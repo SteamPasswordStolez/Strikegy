@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Strikegy — Lobby</title>
+  <style>
+    :root{
+      --bg:#0b0f17; --panel:#111a2b; --text:#eaf0ff; --muted:#9fb0d0;
+      --line:rgba(255,255,255,.12); --btn:#1f4fff; --btn2:#1a2a44;
+      --danger:#ff3b3b;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Arial, sans-serif;
+      background:radial-gradient(1200px 600px at 20% 10%, rgba(31,79,255,.25), transparent 60%),
+                 radial-gradient(900px 500px at 80% 90%, rgba(120,255,214,.12), transparent 55%),
+                 var(--bg);
+      color:var(--text);
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+    .wrap{width:min(980px, 100%); display:grid; gap:16px}
+    .top{
+      display:flex; align-items:flex-end; justify-content:space-between; gap:12px;
+    }
+    .title{
+      line-height:1.05;
+    }
+    .title h1{margin:0; font-size:34px; letter-spacing:.2px}
+    .title p{margin:8px 0 0; color:var(--muted); font-size:14px}
+    .grid{
+      display:grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap:16px;
+    }
+    @media (max-width: 860px){
+      .grid{grid-template-columns:1fr}
+    }
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border:1px solid var(--line);
+      border-radius:18px;
+      padding:18px;
+      box-shadow:0 16px 40px rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+    }
+    .sectionTitle{margin:0 0 10px; font-size:14px; color:var(--muted); letter-spacing:.5px}
+    .modes{display:grid; gap:10px}
+    .mode{
+      display:flex; align-items:flex-start; gap:12px;
+      padding:14px 14px;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      cursor:pointer;
+      transition:transform .06s ease, border-color .12s ease, background .12s ease;
+      user-select:none;
+    }
+    .mode:hover{transform:translateY(-1px); border-color:rgba(255,255,255,.22)}
+    .mode[aria-checked="true"]{
+      border-color: rgba(31,79,255,.65);
+      background: rgba(31,79,255,.15);
+      outline: 2px solid rgba(31,79,255,.25);
+    }
+    .badge{
+      min-width:44px; height:28px;
+      display:flex; align-items:center; justify-content:center;
+      border-radius:999px;
+      border:1px solid var(--line);
+      color:var(--text);
+      font-weight:700;
+      letter-spacing:.4px;
+      font-size:12px;
+      background:rgba(255,255,255,.05);
+    }
+    .mode h3{margin:0; font-size:16px}
+    .mode p{margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.35}
+    .right{
+      display:grid; gap:12px;
+      align-content:start;
+    }
+    .btnRow{display:grid; gap:10px}
+    .btn{
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:14px 14px;
+      font-weight:800;
+      cursor:pointer;
+      background:var(--btn2);
+      color:var(--text);
+      transition:transform .06s ease, filter .12s ease, border-color .12s ease;
+    }
+    .btn:hover{transform:translateY(-1px); border-color:rgba(255,255,255,.22)}
+    .btn.primary{background:linear-gradient(180deg, rgba(31,79,255,1), rgba(23,62,210,1)); border-color:rgba(31,79,255,.65)}
+    .btn.disabled{
+      opacity:.55; cursor:not-allowed;
+    }
+    .meta{
+      display:grid; gap:8px;
+      border-top:1px solid var(--line);
+      padding-top:12px;
+      color:var(--muted);
+      font-size:12.5px;
+    }
+    .row{display:flex; justify-content:space-between; gap:10px}
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      color:var(--muted);
+      font-size:12px;
+    }
+    .warn{
+      color:#ffd3d3;
+      background:rgba(255,59,59,.10);
+      border-color:rgba(255,59,59,.35);
+    }
+    .hint{color:var(--muted); font-size:12px; margin:0}
+  
+    /* Settings modal (Patch 2) */
+    .overlay{
+      position:fixed; inset:0;
+      background:rgba(0,0,0,.55);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+      z-index:50;
+    }
+    .overlay.open{display:flex}
+    .modal{
+      width:min(720px, 100%);
+      background:linear-gradient(180deg, rgba(17,26,43,.95), rgba(10,14,22,.95));
+      border:1px solid var(--line);
+      border-radius:18px;
+      box-shadow:0 24px 70px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    .modalHeader{
+      padding:14px 16px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      border-bottom:1px solid var(--line);
+    }
+    .modalHeader h2{margin:0; font-size:16px; letter-spacing:.2px}
+    .iconBtn{
+      width:38px; height:38px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.06);
+      color:var(--text);
+      cursor:pointer;
+      font-weight:900;
+    }
+    .modalBody{padding:16px; display:grid; gap:14px}
+    .field{
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      border-radius:14px;
+      padding:14px;
+      display:grid;
+      gap:10px;
+    }
+    .fieldTitle{display:flex; justify-content:space-between; gap:10px; align-items:baseline}
+    .fieldTitle b{font-size:14px}
+    .fieldTitle span{color:var(--muted); font-size:12px}
+    .presetGrid{display:grid; gap:10px}
+    .preset{
+      display:flex; gap:10px; align-items:flex-start;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.05);
+      padding:12px;
+      border-radius:12px;
+      cursor:pointer;
+      user-select:none;
+    }
+    .preset:hover{border-color:rgba(255,255,255,.22)}
+    .preset input{margin-top:2px}
+    .preset .desc{margin:2px 0 0; color:var(--muted); font-size:12.5px; line-height:1.35}
+    .sliderRow{display:flex; gap:12px; align-items:center}
+    input[type="range"]{width:100%}
+    .modalFooter{
+      padding:14px 16px;
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+      border-top:1px solid var(--line);
+      background:rgba(0,0,0,.12);
+    }
+    .btn.small{padding:10px 12px; border-radius:12px; font-weight:900}
+    .btn.ghost{background:transparent}
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="title">
+        <h1>Strikegy</h1>
+        <p>Lobby (Patch 1) · 모드 선택 → 시작</p>
+      </div>
+      <div class="pill warn" id="buildPill">Build: dev</div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <p class="sectionTitle">MODE SELECT</p>
+        <div class="modes" id="modes">
+          <div class="mode" role="radio" tabindex="0" data-mode="zone" aria-checked="true">
+            <div class="badge">ZONE</div>
+            <div>
+              <h3>Zone Control</h3>
+              <p>티켓 기반. 거점 점령으로 전선을 만든다.</p>
+            </div>
+          </div>
+
+          <div class="mode" role="radio" tabindex="0" data-mode="conquest" aria-checked="false">
+            <div class="badge">CONQ</div>
+            <div>
+              <h3>Conquest</h3>
+              <p>티켓 없음. 제한 시간 내 전 거점 점령이 목표.</p>
+            </div>
+          </div>
+
+          <div class="mode" role="radio" tabindex="0" data-mode="frontline" aria-checked="false">
+            <div class="badge">FRONT</div>
+            <div>
+              <h3>Frontline</h3>
+              <p>티켓 없음. 제한 시간 종료 시 더 많은 거점 보유 팀 승리.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="card right">
+        <p class="sectionTitle">ACTIONS</p>
+        <div class="btnRow">
+          <button class="btn primary" id="startBtn">Start</button>
+          <button class="btn" id="settingsBtn">Settings</button>
+        </div>
+
+        <div class="meta">
+          <div class="row"><span>Selected Mode</span><b id="selectedModeLabel">zone</b></div>
+          <div class="row"><span>Control Preset</span><b id="controlPresetLabel">pc</b></div>
+          <div class="row"><span>Sensitivity</span><b id="sensitivityLabel">1.00</b></div>
+          <div class="row"><span>Store</span><span>localStorage.selectedMode</span></div>
+          <p class="hint">※ Patch 1 범위: 로비/이동만. 게임 로직은 여기서 절대 구현하지 않음.</p>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+
+  <!-- Settings Modal (Patch 2) -->
+  <div class="overlay" id="settingsOverlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modalHeader">
+        <h2 id="settingsTitle">Settings</h2>
+        <button class="iconBtn" id="settingsCloseBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="field">
+          <div class="fieldTitle">
+            <b>Control Preset</b>
+            <span>저장만 하고, 실제 적용 강화는 Patch 4</span>
+          </div>
+
+          <div class="presetGrid" id="presetGrid">
+            <label class="preset">
+              <input type="radio" name="controlPreset" value="pc">
+              <div>
+                <b>PC</b>
+                <div class="desc">키보드+마우스 조작</div>
+              </div>
+            </label>
+
+            <label class="preset">
+              <input type="radio" name="controlPreset" value="mobile_kb">
+              <div>
+                <b>Mobile + Keyboard</b>
+                <div class="desc">키보드 이동 + 터치/스와이프 시점</div>
+              </div>
+            </label>
+
+            <label class="preset">
+              <input type="radio" name="controlPreset" value="mobile">
+              <div>
+                <b>Mobile</b>
+                <div class="desc">버튼식 이동 + 터치/스와이프 시점</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="fieldTitle">
+            <b>Sensitivity</b>
+            <span>Patch 4에서 시점 회전에 곱해 적용</span>
+          </div>
+
+          <div class="sliderRow">
+            <input id="sensitivityRange" type="range" min="0.2" max="3.0" step="0.05" value="1.0" />
+            <b id="sensitivityValue" style="min-width:64px; text-align:right;">1.00</b>
+          </div>
+          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;">
+            추천 범위: 0.6 ~ 1.6 (원하면 더 올려도 됨)
+          </div>
+        </div>
+      </div>
+
+      <div class="modalFooter">
+        <button class="btn small ghost" id="settingsResetBtn" title="기본값으로 되돌리기">Reset</button>
+        <button class="btn small" id="settingsCancelBtn">Cancel</button>
+        <button class="btn small primary" id="settingsSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+    // Patch 1: 로비 UI + 모드 선택 저장 + game.html 이동만.
+    const modesEl = document.getElementById('modes');
+    const selectedModeLabel = document.getElementById('selectedModeLabel');
+    const startBtn = document.getElementById('startBtn');
+    // Patch 2: Settings (control preset + sensitivity) 저장/유지
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsOverlay = document.getElementById('settingsOverlay');
+    const settingsCloseBtn = document.getElementById('settingsCloseBtn');
+    const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+    const settingsSaveBtn = document.getElementById('settingsSaveBtn');
+    const settingsResetBtn = document.getElementById('settingsResetBtn');
+
+    const controlPresetLabel = document.getElementById('controlPresetLabel');
+    const sensitivityLabel = document.getElementById('sensitivityLabel');
+
+    const sensitivityRange = document.getElementById('sensitivityRange');
+    const sensitivityValue = document.getElementById('sensitivityValue');
+
+    const SETTINGS_KEY = 'strikegy_settings';
+    const DEFAULT_SETTINGS = { controlPreset: 'pc', sensitivity: 1.0 };
+
+    let draftSettings = null; // 모달에서 편집 중인 값(저장 전)
+
+    function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
+
+    function loadSettings(){
+      try{
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if(!raw) return { ...DEFAULT_SETTINGS };
+        const parsed = JSON.parse(raw);
+        const cp = (parsed.controlPreset === 'pc' || parsed.controlPreset === 'mobile' || parsed.controlPreset === 'mobile_kb')
+          ? parsed.controlPreset : DEFAULT_SETTINGS.controlPreset;
+        const sens = clamp(Number(parsed.sensitivity ?? DEFAULT_SETTINGS.sensitivity), 0.2, 3.0);
+        return { controlPreset: cp, sensitivity: sens };
+      }catch(e){
+        return { ...DEFAULT_SETTINGS };
+      }
+    }
+
+    function saveSettings(s){
+      try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }catch(e){}
+    }
+
+    function updateSettingsLabels(s){
+      controlPresetLabel.textContent = s.controlPreset;
+      sensitivityLabel.textContent = Number(s.sensitivity).toFixed(2);
+    }
+
+    function setRadio(name, value){
+      const radios = document.querySelectorAll(`input[name="${name}"]`);
+      radios.forEach(r => { r.checked = (r.value === value); });
+    }
+
+    function getRadio(name){
+      const checked = document.querySelector(`input[name="${name}"]:checked`);
+      return checked ? checked.value : null;
+    }
+
+    function syncFormFromSettings(s){
+      setRadio('controlPreset', s.controlPreset);
+      sensitivityRange.value = String(s.sensitivity);
+      sensitivityValue.textContent = Number(s.sensitivity).toFixed(2);
+    }
+
+    function readSettingsFromForm(){
+      const cp = getRadio('controlPreset') || DEFAULT_SETTINGS.controlPreset;
+      const sens = clamp(Number(sensitivityRange.value), 0.2, 3.0);
+      return { controlPreset: cp, sensitivity: sens };
+    }
+
+    function openSettings(){
+      draftSettings = loadSettings(); // 현재 저장값을 초안으로
+      syncFormFromSettings(draftSettings);
+      settingsOverlay.classList.add('open');
+      settingsOverlay.setAttribute('aria-hidden','false');
+    }
+
+    function closeSettings(){
+      settingsOverlay.classList.remove('open');
+      settingsOverlay.setAttribute('aria-hidden','true');
+      draftSettings = null;
+    }
+
+    settingsBtn.addEventListener('click', () => openSettings());
+    settingsCloseBtn.addEventListener('click', () => closeSettings());
+    settingsCancelBtn.addEventListener('click', () => closeSettings());
+
+    // 오버레이 바깥 클릭으로 닫기
+    settingsOverlay.addEventListener('click', (e) => {
+      if(e.target === settingsOverlay) closeSettings();
+    });
+
+    // ESC로 닫기
+    window.addEventListener('keydown', (e) => {
+      if(e.key === 'Escape' && settingsOverlay.classList.contains('open')) closeSettings();
+    });
+
+    sensitivityRange.addEventListener('input', () => {
+      const val = clamp(Number(sensitivityRange.value), 0.2, 3.0);
+      sensitivityValue.textContent = val.toFixed(2);
+    });
+
+    settingsResetBtn.addEventListener('click', () => {
+      draftSettings = { ...DEFAULT_SETTINGS };
+      syncFormFromSettings(draftSettings);
+    });
+
+    settingsSaveBtn.addEventListener('click', () => {
+      const s = readSettingsFromForm();
+      saveSettings(s);
+      updateSettingsLabels(s);
+      closeSettings();
+    });
+
+
+    const MODE_KEY = 'selectedMode';
+    const DEFAULT_MODE = 'zone';
+
+    function setSelected(mode){
+      // UI 업데이트
+      [...modesEl.querySelectorAll('.mode')].forEach(el => {
+        const on = el.dataset.mode === mode;
+        el.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      selectedModeLabel.textContent = mode;
+
+      // 저장
+      try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+    }
+
+    function getSelected(){
+      try {
+        return localStorage.getItem(MODE_KEY) || DEFAULT_MODE;
+      } catch (e) {
+        return DEFAULT_MODE;
+      }
+    }
+
+    function handlePick(el){
+      const mode = el?.dataset?.mode;
+      if(!mode) return;
+      setSelected(mode);
+    }
+
+    modesEl.addEventListener('click', (e) => {
+      const el = e.target.closest('.mode');
+      if(el) handlePick(el);
+    });
+
+    // 키보드 선택(엔터/스페이스)
+    modesEl.addEventListener('keydown', (e) => {
+      const el = e.target.closest('.mode');
+      if(!el) return;
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        handlePick(el);
+      }
+    });
+
+    startBtn.addEventListener('click', () => {
+      // Patch 1의 목표: game.html로 이동
+      window.location.href = `game.html`;
+    });
+
+    // 초기값 반영
+    setSelected(getSelected());
+    updateSettingsLabels(loadSettings());
+  </script>
+</body>
+</html>

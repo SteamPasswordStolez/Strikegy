@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Strikegy — Patch 4 (Movement)</title>
+  <style>
+    :root{
+      --bg:#0b0f17; --text:#eaf0ff; --muted:#9fb0d0; --line:rgba(255,255,255,.12);
+      --panel:rgba(17,26,43,.82);
+    }
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--text);
+      font-family:system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Arial, sans-serif;
+      overflow:hidden;
+    }
+    #hud{
+      position:fixed; left:14px; top:14px;
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:12px 12px;
+      min-width: 280px;
+      box-shadow:0 16px 40px rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+      z-index:10;
+    }
+    #hud h1{font-size:14px; margin:0 0 8px; letter-spacing:.3px}
+    .row{display:flex; justify-content:space-between; gap:10px; align-items:center; margin:6px 0}
+    .k{color:var(--muted); font-size:12px}
+    .v{font-weight:800; font-size:12.5px}
+    .btns{display:flex; gap:8px; margin-top:10px}
+    button{
+      border:1px solid var(--line);
+      background:rgba(26,42,68,.9);
+      color:var(--text);
+      padding:9px 10px;
+      border-radius:12px;
+      cursor:pointer;
+      font-weight:800;
+      font-size:12.5px;
+    }
+    button:hover{filter:brightness(1.05)}
+    #status{margin-top:8px; color:var(--muted); font-size:12px; line-height:1.35}
+    #overlayError{
+      position:fixed; inset:0; display:none;
+      align-items:center; justify-content:center;
+      background:rgba(0,0,0,.55);
+      z-index:30;
+      padding:24px;
+    }
+    #overlayError .card{
+      width:min(860px, 100%);
+      background:rgba(17,26,43,.92);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:18px;
+      padding:16px;
+      box-shadow:0 20px 60px rgba(0,0,0,.55);
+    }
+    #overlayError h2{margin:0 0 8px; font-size:16px}
+    #overlayError pre{
+      margin:10px 0 0;
+      background:rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+      padding:12px;
+      overflow:auto;
+      max-height:45vh;
+      color:#ffd9d9;
+      font-size:12px;
+      line-height:1.35;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+    canvas{display:block}
+  
+    /* ---- Mobile HUD ---- */
+    .mobileHUD{ position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+    .mobileHUD.hidden{ display:none; }
+    .mh-joystickArea{ position: absolute; left: 0; bottom: 0; width: 45vw; height: 55vh; pointer-events: auto; }
+    .mh-buttons{ position: absolute; right: 2vw; bottom: 6vh; display:flex; flex-direction: column; gap: 10px; pointer-events: auto; }
+    .mh-btn{ padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.25); background: rgba(20,20,20,.55); color:#fff; font-weight: 700; }
+    .mh-btn.on{ outline: 2px solid rgba(120,200,255,.65); }
+    .mh-lookHint{ position:absolute; right: 2vw; top: 8vh; color: rgba(255,255,255,.55); font-size: 12px; pointer-events:none; }
+
+    .mh-joyBase{ position: fixed; width:140px; height:140px;
+      border-radius: 999px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.18);
+      transform: translate(-50%,-50%); display:none; pointer-events:none; }
+    .mh-joyBase.on{ display:block; }
+    .mh-joyKnob{ position:absolute; left:50%; top:50%; width:64px; height:64px; margin-left:-32px; margin-top:-32px;
+      border-radius: 999px; background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.25); }
+
+
+  
+    html, body { touch-action: none; }
+  
+    /* ---- Crosshair ---- */
+    .crosshair{
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      width: 18px; height: 18px; z-index: 44; pointer-events:none;
+    }
+    .crosshair::before, .crosshair::after{
+      content:""; position:absolute; left:50%; top:50%;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 2px 10px rgba(0,0,0,.55);
+    }
+    .crosshair::before{ width: 2px; height: 18px; transform: translate(-50%,-50%); }
+    .crosshair::after{ width: 18px; height: 2px; transform: translate(-50%,-50%); }
+
+    /* ---- Ammo HUD (bottom-right, vertical; BF-style) ---- */
+    .ammoHUD{
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 44;
+      color: rgba(255,255,255,.96);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      text-align: right;
+      pointer-events:none;
+      user-select:none;
+      filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
+    }
+    .ammoWeapon{
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: .06em;
+      opacity: .85;
+      margin-bottom: 6px;
+    }
+    .ammoNums{
+      display:flex;
+      flex-direction: column;
+      align-items: flex-end;
+      line-height: 1;
+    }
+    #ammoMag{ font-size: 40px; font-weight: 900; }
+    .ammoSep{ font-size: 10px; opacity:.55; margin: 6px 0; }
+    #ammoRes{ font-size: 16px; font-weight: 800; opacity:.85; }
+    .ammoStatus{
+      margin-top: 6px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      opacity: .9;
+      min-height: 14px;
+    }
+    .ammoStatus.blink{
+      animation: blink 0.6s steps(2,end) infinite;
+    }
+    @keyframes blink{ 50%{ opacity: .15; } }
+    
+  </style>
+</head>
+<body>
+  <div id="camHud" style="position:fixed;top:10px;left:10px;z-index:9999;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;font-size:12px;line-height:1.35;background:rgba(0,0,0,.55);color:#eaf0ff;border:1px solid rgba(255,255,255,.15);padding:8px 10px;border-radius:12px;pointer-events:none;">
+    <div style="opacity:.75">Patch 4.1 · 점프/달리기/앉기/슬라이드</div>
+    <div>yaw: <b id="yawVal">0.0</b>°</div>
+    <div>pitch: <b id="pitchVal">0.0</b>°</div>
+    <div style="opacity:.65;margin-top:4px">WASD 이동 + Space 점프 + Shift 달리기(홀드) + X 앉기(토글) / 달리기 중 X 슬라이드</div>
+  </div>
+
+  <div id="hud" role="group" aria-label="Patch 3 HUD">
+    <h1>Patch 3 · Map Loader</h1>
+    <div class="row"><span class="k">Selected Mode</span><span class="v" id="modeLabel">-</span></div>
+    <div class="row"><span class="k">Map</span><span class="v" id="mapLabel">-</span></div>
+    <div class="row"><span class="k">World</span><span class="v" id="worldLabel">-</span></div>
+    <div class="row"><span class="k">Zones</span><span class="v" id="zonesLabel">-</span></div>
+    <div class="btns">
+      <button id="backBtn" title="로비로 돌아가기">Lobby</button>
+      <button id="reloadBtn" title="맵 재로드">Reload</button>
+    </div>
+    <div id="status">3D 씬 로딩 중…</div>
+  </div>
+
+  <div id="overlayError" aria-live="polite">
+    <div class="card">
+      <h2>맵 로드 실패</h2>
+      <div class="row"><span class="k">Tried</span><span class="v" id="failPath">-</span></div>
+      <div class="btns">
+        <button id="retryBtn">Retry</button>
+        <button id="toLobbyBtn">Back to Lobby</button>
+      </div>
+      <pre id="failLog"></pre>
+    </div>
+  </div>
+
+  <script type="module">
+  import MuzzleFlash from "./src/effects/MuzzleFlash.js";
+  import SoundSystem from "./src/audio/SoundSystem.js";
+    import { SettingsStore } from "./src/core/SettingsStore.js";
+    import { InputManager } from "./src/input/InputManager.js";
+    import { CameraController } from "./src/camera/CameraController.js";
+    import PlayerController from './src/player/PlayerController.js';
+    import CollisionWorld from './src/world/CollisionWorld.js';
+    import MobileHUD from './src/ui/MobileHUD.js';
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+  import WeaponSystem from "./src/weapons/WeaponSystem.js";
+  import DecalManager from "./src/effects/DecalManager.js";
+
+    // ---------------------------
+    // Patch 3: Mode -> Map 선택(Registry)
+    // ---------------------------
+    const MODE_KEY = "selectedMode";
+    const SETTINGS_KEY = "strikegy_settings";
+
+    const DEFAULT_MAP_BY_MODE = {
+      zone: "maps/zone_5_v1.json",
+      conquest: "maps/conquest_5_v1.json",
+      frontline: "maps/frontline_6_lane_v1.json",
+    };
+
+    function safeGetLocal(key, fallback=null){
+      try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+    }
+
+    function getSelectedMode(){
+      const m = safeGetLocal(MODE_KEY, "zone");
+      return (m === "zone" || m === "conquest" || m === "frontline") ? m : "zone";
+    }
+
+    function resolveMapPath(){
+      // (확장용) 쿼리로 map=... 지정 가능. 없으면 모드 기본맵.
+      const url = new URL(window.location.href);
+      const map = url.searchParams.get("map");
+      const mode = getSelectedMode();
+      if (map && map.startsWith("maps/") && map.endsWith(".json")) return map;
+      return DEFAULT_MAP_BY_MODE[mode] || DEFAULT_MAP_BY_MODE.zone;
+    }
+
+    // ---------------------------
+    // Patch 3: MapLoader (fetch + 최소 검증)
+    // ---------------------------
+    async function loadMapJson(path){
+      const url = `${path}?v=${Date.now()}`; // cache bust (old json 방지)
+      const res = await fetch(url, { cache: "no-store" });
+      if(!res.ok) throw new Error(`Map fetch failed: ${res.status} ${res.statusText}`);
+      const data = await res.json();
+
+      if(!data?.meta?.mode) throw new Error("Invalid map: meta.mode missing");
+      if(!Array.isArray(data.spawns)) throw new Error("Invalid map: spawns missing");
+      if(!Array.isArray(data.zones)) throw new Error("Invalid map: zones missing");
+      if(!Array.isArray(data.objects)) throw new Error("Invalid map: objects missing");
+      if(!data?.world?.groundSize || data.world.groundSize.length !== 2) throw new Error("Invalid map: world.groundSize missing");
+
+      return data;
+    }
+
+    // ---------------------------
+    // Patch 3: SceneBuilder (JSON -> Three)
+    // ---------------------------
+    const MATERIAL_BY_TYPE = {
+      ground: new THREE.MeshStandardMaterial({ color: 0xd6d6d6, roughness: 0.95, metalness: 0 }),
+      wall:   new THREE.MeshStandardMaterial({ color: 0xb8b8b8, roughness: 0.95, metalness: 0 }),
+      cover:  new THREE.MeshStandardMaterial({ color: 0x8f8f8f, roughness: 0.95, metalness: 0 }),
+    };
+
+    const ZONE_MAT = new THREE.MeshStandardMaterial({ color: 0x4fa3ff, transparent: true, opacity: 0.22, roughness: 1, metalness: 0 });
+    const ZONE_EDGE = new THREE.LineBasicMaterial({ color: 0x4fa3ff, transparent: true, opacity: 0.9 });
+
+    const TEAM_COLOR = {
+      blue: 0x4fa3ff,
+      red:  0xff5b5b
+    };
+
+    function makeGround(w, d){
+      const geo = new THREE.PlaneGeometry(w, d);
+      const mesh = new THREE.Mesh(geo, MATERIAL_BY_TYPE.ground);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    function makeBox(type, size, pos){
+      const [sx, sy, sz] = size;
+      const geo = new THREE.BoxGeometry(sx, sy, sz);
+      const mat = MATERIAL_BY_TYPE[type] || MATERIAL_BY_TYPE.cover;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(pos[0], pos[1], pos[2]);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    function makeZoneCircle(radius, pos){
+      const geo = new THREE.CylinderGeometry(radius, radius, 0.2, 48, 1, true);
+      const mesh = new THREE.Mesh(geo, ZONE_MAT);
+      mesh.position.set(pos[0], 0.1, pos[2]);
+      mesh.receiveShadow = false;
+      mesh.castShadow = false;
+
+      // edge
+      const points = [];
+      const seg = 64;
+      for(let i=0;i<=seg;i++){
+        const a = (i/seg) * Math.PI * 2;
+        points.push(new THREE.Vector3(Math.cos(a)*radius, 0.12, Math.sin(a)*radius));
+      }
+      const edgeGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.Line(edgeGeo, ZONE_EDGE);
+      line.position.set(pos[0], 0, pos[2]);
+
+      const g = new THREE.Group();
+      g.add(mesh);
+      g.add(line);
+      return g;
+    }
+
+    function makeSpawnMarker(team, pos){
+      const color = TEAM_COLOR[team] ?? 0xffffff;
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 });
+      const baseGeo = new THREE.CylinderGeometry(2.2, 2.2, 0.25, 24);
+      const base = new THREE.Mesh(baseGeo, mat);
+      base.position.set(pos[0], 0.13, pos[2]);
+
+      const coneGeo = new THREE.ConeGeometry(1.5, 3.6, 16);
+      const cone = new THREE.Mesh(coneGeo, mat);
+      cone.position.set(pos[0], 2.2, pos[2]);
+
+      const g = new THREE.Group();
+      g.add(base);
+      g.add(cone);
+      return g;
+    }
+
+    function makePlayerDummy(pos){
+      // "스폰 가능한 상태" 확인용 더미 캐릭터 (조작 없음)
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
+      const geo = new THREE.CapsuleGeometry(0.55, 0.9, 6, 12);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(pos[0], pos[1], pos[2]);
+      mesh.castShadow = true;
+      return mesh;
+    }
+
+    function buildScene(map){
+      const scene = new THREE.Scene();
+      const collisionWorld = new CollisionWorld();
+      scene.background = new THREE.Color(0x0b0f17);
+
+      // lights (밝게)
+      const amb = new THREE.AmbientLight(0xffffff, map.world?.ambientLight ?? 0.75);
+      scene.add(amb);
+
+      const dlPos = map.world?.dirLight?.pos ?? [80, 140, 60];
+      const dl = new THREE.DirectionalLight(0xffffff, map.world?.dirLight?.intensity ?? 1.1);
+      dl.position.set(dlPos[0], dlPos[1], dlPos[2]);
+      dl.castShadow = true;
+      dl.shadow.mapSize.set(1024, 1024);
+      dl.shadow.camera.near = 1;
+      dl.shadow.camera.far = 400;
+      dl.shadow.camera.left = -160;
+      dl.shadow.camera.right = 160;
+      dl.shadow.camera.top = 160;
+      dl.shadow.camera.bottom = -160;
+      scene.add(dl);
+
+      const [gw, gd] = map.world.groundSize;
+      scene.add(makeGround(gw, gd));
+
+      // objects
+      for(const obj of map.objects){
+        if(obj.shape === "box"){
+          scene.add(makeBox(obj.type, obj.size, obj.pos));
+          // Collision: default to collidable for any solid box except floor/ground.
+          // (Maps may use different type names; safer to opt-out only for floor-like objects.)
+          const t = (obj.type || "").toLowerCase();
+          const nonSolid = (t === "floor" || t === "ground" || t === "deco" || t === "decor" || t === "sky");
+          const collidable = (obj.collision === false) ? false : !nonSolid;
+
+          if (collidable) {
+            collisionWorld.addCenteredBox(obj.type, obj.size, obj.pos);
+          }
+        }
+      }
+
+      // zones (표시용)
+      const zones = [];
+      for(const z of map.zones){
+        if(z.shape === "circle"){
+          const g = makeZoneCircle(z.radius ?? 20, z.pos);
+          scene.add(g);
+          zones.push({ id: z.id, pos: z.pos, radius: z.radius ?? 20 });
+        }
+      }
+
+      // spawns (표시용)
+      const spawns = {};
+      for(const s of map.spawns){
+        const team = s.team;
+        spawns[team] = s;
+        scene.add(makeSpawnMarker(team, s.pos));
+      }
+
+      return { scene, zones, spawns, collisionWorld };
+    }
+
+    // ---------------------------
+    // Renderer / Camera
+    // ---------------------------
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.rotation.order = "YXZ";
+
+    // Patch 4 managers
+    const settingsStore = new SettingsStore();
+    const inputManager = new InputManager({ domElement: renderer.domElement, settingsStore });
+
+    // Patch 4.3: Mobile HUD (joystick + buttons + swipe look)
+    const mobileHUD = new MobileHUD({ root: document.body, input: inputManager, presetGetter: ()=>settingsStore.controlPreset });
+
+
+    // Patch 4: PC 프리셋이면 캔버스 클릭으로 포인터락
+    renderer.domElement.addEventListener("click", () => {
+      settingsStore.refresh();
+      if(settingsStore.controlPreset !== "pc") return;
+      if(document.pointerLockElement !== renderer.domElement){
+        renderer.domElement.requestPointerLock?.();
+      }
+    });
+
+    let cameraController = null;
+    let playerController = null;
+    let collisionWorld = null;
+    let playerObject = null;
+    const clock = new THREE.Clock();
+
+    let current = { scene: null, zones: [], spawns: {} };
+  // Patch 5A (PC): weapons + decals
+  let weaponSystem = null;
+  let soundSystem = null;
+  let muzzleFlash = null;
+  let decalManager = null;
+  let collidableMeshes = [];
+  let mouseLeftDown = false;
+  let mouseRightDown = false;
+  let lastFov = null;
+    
+    function initPlayerFromSpawn(spawn){
+      const p = spawn?.pos ?? [0,2,0];
+      const yaw = spawn?.yaw ?? 0;
+
+      // 기존 플레이어 제거
+      if(playerObject && playerObject.parent) playerObject.parent.remove(playerObject);
+      if(camera.parent) camera.parent.remove(camera);
+
+      // 새 플레이어 생성 + 카메라 부착
+      playerObject = makePlayerDummy(p);
+      current.scene.add(playerObject);
+      playerObject.add(camera);
+      camera.position.set(0, 1.6, 0);
+
+      // 컨트롤러 생성/갱신
+      settingsStore.refresh();
+      cameraController = new CameraController({ playerObject, camera, settingsStore });
+      cameraController.setFromSpawnYawDegrees(-90); // Patch 4A: 고정 초기 yaw
+
+
+      playerController = new PlayerController({ playerObject });
+      playerController.teleportTo(p);
+    }
+
+    function showError(path, err){
+      const overlay = document.getElementById("overlayError");
+      document.getElementById("failPath").textContent = path;
+      document.getElementById("failLog").textContent = String(err?.stack || err?.message || err);
+      overlay.style.display = "flex";
+    }
+
+    function hideError(){
+      document.getElementById("overlayError").style.display = "none";
+    }
+
+    async function boot(){
+      const mode = getSelectedMode();
+      const path = resolveMapPath();
+
+      document.getElementById("modeLabel").textContent = mode;
+      document.getElementById("mapLabel").textContent = path;
+
+      try{
+        hideError();
+        document.getElementById("status").textContent = "맵 JSON 로드 중…";
+
+        const map = await loadMapJson(path);
+
+        // 표시 업데이트
+        const [gw, gd] = map.world.groundSize;
+        document.getElementById("worldLabel").textContent = `${gw} x ${gd}`;
+        document.getElementById("zonesLabel").textContent = `${map.zones.length}`;
+
+        document.getElementById("status").textContent = "씬 빌드 중…";
+        current = buildScene(map);
+        collisionWorld = current.collisionWorld;
+
+        // Patch 4: 플레이어/카메라 초기화 (BLUE 스폰, 없으면 첫 스폰)
+        const blue = current.spawns.blue ?? map.spawns[0];
+        initPlayerFromSpawn(blue);
+
+
+        
+    // Patch 5A: gather collidables (anything that isn't the player/camera)
+    collidableMeshes = [];
+    current.scene.traverse((obj)=>{
+      if(obj && obj.isMesh){
+        // ignore decals/hud helpers
+        if(obj.name && obj.name.startsWith("decal_")) return;
+        collidableMeshes.push(obj);
+      }
+    });
+    decalManager = new DecalManager(current.scene);
+    soundSystem = new SoundSystem();
+    // WebAudio unlock: browsers block sound until a user gesture
+    window.addEventListener('mousedown', ()=> soundSystem?.unlock?.(), { once:true });
+    window.addEventListener('touchstart', ()=> soundSystem?.unlock?.(), { once:true, passive:true });
+    muzzleFlash = new MuzzleFlash(current.scene, camera);
+    weaponSystem = new WeaponSystem({
+      camera: camera,
+      scene: current.scene,
+      getCollidables: ()=> collidableMeshes,
+      onWallHit: (hit)=> decalManager.add(hit),
+      onSound: (name)=> soundSystem.play(name),
+      onShot: ()=> muzzleFlash.spawn(),
+    });
+        lastFov = camera.fov;
+lastFov =
+    // Patch 5A: PC bindings
+    window.addEventListener('contextmenu', (e)=> e.preventDefault());
+    window.addEventListener('mousedown', (e)=>{
+      if(e.button===0) mouseLeftDown = true;
+      if(e.button===2) mouseRightDown = true;
+    });
+    window.addEventListener('mouseup', (e)=>{
+      if(e.button===0) mouseLeftDown = false;
+      if(e.button===2) mouseRightDown = false;
+    });
+    window.addEventListener('keydown', (e)=>{
+      if(e.code==='KeyR') weaponSystem?.startReload();
+      if(e.code==='Digit1') weaponSystem?.switchWeapon('ar1');
+      if(e.code==='Digit2') weaponSystem?.switchWeapon('pistol1');
+    });
+document.getElementById("status").textContent =
+          "로드 완료. 캔버스를 클릭하면(PC) 포인터락이 걸리고 시점 회전만 활성화됩니다. (Patch 4A)";
+      } catch (e){
+        console.error(e);
+        document.getElementById("status").textContent = "로드 실패";
+        showError(path, e);
+      }
+    }
+
+    function animate(){
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      // Patch 4: 입력/카메라/플레이어 업데이트
+      settingsStore.refresh();
+      const controlPreset = settingsStore.controlPreset;
+      if(controlPreset === 'mobile' || controlPreset === 'mobile_kb') mobileHUD.show(); else mobileHUD.hide();
+      const st = inputManager.poll(controlPreset);
+      if(cameraController){
+        cameraController.applyLookDelta(st.lookDX, st.lookDY, controlPreset !== "pc");
+        const dbg = cameraController.getDebug?.();
+        if(dbg){
+          const yEl = document.getElementById('yawVal');
+          const pEl = document.getElementById('pitchVal');
+          if(yEl) yEl.textContent = dbg.yawDeg;
+          if(pEl) pEl.textContent = dbg.pitchDeg;
+        }
+      }
+      if(playerController){
+        // Patch 4A: 이동 비활성 (yaw/pitch만 검증)
+        playerController.update(dt, st, camera, collisionWorld);
+      }
+
+      // 아주 미세한 분위기: zone edge만 살짝 펄스 (가독성)
+      if(current?.scene){
+        // nothing heavy
+      }
+    // Patch 5A: weapons tick (PC only)
+    if(weaponSystem){
+      weaponSystem.setTriggerHeld(mouseLeftDown);
+      weaponSystem.setADS(mouseRightDown);
+      weaponSystem.update(dt);
+      if(decalManager) decalManager.update(dt);
+      if(muzzleFlash) muzzleFlash.update(dt);
+
+      // ADS FOV
+      const targetFov = weaponSystem.isADS ? weaponSystem.current.adsFov : weaponSystem.current.hipFov;
+      if(camera && camera.fov !== targetFov){
+        camera.fov = targetFov;
+        camera.updateProjectionMatrix();
+      }
+
+      // HUD
+      const elMag = document.getElementById('ammoMag');
+      const elRes = document.getElementById('ammoRes');
+      const elW = document.getElementById('ammoWeapon');
+      const elS = document.getElementById('ammoStatus');
+      if(elMag) elMag.textContent = weaponSystem.mag;
+      if(elRes) elRes.textContent = weaponSystem.reserve;
+      if(elW) elW.textContent = weaponSystem.current.name;
+      if(elS){
+        if(weaponSystem.isReloading){ elS.textContent = 'RELOADING'; elS.classList.add('blink'); }
+        else if(weaponSystem.mag===0 && weaponSystem.reserve===0){ elS.textContent = 'EMPTY'; elS.classList.add('blink'); }
+        else { elS.textContent = ''; elS.classList.remove('blink'); }
+      }
+    }
+
+      if(current?.scene) renderer.render(current.scene, camera);
+    }
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // UI hooks
+    document.getElementById("backBtn").addEventListener("click", () => {
+      window.location.href = "index.html";
+    });
+    document.getElementById("reloadBtn").addEventListener("click", () => boot());
+    document.getElementById("retryBtn").addEventListener("click", () => boot());
+    document.getElementById("toLobbyBtn").addEventListener("click", () => {
+      window.location.href = "index.html";
+    });
+
+    // Start
+    await boot();
+    animate();
+  </script>
+<div id="crosshair" style="position:fixed;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);pointer-events:none">
+<div style="position:absolute;left:7px;top:0;width:2px;height:16px;background:#fff"></div>
+<div style="position:absolute;left:0;top:7px;width:16px;height:2px;background:#fff"></div></div>
+<div id="ammoHUD" class="ammoHUD">
+    <div class="ammoWeapon" id="ammoWeapon">AR-1</div>
+    <div class="ammoNums"><span id="ammoMag">30</span><span class="ammoSep">—</span><span id="ammoRes">90</span></div>
+    <div class="ammoStatus" id="ammoStatus"></div>
+  </div></body>
+</html>
