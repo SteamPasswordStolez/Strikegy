@@ -76,26 +76,145 @@
     canvas{display:block}
   
     /* ---- Mobile HUD ---- */
-    .mobileHUD{ position: fixed; inset: 0; pointer-events: none; z-index: 40; }
-    .mobileHUD.hidden{ display:none; }
-    .mh-joystickArea{ position: absolute; left: 0; bottom: 0; width: 45vw; height: 55vh; pointer-events: auto; }
-    .mh-buttons{ position: absolute; right: 2vw; bottom: 6vh; display:flex; flex-direction: column; gap: 10px; pointer-events: auto; }
-    .mh-btn{ padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.25); background: rgba(20,20,20,.55); color:#fff; font-weight: 700; }
-    .mh-btn.on{ outline: 2px solid rgba(120,200,255,.65); }
-    .mh-lookHint{ position:absolute; right: 2vw; top: 8vh; color: rgba(255,255,255,.55); font-size: 12px; pointer-events:none; }
+.mobileHUD{
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  /* iOS safe area */
+  --safeB: env(safe-area-inset-bottom, 0px);
+  --safeR: env(safe-area-inset-right, 0px);
+  --safeL: env(safe-area-inset-left, 0px);
+  --safeT: env(safe-area-inset-top, 0px);
 
-    .mh-joyBase{ position: fixed; width:140px; height:140px;
-      border-radius: 999px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.18);
-      transform: translate(-50%,-50%); display:none; pointer-events:none; }
-    .mh-joyBase.on{ display:block; }
-    .mh-joyKnob{ position:absolute; left:50%; top:50%; width:64px; height:64px; margin-left:-32px; margin-top:-32px;
-      border-radius: 999px; background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.25); }
+  --uiScale: 1;
+  --btnSize: calc(60px * var(--uiScale));
+  --btnSizeSm: calc(56px * var(--uiScale));
+  --btnSizeJump: calc(64px * var(--uiScale));
+  --btnSizeFire: calc(88px * var(--uiScale));
+  --ammoPad: calc(110px * var(--uiScale));
+
+  --gap: calc(10px * var(--uiScale));
+}
+.mobileHUD.hidden{ display:none; }
+
+/* Left move zone */
+.mh-joystickArea{
+  position:absolute;
+  left:0; bottom:0;
+  width: 45vw;
+  height: 55vh;
+  pointer-events: auto;
+  touch-action: none;
+}
+.mh-joyBase{
+  position: fixed;
+  width: 140px; height: 140px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.18);
+  transform: translate(-50%, -50%);
+  display:none;
+  pointer-events:none;
+  z-index: 41;
+}
+.mh-joyBase.show{ display:block; }
+.mh-joyKnob{
+  position:absolute;
+  left:50%; top:50%;
+  width: 52px; height: 52px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.22);
+  transform: translate(-50%, -50%);
+}
+
+/* Combat cluster (right-bottom) */
+.mh-combat{
+  position:absolute;
+  right: calc(18px + var(--safeR) + var(--ammoPad));
+  bottom: calc(18px + var(--safeB));
+  display:flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--gap);
+  pointer-events:auto;
+  touch-action: none;
+  z-index: 41;
+}
+
+/* Actions stack (jump/crouch/sprint) slightly above combat */
+.mh-actions{
+  position:absolute;
+  right: calc(18px + var(--safeR));
+  bottom: calc(18px + var(--safeB) + var(--ammoPad));
+  display:flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--gap);
+  pointer-events:auto;
+  touch-action: none;
+  z-index: 41;
+}
+
+.mh-btn{
+  width: var(--btnSize);
+  height: var(--btnSize);
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(20,20,20,.55);
+  color: #fff;
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  pointer-events:auto;
+  user-select:none;
+  -webkit-user-select:none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mh-btn--small{
+  width: var(--btnSizeSm);
+  height: var(--btnSizeSm);
+  font-size: 20px;
+}
+.mh-btn--fire{
+  width: var(--btnSizeFire);
+  height: var(--btnSizeFire);
+  font-size: 26px;
+  border-color: rgba(255,120,120,0.45);
+  background: rgba(50,15,15,.55);
+}
 
 
-  
-    html, body { touch-action: none; }
-  
-    /* ---- Crosshair ---- */
+.mh-btn--jump{
+  width: var(--btnSizeJump);
+  height: var(--btnSizeJump);
+  font-size: 24px;
+}
+.mh-btn.on{
+  outline: 2px solid rgba(255,255,255,.35);
+}
+.mh-btn.active{
+  outline: 3px solid rgba(120,200,255,.75);
+  box-shadow: 0 0 18px rgba(120,200,255,.35);
+}
+.mh-btn.pulse{
+  transform: scale(0.94);
+}
+
+.mh-lookHint{
+  position:absolute;
+  right: calc(18px + var(--safeR) + var(--ammoPad));
+  top: calc(10px + var(--safeT));
+  color: rgba(255,255,255,.55);
+  font-size: 12px;
+  pointer-events:none;
+  z-index: 41;
+}
+/* ---- End Mobile HUD ---- */
+/* ---- Crosshair ---- */
     .crosshair{
       position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
       width: 18px; height: 18px; z-index: 44; pointer-events:none;
@@ -122,6 +241,7 @@
       filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
     }
     .ammoWeapon{
+
       font-weight: 800;
       font-size: 12px;
       letter-spacing: .06em;
@@ -150,7 +270,226 @@
     }
     @keyframes blink{ 50%{ opacity: .15; } }
     
-  </style>
+  
+    /* ---- Patch 6-1b: Inventory (Modal) ---- */
+    #invBagBtn{
+      position:fixed;
+      top:10px; right:10px;
+      width:46px; height:46px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(17,26,43,.78);
+      color:#eaf0ff;
+      font-size:22px;
+      line-height:1;
+      display:none;
+      z-index: 60;
+      pointer-events:auto;
+      backdrop-filter: blur(6px);
+      box-shadow:0 10px 24px rgba(0,0,0,.35);
+      cursor:pointer;
+    }
+    #invBagBtn:active{ transform: translateY(1px); }
+    @supports (padding: env(safe-area-inset-top)){
+      #invBagBtn{
+        top: calc(10px + env(safe-area-inset-top));
+        right: calc(10px + env(safe-area-inset-right));
+      }
+    }
+
+    
+    /* ---- Patch 6-2b: Shop + Money HUD ---- */
+    #moneyHUD{
+      position:fixed;
+      top:10px; left:10px;
+      padding:8px 10px;
+      border-radius: 12px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(17,26,43,.78);
+      color:#eaf0ff;
+      font-size:14px;
+      letter-spacing:.2px;
+      z-index: 60;
+      pointer-events:none;
+      backdrop-filter: blur(6px);
+      box-shadow:0 10px 24px rgba(0,0,0,.35);
+      display:none;
+    }
+    #shopCartBtn{
+      position:fixed;
+      top:10px; right:62px;
+      width:46px; height:46px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(17,26,43,.78);
+      color:#eaf0ff;
+      font-size:22px;
+      line-height:1;
+      display:none;
+      z-index: 60;
+      pointer-events:auto;
+      backdrop-filter: blur(6px);
+      box-shadow:0 10px 24px rgba(0,0,0,.35);
+      cursor:pointer;
+    }
+    #shopCartBtn:active{ transform: translateY(1px); }
+    @supports (padding: env(safe-area-inset-top)){
+      #moneyHUD{
+        top: calc(10px + env(safe-area-inset-top));
+        left: calc(10px + env(safe-area-inset-left));
+      }
+      #shopCartBtn{
+        top: calc(10px + env(safe-area-inset-top));
+        right: calc(62px + env(safe-area-inset-right));
+      }
+    }
+
+    .shopOverlay{
+      position:fixed; inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: rgba(0,0,0,.55);
+      z-index: 90;
+      pointer-events:auto;
+    }
+    .shopModal{
+      width:min(620px, calc(100vw - 24px));
+      max-height: min(84vh, 760px);
+      overflow:auto;
+      background: var(--panel);
+      border:1px solid var(--line);
+      border-radius: 18px;
+      box-shadow:0 22px 70px rgba(0,0,0,.55);
+      padding: 14px;
+    }
+    .shopHeader{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .shopTitle{ font-weight:900; font-size:18px; }
+    .shopMoney{ font-weight:800; opacity:.95; }
+    .shopClose{
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.06);
+      color:#eaf0ff;
+      border-radius: 10px;
+      padding:6px 10px;
+      cursor:pointer;
+    }
+    .shopTabs{ display:flex; gap:8px; margin:10px 0 12px; flex-wrap:wrap; }
+    .shopTab{
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.05);
+      color:#eaf0ff;
+      border-radius: 999px;
+      padding:8px 10px;
+      cursor:pointer;
+      font-size:13px;
+    }
+    .shopTab.active{ background: rgba(105,169,255,.18); border-color: rgba(105,169,255,.35); }
+    .shopList{ display:flex; flex-direction:column; gap:8px; }
+    .shopSection{ margin-top:4px; font-weight:800; opacity:.9; }
+    .shopItem{
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      border:1px solid rgba(255,255,255,.10);
+      border-radius: 14px;
+      padding:10px;
+      background: rgba(255,255,255,.03);
+    }
+    .shopItemLeft{ display:flex; align-items:center; gap:10px; }
+    .shopIcon{ width:36px; height:36px; border-radius:12px; display:flex; align-items:center; justify-content:center;
+      background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); }
+    .shopMid{ display:flex; flex-direction:column; gap:2px; }
+    .shopName{ font-weight:800; }
+    .shopSub{ font-size:12px; opacity:.85; }
+    .shopBuy{
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(105,169,255,.16);
+      color:#eaf0ff;
+      border-radius: 12px;
+      padding:8px 12px;
+      cursor:pointer;
+      font-weight:800;
+      white-space:nowrap;
+    }
+    .shopBuy.disabled{ opacity:.45; cursor:not-allowed; }
+    .shopBuy:disabled{ opacity:.45; cursor:not-allowed; }
+    .shopHint{ font-size:12px; opacity:.75; margin-top:6px; }
+    .shopToast{ margin-top:10px; font-size:13px; opacity:0; transition: opacity .12s ease; }
+    
+
+.invOverlay{
+      position:fixed; inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      background:rgba(0,0,0,.55);
+      z-index: 80;
+      pointer-events:auto;
+    }
+    .invModal{
+      width:min(540px, calc(100vw - 24px));
+      max-height: min(82vh, 720px);
+      overflow:auto;
+      background: var(--panel);
+      border:1px solid var(--line);
+      border-radius: 18px;
+      box-shadow:0 22px 70px rgba(0,0,0,.55);
+      padding: 14px;
+    }
+    .invHeader{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding-bottom: 10px;
+      border-bottom:1px solid rgba(255,255,255,.10);
+      margin-bottom: 12px;
+    }
+    .invTitle{ font-weight:900; letter-spacing:.02em; }
+    .invSub{ opacity:.85; margin-left:auto; }
+    .invCloseBtn{
+      margin-left:8px;
+      width:36px; height:36px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.12);
+      color:#eaf0ff;
+      cursor:pointer;
+    }
+    .invGrid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap:10px;
+    }
+    @media (max-width: 520px){
+      .invGrid{ grid-template-columns: 1fr; }
+    }
+    .invSlot{
+      display:flex;
+      flex-direction:column;
+      align-items:flex-start;
+      gap:4px;
+      padding:12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.10);
+      color:#eaf0ff;
+      cursor:pointer;
+      text-align:left;
+      user-select:none;
+    }
+    .invSlot.is-selected{
+      border-color: rgba(31,79,255,.95);
+      box-shadow: 0 0 0 2px rgba(31,79,255,.35) inset;
+    }
+    .invSlot.is-locked{
+      opacity:.8;
+      background:rgba(0,0,0,.06);
+    }
+    .invSlotIcon{ font-size:22px; }
+    .invSlotLabel{ font-size:12px; opacity:.75; }
+    .invSlotName{ font-size:13px; font-weight:800; opacity:.92; }
+
+    .ammoSlot{ margin-top: 2px; font-size: 11px; font-weight: 800; letter-spacing: .08em; opacity: .72; }
+</style>
 </head>
 <body>
   <div id="camHud" style="position:fixed;top:10px;left:10px;z-index:9999;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;font-size:12px;line-height:1.35;background:rgba(0,0,0,.55);color:#eaf0ff;border:1px solid rgba(255,255,255,.15);padding:8px 10px;border-radius:12px;pointer-events:none;">
@@ -194,9 +533,19 @@
     import PlayerController from './src/player/PlayerController.js';
     import CollisionWorld from './src/world/CollisionWorld.js';
     import MobileHUD from './src/ui/MobileHUD.js';
-    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+    import InventoryModal from './src/ui/InventoryModal.js';
+    import ShopModal from './src/ui/ShopModal.js';
+    import { ShopSystem } from './src/game/ShopSystem.js';
+    
+  import { EconomyManager } from "./src/game/EconomyManager.js";
+  import { LoadoutManager } from "./src/game/LoadoutManager.js";
+  import { WeaponSwitchManager } from "./src/game/WeaponSwitchManager.js";
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   import WeaponSystem from "./src/weapons/WeaponSystem.js";
   import DecalManager from "./src/effects/DecalManager.js";
+  import { CLASS_KEY, normalizeClassId, initInventoryForClass, CLASSES } from "./src/data/classes.js";
+    // Patch 6-2a: economy manager instance (declared early to avoid TDZ)
+    let economyManager = null;
 
     // ---------------------------
     // Patch 3: Mode -> Map 선택(Registry)
@@ -217,6 +566,15 @@
     function getSelectedMode(){
       const m = safeGetLocal(MODE_KEY, "zone");
       return (m === "zone" || m === "conquest" || m === "frontline") ? m : "zone";
+    }
+
+
+    // ---------------------------
+    // Patch 6-1a: Class selection (from lobby)
+    // ---------------------------
+    function getSelectedClass(){
+      const c = safeGetLocal(CLASS_KEY, "assault");
+      return normalizeClassId(c);
     }
 
     function resolveMapPath(){
@@ -411,11 +769,126 @@
     const settingsStore = new SettingsStore();
     const inputManager = new InputManager({ domElement: renderer.domElement, settingsStore });
 
-    // Patch 4.3: Mobile HUD (joystick + buttons + swipe look)
+    
+
+    // Patch 6-1a/b: Build session profile (class + inventory) from lobby selection
+    const __savedClass = (()=>{ try{ return localStorage.getItem(CLASS_KEY); }catch(e){ return null; } })();
+    const __classId = normalizeClassId(__savedClass || "assault");
+    window.playerProfile = {
+      classId: __classId,
+      className: (CLASSES[__classId] || CLASSES.assault).name,
+      inventory: initInventoryForClass(__classId),
+      activeSlot: { type:"secondary", index:0 },
+    };
+    // Patch 6-2a: Economy manager init
+    economyManager = new EconomyManager(window.playerProfile);
+    economyManager.initOnGameStart();
+
+    window.__strikegyUILock = window.__strikegyUILock || { inventory:false, shop:false };
+
+// Patch 4.3: Mobile HUD (joystick + buttons + swipe look)
     const mobileHUD = new MobileHUD({ root: document.body, input: inputManager, presetGetter: ()=>settingsStore.controlPreset });
 
 
-    // Patch 4: PC 프리셋이면 캔버스 클릭으로 포인터락
+    
+    // Patch 6-1b: Inventory modal + 🎒 button
+    const inventoryModal = new InventoryModal({
+      root: document.body,
+      input: inputManager,
+      settingsStore,
+      mobileHUD,
+      getProfile: ()=>window.playerProfile
+    });
+
+    // Patch 6-2b: Shop system + modal
+    const shopSystem = new ShopSystem({ getProfile: ()=>window.playerProfile, getEconomy: ()=>economyManager });
+    // --- Shop cart button (mobile UI). Always define to avoid ReferenceError.
+
+    const shopCartBtn = document.getElementById("shopCartBtn") || (() => {
+
+      const b = document.createElement("button");
+
+      b.id = "shopCartBtn";
+
+      b.type = "button";
+
+      b.textContent = "🛒";
+
+      b.setAttribute("aria-label", "상점");
+
+      document.body.appendChild(b);
+
+      return b;
+
+    })();
+
+
+    
+    // --- Money HUD (always define)
+    const moneyHUD = document.getElementById("moneyHUD") || (() => {
+      const d = document.createElement("div");
+      d.id = "moneyHUD";
+      d.textContent = "$0";
+      document.body.appendChild(d);
+      return d;
+    })();
+    window.moneyHUD = moneyHUD;
+const shopModal = new ShopModal({
+      root: document.body,
+      input: inputManager,
+      settingsStore,
+      mobileHUD,
+      getProfile: ()=>window.playerProfile,
+      shopSystem
+    });
+    // expose for debugging
+    window.shopModal = shopModal;
+
+    shopCartBtn.addEventListener('click', (e)=>{ e.preventDefault(); shopModal.toggle(); });
+
+
+    const invBagBtn = document.createElement("button");
+    invBagBtn.id = "invBagBtn";
+    invBagBtn.type = "button";
+    invBagBtn.textContent = "🎒";
+    invBagBtn.title = "Inventory (I)";
+    invBagBtn.addEventListener("click", (e)=>{
+      e.preventDefault();
+      inventoryModal.toggle();
+    });
+    document.body.appendChild(invBagBtn);
+
+    function updateInvBagVisibility(){
+      const p = settingsStore.controlPreset;
+      const show = (p === "mobile" || p === "mobile_kb");
+      invBagBtn.style.display = show ? "block" : "none";
+      shopCartBtn.style.display = show ? "block" : "none";
+      moneyHUD.style.display = "block";
+    }
+
+    // Key bindings (PC + mobile_kb)
+    window.addEventListener("keydown", (e)=>{
+      if(e.code === "KeyB"){
+        if(e.repeat) return;
+        const tag = document.activeElement?.tagName;
+        if(tag === "INPUT" || tag === "TEXTAREA") return;
+        try{ shopModal.toggle(); }catch{}
+        e.preventDefault();
+      }else if(e.code === "KeyI"){
+        if(e.repeat) return;
+        const tag = document.activeElement?.tagName;
+        if(tag === "INPUT" || tag === "TEXTAREA") return;
+        inventoryModal.toggle();
+        e.preventDefault();
+      }else if(e.code === "Escape"){
+        if(inventoryModal.isOpen()){
+          inventoryModal.close();
+          e.preventDefault();
+        }
+      }
+    });
+
+// Patch 4: PC 프리셋이면 캔버스 클릭으로 포인터락
     renderer.domElement.addEventListener("click", () => {
       settingsStore.refresh();
       if(settingsStore.controlPreset !== "pc") return;
@@ -430,10 +903,12 @@
     let playerObject = null;
     const clock = new THREE.Clock();
 
+
     let current = { scene: null, zones: [], spawns: {} };
   // Patch 5A (PC): weapons + decals
   let weaponSystem = null;
   let soundSystem = null;
+  let weaponSwitchManager = null;
   let muzzleFlash = null;
   let decalManager = null;
   let collidableMeshes = [];
@@ -527,23 +1002,65 @@
       onSound: (name)=> soundSystem.play(name),
       onShot: ()=> muzzleFlash.spawn(),
     });
+    // Patch 6-3: weapon/slot switching manager (guns + grenades + class items + melee)
+    weaponSwitchManager = new WeaponSwitchManager({
+      profile: window.playerProfile,
+      weaponSystem,
+      onMelee: ()=> soundSystem?.play?.("swap"), // placeholder: reuse swap sound
+    });
+    weaponSwitchManager.ensureActiveSlot?.();
+    // sync to current slot
+    weaponSwitchManager.togglePrimarySecondary?.(); // will settle to owned slot
+
         lastFov = camera.fov;
-lastFov =
-    // Patch 5A: PC bindings
-    window.addEventListener('contextmenu', (e)=> e.preventDefault());
-    window.addEventListener('mousedown', (e)=>{
-      if(e.button===0) mouseLeftDown = true;
-      if(e.button===2) mouseRightDown = true;
-    });
-    window.addEventListener('mouseup', (e)=>{
-      if(e.button===0) mouseLeftDown = false;
-      if(e.button===2) mouseRightDown = false;
-    });
-    window.addEventListener('keydown', (e)=>{
-      if(e.code==='KeyR') weaponSystem?.startReload();
-      if(e.code==='Digit1') weaponSystem?.switchWeapon('ar1');
-      if(e.code==='Digit2') weaponSystem?.switchWeapon('pistol1');
-    });
+    // Patch 5A/6: PC bindings
+    // (guard to avoid duplicate binds when reloading maps)
+    if(!window.__strikegyBoundInputs){
+      window.__strikegyBoundInputs = true;
+
+      const isUIBlockedNow = ()=> (window.__strikegyUILock && (window.__strikegyUILock.inventory || window.__strikegyUILock.shop));
+
+      window.addEventListener('contextmenu', (e)=> e.preventDefault());
+      window.addEventListener('mousedown', (e)=>{
+        if(isUIBlockedNow()) return;
+        if(e.button===0) mouseLeftDown = true;
+        if(e.button===2) mouseRightDown = true;
+      });
+      window.addEventListener('mouseup', (e)=>{
+        if(isUIBlockedNow()) return;
+        if(e.button===0) mouseLeftDown = false;
+        if(e.button===2) mouseRightDown = false;
+      });
+
+      window.addEventListener('wheel', (e)=>{
+        if(isUIBlockedNow()) return;
+        weaponSwitchManager?.togglePrimarySecondary?.();
+        e.preventDefault();
+      }, { passive:false });
+
+      window.addEventListener('keydown', (e)=>{
+        if(isUIBlockedNow()) return;
+
+        // reload (only when holding a gun)
+        if(e.code==='KeyR'){
+          const a = window.playerProfile?.activeSlot;
+          if(a && (a.type==='primary' || a.type==='secondary')){
+            weaponSystem?.startReload?.();
+          }
+          return;
+        }
+
+        // switching (Patch 6-3)
+        if(e.code==='Digit1'){ weaponSwitchManager?.switchToPrimary?.(); return; }
+        if(e.code==='Digit2'){ weaponSwitchManager?.switchToSecondary?.(); return; }
+        if(e.code==='Digit3'){ weaponSwitchManager?.switchToGrenade?.(0); return; }
+        if(e.code==='Digit4'){ weaponSwitchManager?.switchToGrenade?.(1); return; }
+        if(e.code==='Digit5'){ weaponSwitchManager?.switchToGrenade?.(2); return; }
+        if(e.code==='Digit6'){ weaponSwitchManager?.switchToClassItem?.(0); return; }
+        if(e.code==='Digit7'){ weaponSwitchManager?.switchToClassItem?.(1); return; }
+        if(e.code==='KeyF'){ weaponSwitchManager?.triggerMeleeAttack?.(); return; }
+      });
+    }
 document.getElementById("status").textContent =
           "로드 완료. 캔버스를 클릭하면(PC) 포인터락이 걸리고 시점 회전만 활성화됩니다. (Patch 4A)";
       } catch (e){
@@ -556,11 +1073,15 @@ document.getElementById("status").textContent =
     function animate(){
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
+      economyManager?.tick?.(dt);
+      try{ moneyHUD.textContent = `$${Math.floor(window.playerProfile?.money||0)}`; }catch{}
 
       // Patch 4: 입력/카메라/플레이어 업데이트
       settingsStore.refresh();
       const controlPreset = settingsStore.controlPreset;
-      if(controlPreset === 'mobile' || controlPreset === 'mobile_kb') mobileHUD.show(); else mobileHUD.hide();
+      updateInvBagVisibility();
+      const invOpen = inventoryModal.isOpen();
+      if(invOpen) mobileHUD.hide(); else if(controlPreset === 'mobile' || controlPreset === 'mobile_kb') mobileHUD.show(); else mobileHUD.hide();
       const st = inputManager.poll(controlPreset);
       if(cameraController){
         cameraController.applyLookDelta(st.lookDX, st.lookDY, controlPreset !== "pc");
@@ -581,11 +1102,40 @@ document.getElementById("status").textContent =
       if(current?.scene){
         // nothing heavy
       }
-    // Patch 5A: weapons tick (PC only)
+    // Patch 5B-2: weapons tick (PC + Mobile HUD)
     if(weaponSystem){
-      weaponSystem.setTriggerHeld(mouseLeftDown);
-      weaponSystem.setADS(mouseRightDown);
-      weaponSystem.update(dt);
+      const preset = settingsStore.controlPreset;
+      const hudActive = (preset === 'mobile' || preset === 'mobile_kb') && !mobileHUD.el.classList.contains('hidden');
+      const hudState = hudActive ? mobileHUD.state : null;
+
+      // Compose triggers: keep PC behavior intact, add mobile held/toggle
+      const uiBlocked = (inventoryModal && inventoryModal.isOpen && inventoryModal.isOpen()) || (shopModal && shopModal.isOpen && shopModal.isOpen());
+      if(uiBlocked){
+        // prevent accidental shots/ADS while interacting with UI
+        mouseLeftDown = false;
+        mouseRightDown = false;
+      }
+      const aSlot = window.playerProfile?.activeSlot;
+      const holdingGun = !!aSlot && (aSlot.type === 'primary' || aSlot.type === 'secondary');
+      const meleeActive = !!weaponSwitchManager?.meleeActive;
+      const fireHeld = !uiBlocked && holdingGun && !meleeActive && (!!mouseLeftDown || !!(hudState && hudState.fireHeld));
+      const adsOn = !uiBlocked && holdingGun && !meleeActive && (!!mouseRightDown || !!(hudState && hudState.adsOn));
+
+      weaponSystem.setTriggerHeld(fireHeld);
+      weaponSystem.setADS(adsOn);
+
+      // One-shot actions (consume pulses in HUD after handling)
+      if(!uiBlocked && hudState && hudState.reloadPressed){
+        weaponSystem.startReload?.();
+      }
+            if(!uiBlocked && hudState && hudState.nextWeaponPressed){
+        weaponSwitchManager?.togglePrimarySecondary?.();
+      }
+      if(!uiBlocked && hudState && (hudState.reloadPressed || hudState.nextWeaponPressed)){
+        mobileHUD.consumePulses?.();
+      }
+weaponSwitchManager?.update?.(dt);
+weaponSystem.update(dt);
       if(decalManager) decalManager.update(dt);
       if(muzzleFlash) muzzleFlash.update(dt);
 
@@ -604,6 +1154,9 @@ document.getElementById("status").textContent =
       if(elMag) elMag.textContent = weaponSystem.mag;
       if(elRes) elRes.textContent = weaponSystem.reserve;
       if(elW) elW.textContent = weaponSystem.current.name;
+      const elSlot = document.getElementById('ammoSlot');
+      if(elSlot) elSlot.textContent = weaponSwitchManager?.getActiveLabel?.() || '';
+
       if(elS){
         if(weaponSystem.isReloading){ elS.textContent = 'RELOADING'; elS.classList.add('blink'); }
         else if(weaponSystem.mag===0 && weaponSystem.reserve===0){ elS.textContent = 'EMPTY'; elS.classList.add('blink'); }
@@ -639,6 +1192,7 @@ document.getElementById("status").textContent =
 <div style="position:absolute;left:0;top:7px;width:16px;height:2px;background:#fff"></div></div>
 <div id="ammoHUD" class="ammoHUD">
     <div class="ammoWeapon" id="ammoWeapon">AR-1</div>
+    <div class="ammoSlot" id="ammoSlot"></div>
     <div class="ammoNums"><span id="ammoMag">30</span><span class="ammoSep">—</span><span id="ammoRes">90</span></div>
     <div class="ammoStatus" id="ammoStatus"></div>
   </div></body>

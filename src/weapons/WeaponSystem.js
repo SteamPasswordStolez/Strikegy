@@ -19,7 +19,7 @@ export default class WeaponSystem{
       this.weaponStates[id] = { mag: w.magSize, reserve: w.reserve };
     }
 
-    this.currentId = "ar1";
+    this.currentId = "pistol1";
     this.current = WEAPONS[this.currentId];
 
     this.cooldown=0;
@@ -94,7 +94,8 @@ export default class WeaponSystem{
     st.mag--;
     this.cooldown = 60/this.current.rpm;
 
-    this.onSound?.(this.currentId==="pistol1" ? "pistol_fire" : "ar_fire");
+    const _isPistol = (this.currentId==="pistol1" || this.currentId.startsWith("p") || this.currentId.startsWith("mp"));
+    this.onSound?.(_isPistol ? "pistol_fire" : "ar_fire");
     this.onShot?.();
 
     const dir=new THREE.Vector3();

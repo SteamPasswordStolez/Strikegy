@@ -1,4 +1,22 @@
 export const WEAPONS={
-ar1:{id:"ar1",name:"AR-1",fireMode:"auto",rpm:750,range:250,magSize:30,reserve:90,reloadTime:1.9,adsFov:62,hipFov:78},
-pistol1:{id:"pistol1",name:"Pistol",fireMode:"semi",rpm:420,range:120,magSize:12,reserve:48,reloadTime:1.45,adsFov:68,hipFov:78}
+ar1:{id:"ar1",name:"AR-1",rpm:750,range:250,magSize:30,reserve:90,reloadTime:1.9,adsFov:62,hipFov:78},
+ar2:{id:"ar2",name:"AR-2",rpm:750,range:250,magSize:30,reserve:90,reloadTime:1.9,adsFov:62,hipFov:78},
+ar3:{id:"ar3",name:"AR-3",rpm:750,range:250,magSize:30,reserve:90,reloadTime:1.9,adsFov:62,hipFov:78},
+dmr1:{id:"dmr1",name:"DMR-1",rpm:320,range:320,magSize:20,reserve:60,reloadTime:2.15,adsFov:58,hipFov:78},
+dmr2:{id:"dmr2",name:"DMR-2",rpm:320,range:320,magSize:20,reserve:60,reloadTime:2.15,adsFov:58,hipFov:78},
+lmg1:{id:"lmg1",name:"LMG-1",rpm:650,range:260,magSize:60,reserve:180,reloadTime:3.15,adsFov:60,hipFov:78},
+lmg2:{id:"lmg2",name:"LMG-2",rpm:650,range:260,magSize:60,reserve:180,reloadTime:3.15,adsFov:60,hipFov:78},
+mp1:{id:"mp1",name:"Machine Pistol",rpm:950,range:110,magSize:20,reserve:80,reloadTime:1.65,adsFov:66,hipFov:78},
+p2:{id:"p2",name:"Pistol 2",rpm:460,range:130,magSize:14,reserve:56,reloadTime:1.5,adsFov:66,hipFov:78},
+p3:{id:"p3",name:"Pistol 3",rpm:460,range:130,magSize:14,reserve:56,reloadTime:1.5,adsFov:66,hipFov:78},
+p4:{id:"p4",name:"Pistol 4",rpm:460,range:130,magSize:14,reserve:56,reloadTime:1.5,adsFov:66,hipFov:78},
+pistol1:{id:"pistol1",name:"Pistol",rpm:420,range:120,magSize:12,reserve:48,reloadTime:1.45,adsFov:68,hipFov:78},
+sg1:{id:"sg1",name:"SG-1",rpm:140,range:90,magSize:8,reserve:32,reloadTime:2.25,adsFov:70,hipFov:78},
+sg2:{id:"sg2",name:"SG-2",rpm:140,range:90,magSize:8,reserve:32,reloadTime:2.25,adsFov:70,hipFov:78},
+smg1:{id:"smg1",name:"SMG-1",rpm:900,range:180,magSize:30,reserve:120,reloadTime:1.75,adsFov:64,hipFov:78},
+smg2:{id:"smg2",name:"SMG-2",rpm:900,range:180,magSize:30,reserve:120,reloadTime:1.75,adsFov:64,hipFov:78},
+smg3:{id:"smg3",name:"SMG-3",rpm:900,range:180,magSize:30,reserve:120,reloadTime:1.75,adsFov:64,hipFov:78},
+smg4:{id:"smg4",name:"SMG-4",rpm:900,range:180,magSize:30,reserve:120,reloadTime:1.75,adsFov:64,hipFov:78},
+sr1:{id:"sr1",name:"SR-1",rpm:90,range:520,magSize:5,reserve:20,reloadTime:2.8,adsFov:45,hipFov:78},
+sr2:{id:"sr2",name:"SR-2",rpm:90,range:520,magSize:5,reserve:20,reloadTime:2.8,adsFov:45,hipFov:78}
 };

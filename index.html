@@ -326,7 +326,10 @@
   </div>
 
 
-  <script>
+  <script type="module">
+    import ClassSelectModal from "./src/ui/ClassSelectModal.js";
+    import { CLASS_KEY, normalizeClassId } from "./src/data/classes.js";
+
     // Patch 1: 로비 UI + 모드 선택 저장 + game.html 이동만.
     const modesEl = document.getElementById('modes');
     const selectedModeLabel = document.getElementById('selectedModeLabel');
@@ -487,11 +490,19 @@
     });
 
     startBtn.addEventListener('click', () => {
-      // Patch 1의 목표: game.html로 이동
-      window.location.href = `game.html`;
+      // Patch 6-1a: 병과 선택(필수) -> game.html 이동
+      classSelect.open();
     });
 
-    // 초기값 반영
+    const classSelect = new ClassSelectModal({
+      onConfirm: (classId)=>{
+        const normalized = normalizeClassId(classId);
+        try{ localStorage.setItem(CLASS_KEY, normalized); }catch{}
+        window.location.href = `game.html`;
+      }
+    });
+
+// 초기값 반영
     setSelected(getSelected());
     updateSettingsLabels(loadSettings());
   </script>

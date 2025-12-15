@@ -10,7 +10,10 @@ export class InputManager {
 
     this.enabled = true;
 
-    // keyboard state
+    
+    // Patch 6-1b: UI lock (inventory modal etc.)
+    this.uiLocked = false;
+// keyboard state
     this.keys = new Set();
 
     // one-shot presses
@@ -95,7 +98,8 @@ export class InputManager {
   }
 
   _handleMouseMove(e){
-    // PC 프리셋에서만 마우스 시점 사용
+        if(this.uiLocked) return;
+// PC 프리셋에서만 마우스 시점 사용
     const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset !== "pc") return;
@@ -108,7 +112,8 @@ export class InputManager {
   }
 
   _handleTouchStart(e){
-    const preset = this.activePreset || this.settings.controlPreset || 'pc';
+        if(this.uiLocked) return;
+const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset === "pc") return;
 
@@ -129,7 +134,8 @@ export class InputManager {
   }
 
   _handleTouchMove(e){
-    const preset = this.activePreset || this.settings.controlPreset || 'pc';
+        if(this.uiLocked) return;
+const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset === "pc") return;
 
@@ -157,7 +163,8 @@ export class InputManager {
   }
 
   _handleTouchEnd(e){
-    const preset = this.activePreset || this.settings.controlPreset || 'pc';
+        if(this.uiLocked) return;
+const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset === "pc") return;
 
@@ -200,14 +207,35 @@ export class InputManager {
     this._crouchTogglePressed = true;
   }
 
-  poll(presetArg){
+  
+
+  // Patch 6-1b: Lock/unlock gameplay input while UI modals are open.
+  setUILocked(locked){
+    this.uiLocked = !!locked;
+    if(this.uiLocked){
+      // Clear transient deltas to avoid \"stuck\" look
+      this.lookDX = 0; this.lookDY = 0;
+      this._jumpPressed = false;
+      this._crouchTogglePressed = false;
+    }
+  }
+
+  isUILocked(){ return !!this.uiLocked; }
+poll(presetArg){
     if(!this.enabled){
       this.state = { moveX:0, moveZ:0, lookDX:0, lookDY:0, jumpPressed:false, sprintHeld:false, crouchTogglePressed:false };
       this.lookDX = 0; this.lookDY = 0;
       return this.state;
     }
 
-    const preset = this.activePreset || this.settings.controlPreset || 'pc';
+    
+    if(this.uiLocked){
+      this.state = { moveX:0, moveZ:0, lookDX:0, lookDY:0, jumpPressed:false, sprintHeld:false, crouchTogglePressed:false };
+      this.lookDX = 0; this.lookDY = 0;
+      return this.state;
+    }
+
+const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
 
     // move from keyboard or virtual stick
