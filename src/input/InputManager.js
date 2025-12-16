@@ -99,6 +99,7 @@ export class InputManager {
 
   _handleMouseMove(e){
         if(this.uiLocked) return;
+        if(Date.now() < this.lookLockedUntil) return;
 // PC 프리셋에서만 마우스 시점 사용
     const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
@@ -113,6 +114,7 @@ export class InputManager {
 
   _handleTouchStart(e){
         if(this.uiLocked) return;
+        if(Date.now() < this.lookLockedUntil) return;
 const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset === "pc") return;
@@ -135,6 +137,7 @@ const preset = this.activePreset || this.settings.controlPreset || 'pc';
 
   _handleTouchMove(e){
         if(this.uiLocked) return;
+        if(Date.now() < this.lookLockedUntil) return;
 const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset === "pc") return;
@@ -164,6 +167,7 @@ const preset = this.activePreset || this.settings.controlPreset || 'pc';
 
   _handleTouchEnd(e){
         if(this.uiLocked) return;
+        if(Date.now() < this.lookLockedUntil) return;
 const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.activePreset = preset;
     if(preset === "pc") return;
@@ -221,7 +225,17 @@ const preset = this.activePreset || this.settings.controlPreset || 'pc';
   }
 
   isUILocked(){ return !!this.uiLocked; }
-poll(presetArg){
+
+  // Patch 7-4A+: lock look input for N seconds (does not block movement/fire)
+  setLookLocked(seconds){
+    const s = Math.max(0, Number(seconds)||0);
+    this.lookLockedUntil = Math.max(this.lookLockedUntil, Date.now() + s*1000);
+    // Clear deltas to avoid sudden snap when unlocking
+    this.lookDX = 0; this.lookDY = 0;
+    this.vLookDX = 0; this.vLookDY = 0;
+  }
+
+  poll(presetArg){
     if(!this.enabled){
       this.state = { moveX:0, moveZ:0, lookDX:0, lookDY:0, jumpPressed:false, sprintHeld:false, crouchTogglePressed:false };
       this.lookDX = 0; this.lookDY = 0;
@@ -279,8 +293,9 @@ const preset = this.activePreset || this.settings.controlPreset || 'pc';
     this.vLookDY = 0;
 
     // look deltas
-    const lookDX = this.lookDX;
-    const lookDY = this.lookDY;
+    const lookLocked = (Date.now() < this.lookLockedUntil);
+    const lookDX = lookLocked ? 0 : this.lookDX;
+    const lookDY = lookLocked ? 0 : this.lookDY;
     this.lookDX = 0;
     this.lookDY = 0;
 

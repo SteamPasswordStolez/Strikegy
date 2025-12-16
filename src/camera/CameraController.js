@@ -21,6 +21,11 @@ export class CameraController {
     // base multipliers
     this.mouseScale = 0.0020;
     this.touchScale = 0.0035; // touch tends to be smaller deltas
+
+    // ===== Patch 7-2B: recoil offsets (applied on top of yaw/pitch) =====
+    // Keep base yaw/pitch pristine; recoil is temporary offset that decays back to 0.
+    this.recoilYaw = 0;   // radians
+    this.recoilPitch = 0; // radians
   
     this.applyRotation();
 }
@@ -43,11 +48,32 @@ export class CameraController {
   }
 
   _apply(){
-    this.player.rotation.y = this.yaw;
-    this.camera.rotation.x = this.pitch;
+    // Apply recoil as an offset so input and recoil never fight.
+    this.player.rotation.y = this.yaw + this.recoilYaw;
+    this.camera.rotation.x = this.pitch + this.recoilPitch;
   }
 
   applyRotation(){
+    this._apply();
+  }
+
+  // --- Patch 7-2B API ---
+  // Add recoil kick in radians. Caller may scale based on ADS.
+  addRecoil(pitchKick, yawKick){
+    this.recoilPitch += (Number(pitchKick) || 0);
+    this.recoilYaw   += (Number(yawKick)   || 0);
+    // Clamp pitch recoil so we don't snap beyond clamp range.
+    this.recoilPitch = clamp(this.recoilPitch, -0.35, 0.55);
+    this.recoilYaw = clamp(this.recoilYaw, -0.55, 0.55);
+    this._apply();
+  }
+
+  // Frame-independent recoil recovery.
+  // returnSpeed: how fast recoil decays (higher = faster return)
+  updateRecoil(dt, returnSpeed=14){
+    const t = 1 - Math.exp(-(Number(returnSpeed)||14) * dt);
+    this.recoilPitch = this.recoilPitch + (0 - this.recoilPitch) * t;
+    this.recoilYaw   = this.recoilYaw   + (0 - this.recoilYaw)   * t;
     this._apply();
   }
 

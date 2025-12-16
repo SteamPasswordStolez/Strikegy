@@ -33,6 +33,10 @@ export default class PlayerController {
     this.sprintMul = 1.40;
     this.crouchMul = 0.50;
 
+    // Patch 7-2A: external movement multiplier from WeaponSystem (hold/ADS slow)
+    // Default 1.0, assigned in game.html each frame.
+    this.weaponSpeedMul = 1.0;
+
     // ---- slide tuning (confirmed) ----
     this.slideDuration = 0.75;
     this.slideTimer = 0;
@@ -162,6 +166,9 @@ export default class PlayerController {
       let speedMul = 1.0;
       if (sprintHeld && moveZ > 0.2 && !this.isCrouched) speedMul *= this.sprintMul;
       if (this.isCrouched) speedMul *= this.crouchMul;
+
+      // Patch 7-2A: weapon hold/ADS movement slow (1.0 when not holding a gun)
+      if (typeof this.weaponSpeedMul === "number") speedMul *= this.weaponSpeedMul;
 
       vx = dx * this.baseSpeed * speedMul;
       vz = dz * this.baseSpeed * speedMul;

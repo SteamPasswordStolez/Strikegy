@@ -18,6 +18,7 @@ export default class MobileHUD {
       adsOn:false,
       reloadPressed:false,
       nextWeaponPressed:false,
+      meleePressed:false,
     };
 
     this.joy = { active:false, id:null, startX:0, startY:0, curX:0, curY:0 };
@@ -38,6 +39,7 @@ export default class MobileHUD {
         <button class="mh-btn mh-btn--small" id="mhADS" type="button" aria-label="Aim toggle">🎯</button>
         <button class="mh-btn mh-btn--small" id="mhReload" type="button" aria-label="Reload">🔄</button>
         <button class="mh-btn mh-btn--small" id="mhNextWeapon" type="button" aria-label="Next weapon">🔁</button>
+        <button class="mh-btn mh-btn--small" id="mhMelee" type="button" aria-label="Melee">👊</button>
         <button class="mh-btn mh-btn--jump" id="mhJump" type="button" aria-label="Jump">⬆️</button>
         <button class="mh-btn mh-btn--fire" id="mhFire" type="button" aria-label="Fire">🔫</button>
       </div>
@@ -70,6 +72,7 @@ export default class MobileHUD {
   consumePulses(){
     this.state.reloadPressed = false;
     this.state.nextWeaponPressed = false;
+    this.state.meleePressed = false;
   }
 
   destroy(){
@@ -125,6 +128,7 @@ export default class MobileHUD {
     const btnADS = this.el.querySelector("#mhADS");
     const btnReload = this.el.querySelector("#mhReload");
     const btnNext = this.el.querySelector("#mhNextWeapon");
+    const btnMelee = this.el.querySelector("#mhMelee");
 
     // ---- action buttons (existing behavior) ----
     btnJump?.addEventListener("click", (e)=>{ e.preventDefault(); this.input?.pressJump?.(); });
@@ -164,6 +168,13 @@ export default class MobileHUD {
       e.preventDefault();
       this.state.nextWeaponPressed = true;
       this._pulse(btnNext);});
+
+    // Melee: momentary (handled by game loop via weaponSwitchManager)
+    btnMelee?.addEventListener("click", (e)=>{
+      e.preventDefault();
+      this.state.meleePressed = true;
+      this._pulse(btnMelee);
+    });
 
     // ---- joystick (move) ----
     const clamp = (v, a, b)=>Math.max(a, Math.min(b, v));

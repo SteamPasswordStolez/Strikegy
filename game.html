@@ -74,6 +74,70 @@
       word-break:break-word;
     }
     canvas{display:block}
+
+    /* ---- Patch 7-2B: Scope overlay ---- */
+    #scopeOverlay{
+      position:fixed;
+      inset:0;
+      display:none;
+      pointer-events:none;
+      z-index:45;
+    }
+    #scopeOverlay .mask{
+      position:absolute;
+      inset:0;
+      /* Center circle: transparent, outside: dark */
+      background:
+        radial-gradient(circle at center,
+          rgba(0,0,0,0) 0%,
+          rgba(0,0,0,0) 38%,
+          rgba(0,0,0,0.75) 40%,
+          rgba(0,0,0,0.95) 100%);
+    }
+    #scopeOverlay .reticle{
+      position:absolute;
+      left:50%; top:50%;
+      width:520px; height:520px;
+      transform:translate(-50%,-50%);
+      border:2px solid rgba(255,255,255,0.85);
+      border-radius:999px;
+      box-sizing:border-box;
+    }
+    #scopeOverlay .reticle:before,
+    #scopeOverlay .reticle:after{
+      content:"";
+      position:absolute;
+      left:50%; top:50%;
+      transform:translate(-50%,-50%);
+      background:rgba(255,255,255,0.85);
+    }
+    #scopeOverlay .reticle:before{ width:2px; height:520px; }
+    #scopeOverlay .reticle:after{ width:520px; height:2px; }
+
+    /* Mild scope-specific tweaks */
+    #scopeOverlay[data-scope="3x"] .reticle{ width:480px; height:480px; }
+    #scopeOverlay[data-scope="6x"] .reticle{ width:520px; height:520px; }
+    #scopeOverlay[data-scope="8x"] .reticle{ width:560px; height:560px; border-width:2px; }
+
+    /* ---- Patch 7-4A: Smoke / Flash overlays ---- */
+    #smokeOverlay, #flashOverlay{
+      position: fixed;
+      inset: 0;
+      display: block;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 46;
+    }
+    #smokeOverlay{
+      background: rgba(160, 175, 200, 0.20);
+      backdrop-filter: blur(0px);
+      -webkit-backdrop-filter: blur(0px);
+      transition: opacity 80ms linear;
+    }
+    #flashOverlay{
+      background: rgba(255,255,255,1);
+      transition: opacity 45ms linear;
+    }
   
     /* ---- Mobile HUD ---- */
 .mobileHUD{
@@ -526,6 +590,7 @@
 
   <script type="module">
   import MuzzleFlash from "./src/effects/MuzzleFlash.js";
+  import CasingSystem from "./src/effects/CasingSystem.js";
   import SoundSystem from "./src/audio/SoundSystem.js";
     import { SettingsStore } from "./src/core/SettingsStore.js";
     import { InputManager } from "./src/input/InputManager.js";
@@ -542,6 +607,7 @@
   import { WeaponSwitchManager } from "./src/game/WeaponSwitchManager.js";
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   import WeaponSystem from "./src/weapons/WeaponSystem.js";
+  import ThrowablesSystem from "./src/weapons/ThrowablesSystem.js";
   import DecalManager from "./src/effects/DecalManager.js";
   import { CLASS_KEY, normalizeClassId, initInventoryForClass, CLASSES } from "./src/data/classes.js";
     // Patch 6-2a: economy manager instance (declared early to avoid TDZ)
@@ -910,11 +976,48 @@ const shopModal = new ShopModal({
   let soundSystem = null;
   let weaponSwitchManager = null;
   let muzzleFlash = null;
+  let casingSystem = null;
   let decalManager = null;
   let collidableMeshes = [];
   let mouseLeftDown = false;
   let mouseRightDown = false;
   let lastFov = null;
+    // Patch 7-2B: scope overlay DOM cache
+    let scopeOverlayEl = null;
+    let crosshairEl = null;
+    let smokeOverlayEl = null;
+    let flashOverlayEl = null;
+
+    // Patch 7-4A: Throwables system
+    let throwablesSystem = null;
+    let prevGrenadeHold = false;
+
+    // Patch 7-2B: recoil presets (radians)
+    const deg = (d)=> (d * Math.PI / 180);
+    function recoilPresetFor(id){
+      const s = String(id||"").toLowerCase();
+      if(s.startsWith('sr'))  return { pitch: deg(1.35), yaw: deg(0.18), retHip: 10, retAds: 14 };
+      if(s.startsWith('dmr')) return { pitch: deg(0.85), yaw: deg(0.18), retHip: 12, retAds: 16 };
+      if(s.startsWith('sg'))  return { pitch: deg(1.10), yaw: deg(0.35), retHip: 11, retAds: 14 };
+      if(s.startsWith('lmg')) return { pitch: deg(0.65), yaw: deg(0.35), retHip: 11, retAds: 15 };
+      if(s.startsWith('smg')) return { pitch: deg(0.35), yaw: deg(0.28), retHip: 14, retAds: 18 };
+      if(s.startsWith('ar'))  return { pitch: deg(0.45), yaw: deg(0.22), retHip: 13, retAds: 17 };
+      if(s.startsWith('mp'))  return { pitch: deg(0.40), yaw: deg(0.30), retHip: 14, retAds: 18 };
+      // pistols
+      return { pitch: deg(0.55), yaw: deg(0.20), retHip: 13, retAds: 17 };
+    }
+
+    // Patch 7-4A: grenade HUD names
+    const GRENADE_LABEL = {
+      frag:  "💥 고폭 수류탄",
+      smoke: "☁️ 연막탄",
+      flash: "✨ 섬광탄",
+      impact:"💣 충격 수류탄",
+    };
+    function grenadeHudName(id){
+      const k = String(id||"");
+      return GRENADE_LABEL[k] || "투척무기";
+    }
     
     function initPlayerFromSpawn(spawn){
       const p = spawn?.pos ?? [0,2,0];
@@ -994,13 +1097,31 @@ const shopModal = new ShopModal({
     window.addEventListener('mousedown', ()=> soundSystem?.unlock?.(), { once:true });
     window.addEventListener('touchstart', ()=> soundSystem?.unlock?.(), { once:true, passive:true });
     muzzleFlash = new MuzzleFlash(current.scene, camera);
+    // Patch 7-3C: casings/shells (pooled)
+    casingSystem = new CasingSystem(current.scene, camera, { maxCount: 80, lifeSeconds: 30 });
     weaponSystem = new WeaponSystem({
       camera: camera,
       scene: current.scene,
       getCollidables: ()=> collidableMeshes,
       onWallHit: (hit)=> decalManager.add(hit),
       onSound: (name)=> soundSystem.play(name),
-      onShot: ()=> muzzleFlash.spawn(),
+      onEject: (payload)=>{
+        // SR ejects on bolt timing; others immediate.
+        casingSystem?.spawn?.({ mode: payload?.mode || "", weaponId: payload?.weaponId || "" });
+      },
+      // Patch 7-2B: muzzle flash + recoil kick
+      onShot: (payload)=>{
+        muzzleFlash.spawn();
+        if(!cameraController) return;
+        const wid = payload?.weaponId || weaponSystem?.currentId;
+        const isADSNow = !!(payload?.isADS ?? weaponSystem?.isADS);
+        const p = recoilPresetFor(wid);
+        // ADS reduces recoil
+        const mul = isADSNow ? 0.7 : 1.0;
+        // yaw kick randomizes direction
+        const yawKick = (Math.random()*2-1) * p.yaw * mul;
+        cameraController.addRecoil(p.pitch * mul, yawKick);
+      },
     });
     // Patch 6-3: weapon/slot switching manager (guns + grenades + class items + melee)
     weaponSwitchManager = new WeaponSwitchManager({
@@ -1012,7 +1133,43 @@ const shopModal = new ShopModal({
     // sync to current slot
     weaponSwitchManager.togglePrimarySecondary?.(); // will settle to owned slot
 
-        lastFov = camera.fov;
+	    // Patch 7-2A: smooth ADS FOV (initialize)
+	    lastFov = camera.fov;
+
+            // Patch 7-2B / 7-4A: cache overlay elements
+            scopeOverlayEl = document.getElementById('scopeOverlay');
+            crosshairEl = document.getElementById('crosshair');
+            smokeOverlayEl = document.getElementById('smokeOverlay');
+            flashOverlayEl = document.getElementById('flashOverlay');
+
+            // Patch 7-4A: throwables system
+            throwablesSystem = new ThrowablesSystem({
+              camera,
+              scene: current.scene,
+              getCollidables: ()=> collidableMeshes,
+              getPlayerPosition: ()=> (playerObject?.position ? playerObject.position : null),
+              onSound: (name)=> soundSystem?.play?.(name),
+              onCameraKick: (pitch, yaw)=> cameraController?.addRecoil?.(pitch, yaw),
+              onLookLock: (sec)=> inputManager?.setLookLocked?.(sec),
+              isMobile: (typeof window!=='undefined' && !!window.__isMobile) ? true : undefined,
+              onOverlay: ({ smoke, flash })=>{
+                // Smoke: blur + light desaturation tint
+                if(smokeOverlayEl){
+                  // Dense smoke: near-opaque inside
+                  const o = Math.min(0.92, smoke * 0.92);
+                  smokeOverlayEl.style.opacity = String(o);
+                  // backdropFilter is expensive on mobile; keep it mild
+                  const isM = (typeof window!=='undefined' && !!window.__isMobile);
+                  const blur = isM ? (smoke * 6).toFixed(1) : (smoke * 14).toFixed(1);
+                  smokeOverlayEl.style.backdropFilter = `blur(${blur}px)`;
+                  smokeOverlayEl.style.webkitBackdropFilter = `blur(${blur}px)`;
+                }
+                // Flash: whiteout overlay
+                if(flashOverlayEl){
+                  flashOverlayEl.style.opacity = String(Math.min(1, flash));
+                }
+              }
+            });
     // Patch 5A/6: PC bindings
     // (guard to avoid duplicate binds when reloading maps)
     if(!window.__strikegyBoundInputs){
@@ -1034,7 +1191,7 @@ const shopModal = new ShopModal({
 
       window.addEventListener('wheel', (e)=>{
         if(isUIBlockedNow()) return;
-        weaponSwitchManager?.togglePrimarySecondary?.();
+        weaponSwitchManager?.cycleNext?.();
         e.preventDefault();
       }, { passive:false });
 
@@ -1105,6 +1262,9 @@ document.getElementById("status").textContent =
     // Patch 5B-2: weapons tick (PC + Mobile HUD)
     if(weaponSystem){
       const preset = settingsStore.controlPreset;
+      // Patch 7-3C: casing limit per platform (PC 80 / Mobile 30)
+      const casingMax = (preset === 'pc') ? 80 : 30;
+      casingSystem?.setLimits?.({ maxCount: casingMax, lifeSeconds: 30 });
       const hudActive = (preset === 'mobile' || preset === 'mobile_kb') && !mobileHUD.el.classList.contains('hidden');
       const hudState = hudActive ? mobileHUD.state : null;
 
@@ -1117,33 +1277,107 @@ document.getElementById("status").textContent =
       }
       const aSlot = window.playerProfile?.activeSlot;
       const holdingGun = !!aSlot && (aSlot.type === 'primary' || aSlot.type === 'secondary');
+      const invNow = window.playerProfile?.inventory || null;
+      const grenadeActive = !!aSlot && (aSlot.type === 'grenade');
+      const grenadeId = grenadeActive ? (invNow?.grenades?.[aSlot.index] || null) : null;
       const meleeActive = !!weaponSwitchManager?.meleeActive;
       const fireHeld = !uiBlocked && holdingGun && !meleeActive && (!!mouseLeftDown || !!(hudState && hudState.fireHeld));
       const adsOn = !uiBlocked && holdingGun && !meleeActive && (!!mouseRightDown || !!(hudState && hudState.adsOn));
 
+      // Patch 7-4A: grenade hold/release throw (PC + Mobile)
+      const grenadeHold = !uiBlocked && grenadeActive && !meleeActive && !!grenadeId && (!!mouseLeftDown || !!(hudState && hudState.fireHeld));
+      if(throwablesSystem){
+        // If UI opened mid-hold, cancel.
+        if(uiBlocked && (prevGrenadeHold || throwablesSystem.holding)){
+          throwablesSystem.cancelHold?.();
+          prevGrenadeHold = false;
+        }else{
+          if(grenadeHold && !prevGrenadeHold){
+            throwablesSystem.beginHold?.(grenadeId, aSlot.index);
+          }
+          if(!grenadeHold && prevGrenadeHold){
+            const spawned = throwablesSystem.releaseThrow?.(grenadeId, aSlot.index);
+            if(spawned && invNow && Array.isArray(invNow.grenades)){
+              invNow.grenades[aSlot.index] = null; // consume
+              weaponSwitchManager?.cycleNext?.();  // auto leave empty grenade slot
+            }
+          }
+          if(!grenadeActive && (prevGrenadeHold || throwablesSystem.holding)){
+            throwablesSystem.cancelHold?.();
+          }
+          prevGrenadeHold = grenadeHold;
+        }
+      }
+
       weaponSystem.setTriggerHeld(fireHeld);
       weaponSystem.setADS(adsOn);
 
+      // Patch 7-2A: weapon hold/ADS movement multipliers (applied in PlayerController)
+      // - Holding gun: 0.95
+      // - ADS: 0.85 (default) / 0.75 (LMG)
+      let weaponSpeedMul = 1.0;
+      if(!uiBlocked && holdingGun && !meleeActive){
+        weaponSpeedMul *= 0.95;
+        if(adsOn){
+          const wid = (weaponSystem?.currentId || weaponSystem?.current?.id || "");
+          const isLMG = (typeof wid === 'string' && wid.startsWith('lmg')) || (weaponSystem?.current?.name || '').startsWith('LMG');
+          weaponSpeedMul *= isLMG ? 0.75 : 0.85;
+        }
+      }
+      if(playerController) playerController.weaponSpeedMul = weaponSpeedMul;
+
       // One-shot actions (consume pulses in HUD after handling)
-      if(!uiBlocked && hudState && hudState.reloadPressed){
+      if(!uiBlocked && holdingGun && hudState && hudState.reloadPressed){
         weaponSystem.startReload?.();
       }
-            if(!uiBlocked && hudState && hudState.nextWeaponPressed){
-        weaponSwitchManager?.togglePrimarySecondary?.();
+      if(!uiBlocked && hudState && hudState.nextWeaponPressed){
+        // Patch 7-3B: mobile next weapon = full cycle (includes grenades, excludes melee)
+        weaponSwitchManager?.cycleNext?.();
       }
-      if(!uiBlocked && hudState && (hudState.reloadPressed || hudState.nextWeaponPressed)){
+      if(!uiBlocked && hudState && hudState.meleePressed){
+        weaponSwitchManager?.triggerMeleeAttack?.();
+      }
+      if(!uiBlocked && hudState && (hudState.reloadPressed || hudState.nextWeaponPressed || hudState.meleePressed)){
         mobileHUD.consumePulses?.();
       }
 weaponSwitchManager?.update?.(dt);
 weaponSystem.update(dt);
+      if(throwablesSystem) throwablesSystem.update(dt);
       if(decalManager) decalManager.update(dt);
       if(muzzleFlash) muzzleFlash.update(dt);
+      if(casingSystem) casingSystem.update(dt);
+      if(casingSystem) casingSystem.update(dt);
 
-      // ADS FOV
+      // Patch 7-2B: recoil recovery (frame independent)
+      if(cameraController){
+        const wid = (weaponSystem?.currentId || weaponSystem?.current?.id || "");
+        const p = recoilPresetFor(wid);
+        const rs = weaponSystem.isADS ? p.retAds : p.retHip;
+        cameraController.updateRecoil(dt, rs);
+      }
+
+      // Patch 7-2A: smooth ADS FOV (frame-rate independent)
       const targetFov = weaponSystem.isADS ? weaponSystem.current.adsFov : weaponSystem.current.hipFov;
-      if(camera && camera.fov !== targetFov){
-        camera.fov = targetFov;
-        camera.updateProjectionMatrix();
+      if(camera){
+        if(lastFov == null) lastFov = camera.fov;
+        const speed = weaponSystem.isADS ? 18 : 14;
+        const t = 1 - Math.exp(-speed * dt);
+        lastFov = lastFov + (targetFov - lastFov) * t;
+        if(Math.abs(camera.fov - lastFov) > 1e-3){
+          camera.fov = lastFov;
+          camera.updateProjectionMatrix();
+        }
+      }
+
+      // Patch 7-2B: scope overlay + crosshair hide
+      const scope = weaponSystem.isADS ? (weaponSystem.current.scope || '') : '';
+      const scopeActive = !!scope;
+      if(scopeOverlayEl){
+        scopeOverlayEl.style.display = scopeActive ? 'block' : 'none';
+        if(scopeActive) scopeOverlayEl.setAttribute('data-scope', scope);
+      }
+      if(crosshairEl){
+        crosshairEl.style.display = scopeActive ? 'none' : 'block';
       }
 
       // HUD
@@ -1151,16 +1385,32 @@ weaponSystem.update(dt);
       const elRes = document.getElementById('ammoRes');
       const elW = document.getElementById('ammoWeapon');
       const elS = document.getElementById('ammoStatus');
-      if(elMag) elMag.textContent = weaponSystem.mag;
-      if(elRes) elRes.textContent = weaponSystem.reserve;
-      if(elW) elW.textContent = weaponSystem.current.name;
+      const aSlotHud = window.playerProfile?.activeSlot;
+      const invHud = window.playerProfile?.inventory || null;
+      const grenadeActiveHud = !!aSlotHud && aSlotHud.type === 'grenade';
+      if(grenadeActiveHud){
+        const gid = invHud?.grenades?.[aSlotHud.index] || null;
+        if(elW) elW.textContent = grenadeHudName(gid);
+        if(elMag) elMag.textContent = gid ? '1' : '0';
+        if(elRes) elRes.textContent = '';
+      }else{
+        if(elMag) elMag.textContent = weaponSystem.mag;
+        if(elRes) elRes.textContent = weaponSystem.reserve;
+        if(elW) elW.textContent = weaponSystem.current.name;
+      }
       const elSlot = document.getElementById('ammoSlot');
       if(elSlot) elSlot.textContent = weaponSwitchManager?.getActiveLabel?.() || '';
 
       if(elS){
-        if(weaponSystem.isReloading){ elS.textContent = 'RELOADING'; elS.classList.add('blink'); }
-        else if(weaponSystem.mag===0 && weaponSystem.reserve===0){ elS.textContent = 'EMPTY'; elS.classList.add('blink'); }
-        else { elS.textContent = ''; elS.classList.remove('blink'); }
+        if(grenadeActiveHud){
+          const gid = invHud?.grenades?.[aSlotHud.index] || null;
+          if(!gid){ elS.textContent = 'EMPTY'; elS.classList.add('blink'); }
+          else { elS.textContent = ''; elS.classList.remove('blink'); }
+        }else{
+          if(weaponSystem.isReloading){ elS.textContent = 'RELOADING'; elS.classList.add('blink'); }
+          else if(weaponSystem.mag===0 && weaponSystem.reserve===0){ elS.textContent = 'EMPTY'; elS.classList.add('blink'); }
+          else { elS.textContent = ''; elS.classList.remove('blink'); }
+        }
       }
     }
 
@@ -1187,6 +1437,13 @@ weaponSystem.update(dt);
     await boot();
     animate();
   </script>
+  <!-- Patch 7-2B: scope overlay (shown only when ADS + weapon has scope) -->
+  <div id="scopeOverlay" data-scope="3x">
+    <div class="mask"></div>
+    <div class="reticle"></div>
+  </div>
+  <div id="smokeOverlay"></div>
+  <div id="flashOverlay"></div>
 <div id="crosshair" style="position:fixed;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);pointer-events:none">
 <div style="position:absolute;left:7px;top:0;width:2px;height:16px;background:#fff"></div>
 <div style="position:absolute;left:0;top:7px;width:16px;height:2px;background:#fff"></div></div>

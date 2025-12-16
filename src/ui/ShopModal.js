@@ -149,7 +149,8 @@ export default class ShopModal {
       if(item.type === "primary"){
         disabled = !!inv?.primary || !this.shopSystem.canBuyPrimaryForClass(classId, item.category);
       }else if(item.type === "secondary"){
-        disabled = (inv?.secondary && inv.secondary !== "basic_pistol");
+        // Patch 7-3B: 기본 권총(pistol1/basic_pistol)은 '업그레이드 가능' 상태로 취급
+        disabled = (inv?.secondary && inv.secondary !== "basic_pistol" && inv.secondary !== "pistol1");
       }else if(item.type === "grenade"){
         const g = inv?.grenades || [];
         disabled = g.filter(Boolean).length >= 3;

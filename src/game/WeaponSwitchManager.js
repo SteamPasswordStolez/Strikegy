@@ -107,6 +107,37 @@ export class WeaponSwitchManager {
     return false;
   }
 
+  // Patch 7-3B: cycle through owned slots in a stable order.
+  // Order: primary -> secondary -> grenades(0..2) -> classItem(0..1). Melee is excluded.
+  cycleNext(){
+    this.ensureActiveSlot();
+    const p = this.profile;
+    const inv = p?.inventory;
+    if(!p || !inv) return false;
+
+    const slots = [];
+    if(inv.primary) slots.push({ type:"primary", index:0 });
+    if(inv.secondary) slots.push({ type:"secondary", index:0 });
+    if(Array.isArray(inv.grenades)){
+      for(let i=0;i<3;i++) if(inv.grenades[i]) slots.push({ type:"grenade", index:i });
+    }
+    if(Array.isArray(inv.classItems)){
+      for(let i=0;i<2;i++) if(inv.classItems[i]) slots.push({ type:"classItem", index:i });
+    }
+
+    if(slots.length<=0) return false;
+
+    const a = p.activeSlot;
+    let idx = -1;
+    if(a && (a.type === "primary" || a.type === "secondary" || a.type === "grenade" || a.type === "classItem")){
+      idx = slots.findIndex(s=> s.type===a.type && (s.index|0)===(a.index|0));
+    }
+    if(idx < 0) idx = 0;
+
+    const next = slots[(idx + 1) % slots.length];
+    return this._setSlot(next.type, next.index);
+  }
+
   switchToGrenade(idx){
     this.ensureActiveSlot();
     const inv = this.profile?.inventory;
