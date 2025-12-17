@@ -90,6 +90,39 @@ function makeSoftParticleTexture(){
   return tex;
 }
 
+function makeNoiseAlphaTexture(){
+  const c = document.createElement("canvas");
+  c.width = 96; c.height = 96;
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(c.width, c.height);
+  for(let i=0;i<img.data.length;i+=4){
+    // soft cloudy noise
+    const v = Math.floor(140 + Math.random()*115); // 140..255
+    img.data[i+0] = v;
+    img.data[i+1] = v;
+    img.data[i+2] = v;
+    img.data[i+3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // slightly blur by drawing scaled
+  const c2 = document.createElement("canvas");
+  c2.width = 96; c2.height = 96;
+  const ctx2 = c2.getContext("2d");
+  ctx2.globalAlpha = 0.85;
+  ctx2.drawImage(c, 0, 0);
+  ctx2.globalAlpha = 0.55;
+  ctx2.drawImage(c, -6, -4);
+  ctx2.drawImage(c,  4,  6);
+
+  const tex = new THREE.CanvasTexture(c2);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.6, 1.6);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+
 export default class ThrowablesSystem{
   constructor(opts){
     this.camera = opts?.camera || null;
@@ -231,11 +264,14 @@ export default class ThrowablesSystem{
   _specFor(id){
     switch(String(id)){
       case "frag":
-        return { fuse: 1.3, color: 0xffb347, size: 0.085, impact:false, kind:"HE" };
+        // Fuse (final): 2.5s
+        return { fuse: 2.5, color: 0xffb347, size: 0.085, impact:false, kind:"HE" };
       case "smoke":
-        return { fuse: 1.0, color: 0xbfd6ff, size: 0.085, impact:false, kind:"SMOKE" };
+        // Fuse (final): 1.2s
+        return { fuse: 1.2, color: 0xbfd6ff, size: 0.085, impact:false, kind:"SMOKE" };
       case "flash":
-        return { fuse: 1.0, color: 0xffffff, size: 0.080, impact:false, kind:"FLASH" };
+        // Fuse (final): 3.0s
+        return { fuse: 3.0, color: 0xffffff, size: 0.080, impact:false, kind:"FLASH" };
       case "impact":
         return { fuse: 0.0, color: 0xa7fffb, size: 0.080, impact:true,  kind:"IMPACT" };
       default:
@@ -322,11 +358,16 @@ export default class ThrowablesSystem{
               _tmpN.applyMatrix3(nrm).normalize();
             }
 
-            if(g.impact){
-              this._detonate(g);
-              this._removeProjectile(i);
-              continue;
-            }
+	            if(g.impact){
+	              // Impact grenade: detonate only when it hits the ground ("바닥에 떨어지자마자")
+	              // Wall hits should bounce, then it will explode on the first ground contact.
+	              if(_tmpN.y > 0.35){
+	                this._detonate(g);
+	                this._removeProjectile(i);
+	                continue;
+	              }
+	              // else: treat as a normal bounce below
+	            }
 
             // bounce
             const v = g.vel;
@@ -370,9 +411,34 @@ export default class ThrowablesSystem{
     for(let i=this._smokes.length-1;i>=0;i--){
       const s = this._smokes[i];
       s.t -= dt;
+
+      // update particle cloud
       s.cloud?.update?.(dt);
+
+	      // drive volume opacity (fade in/out) + dynamic volume motion
+      if(s.volume?.setOpacity){
+        const life = 9.5;
+        const age = Math.max(0, life - s.t);
+        const fadeIn = 0.20;
+        const fadeOut = 1.25;
+
+        let o = s.baseOpacity ?? 0.92;
+
+        if(age < fadeIn){
+          o *= clamp01(age / fadeIn);
+        }
+        if(s.t < fadeOut){
+          o *= clamp01(s.t / fadeOut);
+        }
+        // keep it very dense
+	        s.volume.setOpacity(Math.min(0.99, o));
+      }
+	      // Dynamic "shader" motion even while fading
+	      s.volume?.update?.(dt);
+
       if(s.t <= 0){
         s.cloud?.dispose?.();
+        s.volume?.dispose?.();
         this._smokes.splice(i,1);
       }
     }
@@ -411,6 +477,9 @@ export default class ThrowablesSystem{
         smoke = Math.max(smoke, clamp01(t));
       }
     }
+
+	    // make smoke feel *extremely* dense (near total vision block)
+	    smoke = Math.min(1, Math.pow(smoke * 1.55, 0.42));
 
     let flash = 0;
     for(const f of this._flashes){
@@ -518,7 +587,7 @@ export default class ThrowablesSystem{
         this.scene?.add?.(r2);
         this._rings.push({ mesh: r2, t:0, dur: 0.42, grow: 22 });
       }catch{}
-      this._applyExplosionDamage({ pos: g.pos, radius: 6, max: 100, min: 20 });
+      this._applyExplosionDamage({ pos: g.pos, radius: 6, max: 120, min: 20 });
       // Stronger shake
       this._shakes.push({ t: 0.55, dur: 0.55, pitchAmp: 0.18, yawAmp: 0.22 });
       this._cameraKickNear({ pos: g.pos, radius: 6, maxPitch: 0.22, maxYaw: 0.18 });
@@ -527,9 +596,12 @@ export default class ThrowablesSystem{
 
     if(id === "smoke"){
       this.onSound?.("grenade_smoke");
-      const cloud = this._spawnSmokeCloud(g.pos);
-      // 9.5s duration, dense enough to block vision
-      this._smokes.push({ pos: g.pos.clone(), radius: 9.0, t: 9.5, cloud });
+      // Wider + denser (final tuning)
+      const SMOKE_RADIUS = 11.6;
+      const cloud = this._spawnSmokeCloud(g.pos, SMOKE_RADIUS);
+      const volume = this._spawnSmokeVolume(g.pos, SMOKE_RADIUS);
+      // 9.5s duration: near-total vision block inside/outside
+      this._smokes.push({ pos: g.pos.clone(), radius: SMOKE_RADIUS, t: 9.5, cloud, volume, baseOpacity: 0.975 });
       return;
     }
 
@@ -541,35 +613,40 @@ export default class ThrowablesSystem{
 
     if(id === "impact"){
       this.onSound?.("grenade_impact");
-      this._applyExplosionDamage({ pos: g.pos, radius: 4, max: 40, min: 40 });
-      // Disorient: lock look for 1.5s + very large shake
-      this.onLookLock?.(1.5);
-      this._shakes.push({ t: 1.5, dur: 1.5, pitchAmp: 0.22, yawAmp: 0.36 });
-      this._cameraKickNear({ pos: g.pos, radius: 4, maxPitch: 0.14, maxYaw: 0.22 });
+      // Impact grenade: primarily disorienting, but can finish low-HP targets.
+      // (Patch 8 PRO+ tuning) Make it meaningfully dangerous at very close range.
+      this._applyExplosionDamage({ pos: g.pos, radius: 4.6, max: 80, min: 18 });
+      // Disorient: lock look for ~1.2s + strong shake
+      this.onLookLock?.(1.2);
+      this._shakes.push({ t: 1.2, dur: 1.2, pitchAmp: 0.20, yawAmp: 0.32 });
+      this._cameraKickNear({ pos: g.pos, radius: 4.6, maxPitch: 0.16, maxYaw: 0.26 });
       return;
     }
 
     this.onSound?.("grenade_explode");
   }
 
-  _spawnSmokeCloud(pos){
+	_spawnSmokeCloud(pos, radius=11.6){
     if(!this.scene) return null;
     if(!this._softTex){
       try{ this._softTex = makeSoftParticleTexture(); }catch{ this._softTex = null; }
     }
 
-    // Dense cloud: aim to make the inside / through-smoke nearly opaque.
-    const count = this.isMobile ? 280 : 520;
+	    // Dense cloud: aim to make the inside / through-smoke nearly opaque.
+	    // Scale particle budget slightly with radius (kept bounded for perf).
+	    const base = this.isMobile ? 1100 : 2600;
+	    const rMul = Math.max(0.9, Math.min(1.25, radius / 11.6));
+	    const count = Math.floor(base * rMul);
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
     const velocity = new Float32Array(count * 3);
     const size = new Float32Array(count);
 
     for(let i=0;i<count;i++){
-      // spawn inside a small sphere
-      const r = Math.random() * 0.9;
+	      // spawn inside a sphere scaled to the smoke radius
+	      const r = Math.random() * (radius * 0.11);
       const a = Math.random() * Math.PI * 2;
-      const h = (Math.random()*2 - 1) * 0.35;
+	      const h = (Math.random()*2 - 1) * (radius * 0.045);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       const y = h;
@@ -578,15 +655,16 @@ export default class ThrowablesSystem{
       positions[i*3+1] = pos.y + y;
       positions[i*3+2] = pos.z + z;
 
-      // gentle outward + upward drift
-      const vx = x * (0.35 + Math.random()*0.6) + (Math.random()*2-1)*0.12;
-      const vz = z * (0.35 + Math.random()*0.6) + (Math.random()*2-1)*0.12;
-      const vy = (0.35 + Math.random()*0.7);
+	      // gentle outward + upward drift (scaled with radius)
+	      const drift = 0.28 + Math.random()*0.55;
+	      const vx = x * drift + (Math.random()*2-1) * 0.16;
+	      const vz = z * drift + (Math.random()*2-1) * 0.16;
+	      const vy = (0.42 + Math.random()*0.85);
       velocity[i*3+0] = vx;
       velocity[i*3+1] = vy;
       velocity[i*3+2] = vz;
 
-      size[i] = this.isMobile ? (8 + Math.random()*12) : (10 + Math.random()*18);
+	      size[i] = this.isMobile ? (14 + Math.random()*22) : (18 + Math.random()*30);
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -626,7 +704,8 @@ export default class ThrowablesSystem{
         const oIn = clamp01(cloud.t / cloud.fadeIn);
         // keep opaque most of the time; fade out only near the end
         const oOut = clamp01(alive / 2.8);
-        points.material.opacity = Math.min(0.95, oIn * oOut * 1.05);
+	        // Keep it extremely dense ("외부에서 보이지 않을 정도")
+	        points.material.opacity = Math.min(0.995, oIn * oOut * 1.18);
 
         // expand + drift
         for(let i=0;i<count;i++){
@@ -654,7 +733,71 @@ export default class ThrowablesSystem{
       }
     };
 
-    return cloud;
+	    // register + return so the caller can manage lifetime
+	    this._smokeClouds?.push?.(cloud);
+	    return cloud;
+	  }
+
+	  _spawnSmokeVolume(pos, radius){
+    if(!this.scene) return null;
+    if(!this._noiseTex){
+      try{ this._noiseTex = makeNoiseAlphaTexture(); }catch{ this._noiseTex = null; }
+    }
+
+    const detail = this.isMobile ? 1 : 2;
+    const geo = new THREE.IcosahedronGeometry(radius, detail);
+
+	    const mat = new THREE.MeshBasicMaterial({
+	      color: 0x6a6a6a,
+	      transparent: true,
+	      opacity: 0.975,
+	      // depthWrite ON makes the volume "really" block what's behind it
+	      depthWrite: true,
+	      depthTest: true,
+	      side: THREE.DoubleSide
+	    });
+
+    // "shader-ish" cloudy breakup without custom GLSL
+	    if(this._noiseTex){
+	      mat.alphaMap = this._noiseTex;
+	      mat.alphaTest = 0.04;
+	      mat.alphaMap.needsUpdate = true;
+	    }
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(pos);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 997; // behind particles but still covers
+
+    this.scene.add(mesh);
+
+	    let tPhase = 0;
+	    return {
+      mesh,
+      geo,
+      mat,
+	      baseOpacity: 0.975,
+	      setOpacity: (o)=>{ mat.opacity = o; },
+	      // Dynamic "shader-like" motion: swirl the alpha texture + slow volume rotation
+	      update: (dt)=>{
+	        tPhase += dt;
+	        if(mat.alphaMap){
+	          // subtle UV drift
+	          mat.alphaMap.offset.x = (mat.alphaMap.offset.x + dt*0.06) % 1;
+	          mat.alphaMap.offset.y = (mat.alphaMap.offset.y + dt*0.045) % 1;
+	          // micro breathing opacity variation
+	          // (final opacity still controlled by setOpacity in the smoke loop)
+	          mat.alphaMap.rotation = Math.sin(tPhase*0.55) * 0.08;
+	        }
+	        mesh.rotation.y += dt * 0.18;
+	        mesh.rotation.x += dt * 0.06;
+	      },
+      dispose: ()=>{
+        try{ (mesh.parent||null)?.remove?.(mesh); }catch{}
+        try{ geo.dispose?.(); }catch{}
+        try{ mat.dispose?.(); }catch{}
+      }
+    };
   }
 
   _applyExplosionDamage({pos, radius, max, min}){
@@ -678,19 +821,31 @@ export default class ThrowablesSystem{
   _applyFlashToLocal({pos}){
     const cam = this.camera;
     if(!cam) return;
+
+    // Final tuning: small radius so thrower isn't constantly self-flashed
+    const FLASH_RADIUS = 10.0;
+
     const camPos = _v0.setFromMatrixPosition(cam.matrixWorld);
+    const d = camPos.distanceTo(pos);
+    if(d > FLASH_RADIUS) return;
+
     const to = _v1.copy(pos).sub(camPos);
     if(to.lengthSq() < 1e-6) return;
     to.normalize();
+
     cam.getWorldDirection(_tmpDir);
     _tmpDir.normalize();
 
+    // Strong flash only if within ~60� cone total (�30�)
+    const COS_30 = Math.cos(THREE.MathUtils.degToRad(30));
     const dot = _tmpDir.dot(to);
-    const strong = dot >= COS_60;
+    const strong = dot >= COS_30;
+
     const dur = strong ? 1.2 : 0.4;
     // Bright enough to fully whiteout. Consumer clamps to 1.
     const base = strong ? 2.2 : 1.2;
     const hold = strong ? 0.35 : 0.18;
+
     this._flashes.push({ base, t: dur, dur, hold });
 
     // ear ring / aftershock

@@ -598,6 +598,7 @@
     import PlayerController from './src/player/PlayerController.js';
     import CollisionWorld from './src/world/CollisionWorld.js';
     import MobileHUD from './src/ui/MobileHUD.js';
+    import { CombatOverlayUI } from './src/ui/CombatOverlayUI.js';
     import InventoryModal from './src/ui/InventoryModal.js';
     import ShopModal from './src/ui/ShopModal.js';
     import { ShopSystem } from './src/game/ShopSystem.js';
@@ -854,6 +855,75 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
 // Patch 4.3: Mobile HUD (joystick + buttons + swipe look)
     const mobileHUD = new MobileHUD({ root: document.body, input: inputManager, presetGetter: ()=>settingsStore.controlPreset });
+
+    // Patch 8-0X: Combat overlay UI (HP / damage / death / respawn)
+    const combatUI = new CombatOverlayUI({ root: document.body });
+    window.combatUI = combatUI;
+
+    // Patch 8-0PRO: TEMP Health/Death/Respawn (grenade damage test loop)
+    let playerHP = 100;
+    let playerHPMax = 100;
+    let playerDead = false;
+    let respawnLeft = 0;
+
+    function setHP(cur){
+      playerHP = Math.max(0, Math.min(playerHPMax, cur|0));
+      window.combatUI?.setHP?.(playerHP, playerHPMax);
+    }
+
+    function getDefaultSpawn(){
+      const sp = current?.spawns || null;
+      const pick = (arr)=> (Array.isArray(arr) && arr.length ? arr[0] : null);
+      // prefer Blue spawns if available (temporary)
+      return pick(sp?.blue) || pick(sp?.red) || pick(sp?.ct) || pick(sp?.t) || pick(sp?.all) || null;
+    }
+
+    function killPlayer(){
+      if(playerDead) return;
+      playerDead = true;
+      respawnLeft = 5.0;
+
+      // UI
+      window.combatUI?.setDead?.({ killerText: "KILLED" });
+      window.combatUI?.setRespawning?.(Math.ceil(respawnLeft));
+
+      // minimal input cancel
+      mouseLeftDown = false;
+      mouseRightDown = false;
+    }
+
+    function respawnPlayer(){
+      playerDead = false;
+      setHP(playerHPMax);
+
+      const sp = getDefaultSpawn();
+      if(sp) initPlayerFromSpawn(sp);
+
+      window.combatUI?.respawnFlash?.();
+      window.combatUI?.setAlive?.();
+    }
+
+    // Explosion damage: distance falloff, local player only (temporary)
+    function applyExplosionDamageToLocal({ pos, radius, max, min }){
+      if(playerDead) return;
+      const ppos = playerObject?.position;
+      if(!ppos || !pos) return;
+
+      const d = ppos.distanceTo(pos);
+      if(d > radius) return;
+
+      const t = 1 - (d / Math.max(0.001, radius)); // 1..0
+      const dmg = Math.round((min ?? 0) + ((max ?? 0) - (min ?? 0)) * t);
+
+      const ratio = Math.min(1, Math.max(0, dmg / playerHPMax));
+      window.combatUI?.flashDamage?.(ratio);
+
+      setHP(playerHP - dmg);
+      if(playerHP <= 0) killPlayer();
+    }
+
+    // initial sync
+    setHP(playerHP);
 
 
     
@@ -1152,15 +1222,16 @@ const shopModal = new ShopModal({
               onCameraKick: (pitch, yaw)=> cameraController?.addRecoil?.(pitch, yaw),
               onLookLock: (sec)=> inputManager?.setLookLocked?.(sec),
               isMobile: (typeof window!=='undefined' && !!window.__isMobile) ? true : undefined,
+              onDamage: (payload)=> applyExplosionDamageToLocal(payload),
               onOverlay: ({ smoke, flash })=>{
                 // Smoke: blur + light desaturation tint
                 if(smokeOverlayEl){
                   // Dense smoke: near-opaque inside
-                  const o = Math.min(0.92, smoke * 0.92);
+                  const o = Math.min(0.985, smoke * 0.985);
                   smokeOverlayEl.style.opacity = String(o);
                   // backdropFilter is expensive on mobile; keep it mild
                   const isM = (typeof window!=='undefined' && !!window.__isMobile);
-                  const blur = isM ? (smoke * 6).toFixed(1) : (smoke * 14).toFixed(1);
+                  const blur = isM ? (smoke * 8).toFixed(1) : (smoke * 18).toFixed(1);
                   smokeOverlayEl.style.backdropFilter = `blur(${blur}px)`;
                   smokeOverlayEl.style.webkitBackdropFilter = `blur(${blur}px)`;
                 }
@@ -1230,6 +1301,12 @@ document.getElementById("status").textContent =
     function animate(){
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
+      // Patch 8-0PRO: respawn timer tick
+      if(playerDead){
+        respawnLeft -= dt;
+        window.combatUI?.setRespawning?.(Math.max(0, Math.ceil(respawnLeft)));
+        if(respawnLeft <= 0) respawnPlayer();
+      }
       economyManager?.tick?.(dt);
       try{ moneyHUD.textContent = `$${Math.floor(window.playerProfile?.money||0)}`; }catch{}
 
@@ -1250,7 +1327,7 @@ document.getElementById("status").textContent =
           if(pEl) pEl.textContent = dbg.pitchDeg;
         }
       }
-      if(playerController){
+      if(playerController && !playerDead){
         // Patch 4A: 이동 비활성 (yaw/pitch만 검증)
         playerController.update(dt, st, camera, collisionWorld);
       }
@@ -1260,7 +1337,7 @@ document.getElementById("status").textContent =
         // nothing heavy
       }
     // Patch 5B-2: weapons tick (PC + Mobile HUD)
-    if(weaponSystem){
+    if(weaponSystem && !playerDead){
       const preset = settingsStore.controlPreset;
       // Patch 7-3C: casing limit per platform (PC 80 / Mobile 30)
       const casingMax = (preset === 'pc') ? 80 : 30;
