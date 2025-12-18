@@ -626,6 +626,17 @@ export default class ThrowablesSystem{
     this.onSound?.("grenade_explode");
   }
 
+  // Patch 7-4B: allow other systems (class items) to reuse detonation FX safely.
+  // NOTE: This is a *visual + local-damage* helper. Balance numbers come from the id's preset.
+  triggerDetonation(id, pos){
+    if(!pos) return false;
+    const p = (pos.clone ? pos.clone() : pos);
+    // Fake projectile payload for _detonate.
+    const g = { id: String(id), pos: p };
+    try{ this._detonate(g); }catch(e){ console.warn('triggerDetonation failed', e); return false; }
+    return true;
+  }
+
 	_spawnSmokeCloud(pos, radius=11.6){
     if(!this.scene) return null;
     if(!this._softTex){

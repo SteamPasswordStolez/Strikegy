@@ -77,15 +77,22 @@ export class ShopSystem {
         return { ok:false, reason:"NO_SECONDARY" };
       }
 
-      // Try to call weapon system if present; otherwise it's a no-op (still consumes money)
+      // Patch 7-4B: use the shared ammo refill engine (same semantics as ammo_pack, but delay=0).
+      // Fallback to WeaponSystem helpers if the service isn't wired.
       try{
-        const ws = profile.weaponSystem || window.weaponSystem || null;
-        if(ws && typeof ws.refillAmmo === "function"){
-          ws.refillAmmo(item.id);
-        }else if(ws && typeof ws.refillPrimaryAmmo === "function" && item.id==="ammo_primary"){
-          ws.refillPrimaryAmmo();
-        }else if(ws && typeof ws.refillSecondaryAmmo === "function" && item.id==="ammo_secondary"){
-          ws.refillSecondaryAmmo();
+        const ars = profile.ammoRefillService || window.ammoRefillService || null;
+        if(ars && typeof ars.refill === "function"){
+          if(item.id === "ammo_primary") ars.refill({ primary:true, secondary:false, delaySec:0 });
+          if(item.id === "ammo_secondary") ars.refill({ primary:false, secondary:true, delaySec:0 });
+        }else{
+          const ws = profile.weaponSystem || window.weaponSystem || null;
+          if(ws && typeof ws.refillAmmo === "function"){
+            ws.refillAmmo(item.id);
+          }else if(ws && typeof ws.refillPrimaryAmmo === "function" && item.id==="ammo_primary"){
+            ws.refillPrimaryAmmo();
+          }else if(ws && typeof ws.refillSecondaryAmmo === "function" && item.id==="ammo_secondary"){
+            ws.refillSecondaryAmmo();
+          }
         }
       }catch{}
 

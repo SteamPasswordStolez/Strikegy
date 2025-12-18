@@ -89,6 +89,15 @@ export class CombatOverlayUI {
     }, 300);
   }
 
+  // Patch 7-4B: melee feedback (visual-only)
+  meleeSwing(){
+    if(!this.melee) return;
+    this.melee.classList.remove('play');
+    // restart animation
+    void this.melee.offsetHeight;
+    this.melee.classList.add('play');
+  }
+
   destroy() {
     if (this._damageRaf) cancelAnimationFrame(this._damageRaf);
     this._damageRaf = 0;
@@ -118,11 +127,23 @@ export class CombatOverlayUI {
       <div class="combat-hp__bar">
         <div class="combat-hp__fill" id="_hpFill"></div>
       </div>
-    `;
+    
+      <div class="combat-bandage" id="_bandageWrap">
+        <div class="combat-bandage__icon">🩹</div>
+        <div class="combat-bandage__count" id="_bandageCount">1</div>
+        <div class="combat-bandage__hint" id="_bandageHint">C</div>
+      </div>
+`;
     this.hpPanel = hpPanel;
     this.hpText = hpPanel.querySelector("#_hpText");
     this.hpFill = hpPanel.querySelector("#_hpFill");
     this.invTag = hpPanel.querySelector("#_invTag");
+
+    // Bandage UI
+    this.bandageWrap = hpPanel.querySelector("#_bandageWrap");
+    this.bandageCountEl = hpPanel.querySelector("#_bandageCount");
+    this.bandageHintEl = hpPanel.querySelector("#_bandageHint");
+    this.setBandageHintActive(false);
     this.invTag.style.display = "none";
 
     // Damage vignette overlay
@@ -160,8 +181,15 @@ export class CombatOverlayUI {
     flash.style.opacity = "0";
     this.flash = flash;
 
+    // Melee swing overlay (bottom-right)
+    const melee = document.createElement("div");
+    melee.className = "combat-melee";
+    melee.innerHTML = `<div class="combat-melee__knife">🗡️</div>`;
+    this.melee = melee;
+
     wrap.appendChild(dmg);
     wrap.appendChild(flash);
+    wrap.appendChild(melee);
     wrap.appendChild(hpPanel);
     wrap.appendChild(death);
     wrap.appendChild(respawn);
@@ -187,7 +215,14 @@ export class CombatOverlayUI {
         padding:2px 6px;border-radius:999px;font-size:11px;font-weight:700;
         background:rgba(80,190,255,0.22); border:1px solid rgba(80,190,255,0.35);
       }
-      .combat-hp__bar{height:10px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,0.10);
+      
+.combat-bandage{display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:700;font-size:14px;opacity:0.95}
+.combat-bandage__icon{font-size:18px;line-height:1}
+.combat-bandage__count{min-width:18px;text-align:left}
+.combat-bandage__hint{margin-left:auto;border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:2px 8px;font-weight:800;letter-spacing:0.5px}
+.combat-bandage__hint.blink{animation:combatBlink 0.8s infinite}
+@keyframes combatBlink{0%,49%{opacity:1}50%,100%{opacity:0.25}}
+.combat-hp__bar{height:10px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,0.10);
         border:1px solid rgba(255,255,255,0.08);
       }
       .combat-hp__fill{height:100%;width:100%;transform-origin:left center;transform:scaleX(1);
@@ -219,6 +254,20 @@ export class CombatOverlayUI {
       .combat-respawn__label{font-size:13px;letter-spacing:0.22em;font-weight:800;opacity:0.85;}
       .combat-respawn__counter{margin-top:10px;font-size:52px;font-weight:900;font-variant-numeric: tabular-nums;}
 
+      /* Patch 7-4B: melee swing */
+      .combat-melee{position:fixed;right:18px;bottom:18px;width:240px;height:240px;
+        display:flex;align-items:flex-end;justify-content:flex-end;opacity:0;transform:translate(26px, 28px) rotate(-10deg);
+        pointer-events:none;filter:drop-shadow(0 12px 18px rgba(0,0,0,0.35));
+      }
+      .combat-melee__knife{font-size:120px;line-height:1;transform:rotate(10deg);}
+      .combat-melee.play{animation: combatMeleeSwing 320ms ease-out forwards;}
+      @keyframes combatMeleeSwing{
+        0%{opacity:0;transform:translate(30px, 34px) rotate(-18deg) scale(0.95)}
+        20%{opacity:1}
+        45%{opacity:1;transform:translate(-8px, -10px) rotate(18deg) scale(1.0)}
+        100%{opacity:0;transform:translate(-28px, -16px) rotate(24deg) scale(0.98)}
+      }
+
       .combat-flash{position:fixed;inset:0;pointer-events:none;background:rgba(255,255,255,0.92);}
     `;
     document.head.appendChild(style);
@@ -245,4 +294,28 @@ export class CombatOverlayUI {
     };
     this._damageRaf = requestAnimationFrame(step);
   }
+
+  setBandageCount(count){
+    // count can be Infinity for unlimited
+    if(!this.bandageCountEl) return;
+    const inf = (count === Infinity || count === -1);
+    this._bandageInf = inf;
+    if(inf){
+      this.bandageCountEl.textContent = "∞";
+      this.bandageWrap?.classList.add("is-inf");
+    }else{
+      const n = Math.max(0, Number.isFinite(count) ? Math.floor(count) : 0);
+      this.bandageCountEl.textContent = String(n);
+      this.bandageWrap?.classList.remove("is-inf");
+    }
+  }
+
+  setBandageHintActive(active){
+    if(!this.bandageHintEl) return;
+    this.bandageHintEl.style.opacity = active ? "1" : "0.35";
+    if(active) this.bandageHintEl.classList.add("blink");
+    else this.bandageHintEl.classList.remove("blink");
+  }
 }
+
+

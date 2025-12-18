@@ -119,6 +119,22 @@
     #scopeOverlay[data-scope="6x"] .reticle{ width:520px; height:520px; }
     #scopeOverlay[data-scope="8x"] .reticle{ width:560px; height:560px; border-width:2px; }
 
+    /* ---- Patch 7-4B: Binocular overlay (separate from scope) ---- */
+    #binoOverlay{position:fixed;inset:0;display:none;pointer-events:none;z-index:45;}
+    #binoOverlay .mask{position:absolute;inset:0;background:
+      radial-gradient(circle at center,
+        rgba(0,0,0,0) 0%,
+        rgba(0,0,0,0) 46%,
+        rgba(0,0,0,0.55) 49%,
+        rgba(0,0,0,0.92) 100%);
+    }
+    #binoOverlay .reticle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      width:560px;height:560px;border:2px solid rgba(255,255,255,0.65);border-radius:999px;box-sizing:border-box;
+    }
+    #binoOverlay .reticle:after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      width:8px;height:8px;border-radius:999px;background:rgba(255,255,255,0.85);
+    }
+
     /* ---- Patch 7-4A: Smoke / Flash overlays ---- */
     #smokeOverlay, #flashOverlay{
       position: fixed;
@@ -333,6 +349,44 @@
       animation: blink 0.6s steps(2,end) infinite;
     }
     @keyframes blink{ 50%{ opacity: .15; } }
+
+    /* ---- Patch 7-4B: Binocular HUD (only while binocular aiming) ---- */
+    .binoHUD{
+      position: fixed;
+      right: 18px;
+      bottom: 108px;
+      z-index: 45;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: auto;
+      user-select:none;
+      filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
+    }
+    .binoText{
+      color: rgba(255,255,255,.95);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-weight: 900;
+      letter-spacing: .06em;
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.12);
+      min-width: 54px;
+      text-align: center;
+    }
+    .binoBtn{
+      width: 40px;
+      height: 40px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.35);
+      color: rgba(255,255,255,.95);
+      font-size: 18px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .binoBtn:active{ transform: scale(0.96); }
     
   
     /* ---- Patch 6-1b: Inventory (Modal) ---- */
@@ -602,6 +656,8 @@
     import InventoryModal from './src/ui/InventoryModal.js';
     import ShopModal from './src/ui/ShopModal.js';
     import { ShopSystem } from './src/game/ShopSystem.js';
+  import { AmmoRefillService } from './src/game/AmmoRefillService.js';
+  import { ClassItemSystem } from './src/game/ClassItemSystem.js';
     
   import { EconomyManager } from "./src/game/EconomyManager.js";
   import { LoadoutManager } from "./src/game/LoadoutManager.js";
@@ -613,6 +669,8 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   import { CLASS_KEY, normalizeClassId, initInventoryForClass, CLASSES } from "./src/data/classes.js";
     // Patch 6-2a: economy manager instance (declared early to avoid TDZ)
     let economyManager = null;
+    let ammoRefillService = null;
+    let classItemSystem = null;
 
     // ---------------------------
     // Patch 3: Mode -> Map 선택(Registry)
@@ -846,7 +904,16 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       className: (CLASSES[__classId] || CLASSES.assault).name,
       inventory: initInventoryForClass(__classId),
       activeSlot: { type:"secondary", index:0 },
+      team: "blue",
     };
+
+    // Patch 8-1PRO: default team is blue unless changed in console
+    window.setTeam = function(team){
+      const t = String(team||"").toLowerCase();
+      window.playerProfile.team = (t === "red" || t === "t") ? "red" : "blue";
+      console.log("[Strikegy] Team set to:", window.playerProfile.team);
+    };
+
     // Patch 6-2a: Economy manager init
     economyManager = new EconomyManager(window.playerProfile);
     economyManager.initOnGameStart();
@@ -865,23 +932,79 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     let playerHPMax = 100;
     let playerDead = false;
     let respawnLeft = 0;
+    // Patch 8-2PRO: Bandage (🩹) - all players start with 1 each life; medic unlimited
+    let bandageCount = 1;          // for non-medic
+    let bandageHealing = false;
+    let bandageHealRate = 0;       // HP per second
+    let bandageHealStopOnDamage = true;
+
+    function isMedic(){
+      return (window.playerProfile?.classId === "medic");
+    }
+    function getBandageCount(){
+      return isMedic() ? Infinity : bandageCount;
+    }
+    function syncBandageUI(){
+      try{
+        window.combatUI?.setBandageCount?.(getBandageCount());
+        const canUse = (!playerDead) && (playerHP < playerHPMax) && (!bandageHealing) && (isMedic() || bandageCount > 0);
+        window.combatUI?.setBandageHintActive?.(!!canUse);
+      }catch{}
+    }
+    function stopBandageHealing(){
+      if(!bandageHealing) return;
+      bandageHealing = false;
+      bandageHealRate = 0;
+      syncBandageUI();
+    }
+    function startBandageHealing(){
+      if(playerDead) return;
+      if(playerHP >= playerHPMax) return;
+      if(bandageHealing) return;
+      if(!isMedic()){
+        if(bandageCount <= 0) return;
+        bandageCount -= 1;
+      }
+      bandageHealing = true;
+      bandageHealRate = 15 + Math.random()*6; // 15~21 per sec
+      syncBandageUI();
+    }
+
 
     function setHP(cur){
-      playerHP = Math.max(0, Math.min(playerHPMax, cur|0));
+      playerHP = Math.max(0, Math.min(playerHPMax, Number(cur)));
       window.combatUI?.setHP?.(playerHP, playerHPMax);
+      syncBandageUI();
     }
 
     function getDefaultSpawn(){
       const sp = current?.spawns || null;
-      const pick = (arr)=> (Array.isArray(arr) && arr.length ? arr[0] : null);
-      // prefer Blue spawns if available (temporary)
-      return pick(sp?.blue) || pick(sp?.red) || pick(sp?.ct) || pick(sp?.t) || pick(sp?.all) || null;
+
+      // Team defaults to blue unless changed in console via window.setTeam("red")
+      const team = (window.playerProfile?.team || "blue");
+      const norm = (t)=> {
+        const x = String(t||"").toLowerCase();
+        if(x === "red" || x === "t") return "red";
+        return "blue";
+      };
+      const key = norm(team);
+
+      // current.spawns is a map: { blue: spawnObj, red: spawnObj, ... }
+      const pickOne = (k)=> (sp && sp[k]) ? sp[k] : null;
+
+      // Team spawn first, then sensible fallbacks
+      return pickOne(key) || pickOne(key === "blue" ? "red" : "blue")
+        || pickOne("ct") || pickOne("t") || pickOne("all") || null;
     }
 
     function killPlayer(){
       if(playerDead) return;
       playerDead = true;
       respawnLeft = 5.0;
+      stopBandageHealing();
+
+      // Patch 7-4B+: class-item ammo/mag resets immediately on death (per design)
+      try{ classItemSystem?.resetOnDeath?.(); }catch{}
 
       // UI
       window.combatUI?.setDead?.({ killerText: "KILLED" });
@@ -892,8 +1015,54 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       mouseRightDown = false;
     }
 
-    function respawnPlayer(){
+    
+// Patch 8-1PRO: respawn inventory reset rules
+function resetInventoryForRespawn(){
+  const p = window.playerProfile;
+  if(!p || !p.inventory) return;
+
+  const inv = p.inventory;
+
+  // Keep melee + class items
+  const keepMelee = inv.melee;
+  const keepClassItems = Array.isArray(inv.classItems) ? inv.classItems.slice() : [null, null];
+
+  // Reset everything else (keep default pistol)
+  inv.primary = null;
+  inv.secondary = "pistol1";
+  inv.grenades = [null, null, null];
+
+  inv.melee = keepMelee;
+  inv.classItems = keepClassItems;
+
+  // Reset per-life class-item state that has ammo/mag semantics
+  // Bandage/AmmoBag are infinite => nothing to reset for them.
+  if(!p.classItemState) p.classItemState = {};
+  const s = p.classItemState;
+  // ammo pools used by some class items
+  if(typeof s.panzerAmmo === "number") s.panzerAmmo = 2;
+  if(typeof s.smokeLauncherAmmo === "number") s.smokeLauncherAmmo = 4;
+  // give-limits reset per life
+  s.medicGiven = {};
+  s.supportGiven = {};
+
+  // Force active slot to default pistol
+  p.activeSlot = { type:"secondary", index:0 };
+
+  // Let switch manager resync weapon system on next update
+  weaponSwitchManager?.ensureActiveSlot?.();
+  weaponSwitchManager?.switchToSecondary?.();
+}
+function respawnPlayer(){
       playerDead = false;
+
+      // Inventory reset at respawn (keep melee + class items; keep default pistol)
+      resetInventoryForRespawn();
+
+      // Bandage reset: 1 per life (medic is infinite)
+      bandageCount = 1;
+      stopBandageHealing();
+
       setHP(playerHPMax);
 
       const sp = getDefaultSpawn();
@@ -917,6 +1086,8 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
       const ratio = Math.min(1, Math.max(0, dmg / playerHPMax));
       window.combatUI?.flashDamage?.(ratio);
+      // Taking damage cancels bandage healing immediately
+      stopBandageHealing();
 
       setHP(playerHP - dmg);
       if(playerHP <= 0) killPlayer();
@@ -924,6 +1095,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
     // initial sync
     setHP(playerHP);
+    syncBandageUI();
 
 
     
@@ -1016,6 +1188,13 @@ const shopModal = new ShopModal({
         if(tag === "INPUT" || tag === "TEXTAREA") return;
         inventoryModal.toggle();
         e.preventDefault();
+      }else if(e.code === "KeyC"){
+        if(e.repeat) return;
+        const tag = document.activeElement?.tagName;
+        if(tag === "INPUT" || tag === "TEXTAREA") return;
+        // Use bandage if HP < 100
+        startBandageHealing();
+        e.preventDefault();
       }else if(e.code === "Escape"){
         if(inventoryModal.isOpen()){
           inventoryModal.close();
@@ -1054,6 +1233,7 @@ const shopModal = new ShopModal({
   let lastFov = null;
     // Patch 7-2B: scope overlay DOM cache
     let scopeOverlayEl = null;
+    let binoOverlayEl = null;
     let crosshairEl = null;
     let smokeOverlayEl = null;
     let flashOverlayEl = null;
@@ -1061,6 +1241,7 @@ const shopModal = new ShopModal({
     // Patch 7-4A: Throwables system
     let throwablesSystem = null;
     let prevGrenadeHold = false;
+    let prevClassUse = false;
 
     // Patch 7-2B: recoil presets (radians)
     const deg = (d)=> (d * Math.PI / 180);
@@ -1197,7 +1378,10 @@ const shopModal = new ShopModal({
     weaponSwitchManager = new WeaponSwitchManager({
       profile: window.playerProfile,
       weaponSystem,
-      onMelee: ()=> soundSystem?.play?.("swap"), // placeholder: reuse swap sound
+      onMelee: ()=>{
+        soundSystem?.play?.("swap"); // placeholder SFX
+        window.combatUI?.meleeSwing?.();
+      },
     });
     weaponSwitchManager.ensureActiveSlot?.();
     // sync to current slot
@@ -1208,6 +1392,7 @@ const shopModal = new ShopModal({
 
             // Patch 7-2B / 7-4A: cache overlay elements
             scopeOverlayEl = document.getElementById('scopeOverlay');
+            binoOverlayEl = document.getElementById('binoOverlay');
             crosshairEl = document.getElementById('crosshair');
             smokeOverlayEl = document.getElementById('smokeOverlay');
             flashOverlayEl = document.getElementById('flashOverlay');
@@ -1241,6 +1426,55 @@ const shopModal = new ShopModal({
                 }
               }
             });
+
+            // Patch 7-4B: shared ammo refill engine (ammo_pack + shop ammo refills)
+            ammoRefillService = new AmmoRefillService({
+              profile: window.playerProfile,
+              weaponSystem,
+              onStatus: (text, blink)=>{
+                const elS = document.getElementById('ammoStatus');
+                if(!elS) return;
+                if(text){ elS.textContent = String(text); }
+                else{
+                  // don't clear if weapon reload/empty is active; HUD update loop will handle it
+                }
+                if(blink) elS.classList.add('blink');
+              }
+            });
+
+            // expose for ShopSystem (ammo refill utilities)
+            window.ammoRefillService = ammoRefillService;
+            try{ window.playerProfile.ammoRefillService = ammoRefillService; }catch{}
+
+            // Patch 7-4B: class item system (Key6/7 use + binocular zoom)
+            classItemSystem = new ClassItemSystem({
+              profile: window.playerProfile,
+              camera,
+              scene: current.scene,
+              getCollidables: ()=> collidableMeshes,
+              getPlayerObject: ()=> playerObject,
+              getEntities: ()=> [{ position: playerObject?.position, hp: window.playerHp, maxHp: window.playerMaxHp, team: window.playerProfile?.team || 'blue' }],
+              throwablesSystem,
+              ammoRefill: ammoRefillService,
+              onSound: (name)=> soundSystem?.play?.(name),
+              onHUD: (payload)=>{
+                // binocular UI is handled below in the HUD update loop
+              }
+            });
+
+            // Patch 7-4B: binocular +/- buttons (mobile-friendly)
+            if(!window.__strikegyBinoBound){
+              window.__strikegyBinoBound = true;
+              const m = document.getElementById('binoMinus');
+              const p = document.getElementById('binoPlus');
+              if(m) m.addEventListener('click', (e)=>{ e.preventDefault(); classItemSystem?.adjustBinoZoom?.(-1); });
+              if(p) p.addEventListener('click', (e)=>{ e.preventDefault(); classItemSystem?.adjustBinoZoom?.(+1); });
+              // prevent click from also firing
+              if(m) m.addEventListener('mousedown', (e)=> e.stopPropagation());
+              if(p) p.addEventListener('mousedown', (e)=> e.stopPropagation());
+              if(m) m.addEventListener('touchstart', (e)=> e.stopPropagation(), { passive:false });
+              if(p) p.addEventListener('touchstart', (e)=> e.stopPropagation(), { passive:false });
+            }
     // Patch 5A/6: PC bindings
     // (guard to avoid duplicate binds when reloading maps)
     if(!window.__strikegyBoundInputs){
@@ -1262,6 +1496,11 @@ const shopModal = new ShopModal({
 
       window.addEventListener('wheel', (e)=>{
         if(isUIBlockedNow()) return;
+        // Patch 7-4B: binocular zoom uses wheel while aiming
+        if(classItemSystem && classItemSystem.isBinoAiming?.()){
+          const used = classItemSystem.onWheel?.(e);
+          if(used){ e.preventDefault(); return; }
+        }
         weaponSwitchManager?.cycleNext?.();
         e.preventDefault();
       }, { passive:false });
@@ -1301,12 +1540,27 @@ document.getElementById("status").textContent =
     function animate(){
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
+      try{
       // Patch 8-0PRO: respawn timer tick
       if(playerDead){
         respawnLeft -= dt;
         window.combatUI?.setRespawning?.(Math.max(0, Math.ceil(respawnLeft)));
         if(respawnLeft <= 0) respawnPlayer();
       }
+      // Patch 8-2PRO: Bandage healing tick
+      if(!playerDead && bandageHealing){
+        const next = playerHP + (bandageHealRate * dt);
+        if(next >= playerHPMax){
+          setHP(playerHPMax);
+          stopBandageHealing();
+        }else{
+          setHP(next);
+        }
+      }
+      // Patch 8-1PROA: keep world simulation running even when dead
+      if(throwablesSystem) throwablesSystem.update(dt);
+      if(classItemSystem) classItemSystem.update(dt);
+
       economyManager?.tick?.(dt);
       try{ moneyHUD.textContent = `$${Math.floor(window.playerProfile?.money||0)}`; }catch{}
 
@@ -1328,7 +1582,18 @@ document.getElementById("status").textContent =
         }
       }
       if(playerController && !playerDead){
-        // Patch 4A: 이동 비활성 (yaw/pitch만 검증)
+        // Patch 7-4B+: Sniper ladder auto-climb assist (does not pause world)
+        const climb = classItemSystem?.getClimbAssist?.(st, dt) || null;
+        if(climb && climb.active){
+          // lock horizontal while climbing to prevent "maptal" via momentum
+          st.moveX = 0;
+          st.moveZ = 0;
+          playerController.gravity = 0;
+          playerController.vy = 0;
+          playerObject.position.y += (climb.deltaY || 0);
+        }else{
+          playerController.gravity = 18;
+        }
         playerController.update(dt, st, camera, collisionWorld);
       }
 
@@ -1357,6 +1622,8 @@ document.getElementById("status").textContent =
       const invNow = window.playerProfile?.inventory || null;
       const grenadeActive = !!aSlot && (aSlot.type === 'grenade');
       const grenadeId = grenadeActive ? (invNow?.grenades?.[aSlot.index] || null) : null;
+      const classActive = !!aSlot && (aSlot.type === 'classItem');
+      const classId = classActive ? (invNow?.classItems?.[aSlot.index] || null) : null;
       const meleeActive = !!weaponSwitchManager?.meleeActive;
       const fireHeld = !uiBlocked && holdingGun && !meleeActive && (!!mouseLeftDown || !!(hudState && hudState.fireHeld));
       const adsOn = !uiBlocked && holdingGun && !meleeActive && (!!mouseRightDown || !!(hudState && hudState.adsOn));
@@ -1384,6 +1651,23 @@ document.getElementById("status").textContent =
           }
           prevGrenadeHold = grenadeHold;
         }
+      }
+
+      // Patch 7-4B: class item use (press-to-use, no world pause)
+      const classPress = !uiBlocked && classActive && !meleeActive && !!classId && (!!mouseLeftDown || !!(hudState && hudState.fireHeld));
+      if(classItemSystem){
+        if(classPress && !prevClassUse){
+          classItemSystem.use?.(aSlot.index|0);
+          // consume the click edge so it doesn't accidentally shoot next frame
+          mouseLeftDown = false;
+        }
+        prevClassUse = !!classPress;
+      }
+
+      // Binocular aiming piggybacks on ADS input when classItem=binocular
+      if(classItemSystem){
+        const binoShouldAim = (!uiBlocked && classActive && (classId === 'binocular') && (!!mouseRightDown || !!(hudState && hudState.adsOn)));
+        classItemSystem.setBinocularAiming?.(binoShouldAim);
       }
 
       weaponSystem.setTriggerHeld(fireHeld);
@@ -1419,8 +1703,8 @@ document.getElementById("status").textContent =
       }
 weaponSwitchManager?.update?.(dt);
 weaponSystem.update(dt);
-      if(throwablesSystem) throwablesSystem.update(dt);
-      if(decalManager) decalManager.update(dt);
+      // (moved) throwablesSystem update handled earlier
+if(decalManager) decalManager.update(dt);
       if(muzzleFlash) muzzleFlash.update(dt);
       if(casingSystem) casingSystem.update(dt);
       if(casingSystem) casingSystem.update(dt);
@@ -1433,11 +1717,16 @@ weaponSystem.update(dt);
         cameraController.updateRecoil(dt, rs);
       }
 
-      // Patch 7-2A: smooth ADS FOV (frame-rate independent)
-      const targetFov = weaponSystem.isADS ? weaponSystem.current.adsFov : weaponSystem.current.hipFov;
+      // Patch 7-2A + 7-4B: smooth ADS FOV (frame-rate independent) + binocular zoom
+      const binoActive = !!(classItemSystem && classItemSystem.isBinoAiming?.());
+      const baseFov = (classItemSystem?.bino?.baseFov ?? camera?.fov ?? 75);
+      const binoFov = baseFov / (classItemSystem?.bino?.zoom ?? 8);
+      const targetFov = binoActive
+        ? binoFov
+        : (weaponSystem.isADS ? weaponSystem.current.adsFov : weaponSystem.current.hipFov);
       if(camera){
         if(lastFov == null) lastFov = camera.fov;
-        const speed = weaponSystem.isADS ? 18 : 14;
+        const speed = (binoActive || weaponSystem.isADS) ? 18 : 14;
         const t = 1 - Math.exp(-speed * dt);
         lastFov = lastFov + (targetFov - lastFov) * t;
         if(Math.abs(camera.fov - lastFov) > 1e-3){
@@ -1446,15 +1735,18 @@ weaponSystem.update(dt);
         }
       }
 
-      // Patch 7-2B: scope overlay + crosshair hide
-      const scope = weaponSystem.isADS ? (weaponSystem.current.scope || '') : '';
+      // Patch 7-2B + 7-4B: scope overlay + binocular overlay + crosshair hide
+      const scope = (!binoActive && weaponSystem.isADS) ? (weaponSystem.current.scope || '') : '';
       const scopeActive = !!scope;
       if(scopeOverlayEl){
         scopeOverlayEl.style.display = scopeActive ? 'block' : 'none';
         if(scopeActive) scopeOverlayEl.setAttribute('data-scope', scope);
       }
+      if(binoOverlayEl){
+        binoOverlayEl.style.display = binoActive ? 'block' : 'none';
+      }
       if(crosshairEl){
-        crosshairEl.style.display = scopeActive ? 'none' : 'block';
+        crosshairEl.style.display = (scopeActive || binoActive) ? 'none' : 'block';
       }
 
       // HUD
@@ -1465,7 +1757,12 @@ weaponSystem.update(dt);
       const aSlotHud = window.playerProfile?.activeSlot;
       const invHud = window.playerProfile?.inventory || null;
       const grenadeActiveHud = !!aSlotHud && aSlotHud.type === 'grenade';
-      if(grenadeActiveHud){
+      const classInfo = classItemSystem?.getHUDInfo?.();
+      if(classInfo){
+        if(elW) elW.textContent = classInfo.weapon || '';
+        if(elMag) elMag.textContent = classInfo.magText ?? '';
+        if(elRes) elRes.textContent = classInfo.resText ?? '';
+      }else if(grenadeActiveHud){
         const gid = invHud?.grenades?.[aSlotHud.index] || null;
         if(elW) elW.textContent = grenadeHudName(gid);
         if(elMag) elMag.textContent = gid ? '1' : '0';
@@ -1479,7 +1776,10 @@ weaponSystem.update(dt);
       if(elSlot) elSlot.textContent = weaponSwitchManager?.getActiveLabel?.() || '';
 
       if(elS){
-        if(grenadeActiveHud){
+        if(classInfo){
+          elS.textContent = classInfo.status || '';
+          if(classInfo.blink) elS.classList.add('blink'); else elS.classList.remove('blink');
+        }else if(grenadeActiveHud){
           const gid = invHud?.grenades?.[aSlotHud.index] || null;
           if(!gid){ elS.textContent = 'EMPTY'; elS.classList.add('blink'); }
           else { elS.textContent = ''; elS.classList.remove('blink'); }
@@ -1489,9 +1789,25 @@ weaponSystem.update(dt);
           else { elS.textContent = ''; elS.classList.remove('blink'); }
         }
       }
+
+      // Patch 7-4B: binocular HUD
+      const binoHUD = document.getElementById('binoHUD');
+      if(binoHUD){
+        const show = !!(classItemSystem && classItemSystem.isBinoAiming?.());
+        binoHUD.style.display = show ? 'flex' : 'none';
+        if(show){
+          const t = document.getElementById('binoText');
+          const z = classItemSystem?.bino?.zoom;
+          if(t && z) t.textContent = `${z}x`;
+        }
+      }
     }
 
-      if(current?.scene) renderer.render(current.scene, camera);
+            }catch(e){
+        console.error("animate error", e);
+      }
+
+if(current?.scene) renderer.render(current.scene, camera);
     }
 
     window.addEventListener("resize", () => {
@@ -1519,6 +1835,10 @@ weaponSystem.update(dt);
     <div class="mask"></div>
     <div class="reticle"></div>
   </div>
+  <div id="binoOverlay">
+    <div class="mask"></div>
+    <div class="reticle"></div>
+  </div>
   <div id="smokeOverlay"></div>
   <div id="flashOverlay"></div>
 <div id="crosshair" style="position:fixed;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);pointer-events:none">
@@ -1529,5 +1849,14 @@ weaponSystem.update(dt);
     <div class="ammoSlot" id="ammoSlot"></div>
     <div class="ammoNums"><span id="ammoMag">30</span><span class="ammoSep">—</span><span id="ammoRes">90</span></div>
     <div class="ammoStatus" id="ammoStatus"></div>
-  </div></body>
+  </div>
+
+  <!-- Patch 7-4B: binocular zoom HUD (only visible while aiming with binocular) -->
+  <div id="binoHUD" class="binoHUD" style="display:none">
+    <button id="binoMinus" class="binoBtn" tabindex="-1">-</button>
+    <div id="binoText" class="binoText">8x</div>
+    <button id="binoPlus" class="binoBtn" tabindex="-1">+</button>
+  </div>
+
+  </body>
 </html>

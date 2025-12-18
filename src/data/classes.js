@@ -5,19 +5,23 @@ export const CLASS_KEY = "strikegy_selectedClass";
 // Internal ids are stable and used across patches
 export const CLASSES = {
   assault: { id: "assault", name: "경보병", icon: "🪖", classItems: ["panzerfaust", null] },
-  medic:   { id: "medic",   name: "의무병", icon: "🩺", classItems: ["bandage", "launcher_grenade"] },
+  // NOTE Patch 7-4B: bandage is on KeyC (not a classItem slot).
+  // Medic classItem slot0 is a fired heal-smoke launcher.
+  medic:   { id: "medic",   name: "의무병", icon: "🩺", classItems: ["smoke_launcher_heal", null] },
   support: { id: "support", name: "보급병", icon: "📦", classItems: ["ammo_pack", "landmine"] },
-  sniper:  { id: "sniper",  name: "저격병", icon: "🎯", classItems: ["binocular", null] },
+  // Patch 7-4B+: Sniper gets Ladder in slot1
+  sniper:  { id: "sniper",  name: "저격병", icon: "🎯", classItems: ["binocular", "ladder"] },
 };
 
 // User-facing icons (6-1: display only; behavior comes later patches)
 export const ITEM_ICONS = {
   panzerfaust: "💥",
   bandage: "🩹",
-  launcher_grenade: "🧨",
+  smoke_launcher_heal: "🌫️",
   ammo_pack: "📦",
   landmine: "💣",
   binocular: "🔭",
+  ladder: "🪜",
 };
 
 export function normalizeClassId(id){
