@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Strikegy - Room (Patch 11-C)</title>
+  <style>
+    :root{
+      --bg0:#0b0f1a;
+      --bg1:#0e1626;
+      --line:rgba(255,255,255,.10);
+      --text:#eaf0ff;
+      --muted:rgba(234,240,255,.70);
+      --accent:rgba(57,255,209,.12);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Arial, sans-serif;
+      color:var(--text);
+      background:
+        radial-gradient(1200px 600px at 20% 10%, rgba(90,120,255,.16), transparent 55%),
+        radial-gradient(900px 520px at 70% 65%, rgba(57,255,209,.12), transparent 55%),
+        linear-gradient(135deg, var(--bg0), var(--bg1));
+      min-height:100vh;
+    }
+    .wrap{max-width:1100px;margin:0 auto;padding:22px 16px 40px}
+    .top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+    .brand h1{margin:0;font-size:30px;letter-spacing:.3px}
+    .brand .sub{margin-top:6px;color:var(--muted);font-size:13.5px}
+    .nav a{
+      color:var(--text);text-decoration:none;
+      padding:10px 12px;border-radius:12px;border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+    }
+    .grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px}
+    .card{
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      border-radius:18px;
+      padding:14px;
+      backdrop-filter: blur(10px);
+    }
+    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+    .status{ margin-top:10px; padding:8px 10px; border-radius:12px; border:1px solid var(--line); background:rgba(10,12,18,.25); font-size:13px; }
+    .status.ok{ border-color: rgba(57,255,209,.35); }
+    .status.warn{ border-color: rgba(255,200,80,.35); }
+    .status.bad{ border-color: rgba(255,90,110,.35); }
+    .hint{ font-size:12.5px; opacity:.85; color:var(--muted); }
+    .btn{ padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:var(--accent); color:var(--text); cursor:pointer; font-weight:900; }
+    .btn:hover{ filter:brightness(1.05); }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; }
+    .btn-ghost{ background:rgba(10,12,18,.18); }
+    .split{ display:grid; grid-template-columns: 1.1fr 1fr; gap:12px; }
+    @media (max-width: 980px){ .split{ grid-template-columns:1fr; } }
+    .box{ border-radius:16px; border:1px solid var(--line); background:rgba(10,12,18,.16); padding:12px; }
+    .boxTitle{ font-weight:950; opacity:.95; margin-bottom:10px; }
+    .list{ display:flex; flex-direction:column; gap:8px; }
+    .player{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px; border-radius:14px; border:1px solid rgba(255,255,255,.08); background:rgba(10,12,18,.20); }
+    .tag{ font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); margin-left:6px; }
+    .tag-ready{ border-color: rgba(57,255,209,.35); background: rgba(57,255,209,.10); }
+    .tag-team{ border-color: rgba(120,160,255,.30); background: rgba(120,160,255,.10); }
+    .tag-me{ border-color: rgba(255,90,110,.35); background: rgba(255,90,110,.10); }
+    .tag-host{ border-color: rgba(255,200,80,.35); background: rgba(255,200,80,.10); }
+    .input{ flex:1; min-width:160px; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:rgba(10,12,18,.20); color:var(--text); outline:none; }
+    .label{ font-size:12.5px; opacity:.75; margin-bottom:6px; color:var(--muted); }
+    .check{ display:flex; align-items:center; gap:8px; font-size:13px; opacity:.9; }
+    .danger{ border-color: rgba(255,90,110,.35) !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <h1 id="rTitle">Room</h1>
+        <div class="sub">대기실 · Patch 11-C (설정/안전장치)</div>
+      </div>
+      <div class="nav">
+        <a href="./multiplay.html">← 멀티 로비</a>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="row" style="justify-content:space-between;">
+          <div class="hint">내 정보: <span id="rYou">-</span></div>
+          <div class="row">
+            <select id="rTeam" class="input" style="max-width:140px;">
+              <option value="AUTO">AUTO</option>
+              <option value="RED">RED</option>
+              <option value="BLUE">BLUE</option>
+            </select>
+            <button id="rBtnReady" class="btn">준비</button>
+            <button id="rBtnLeave" class="btn btn-ghost">나가기</button>
+          </div>
+        </div>
+        <div id="rStatus" class="status">CONNECTING…</div>
+        <div id="rHintHttps" class="hint" style="display:none; margin-top:6px;">
+          ⚠️ GitHub Pages(https)에서는 <b>ws://</b>가 차단됩니다. 반드시 <b>wss://</b> 프록시를 쓰세요.
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="split">
+          <div class="box">
+            <div class="boxTitle">플레이어</div>
+            <div id="rPlayers" class="list"></div>
+          </div>
+
+          <div class="box">
+            <div class="boxTitle">방 설정 (방장)</div>
+            <div id="rHostHint" class="hint">방장만 변경/시작 가능</div>
+
+            <div id="rSettings" style="margin-top:10px;">
+              <div class="row">
+                <div style="flex:1;">
+                  <div class="label">모드</div>
+                  <select id="rMode" class="input">
+                    <option value="zone">Zone Control</option>
+                    <option value="conquest">Conquest</option>
+                    <option value="frontline">Frontline</option>
+                  </select>
+                </div>
+                <div style="flex:1;">
+                  <div class="label">(Zone) 티켓</div>
+                  <input id="rZoneTickets" class="input" type="number" min="1" max="999" value="300" />
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:10px;">
+                <div style="flex:1;">
+                  <div class="label">리스폰 시간(초)</div>
+                  <input id="rRespawn" class="input" type="number" min="0" max="30" value="5" />
+                </div>
+                <div style="flex:1;">
+                  <div class="label">봇 사용</div>
+                  <label class="check" style="margin-top:8px;">
+                    <input id="rBotsEnabled" type="checkbox" />
+                    <span>봇 추가/삭제 허용</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="label" style="margin-top:14px;">경제 규칙</div>
+              <div class="row">
+                <div style="flex:1;">
+                  <div class="label">시작 돈</div>
+                  <input id="rMoneyStart" class="input" type="number" min="0" max="20000" value="1200" />
+                </div>
+                <div style="flex:1;">
+                  <div class="label">상한</div>
+                  <input id="rMoneyCap" class="input" type="number" min="0" max="20000" value="9000" />
+                </div>
+              </div>
+              <div class="row" style="margin-top:10px;">
+                <div style="flex:1;">
+                  <div class="label">30초당 획득</div>
+                  <input id="rIncome30" class="input" type="number" min="0" max="5000" value="100" />
+                </div>
+                <div style="flex:1;">
+                  <div class="label">킬 보상</div>
+                  <input id="rKill" class="input" type="number" min="0" max="5000" value="300" />
+                </div>
+              </div>
+              <div class="row" style="margin-top:10px;">
+                <div style="flex:1;">
+                  <div class="label">점령 보상(기본)</div>
+                  <input id="rCapture" class="input" type="number" min="0" max="5000" value="200" />
+                </div>
+                <div style="flex:1;">
+                  <div class="label">/ n (나눌 값)</div>
+                  <input id="rCaptureN" class="input" type="number" min="1" max="16" value="1" />
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:14px;">
+                <label class="check" style="flex:1;">
+                  <input id="rConfirm" type="checkbox" />
+                  <span>변경 사항이 게임 밸런스를 바꿀 수 있음을 이해함</span>
+                </label>
+              </div>
+
+              <div class="row" style="margin-top:12px; justify-content:flex-end;">
+                <button id="rBtnApply" class="btn btn-ghost" disabled>적용</button>
+                <button id="rBtnStart" class="btn" disabled>시작</button>
+              </div>
+
+              <div class="hint" style="margin-top:10px;">
+                🔒 안전장치: 방장이 체크박스를 켜야 ‘적용’이 활성화됩니다.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="rErrorCard" style="display:none;">
+        <div style="font-weight:1000;">문제 발생</div>
+        <div class="hint" id="rErrorText" style="margin-top:8px;"></div>
+        <div class="row" style="margin-top:12px;">
+          <button id="rBtnBack" class="btn">멀티 로비로 돌아가기</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script type="module" src="./src/net/room-ui-11c.js"></script>
+</body>
+</html>

@@ -49,6 +49,11 @@ export default class CollisionWorld {
         // vertical overlap check
         if (yMax < b.min.y || yMin > b.max.y) continue;
 
+        // Patch 7-4I: if the capsule is entirely above the top face (standing on the box),
+        // we do NOT resolve XZ against it. This lets players stand/walk on top of inner walls
+        // without being shoved sideways by the XZ-only solver.
+        if (yMin >= b.max.y - 1e-3) continue;
+
 // closest point on AABB to capsule center in XZ
         const clx = Math.max(b.min.x, Math.min(pos.x, b.max.x));
         const clz = Math.max(b.min.z, Math.min(pos.z, b.max.z));

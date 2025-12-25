@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Strikegy - Multiplayer Lobby (Patch 11-C SPA)</title>
+  <style>
+    :root{
+      --bg0:#0b0f1a;
+      --bg1:#0e1626;
+      --line:rgba(255,255,255,.10);
+      --text:#eaf0ff;
+      --muted:rgba(234,240,255,.70);
+      --accent:rgba(57,255,209,.12);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Arial, sans-serif;
+      color:var(--text);
+      background:
+        radial-gradient(1200px 600px at 20% 10%, rgba(90,120,255,.16), transparent 55%),
+        radial-gradient(900px 520px at 70% 65%, rgba(57,255,209,.12), transparent 55%),
+        linear-gradient(135deg, var(--bg0), var(--bg1));
+      min-height:100vh;
+    }
+    .wrap{max-width:1100px;margin:0 auto;padding:22px 16px 40px}
+    .top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+    .brand h1{margin:0;font-size:34px;letter-spacing:.3px}
+    .brand .sub{margin-top:6px;color:var(--muted);font-size:13.5px}
+    .nav a{
+      color:var(--text);text-decoration:none;
+      padding:10px 12px;border-radius:12px;border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+    }
+    .grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px}
+    .card{
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      border-radius:18px;
+      padding:14px;
+      backdrop-filter: blur(10px);
+    }
+    .mp-status{ margin-top:10px; padding:8px 10px; border-radius:12px; border:1px solid var(--line); background:rgba(10,12,18,.25); font-size:13px; }
+    .mp-status.ok{ border-color: rgba(57,255,209,.35); }
+    .mp-status.warn{ border-color: rgba(255,200,80,.35); }
+    .mp-status.bad{ border-color: rgba(255,90,110,.35); }
+    .mp-hint{ font-size:12.5px; opacity:.85; color:var(--muted); }
+    .mp-you{ font-size:12.5px; opacity:.85; color:var(--muted); }
+    .mp-inline{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .mp-input{ flex:1; min-width:160px; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:rgba(10,12,18,.20); color:var(--text); outline:none; }
+    .mp-btn{ padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:var(--accent); color:var(--text); cursor:pointer; font-weight:900; }
+    .mp-btn:hover{ filter:brightness(1.05); }
+    .mp-btn:disabled{ opacity:.5; cursor:not-allowed; }
+    .mp-btn-ghost{ background:rgba(10,12,18,.18); }
+    .mp-split{ display:grid; grid-template-columns: 1.2fr 1fr; gap:12px; }
+    @media (max-width: 980px){ .mp-split{ grid-template-columns:1fr; } }
+    .mp-box{ border-radius:16px; border:1px solid var(--line); background:rgba(10,12,18,.16); padding:12px; }
+    .mp-boxTitle{ font-weight:950; opacity:.95; margin-bottom:10px; }
+    .mp-list{ display:flex; flex-direction:column; gap:8px; }
+    .mp-empty{ opacity:.7; padding:10px; }
+    .mp-room{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px; border-radius:14px; border:1px solid rgba(255,255,255,.08); background:rgba(10,12,18,.20); }
+    .mp-room-title{ font-weight:950; }
+    .mp-room-meta{ font-size:12.5px; opacity:.75; color:var(--muted); }
+    .mp-badge{ font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid rgba(255,200,80,.35); background:rgba(255,200,80,.10); margin-left:6px; }
+    .mp-form .mp-label{ font-size:12.5px; opacity:.75; margin-bottom:6px; color:var(--muted); }
+    .mp-log{ min-height:110px; max-height:180px; overflow:auto; padding:10px; border-radius:12px; border:1px solid var(--line); background:rgba(0,0,0,.22); }
+    .mp-roomHeader{ display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+    .mp-roomHeaderTitle{ font-weight:1000; font-size:16px; }
+    .mp-roomHeaderSub{ font-size:12.5px; opacity:.75; color:var(--muted); }
+    .mp-player{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px; border-radius:14px; border:1px solid rgba(255,255,255,.08); background:rgba(10,12,18,.20); }
+    .mp-player-sub{ font-size:12px; opacity:.65; color:var(--muted); }
+    .mp-tag{ font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); margin-left:6px; }
+    .mp-tag-ready{ border-color: rgba(57,255,209,.35); background: rgba(57,255,209,.10); }
+    .mp-tag-team{ border-color: rgba(120,160,255,.30); background: rgba(120,160,255,.10); }
+    .mp-tag-me{ border-color: rgba(255,90,110,.35); background: rgba(255,90,110,.10); }
+    .mp-check{ display:flex; align-items:center; gap:8px; font-size:13px; opacity:.9; }
+    .mp-hidden{ display:none !important; }
+
+    /* Modal */
+    .mp-modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:18px; z-index:9999; }
+    .mp-modal-backdrop.show{ display:flex; }
+    .mp-modal{ width:min(520px, 100%); border:1px solid var(--line); background:rgba(10,12,18,.88); border-radius:18px; padding:14px; box-shadow: 0 18px 40px rgba(0,0,0,.35); backdrop-filter: blur(12px); }
+    .mp-modalTitle{ font-weight:1000; font-size:16px; margin:2px 0 10px; }
+    .mp-modalRow{ display:flex; gap:10px; flex-wrap:wrap; }
+    .mp-modalRow > *{ flex:1; }
+    .mp-modalActions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+    .mp-help{ font-size:12.5px; color:var(--muted); opacity:.9; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <h1>Strikegy</h1>
+        <div class="sub">멀티플레이 로비 · Patch 11-C (SPA: 로비↔룸 화면전환, WS 유지)</div>
+      </div>
+      <div class="nav">
+        <a href="./index.html">← 메인 로비</a>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div style="font-weight:950; font-size:16px;">서버 연결</div>
+
+        <div class="mp-inline" style="margin-top:10px;">
+          <input id="mpServerUrl" class="mp-input" placeholder="wss://ws.strikegy.org/ws" />
+          <button id="mpBtnConnect" class="mp-btn mp-hidden">연결</button>
+          <button id="mpBtnRefresh" class="mp-btn mp-btn-ghost">새로고침</button>
+        </div>
+        <div id="mpHttpsHint" class="mp-hint" style="display:none; margin-top:6px;">
+          ⚠️ GitHub Pages(https)에서는 <b>ws://</b>가 차단됩니다. <b>wss://</b> 프록시를 쓰세요. (예: wss://YOUR_DOMAIN/ws)
+        </div>
+
+        <div class="mp-inline" style="margin-top:10px;">
+          <input id="mpNick" class="mp-input" placeholder="닉네임 (최대 16자)" />
+          <button id="mpBtnSetNick" class="mp-btn mp-btn-ghost">닉 변경</button>
+          <div class="mp-you">내 정보: <span id="mpYou">-</span></div>
+        </div>
+
+        <div id="mpStatus" class="mp-status">미연결</div>
+      </section>
+
+      <section class="card" id="mpLobbyPanel">
+        <div class="mp-split">
+          <div class="mp-box">
+            <div class="mp-boxTitle">방 목록</div>
+            <div id="mpRoomList" class="mp-list"></div>
+          </div>
+
+          <div class="mp-box">
+            <div class="mp-boxTitle">방 만들기 / 참가</div>
+            <div class="mp-form">
+              <div class="mp-inline">
+                <button id="mpBtnOpenCreate" class="mp-btn" style="flex:1;">방 생성</button>
+                <button id="mpBtnOpenJoin" class="mp-btn mp-btn-ghost" style="flex:1;">방 참가</button>
+              </div>
+              <div class="mp-help">방 생성/참가는 모달로 설정합니다. (SPA라서 WS가 끊기지 않습니다)</div>
+
+              <div class="mp-label" style="margin-top:10px;">로그</div>
+              <pre id="mpLog" class="mp-log"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="mpRoomPanel" style="display:none;">
+        <div class="mp-roomHeader">
+          <div>
+            <div class="mp-roomHeaderTitle" id="mpRoomName">Room</div>
+            <div class="mp-roomHeaderSub">상태: <span id="mpRoomState">LOBBY</span></div>
+          </div>
+          <div class="mp-inline">
+            <select id="mpTeam" class="mp-input" style="max-width:140px;">
+              <option value="AUTO">AUTO</option>
+              <option value="RED">RED</option>
+              <option value="BLUE">BLUE</option>
+            </select>
+            <button id="mpBtnReady" class="mp-btn">준비</button>
+            <button id="mpBtnLeave" class="mp-btn mp-btn-ghost">나가기</button>
+          </div>
+        </div>
+
+        <div class="mp-split" style="margin-top:12px;">
+          <div class="mp-box">
+            <div class="mp-boxTitle">플레이어</div>
+            <div id="mpPlayerList" class="mp-list"></div>
+          </div>
+
+          <div class="mp-box">
+            <div class="mp-boxTitle">방 설정 (방장)</div>
+            <div id="mpHostOnlyHint" class="mp-hint">방장만 변경/시작 가능</div>
+
+            <div class="mp-form" id="mpSettingsForm">
+              <div class="mp-inline">
+                <div style="flex:1">
+                  <div class="mp-label">게임 모드</div>
+                  <select id="mpSetMode" class="mp-input">
+                    <option value="zone">Zone Control</option>
+                    <option value="conquest">Conquest</option>
+                    <option value="frontline">Frontline</option>
+                  </select>
+                </div>
+                <div style="flex:1">
+                  <div class="mp-label">봇</div>
+                  <select id="mpSetBots" class="mp-input">
+                    <option value="off">비활성화</option>
+                    <option value="on">활성화</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="mp-inline" style="margin-top:10px;">
+                <div style="flex:1">
+                  <div class="mp-label">(Zone 한정) 티켓</div>
+                  <input id="mpSetZoneTickets" type="number" min="1" max="999" class="mp-input" value="200" />
+                </div>
+                <div style="flex:1">
+                  <div class="mp-label">(공통) 리스폰 시간(초)</div>
+                  <input id="mpSetRespawn" type="number" min="1" max="60" class="mp-input" value="5" />
+                </div>
+              </div>
+
+              <div class="mp-label" style="margin-top:12px;">경제 규칙</div>
+              <div class="mp-inline">
+                <div style="flex:1">
+                  <div class="mp-label">시작 돈</div>
+                  <input id="mpEcoStart" type="number" min="0" max="99999" class="mp-input" value="1200" />
+                </div>
+                <div style="flex:1">
+                  <div class="mp-label">상한</div>
+                  <input id="mpEcoCap" type="number" min="0" max="99999" class="mp-input" value="9000" />
+                </div>
+              </div>
+              <div class="mp-inline" style="margin-top:10px;">
+                <div style="flex:1">
+                  <div class="mp-label">30초당 획득</div>
+                  <input id="mpEcoIncome30" type="number" min="0" max="99999" class="mp-input" value="100" />
+                </div>
+                <div style="flex:1">
+                  <div class="mp-label">킬</div>
+                  <input id="mpEcoKill" type="number" min="0" max="99999" class="mp-input" value="300" />
+                </div>
+              </div>
+              <div class="mp-inline" style="margin-top:10px;">
+                <div style="flex:1">
+                  <div class="mp-label">목표 점령 (200/n)</div>
+                  <input id="mpEcoCapture" type="number" min="0" max="99999" class="mp-input" value="200" />
+                </div>
+                <div style="flex:1">
+                  <div class="mp-label">n(분배 수)</div>
+                  <input id="mpEcoCaptureDiv" type="number" min="1" max="16" class="mp-input" value="1" />
+                </div>
+              </div>
+
+              <label class="mp-check" style="margin-top:12px;">
+                <input id="mpSafetyAck" type="checkbox" />
+                <span>나는 룰/경제 변경이 밸런스에 영향을 준다는 것을 이해합니다.</span>
+              </label>
+
+              <div class="mp-inline" style="margin-top:12px; justify-content:flex-end;">
+                <button id="mpBtnApplySettings" class="mp-btn mp-btn-ghost" disabled>적용</button>
+                <button id="mpBtnStart" class="mp-btn">시작</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Create Room Modal -->
+  <div id="mpCreateModal" class="mp-modal-backdrop" aria-hidden="true">
+    <div class="mp-modal" role="dialog" aria-modal="true">
+      <div class="mp-modalTitle">방 생성</div>
+
+      <div class="mp-label">방 이름</div>
+      <input id="mpCreateName" class="mp-input" placeholder="예: 우리반 4v4" />
+
+      <div class="mp-modalRow" style="margin-top:10px;">
+        <div>
+          <div class="mp-label">최대 인원</div>
+          <input id="mpCreateMax" class="mp-input" type="number" min="2" max="16" value="8" />
+        </div>
+        <div>
+          <div class="mp-label">비공개</div>
+          <select id="mpCreatePrivate" class="mp-input">
+            <option value="0" selected>공개</option>
+            <option value="1">비공개</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mp-label" style="margin-top:10px;">비밀번호 (비공개일 때)</div>
+      <input id="mpCreatePassword" class="mp-input" placeholder="옵션" />
+      <div class="mp-help">※ 서버가 아직 비공개/비번을 강제하지 않으면, 일단 UI만 준비해둡니다.</div>
+
+      <div class="mp-modalActions">
+        <button class="mp-btn mp-btn-ghost" data-close="mpCreateModal">취소</button>
+        <button id="mpBtnCreate" class="mp-btn">생성</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join Room Modal -->
+  <div id="mpJoinModal" class="mp-modal-backdrop" aria-hidden="true">
+    <div class="mp-modal" role="dialog" aria-modal="true">
+      <div class="mp-modalTitle">방 참가</div>
+
+      <div class="mp-label">방 코드</div>
+      <input id="mpJoinCode" class="mp-input" placeholder="예: ABC123" />
+
+      <div class="mp-label" style="margin-top:10px;">비밀번호 (필요 시)</div>
+      <input id="mpJoinPassword" class="mp-input" placeholder="옵션" />
+
+      <div class="mp-modalActions">
+        <button class="mp-btn mp-btn-ghost" data-close="mpJoinModal">취소</button>
+        <button id="mpBtnJoin" class="mp-btn">참가</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/net/multiplay-ui.js"></script>
+</body>
+</html>

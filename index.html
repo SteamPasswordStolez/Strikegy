@@ -6,16 +6,26 @@
   <title>Strikegy — Lobby</title>
   <style>
     :root{
-      --bg:#0b0f17; --panel:#111a2b; --text:#eaf0ff; --muted:#9fb0d0;
-      --line:rgba(255,255,255,.12); --btn:#1f4fff; --btn2:#1a2a44;
-      --danger:#ff3b3b;
+      --bg:#070a12;
+      --panel:#0f1729;
+      --panel2:#0b1220;
+      --text:#eaf0ff;
+      --muted:#9fb0d0;
+      --line:rgba(255,255,255,.12);
+      --blue:#1f4fff;
+      --blue2:#163dd6;
+      --red:#ff3b3b;
+      --cyan:#4dffd4;
     }
     *{box-sizing:border-box}
     body{
       margin:0; font-family:system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Arial, sans-serif;
-      background:radial-gradient(1200px 600px at 20% 10%, rgba(31,79,255,.25), transparent 60%),
-                 radial-gradient(900px 500px at 80% 90%, rgba(120,255,214,.12), transparent 55%),
-                 var(--bg);
+      background:
+        radial-gradient(900px 520px at 18% 12%, rgba(31,79,255,.26), transparent 60%),
+        radial-gradient(780px 520px at 78% 88%, rgba(57,255,209,.10), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.04), transparent 35%),
+        repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 1px, transparent 1px 10px),
+        var(--bg);
       color:var(--text);
       min-height:100vh;
       display:flex;
@@ -41,7 +51,7 @@
       .grid{grid-template-columns:1fr}
     }
     .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
       border:1px solid var(--line);
       border-radius:18px;
       padding:18px;
@@ -76,7 +86,11 @@
       letter-spacing:.4px;
       font-size:12px;
       background:rgba(255,255,255,.05);
-    }
+    
+    .mode[data-mode="zone"] .badge{border-color:rgba(77,255,212,.35); background:rgba(77,255,212,.10);} 
+    .mode[data-mode="conquest"] .badge{border-color:rgba(31,79,255,.45); background:rgba(31,79,255,.10);} 
+    .mode[data-mode="frontline"] .badge{border-color:rgba(255,59,59,.35); background:rgba(255,59,59,.10);}
+}
     .mode h3{margin:0; font-size:16px}
     .mode p{margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.35}
     .right{
@@ -95,7 +109,7 @@
       transition:transform .06s ease, filter .12s ease, border-color .12s ease;
     }
     .btn:hover{transform:translateY(-1px); border-color:rgba(255,255,255,.22)}
-    .btn.primary{background:linear-gradient(180deg, rgba(31,79,255,1), rgba(23,62,210,1)); border-color:rgba(31,79,255,.65)}
+    .btn.primary{background:linear-gradient(180deg, var(--blue), var(--blue2)); border-color:rgba(31,79,255,.65)}
     .btn.disabled{
       opacity:.55; cursor:not-allowed;
     }
@@ -141,6 +155,10 @@
       border-radius:18px;
       box-shadow:0 24px 70px rgba(0,0,0,.55);
       overflow:hidden;
+      /* Hotfix 9-4E.2: allow settings to scroll on small screens */
+      display:flex;
+      flex-direction:column;
+      max-height:calc(100vh - 48px);
     }
     .modalHeader{
       padding:14px 16px;
@@ -160,7 +178,18 @@
       cursor:pointer;
       font-weight:900;
     }
-    .modalBody{padding:16px; display:grid; gap:14px}
+    .modalBody{
+      padding:16px;
+      display:grid;
+      gap:14px;
+      /* scroll inside modal instead of freezing the page */
+      overflow-y:auto;
+      -webkit-overflow-scrolling:touch;
+	      overscroll-behavior: contain;
+	      touch-action: pan-y;
+      flex:1;
+      min-height:0;
+    }
     .field{
       border:1px solid var(--line);
       background:rgba(0,0,0,.18);
@@ -205,9 +234,9 @@
     <div class="top">
       <div class="title">
         <h1>Strikegy</h1>
-        <p>Lobby (Patch 1) · 모드 선택 → 시작</p>
+        <p>AI 교전 · 모드 규칙 · 장기 프로젝트 빌드</p>
       </div>
-      <div class="pill warn" id="buildPill">Build: dev</div>
+      <div class="pill" id="buildPill" style="display:none"></div>
     </div>
 
     <div class="grid">
@@ -243,23 +272,26 @@
       <aside class="card right">
         <p class="sectionTitle">ACTIONS</p>
         <div class="btnRow">
-          <button class="btn primary" id="startBtn">Start</button>
-          <button class="btn" id="settingsBtn">Settings</button>
+          <button class="btn primary" id="startBtn">싱글플레이 시작</button>
+          <button class="btn" id="mpBtn">멀티플레이</button>
+          <button class="btn" id="howtoBtn">조작법 · 규칙</button>
+          <button class="btn" id="settingsBtn">설정</button>
         </div>
 
         <div class="meta">
           <div class="row"><span>Selected Mode</span><b id="selectedModeLabel">zone</b></div>
           <div class="row"><span>Control Preset</span><b id="controlPresetLabel">pc</b></div>
           <div class="row"><span>Sensitivity</span><b id="sensitivityLabel">1.00</b></div>
+          <div class="row"><span>Bot Difficulty</span><b id="botDifficultyLabel">normal</b></div>
           <div class="row"><span>Store</span><span>localStorage.selectedMode</span></div>
-          <p class="hint">※ Patch 1 범위: 로비/이동만. 게임 로직은 여기서 절대 구현하지 않음.</p>
+          <p class="hint">※ 설정/선택값은 기기에 저장됩니다 (localStorage).</p>
         </div>
       </aside>
     </div>
   </div>
 
 
-  <!-- Settings Modal (Patch 2) -->
+  <!-- Settings Modal -->
   <div class="overlay" id="settingsOverlay" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="modalHeader">
@@ -271,7 +303,7 @@
         <div class="field">
           <div class="fieldTitle">
             <b>Control Preset</b>
-            <span>저장만 하고, 실제 적용 강화는 Patch 4</span>
+            <span>선택값은 게임에 적용됩니다</span>
           </div>
 
           <div class="presetGrid" id="presetGrid">
@@ -304,7 +336,7 @@
         <div class="field">
           <div class="fieldTitle">
             <b>Sensitivity</b>
-            <span>Patch 4에서 시점 회전에 곱해 적용</span>
+            <span>시점 회전에 곱해 적용</span>
           </div>
 
           <div class="sliderRow">
@@ -313,6 +345,59 @@
           </div>
           <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;">
             추천 범위: 0.6 ~ 1.6 (원하면 더 올려도 됨)
+          </div>
+        </div>
+
+        <!-- Bot difficulty -->
+        <div class="field">
+          <div class="fieldTitle">
+            <b>Bot Difficulty</b>
+            <span>봇 교전/길찾기 공격성·정확도에 영향</span>
+          </div>
+
+          <div class="presetGrid" id="botDiffGrid">
+            <label class="preset">
+              <input type="radio" name="botDifficulty" value="very_easy">
+              <div>
+                <b>Very Easy</b>
+                <div class="desc">느린 반응 · 낮은 정확도 · 공격성 낮음</div>
+              </div>
+            </label>
+            <label class="preset">
+              <input type="radio" name="botDifficulty" value="easy">
+              <div>
+                <b>Easy</b>
+                <div class="desc">초보용 · 교전 빈도 보통 · 실수 많음</div>
+              </div>
+            </label>
+            <label class="preset">
+              <input type="radio" name="botDifficulty" value="normal">
+              <div>
+                <b>Normal</b>
+                <div class="desc">기본값 · 무난한 교전/정확도</div>
+              </div>
+            </label>
+            <label class="preset">
+              <input type="radio" name="botDifficulty" value="hard">
+              <div>
+                <b>Hard</b>
+                <div class="desc">반응 빠름 · 추격 적극 · 실수 적음</div>
+              </div>
+            </label>
+            <label class="preset">
+              <input type="radio" name="botDifficulty" value="expert">
+              <div>
+                <b>Expert</b>
+                <div class="desc">강함 · Bot vs Bot 교전도 더 잦음</div>
+              </div>
+            </label>
+            <label class="preset">
+              <input type="radio" name="botDifficulty" value="nightmare">
+              <div>
+                <b>Nightmare</b>
+                <div class="desc">매우 강함 · 공격성/정확도 극대화</div>
+              </div>
+            </label>
           </div>
         </div>
       </div>
@@ -325,31 +410,98 @@
     </div>
   </div>
 
+  <!-- How-to / Rules Modal -->
+  <div class="overlay" id="howtoOverlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="howtoTitle">
+      <div class="modalHeader">
+        <h2 id="howtoTitle">조작법 · 규칙</h2>
+        <button class="iconBtn" id="howtoCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="modalBody">
+        <div class="field">
+          <div class="fieldTitle"><b>PC 조작</b><span>기본</span></div>
+          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;line-height:1.6">
+            이동: <b>WASD</b> · 점프: <b>Space</b> · 달리기(홀드): <b>Shift</b> · 앉기(토글): <b>X</b> · 슬라이드: <b>달리기 중 X</b><br>
+            발사: <b>좌클릭</b> · 조준: <b>우클릭</b> · 재장전: <b>R</b> · 무기/장비: <b>I</b> · 근접: <b>F</b>
+          </div>
+        </div>
+        <div class="field">
+          <div class="fieldTitle"><b>모바일 조작</b><span>환경에 따라 다름</span></div>
+          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;line-height:1.6">
+            설정에서 <b>Mobile</b> 또는 <b>Mobile + Keyboard</b> 선택 가능.<br>
+            모바일 HUD 버튼으로 이동/사격/조준/재장전/장비 사용을 지원합니다.
+          </div>
+        </div>
+        <div class="field">
+          <div class="fieldTitle"><b>게임 규칙</b><span>요약</span></div>
+          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;line-height:1.6">
+            <b>Zone Control</b>: 거점을 점령해 전선을 만든다 (점령/중립화 진행).<br>
+            <b>Conquest</b>: 제한 시간 내 거점을 더 많이 확보하면 유리.<br>
+            <b>Frontline</b>: 시간 종료 시 더 많은 거점 보유 팀 승리.<br>
+            리스폰 대기시간: <b>5초</b>.
+          </div>
+        </div>
+      </div>
+      <div class="modalFooter">
+        <button class="btn small" id="howtoOkBtn">확인</button>
+      </div>
+    </div>
+  </div>
+
 
   <script type="module">
     import ClassSelectModal from "./src/ui/ClassSelectModal.js";
     import { CLASS_KEY, normalizeClassId } from "./src/data/classes.js";
 
-    // Patch 1: 로비 UI + 모드 선택 저장 + game.html 이동만.
+    // Lobby UI + 설정 저장 + game.html 이동
     const modesEl = document.getElementById('modes');
     const selectedModeLabel = document.getElementById('selectedModeLabel');
     const startBtn = document.getElementById('startBtn');
     // Patch 2: Settings (control preset + sensitivity) 저장/유지
     const settingsBtn = document.getElementById('settingsBtn');
+
+    // Patch 11-A: 멀티플레이 페이지로 이동
+    const mpBtn = document.getElementById('mpBtn');
+    mpBtn?.addEventListener('click', () => {
+      location.href = './multiplay.html';
+    });
+    const howtoBtn = document.getElementById('howtoBtn');
+    const howtoOverlay = document.getElementById('howtoOverlay');
+    const howtoCloseBtn = document.getElementById('howtoCloseBtn');
+    const howtoOkBtn = document.getElementById('howtoOkBtn');
     const settingsOverlay = document.getElementById('settingsOverlay');
     const settingsCloseBtn = document.getElementById('settingsCloseBtn');
     const settingsCancelBtn = document.getElementById('settingsCancelBtn');
     const settingsSaveBtn = document.getElementById('settingsSaveBtn');
     const settingsResetBtn = document.getElementById('settingsResetBtn');
 
+    // How-to / Rules modal
+    howtoBtn?.addEventListener('click', ()=>openOverlay(howtoOverlay));
+    howtoCloseBtn?.addEventListener('click', ()=>closeOverlay(howtoOverlay));
+    howtoOkBtn?.addEventListener('click', ()=>closeOverlay(howtoOverlay));
+
+    function openOverlay(el){
+      if(!el) return;
+      el.classList.add('open');
+      el.setAttribute('aria-hidden','false');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeOverlay(el){
+      if(!el) return;
+      el.classList.remove('open');
+      el.setAttribute('aria-hidden','true');
+      document.body.style.overflow = '';
+    }
+
     const controlPresetLabel = document.getElementById('controlPresetLabel');
     const sensitivityLabel = document.getElementById('sensitivityLabel');
+    const botDifficultyLabel = document.getElementById('botDifficultyLabel');
 
     const sensitivityRange = document.getElementById('sensitivityRange');
     const sensitivityValue = document.getElementById('sensitivityValue');
 
     const SETTINGS_KEY = 'strikegy_settings';
-    const DEFAULT_SETTINGS = { controlPreset: 'pc', sensitivity: 1.0 };
+    const DEFAULT_SETTINGS = { controlPreset: 'pc', sensitivity: 1.0, botDifficulty: 'normal' };
 
     let draftSettings = null; // 모달에서 편집 중인 값(저장 전)
 
@@ -363,7 +515,10 @@
         const cp = (parsed.controlPreset === 'pc' || parsed.controlPreset === 'mobile' || parsed.controlPreset === 'mobile_kb')
           ? parsed.controlPreset : DEFAULT_SETTINGS.controlPreset;
         const sens = clamp(Number(parsed.sensitivity ?? DEFAULT_SETTINGS.sensitivity), 0.2, 3.0);
-        return { controlPreset: cp, sensitivity: sens };
+        const bdRaw = String(parsed.botDifficulty ?? DEFAULT_SETTINGS.botDifficulty).toLowerCase();
+        const bdAllowed = ['very_easy','easy','normal','hard','expert','nightmare'];
+        const bd = bdAllowed.includes(bdRaw) ? bdRaw : DEFAULT_SETTINGS.botDifficulty;
+        return { controlPreset: cp, sensitivity: sens, botDifficulty: bd };
       }catch(e){
         return { ...DEFAULT_SETTINGS };
       }
@@ -376,6 +531,7 @@
     function updateSettingsLabels(s){
       controlPresetLabel.textContent = s.controlPreset;
       sensitivityLabel.textContent = Number(s.sensitivity).toFixed(2);
+      botDifficultyLabel.textContent = s.botDifficulty;
     }
 
     function setRadio(name, value){
@@ -390,14 +546,16 @@
 
     function syncFormFromSettings(s){
       setRadio('controlPreset', s.controlPreset);
+      setRadio('botDifficulty', s.botDifficulty);
       sensitivityRange.value = String(s.sensitivity);
       sensitivityValue.textContent = Number(s.sensitivity).toFixed(2);
     }
 
     function readSettingsFromForm(){
       const cp = getRadio('controlPreset') || DEFAULT_SETTINGS.controlPreset;
+      const bd = getRadio('botDifficulty') || DEFAULT_SETTINGS.botDifficulty;
       const sens = clamp(Number(sensitivityRange.value), 0.2, 3.0);
-      return { controlPreset: cp, sensitivity: sens };
+      return { controlPreset: cp, sensitivity: sens, botDifficulty: bd };
     }
 
     function openSettings(){

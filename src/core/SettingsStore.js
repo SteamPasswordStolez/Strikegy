@@ -5,7 +5,9 @@ const KEY = "strikegy_settings";
 
 const DEFAULTS = Object.freeze({
   controlPreset: "pc",      // "pc" | "mobile" | "mobile_kb"
-  sensitivity: 1.0          // 0.2 ~ 3.0 (Patch 2 기준)
+  sensitivity: 1.0,         // 0.2 ~ 3.0 (Patch 2 기준)
+  // Patch 9-3C+: lobby-selectable bot difficulty
+  botDifficulty: "normal"   // very_easy | easy | normal | hard | expert | nightmare
 });
 
 function clamp(n, a, b){
@@ -41,6 +43,13 @@ export class SettingsStore {
 
     const s = Number(this._data.sensitivity);
     this._data.sensitivity = clamp(Number.isFinite(s) ? s : 1.0, 0.2, 3.0);
+
+    const bd = String(this._data.botDifficulty || "").toLowerCase();
+    if(bd !== "very_easy" && bd !== "easy" && bd !== "normal" && bd !== "hard" && bd !== "expert" && bd !== "nightmare"){
+      this._data.botDifficulty = "normal";
+    }else{
+      this._data.botDifficulty = bd;
+    }
   }
 
   refresh(){
@@ -50,11 +59,13 @@ export class SettingsStore {
 
   get controlPreset(){ return this._data.controlPreset; }
   get sensitivity(){ return this._data.sensitivity; }
+  get botDifficulty(){ return this._data.botDifficulty; }
 
   // (선택) Patch 4에서 직접 저장할 일은 거의 없지만, 필요하면 사용 가능
-  set(controlPreset, sensitivity){
+  set(controlPreset, sensitivity, botDifficulty){
     if(controlPreset != null) this._data.controlPreset = controlPreset;
     if(sensitivity != null) this._data.sensitivity = sensitivity;
+    if(botDifficulty != null) this._data.botDifficulty = botDifficulty;
     this._sanitize();
     this._write();
   }

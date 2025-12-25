@@ -2,10 +2,12 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.mod
 import { WEAPONS } from "./WeaponData.js";
 
 export default class WeaponSystem{
-  constructor({camera,scene,getCollidables,onWallHit,onSound,onShot,onEject}){
+  constructor({camera,scene,getCollidables,getDamageables,onWallHit,onEntityHit,onSound,onShot,onEject}){
     this.camera=camera;
     this.scene=scene;
     this.getCollidables=getCollidables;
+    this.getDamageables=getDamageables;
+    this.onEntityHit=onEntityHit;
     this.onWallHit=onWallHit;
     this.onSound=onSound;
     this.onShot=onShot;
@@ -92,6 +94,27 @@ export default class WeaponSystem{
     this.current = w;
     this.cooldown = 0;
     this.onSound?.("swap");
+  }
+
+  // Patch 8-4A2: Reset all weapon magazines/reserve on death (per design).
+  // This makes per-life ammo state deterministic and avoids partial-mag edge cases.
+  resetAllAmmoFull(){
+    try{
+      for(const id in WEAPONS){
+        const w = WEAPONS[id];
+        if(!w) continue;
+        if(!this.weaponStates[id]) this.weaponStates[id] = { mag: 0, reserve: 0 };
+        this.weaponStates[id].mag = Number(w.magSize ?? 0) || 0;
+        this.weaponStates[id].reserve = Number(w.reserve ?? 0) || 0;
+      }
+      // Cancel any reload/burst state as well.
+      this.isReloading = false;
+      this.reloadTimer = 0;
+      this.v7_actionLock = 0;
+      this.v7_burstActive = false;
+      this.v7_burstLeft = 0;
+      this.v7_burstTimer = 0;
+    }catch(e){}
   }
 
   startReload(){
@@ -324,11 +347,39 @@ export default class WeaponSystem{
       return;
     }
 
-    // Default: single hitscan ray
+    // Default: single hitscan ray (world + damageables)
     this.ray.set(origin,dir);
     this.ray.far=this.current.range;
 
-    const hits=this.ray.intersectObjects(this.getCollidables(),true);
-    if(hits.length) this.onWallHit?.(hits[0]);
+    let worldHits=this.ray.intersectObjects(this.getCollidables(),true);
+    // Filter out damageable hits so entities (bots/players) don't get treated like walls.
+    // If we don't do this, a bot mesh included in collidables can swallow the hit and
+    // prevent onEntityHit from firing.
+    if(worldHits && worldHits.length){
+      worldHits = worldHits.filter(h => !h?.object?.userData?.damageableId);
+    }
+
+    // Optional: damageable hits (bots / remote players / dummies)
+    let dmgHit = null;
+    try{
+      const dmgRoots = (typeof this.getDamageables === "function") ? (this.getDamageables() || []) : [];
+      if(dmgRoots.length){
+        const dh = this.ray.intersectObjects(dmgRoots, true);
+        if(dh && dh.length) dmgHit = dh[0];
+      }
+    }catch{}
+
+    const worldHit = (worldHits && worldHits.length) ? worldHits[0] : null;
+
+    // Choose nearest hit
+    const best = (!worldHit) ? dmgHit : (!dmgHit ? worldHit : (dmgHit.distance < worldHit.distance ? dmgHit : worldHit));
+
+    if(best){
+      if(best === dmgHit){
+        this.onEntityHit?.(best, this.current);
+      }else{
+        this.onWallHit?.(best);
+      }
+    }
   }
 }

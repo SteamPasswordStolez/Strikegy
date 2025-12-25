@@ -15,6 +15,8 @@ export class ClassItemSystem {
     this.getEntities = opts.getEntities || (()=>[]); // for heal-smoke later
     this.throwablesSystem = opts.throwablesSystem || null;
     this.ammoRefill = opts.ammoRefill || null;
+    // Patch 7-4C (temp): allow class items to inject simple AABB colliders (ladder anti-maptal)
+    this.collisionWorld = opts.collisionWorld || null;
     this.onSound = opts.onSound || (()=>{});
     this.onHUD = opts.onHUD || (()=>{}); // (payload) => {}
 
@@ -43,7 +45,7 @@ export class ClassItemSystem {
       valid: false,
       base: new THREE.Vector3(),
       normal: new THREE.Vector3(0, 0, 1),
-      height: 5.0,
+      height: 8.5,
       preview: null,
       mesh: null,
       _tmp: { hit: null },
@@ -441,37 +443,60 @@ export class ClassItemSystem {
   }
 
   _validateLadderPlacement(hit){
-    if(!hit || !hit.point || !hit.normal) return false;
-    // 1) Must be near-vertical wall
-    if(Math.abs(hit.normal.y) > 0.2) return false;
-
+    // Patch 7-4C (temp): make ladder placement forgiving and axis-aligned
+    // Goal: "works now" > perfect validation.
+    if(!hit || !hit.point){
+      return false;
+    }
     const base = hit.point.clone();
 
-    // 2) Ground check under base
-    const gRay = new THREE.Raycaster(base.clone().add(new THREE.Vector3(0, 0.25, 0)), new THREE.Vector3(0, -1, 0), 0, 3.0);
-    const gHits = gRay.intersectObjects(this.getCollidables?.() || [], true);
+    // Ground snap (required)
+    // Patch 7-4D: user requested "바닥에 닿기만 하면 설치".
+    // => We only require some ground hit; we don't reject by slope normal.
+    const gRay = new THREE.Raycaster(
+      base.clone().add(new THREE.Vector3(0, 0.5, 0)),
+      new THREE.Vector3(0, -1, 0),
+      0,
+      10.0
+    );
+    // Use collidables if provided, otherwise fall back to scene children.
+    let gTargets = this.getCollidables?.() || [];
+    if(!gTargets || !gTargets.length){
+      try{ gTargets = this.scene?.children || []; }catch{ gTargets = []; }
+    }
+    let gHits = gRay.intersectObjects(gTargets, true);
+    // If collidableMeshes doesn't include the floor, fall back to scene children.
+    if(!gHits || !gHits.length){
+      try{
+        const all = this.scene?.children || [];
+        gHits = gRay.intersectObjects(all, true);
+      }catch{ gHits = []; }
+    }
     if(!gHits || !gHits.length) return false;
     const g = gHits[0];
-    if(!g.normal || g.normal.y < 0.85) return false;
+    // snap to the first ground intersection point
     base.copy(g.point);
 
-    // 3) Height clamp (hard anti-map-break)
-    const h = clamp(this.ladder.height, 2.5, 5.5);
+    // Height clamp (hard anti-map-break)
+    const h = clamp(this.ladder.height, 3.5, 10.0);
 
-    // 4) Wall continuity probes (prevents placing through gaps / out of bounds)
-    const n = hit.normal.clone().normalize();
-    const inward = n.clone().multiplyScalar(-1);
-    const probeRay = new THREE.Raycaster();
-    const samples = [0.2, h*0.5, h-0.2];
-    for(const y of samples){
-      const p = base.clone().add(new THREE.Vector3(0, y, 0));
-      probeRay.set(p, inward);
-      probeRay.far = 0.55;
-      const ph = probeRay.intersectObjects(this.getCollidables?.() || [], true);
-      if(!ph || !ph.length) return false;
+    // Wall normal: if missing, fallback to camera forward
+    let n = (hit.normal ? hit.normal.clone() : new THREE.Vector3(0,0,1));
+    if(Math.abs(n.y) > 0.6){
+      // if we hit ground or weird surface, use camera facing
+      try{ this.camera?.getWorldDirection?.(n); }catch{}
+    }
+    n.y = 0;
+    if(n.lengthSq() < 1e-6) n.set(0,0,1);
+    n.normalize();
+
+    // Snap to cardinal axis so our CollisionWorld AABBs remain accurate.
+    if(Math.abs(n.x) >= Math.abs(n.z)){
+      n.set(Math.sign(n.x) || 1, 0, 0);
+    }else{
+      n.set(0, 0, Math.sign(n.z) || 1);
     }
 
-    // Save
     this.ladder.base.copy(base);
     this.ladder.normal.copy(n);
     this.ladder.height = h;
@@ -497,7 +522,7 @@ export class ClassItemSystem {
     // When ladder item is selected, we always show preview mode.
     this._setLadderPlacing(true);
     this._ensureLadderPreview();
-    const hit = this._raycastWallForLadder();
+    let hit = this._raycastWallForLadder();
     // HF1: Keep preview visible even when placement is invalid or no wall is hit.
     try{
       if(hit && hit.point){
@@ -510,9 +535,14 @@ export class ClassItemSystem {
         this.camera?.getWorldDirection?.(fwd);
         fwd.normalize();
         this.ladder.base.copy(base).add(fwd.multiplyScalar(2.0));
-        this.ladder.normal.set(0,0,1);
+        this.ladder.normal.copy(fwd).setY(0).normalize();
+        if(this.ladder.normal.lengthSq() < 1e-6) this.ladder.normal.set(0,0,1);
       }
     }catch{}
+    // If no wall hit, still allow placement using a synthetic hit.
+    if(!hit){
+      hit = { point: this.ladder.base.clone(), normal: this.ladder.normal.clone() };
+    }
     const ok = this._validateLadderPlacement(hit);
     this.ladder.valid = !!ok;
 
@@ -520,9 +550,11 @@ export class ClassItemSystem {
       this.ladder.preview.visible = true;
       const m = this.ladder.preview;
       m.position.copy(this.ladder.base).add(new THREE.Vector3(0, this.ladder.height*0.5, 0));
-      // face inward (so it hugs the wall)
-      const face = this.ladder.base.clone().add(this.ladder.normal.clone().multiplyScalar(-1));
-      m.lookAt(face);
+      // Patch 7-4D: preview must stay perfectly vertical (yaw-only).
+      // Using lookAt() tilts the preview because target Y differs from the mesh center.
+      const n = this.ladder.normal;
+      const yaw = Math.atan2(-n.x, -n.z);
+      m.rotation.set(0, yaw, 0);
       // green when valid, red when invalid
       const mat = m.material;
       if(mat && mat.color){
@@ -533,38 +565,73 @@ export class ClassItemSystem {
   }
 
   _buildLadderMesh(){
+    // Patch 7-4C (temp): simple box ladder mesh (stable, cheap, no "curved" look)
     const h = this.ladder.height;
     const group = new THREE.Group();
     group.name = 'ladder';
-    const railGeom = new THREE.CylinderGeometry(0.035, 0.035, h, 10);
-    const rungGeom = new THREE.CylinderGeometry(0.025, 0.025, 0.38, 10);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.55, metalness: 0.35 });
-    const left = new THREE.Mesh(railGeom, mat);
-    const right = new THREE.Mesh(railGeom, mat);
-    left.position.set(-0.16, h*0.5, 0);
-    right.position.set(0.16, h*0.5, 0);
-    group.add(left, right);
-    const rungCount = 8;
-    for(let i=0;i<rungCount;i++){
-      const t = (i+1)/(rungCount+1);
-      const rung = new THREE.Mesh(rungGeom, mat);
-      rung.rotation.z = Math.PI/2;
-      rung.position.set(0, h*t, 0);
-      group.add(rung);
-    }
+    const bodyGeom = new THREE.BoxGeometry(0.55, h, 0.18);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x8f8f8f, roughness: 0.75, metalness: 0.2 });
+    const body = new THREE.Mesh(bodyGeom, mat);
+    body.position.set(0, h*0.5, 0);
+    group.add(body);
     return group;
+  }
+
+  _removeLadderColliders(){
+    const cw = this.collisionWorld;
+    if(!cw || !Array.isArray(cw.boxes)) return;
+    cw.boxes = cw.boxes.filter(b => (b.type !== 'ladder' && b.type !== 'ladder_cap'));
+  }
+
+  _addLadderColliders(){
+    const cw = this.collisionWorld;
+    if(!cw || typeof cw.addCenteredBox !== 'function') return;
+    const base = this.ladder.base;
+    const n = this.ladder.normal;
+    const h = this.ladder.height;
+
+    // axis-aligned due to snapping in _validateLadderPlacement
+    const alongX = (Math.abs(n.x) > 0.5);
+    const thickness = 0.28;
+    const width = 0.95;
+
+    // ladder "wall" (thin) — helps prevent stepping through / weird pushes while climbing
+    const size = alongX ? [thickness, h, width] : [width, h, thickness];
+    const center = [
+      base.x + n.x * (thickness*0.25),
+      base.y + h*0.5,
+      base.z + n.z * (thickness*0.25),
+    ];
+    cw.addCenteredBox('ladder', size, center);
+
+    // top cap (anti-maptal): a thicker wall a bit above the top
+    const capH = 1.3;
+    const capThick = 0.6;
+    const capW = 1.25;
+    const capSize = alongX ? [capThick, capH, capW] : [capW, capH, capThick];
+    const capCenter = [
+      base.x + n.x * (capThick*0.35),
+      base.y + h + capH*0.5 - 0.15,
+      base.z + n.z * (capThick*0.35),
+    ];
+    cw.addCenteredBox('ladder_cap', capSize, capCenter);
   }
 
   _placeLadder(){
     if(!this.ladder.valid) return false;
     try{ if(this.ladder.mesh) this.scene?.remove?.(this.ladder.mesh); }catch{}
+    // update collision AABBs (remove old, add new)
+    this._removeLadderColliders();
     const mesh = this._buildLadderMesh();
     mesh.position.copy(this.ladder.base);
     mesh.position.y += 0.0;
-    const face = this.ladder.base.clone().add(this.ladder.normal.clone().multiplyScalar(-1));
-    mesh.lookAt(face);
+    // Patch 7-4D: keep placed ladder vertical (yaw-only), consistent with preview.
+    const n = this.ladder.normal;
+    const yaw = Math.atan2(-n.x, -n.z);
+    mesh.rotation.set(0, yaw, 0);
     this.scene?.add?.(mesh);
     this.ladder.mesh = mesh;
+    this._addLadderColliders();
     this.onSound?.('swap');
     return true;
   }
@@ -577,27 +644,104 @@ export class ClassItemSystem {
 
   // Returns climb assist info. game.html may choose to apply it to PlayerController.
   getClimbAssist(input, dt){
+    // Kinematic ladder climb assist (stable) + clean top-out onto nearby surface
     if(!this.ladder.mesh) return { active:false };
     if(this.profile?.isDead) return { active:false };
     const po = this.getPlayerObject?.();
     if(!po) return { active:false };
+
     const moveZ = input?.moveZ ?? 0;
     if(Math.abs(moveZ) < 0.15) return { active:false };
 
-    // Compute distance to ladder base in XZ
     const p = po.position;
     const base = this.ladder.base;
+    const n = this.ladder.normal; // may be camera-yaw based; don't trust it blindly for top-out
+
+    // Forgiving proximity check
     const dx = p.x - base.x;
     const dz = p.z - base.z;
     const distXZ = Math.hypot(dx, dz);
-    if(distXZ > 0.85) return { active:false };
+    if(distXZ > 1.35) return { active:false };
 
-    // Climb speed
     const climbSpeed = 3.2;
-    const dir = moveZ > 0 ? 1 : -1; // W => +, S => -
-    const deltaY = dir * climbSpeed * (dt || 0);
+    const dir = moveZ > 0 ? 1 : -1; // W => up, S => down
+    let deltaY = dir * climbSpeed * (dt || 0);
+
+    const bottomY = base.y;
+    const topY = base.y + (this.ladder.height || 0);
+
+    // --- Clamp vertical travel so we never "fly" above the ladder
+    if(dir > 0){
+      const remain = (topY - 0.12) - p.y;
+      if(remain <= 0){
+        // === TOP-OUT ===
+        // Find a safe "stand here" spot near the ladder top by probing downwards on both sides.
+        // This avoids being shoved away by collision resolution and makes stepping onto inner walls reliable.
+        const collidables = (this.getCollidables?.() || []);
+        const ray = new THREE.Raycaster();
+        const down = new THREE.Vector3(0,-1,0);
+
+        // Build a reasonable sideways direction from ladder normal; if it's degenerate, fallback to camera forward.
+        const side = new THREE.Vector3(n?.x||0, 0, n?.z||0);
+        if(side.lengthSq() < 1e-6){
+          if(this.camera){
+            this.camera.getWorldDirection(side);
+            side.y = 0;
+          }
+        }
+        if(side.lengthSq() < 1e-6) side.set(0,0,1);
+        side.normalize();
+
+        const probeY = topY + 1.6;
+        const offsets = [
+          side.clone().multiplyScalar(0.85),
+          side.clone().multiplyScalar(-0.85),
+          new THREE.Vector3(0,0,0),
+        ];
+
+        let best = null; // {x,y,z} where y is the *surface* Y we can stand on
+        for(const off of offsets){
+          const origin = new THREE.Vector3(base.x + off.x, probeY, base.z + off.z);
+          ray.set(origin, down);
+          ray.far = 5.0;
+          const hits = ray.intersectObjects(collidables, true);
+          if(hits && hits.length){
+            const pt = hits[0].point;
+            // Prefer higher surfaces (e.g., top of inner wall) but keep it near the ladder top region.
+            if(pt.y >= topY - 2.0 && pt.y <= topY + 2.0){
+              if(!best || pt.y > best.y){
+                best = { x: pt.x, y: pt.y, z: pt.z };
+              }
+            }
+          }
+        }
+
+        if(!best){
+          // Fallback: stop at the ladder top. game.html will place the player correctly using capsule half-height.
+          return { active:true, topOut:true, lockXZ:false, deltaY:0, placeOnSurface:true, surfaceY: topY };
+        }
+
+        return {
+          active:true,
+          topOut:true,
+          lockXZ:false,
+          deltaY:0,
+          // place player onto the detected surface (standable)
+          setX: best.x,
+          setZ: best.z,
+          placeOnSurface:true,
+          surfaceY: best.y,
+        };
+      }
+      deltaY = Math.min(deltaY, remain);
+    }else{
+      const remain = bottomY - p.y;
+      deltaY = Math.max(deltaY, remain);
+    }
+
     return { active:true, deltaY, lockXZ:true };
   }
+
 
   // ===== Internal helpers =====
   _isBinocularEquipped(){

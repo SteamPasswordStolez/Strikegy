@@ -17,6 +17,7 @@ export default class MobileHUD {
       fireHeld:false,
       adsOn:false,
       reloadPressed:false,
+      bandagePressed:false,
       nextWeaponPressed:false,
       meleePressed:false,
     };
@@ -38,6 +39,7 @@ export default class MobileHUD {
       <div class="mh-combat" aria-label="Combat buttons">
         <button class="mh-btn mh-btn--small" id="mhADS" type="button" aria-label="Aim toggle">🎯</button>
         <button class="mh-btn mh-btn--small" id="mhReload" type="button" aria-label="Reload">🔄</button>
+        <button class="mh-btn mh-btn--small mh-hidden" id="mhBandage" type="button" aria-label="Bandage">🩹</button>
         <button class="mh-btn mh-btn--small" id="mhNextWeapon" type="button" aria-label="Next weapon">🔁</button>
         <button class="mh-btn mh-btn--small" id="mhMelee" type="button" aria-label="Melee">👊</button>
         <button class="mh-btn mh-btn--jump" id="mhJump" type="button" aria-label="Jump">⬆️</button>
@@ -69,8 +71,16 @@ export default class MobileHUD {
     this.consumePulses();
   }
 
+  // Patch 9-4F: show/hide bandage button (only when HP < max)
+  setBandageVisible(v){
+    const b = this.el.querySelector("#mhBandage");
+    if(!b) return;
+    b.classList.toggle("mh-hidden", !v);
+  }
+
   consumePulses(){
     this.state.reloadPressed = false;
+    this.state.bandagePressed = false;
     this.state.nextWeaponPressed = false;
     this.state.meleePressed = false;
   }
@@ -127,6 +137,7 @@ export default class MobileHUD {
     const btnFire = this.el.querySelector("#mhFire");
     const btnADS = this.el.querySelector("#mhADS");
     const btnReload = this.el.querySelector("#mhReload");
+    const btnBandage = this.el.querySelector("#mhBandage");
     const btnNext = this.el.querySelector("#mhNextWeapon");
     const btnMelee = this.el.querySelector("#mhMelee");
 
@@ -163,6 +174,13 @@ export default class MobileHUD {
       e.preventDefault();
       this.state.reloadPressed = true;
       this._pulse(btnReload);});
+
+    // Bandage: momentary (game loop checks HP + cooldown)
+    btnBandage?.addEventListener("click", (e)=>{
+      e.preventDefault();
+      this.state.bandagePressed = true;
+      this._pulse(btnBandage);
+    });
 
     btnNext?.addEventListener("click", (e)=>{
       e.preventDefault();

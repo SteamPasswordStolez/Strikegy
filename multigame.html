@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Strikegy — Game</title>
+  <title>Strikegy — MultiGame (Patch 11-D1)</title>
   <style>
     :root{
       --bg:#0b0f17; --text:#eaf0ff; --muted:#9fb0d0; --line:rgba(255,255,255,.12);
@@ -774,7 +774,9 @@
     import { ShopSystem } from './src/game/ShopSystem.js';
   import { AmmoRefillService } from './src/game/AmmoRefillService.js';
   import { ClassItemSystem } from './src/game/ClassItemSystem.js';
-  import { initMPBootstrap } from './src/net/MPBootstrap.js';
+  // Patch 11-D1: in-game WS client (authoritative movement + snapshots)
+  import { LobbyWSClient } from './src/net/LobbyWSClient.js';
+  import { C2S, S2C } from './src/net/protocol.js';
     
   import { EconomyManager } from "./src/game/EconomyManager.js";
   import { LoadoutManager } from "./src/game/LoadoutManager.js";
@@ -827,6 +829,148 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       if (map && map.startsWith("maps/") && map.endsWith(".json")) return map;
       return DEFAULT_MAP_BY_MODE[mode] || DEFAULT_MAP_BY_MODE.zone;
     }
+
+    // ---------------------------
+    // Patch 11-D1: Multiplayer runtime (WS authoritative movement + remote capsules)
+    // - Uses the same WS connection as lobby/room
+    // - Only synces: position + yaw (for now)
+    // ---------------------------
+    (function initMultiplayerRuntime(){
+      const params = new URLSearchParams(location.search);
+      const enabled = params.get('mp') === '1';
+      const roomId = params.get('room') || sessionStorage.getItem('mp_roomId') || '';
+
+      // Expose a small debug surface
+      const mp = {
+        enabled,
+        roomId,
+        client: null,
+        youId: null,
+        lastSnapshot: null,
+        remote: new Map(), // playerId -> { mesh }
+        _sendAcc: 0,
+      };
+      window.__mp = mp;
+
+      if (!enabled) return;
+      if (!roomId) {
+        console.warn('[MP] missing room id');
+        return;
+      }
+
+      // server url (same default used by multiplay.html)
+      const wsUrl = sessionStorage.getItem('mp_serverUrl') || 'wss://ws.strikegy.org/ws';
+      const c = new LobbyWSClient(wsUrl);
+      mp.client = c;
+
+      c.on('open', () => {
+        // Patch 11-D1: reclaim old playerId across page navigation if possible
+        const token = sessionStorage.getItem('mp_reconnectToken') || '';
+        if (token) c.reconnect(token);
+        else c.joinRoom(roomId);
+      });
+
+      c.on(S2C.INIT, (m) => {
+        mp.youId = m?.you?.id || null;
+      });
+
+      c.on(S2C.GAME_SNAPSHOT, (m) => {
+        if (!m || m.roomId !== mp.roomId) return;
+        mp.lastSnapshot = m;
+      });
+
+      c.on(S2C.ERROR, (m) => {
+        console.error('[MP] server error', m);
+      });
+
+      c.connect({ reconnect: true });
+
+      function ensureRemoteMesh(scene, pid){
+        if (mp.remote.has(pid)) return mp.remote.get(pid);
+        const mesh = makeCapsuleMesh();
+        mesh.name = `mp_remote_${pid}`;
+        scene.add(mesh);
+        const entry = { mesh };
+        mp.remote.set(pid, entry);
+        return entry;
+      }
+
+      function makeCapsuleMesh(){
+        // simple capsule (cylinder + 2 spheres)
+        const g = new THREE.Group();
+        const r = 0.38;
+        const h = 1.6;
+        const cylH = Math.max(0.2, h - r*2);
+        const mat = new THREE.MeshStandardMaterial({ color: 0xff7a8a, roughness: 0.9, metalness: 0.0 });
+        const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r, cylH, 10), mat);
+        cyl.position.y = r + cylH/2;
+        const top = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), mat);
+        top.position.y = r + cylH;
+        const bot = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), mat);
+        bot.position.y = r;
+        g.add(cyl, top, bot);
+        return g;
+      }
+
+      // Called from the main animate loop (patched near playerController.update)
+      mp._sendInputTick = function(dt, { moveX, moveZ, sprint, camera }){
+        if (!mp.client || !mp.client.isOpen) return;
+        mp._sendAcc += dt;
+        const SEND_HZ = 20;
+        const step = 1 / SEND_HZ;
+        if (mp._sendAcc < step) return;
+        mp._sendAcc = mp._sendAcc % step;
+
+        // yaw in radians (match minimap fallback: atan2(dir.x, dir.z))
+        let yaw = 0;
+        try {
+          const dir = new THREE.Vector3();
+          camera.getWorldDirection(dir);
+          yaw = Math.atan2(dir.x, dir.z);
+        } catch (e) {
+          yaw = Number(camera?.rotation?.y) || 0;
+        }
+
+        mp.client.send({
+          type: C2S.GAME_INPUT,
+          roomId: mp.roomId,
+          input: { moveX: Number(moveX)||0, moveZ: Number(moveZ)||0, sprint: !!sprint, yaw },
+        });
+      };
+
+      mp._applySnapshot = function({ playerObject, scene, cameraController }){
+        const snap = mp.lastSnapshot;
+        if (!snap || !scene) return;
+
+        const youId = mp.youId || sessionStorage.getItem('mp_youId') || null;
+        const players = snap.players || {};
+
+        // local player position
+        if (youId && players[youId] && playerObject?.position) {
+          const p = players[youId];
+          const pos = p.pos || {};
+          playerObject.position.x = Number(pos.x) || 0;
+          playerObject.position.y = Number(pos.y) || 2;
+          playerObject.position.z = Number(pos.z) || 0;
+        }
+
+        // remotes
+        for (const pid of Object.keys(players)) {
+          if (pid === youId) continue;
+          const ent = ensureRemoteMesh(scene, pid);
+          const pos = players[pid]?.pos || {};
+          ent.mesh.position.set(Number(pos.x)||0, Number(pos.y)||2, Number(pos.z)||0);
+        }
+
+        // cleanup remotes that disappeared
+        for (const [pid, ent] of mp.remote) {
+          if (!players[pid]) {
+            try { scene.remove(ent.mesh); } catch(_) {}
+            mp.remote.delete(pid);
+          }
+        }
+      };
+    })();
 
     // ---------------------------
     // Patch 3: MapLoader (fetch + 최소 검증)
@@ -2146,7 +2290,28 @@ document.getElementById("status").textContent =
           const halfH = playerController.isCrouched ? playerController.halfHeightCrouch : playerController.halfHeightStand;
           playerController.groundY = computePlatformGroundY(playerObject.position, halfH);
         }
+        // ---------------------------
+        // Patch 11-D1: Authoritative multiplayer movement (position via server snapshots)
+        // ---------------------------
+        const __mpMoveX = st.moveX;
+        const __mpMoveZ = st.moveZ;
+        const __mpSprint = !!st.sprintHeld;
+
+        // Prevent client-side translation when MP is enabled.
+        if (window.__mp && window.__mp.enabled) {
+          st.moveX = 0;
+          st.moveZ = 0;
+        }
+
         playerController.update(dt, st, camera, collisionWorld);
+
+        if (window.__mp && window.__mp.enabled) {
+          // send input at a fixed rate
+          window.__mp._sendInputTick?.(dt, { moveX: __mpMoveX, moveZ: __mpMoveZ, sprint: __mpSprint, camera });
+          // apply last authoritative snapshot for local + remote players
+          // NOTE: multigame uses current.scene (not a global `scene` var). Pass it explicitly.
+          window.__mp._applySnapshot?.({ playerObject, scene: current.scene, camera, cameraController });
+        }
 
 
         // Patch 8-1: minimap tick
@@ -2468,8 +2633,7 @@ if(current?.scene) renderer.render(current.scene, camera);
     animate();
   
 
-  // Patch 11-A: multiplayer bootstrap banner (no sync yet)
-  initMPBootstrap();</script>
+  </script>
   <!-- Patch 7-2B: scope overlay (shown only when ADS + weapon has scope) -->
   <div id="scopeOverlay" data-scope="3x">
     <div class="mask"></div>

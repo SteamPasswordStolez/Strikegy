@@ -130,10 +130,14 @@ export default class ThrowablesSystem{
     this.getCollidables = opts?.getCollidables || (()=>[]);
     this.getPlayerPosition = opts?.getPlayerPosition || null;
 
-    this.onSound = opts?.onSound || null;
+    
+    this.getPlayerTeam = opts?.getPlayerTeam || (()=>"blue");
+this.onSound = opts?.onSound || null;
     this.onDamage = opts?.onDamage || null;           // optional (future)
     this.onCameraKick = opts?.onCameraKick || null;   // (pitch, yaw)
-    this.onOverlay = opts?.onOverlay || null;         // ({smoke, flash})
+    this.onOverlay = opts?.onOverlay || null;         
+    this.onEffect = opts?.onEffect || null; // ({type,pos,radius,duration,sourceTeam})
+// ({smoke, flash})
     this.onLookLock = opts?.onLookLock || null;       // (seconds) freeze look input
 
     this.isMobile = opts?.isMobile ?? isMobileUA();
@@ -255,6 +259,7 @@ export default class ThrowablesSystem{
       kind: spec.kind,
       radius: spec.size,
       bounces: 0,
+      sourceTeam: (this.getPlayerTeam?.() || "blue"),
     });
 
     this.onSound?.("throw_cast");
@@ -587,7 +592,7 @@ export default class ThrowablesSystem{
         this.scene?.add?.(r2);
         this._rings.push({ mesh: r2, t:0, dur: 0.42, grow: 22 });
       }catch{}
-      this._applyExplosionDamage({ pos: g.pos, radius: 6, max: 120, min: 20 });
+      this._applyExplosionDamage({ pos: g.pos, radius: 6, max: 120, min: 20, sourceTeam: g.sourceTeam });
       // Stronger shake
       this._shakes.push({ t: 0.55, dur: 0.55, pitchAmp: 0.18, yawAmp: 0.22 });
       this._cameraKickNear({ pos: g.pos, radius: 6, maxPitch: 0.22, maxYaw: 0.18 });
@@ -602,12 +607,14 @@ export default class ThrowablesSystem{
       const volume = this._spawnSmokeVolume(g.pos, SMOKE_RADIUS);
       // 9.5s duration: near-total vision block inside/outside
       this._smokes.push({ pos: g.pos.clone(), radius: SMOKE_RADIUS, t: 9.5, cloud, volume, baseOpacity: 0.975 });
+      this.onEffect?.({ type:"smoke", pos: g.pos.clone(), radius: SMOKE_RADIUS, duration: 9.5, sourceTeam: g.sourceTeam });
       return;
     }
 
     if(id === "flash"){
       this.onSound?.("grenade_flash");
       this._applyFlashToLocal({ pos: g.pos });
+      this.onEffect?.({ type:"flash", pos: g.pos.clone(), radius: 12.0, duration: 1.2, sourceTeam: g.sourceTeam });
       return;
     }
 
@@ -615,11 +622,12 @@ export default class ThrowablesSystem{
       this.onSound?.("grenade_impact");
       // Impact grenade: primarily disorienting, but can finish low-HP targets.
       // (Patch 8 PRO+ tuning) Make it meaningfully dangerous at very close range.
-      this._applyExplosionDamage({ pos: g.pos, radius: 4.6, max: 80, min: 18 });
+      this._applyExplosionDamage({ pos: g.pos, radius: 4.6, max: 80, min: 18, sourceTeam: g.sourceTeam });
       // Disorient: lock look for ~1.2s + strong shake
       this.onLookLock?.(1.2);
       this._shakes.push({ t: 1.2, dur: 1.2, pitchAmp: 0.20, yawAmp: 0.32 });
       this._cameraKickNear({ pos: g.pos, radius: 4.6, maxPitch: 0.16, maxYaw: 0.26 });
+      this.onEffect?.({ type:"impact", pos: g.pos.clone(), radius: 4.6, duration: 1.2, sourceTeam: g.sourceTeam });
       return;
     }
 
@@ -632,7 +640,7 @@ export default class ThrowablesSystem{
     if(!pos) return false;
     const p = (pos.clone ? pos.clone() : pos);
     // Fake projectile payload for _detonate.
-    const g = { id: String(id), pos: p };
+    const g = { id: String(id), pos: p, sourceTeam: (this.getPlayerTeam?.() || "blue") };
     try{ this._detonate(g); }catch(e){ console.warn('triggerDetonation failed', e); return false; }
     return true;
   }
@@ -811,10 +819,10 @@ export default class ThrowablesSystem{
     };
   }
 
-  _applyExplosionDamage({pos, radius, max, min}){
+  _applyExplosionDamage({pos, radius, max, min, sourceTeam=null}){
     // Teamkill/self-damage OFF by spec.
     if(typeof this.onDamage !== "function") return;
-    this.onDamage({ pos, radius, max, min });
+    this.onDamage({ pos, radius, max, min, sourceTeam });
   }
 
   _cameraKickNear({pos, radius, maxPitch, maxYaw}){
