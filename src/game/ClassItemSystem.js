@@ -1,7 +1,7 @@
 // src/game/ClassItemSystem.js
 // Patch 7-4B: class items (Key6/7) + ammo semantics + binocular zoom UI hooks
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
 const clamp = (v,a,b)=> Math.max(a, Math.min(b, v));
 

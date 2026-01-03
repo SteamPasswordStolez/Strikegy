@@ -1,0 +1,358 @@
+{
+  "name": "CH1 M5 Cityline (Alleys)",
+  "world": {
+    "groundSize": [
+      300,
+      300
+    ],
+    "visualProfile": "urban_day"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -130,
+        2,
+        -120
+      ],
+      "yaw": 45
+    },
+    {
+      "team": "red",
+      "pos": [
+        120,
+        2,
+        130
+      ],
+      "yaw": 225
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        300,
+        18,
+        3
+      ],
+      "pos": [
+        0,
+        9.0,
+        -150.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        300,
+        18,
+        3
+      ],
+      "pos": [
+        0,
+        9.0,
+        150.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        18,
+        300
+      ],
+      "pos": [
+        -150.0,
+        9.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        18,
+        300
+      ],
+      "pos": [
+        150.0,
+        9.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        110
+      ],
+      "pos": [
+        -60,
+        6.0,
+        -75
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        110
+      ],
+      "pos": [
+        -60,
+        6.0,
+        75
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        110
+      ],
+      "pos": [
+        0,
+        6.0,
+        -75
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        110
+      ],
+      "pos": [
+        0,
+        6.0,
+        75
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        110
+      ],
+      "pos": [
+        60,
+        6.0,
+        -75
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        110
+      ],
+      "pos": [
+        60,
+        6.0,
+        75
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        110,
+        12,
+        3
+      ],
+      "pos": [
+        -75,
+        6.0,
+        -60
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        110,
+        12,
+        3
+      ],
+      "pos": [
+        75,
+        6.0,
+        -60
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        110,
+        12,
+        3
+      ],
+      "pos": [
+        -75,
+        6.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        110,
+        12,
+        3
+      ],
+      "pos": [
+        75,
+        6.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        110,
+        12,
+        3
+      ],
+      "pos": [
+        -75,
+        6.0,
+        60
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        110,
+        12,
+        3
+      ],
+      "pos": [
+        75,
+        6.0,
+        60
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        3,
+        6
+      ],
+      "pos": [
+        -30,
+        1.5,
+        -30
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        3,
+        6
+      ],
+      "pos": [
+        30,
+        1.5,
+        30
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        3,
+        6
+      ],
+      "pos": [
+        90,
+        1.5,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        14,
+        3,
+        6
+      ],
+      "pos": [
+        0,
+        1.5,
+        100
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        3,
+        6
+      ],
+      "pos": [
+        -100,
+        1.5,
+        0
+      ]
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "street": {
+        "pos": [
+          -70,
+          2,
+          -40
+        ],
+        "r": 10
+      },
+      "rooftop": {
+        "pos": [
+          40,
+          2,
+          40
+        ],
+        "r": 10
+      },
+      "exfil": {
+        "pos": [
+          140,
+          2,
+          140
+        ],
+        "r": 12
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}

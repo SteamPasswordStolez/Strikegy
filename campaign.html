@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Strikegy — Campaign</title>
+  <style>
+    :root{--bg:#070a12;--panel:#0f1729;--text:#eaf0ff;--muted:#9fb0d0;--line:rgba(255,255,255,.12);--blue:#1f4fff;--blue2:#163dd6}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Noto Sans KR",Segoe UI,Roboto,Arial,sans-serif;background:radial-gradient(900px 520px at 18% 12%, rgba(31,79,255,.18), transparent 60%),radial-gradient(780px 520px at 78% 88%, rgba(57,255,209,.08), transparent 60%),linear-gradient(180deg, rgba(255,255,255,.04), transparent 35%),var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .card{width:min(880px,100%);background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 16px 40px rgba(0,0,0,.35)}
+    h1{margin:0;font-size:28px}
+    p{margin:10px 0 0;color:var(--muted);line-height:1.5}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    .btn{border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-weight:800;cursor:pointer;background:rgba(0,0,0,.18);color:var(--text)}
+    .primary{background:linear-gradient(180deg, var(--blue), var(--blue2));border-color:rgba(31,79,255,.65)}
+    .ghost{background:rgba(255,255,255,.04)}
+    .small{font-size:12px;color:var(--muted);margin-top:12px}
+    code{color:#cfe2ff}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Campaign</h1>
+    <p>
+      싱글 <b>캠페인</b> 모드입니다. (MW 리부트 스타일)<br>
+      <span style="opacity:.9">난이도(쉬움/보통/어려움) 선택 + 미션 로드 프레임워크가 포함됩니다.</span>
+    </p>
+
+    <div class="row">
+      <button class="btn primary" id="newBtn">새 캠페인 시작</button>
+      <button class="btn" id="contBtn">이어하기</button>
+      <button class="btn ghost" id="backBtn">로비로</button>
+    </div>
+
+    <div style="margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:14px; background:rgba(0,0,0,.16)">
+      <div style="font-weight:900; margin-bottom:8px">난이도</div>
+      <div class="row" style="margin-top:0">
+        <button class="btn" data-diff="easy">쉬움</button>
+        <button class="btn primary" data-diff="normal">보통</button>
+        <button class="btn" data-diff="hard">어려움</button>
+      </div>
+      <div class="small" style="margin-top:10px">
+        쉬움: 플레이어 피해량↑ / 적 피해량↓ · 어려움: 플레이어 피해량↓ / 적 피해량↑
+      </div>
+    </div>
+
+    <div class="small">
+      <code>strikegy_campaign_v1</code> 세션을 localStorage에 저장하고 <code>game.html?campaign=1</code>로 이동합니다.
+    </div>
+  </div>
+
+  <script type="module">
+    const KEY = 'strikegy_campaign_v1';
+
+    const DIFF = {
+      easy:   { id:'easy',   playerDamage: 1.20, enemyDamage: 0.75 },
+      normal: { id:'normal', playerDamage: 1.00, enemyDamage: 1.00 },
+      hard:   { id:'hard',   playerDamage: 0.90, enemyDamage: 1.25 },
+    };
+
+    let selectedDiff = 'normal';
+
+    function paintButtons(){
+      document.querySelectorAll('button[data-diff]').forEach(btn=>{
+        const id = btn.getAttribute('data-diff');
+        btn.classList.toggle('primary', id === selectedDiff);
+      });
+    }
+
+    document.querySelectorAll('button[data-diff]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        selectedDiff = btn.getAttribute('data-diff') || 'normal';
+        if(!DIFF[selectedDiff]) selectedDiff = 'normal';
+        paintButtons();
+      });
+    });
+    paintButtons();
+
+    function setSession(isNew){
+      const now = Date.now();
+      const session = {
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+        chapter: 1,
+        act: 1,
+        mission: 1,
+        difficulty: DIFF[selectedDiff],
+        // Campaign mission id (stable key)
+        missionId: 'c1_m1_insertion',
+      };
+      try{
+        if(isNew) localStorage.setItem(KEY, JSON.stringify(session));
+        else{
+          const raw = localStorage.getItem(KEY);
+          if(!raw) localStorage.setItem(KEY, JSON.stringify(session));
+        }
+      }catch(_){/* ignore */}
+    }
+
+    document.getElementById('newBtn')?.addEventListener('click', ()=>{
+      setSession(true);
+      location.href = './game.html?campaign=1';
+    });
+    document.getElementById('contBtn')?.addEventListener('click', ()=>{
+      setSession(false);
+      location.href = './game.html?campaign=1&continue=1';
+    });
+    document.getElementById('backBtn')?.addEventListener('click', ()=>{
+      location.href = './index.html';
+    });
+  </script>
+</body>
+</html>

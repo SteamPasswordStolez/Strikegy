@@ -273,7 +273,7 @@
         <p class="sectionTitle">ACTIONS</p>
         <div class="btnRow">
           <button class="btn primary" id="startBtn">싱글플레이 시작</button>
-          <button class="btn" id="mpBtn">멀티플레이</button>
+          <button class="btn" id="campaignBtn">캠페인</button>
           <button class="btn" id="howtoBtn">조작법 · 규칙</button>
           <button class="btn" id="settingsBtn">설정</button>
         </div>
@@ -460,10 +460,10 @@
     // Patch 2: Settings (control preset + sensitivity) 저장/유지
     const settingsBtn = document.getElementById('settingsBtn');
 
-    // Patch 11-A: 멀티플레이 페이지로 이동
-    const mpBtn = document.getElementById('mpBtn');
-    mpBtn?.addEventListener('click', () => {
-      location.href = './multiplay.html';
+    // Patch 0-F: 싱글 캠페인 진입점 (멀티플레이 제거)
+    const campaignBtn = document.getElementById('campaignBtn');
+    campaignBtn?.addEventListener('click', () => {
+      location.href = './campaign.html';
     });
     const howtoBtn = document.getElementById('howtoBtn');
     const howtoOverlay = document.getElementById('howtoOverlay');

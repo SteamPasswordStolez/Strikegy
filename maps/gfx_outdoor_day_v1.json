@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "mode": "zone",
+    "title": "GFX Test: Outdoor Day (v1)",
+    "author": "Strikegy",
+    "notes": "Graphics/lighting baseline test map for Patch 1-G"
+  },
+  "world": {
+    "groundSize": [500, 500],
+    "visualProfile": "outdoor_day"
+  },
+  "spawns": [
+    {"team": "blue", "pos": [-140, 2, -210], "yaw": 15},
+    {"team": "red",  "pos": [ 140, 2,  210], "yaw": 195}
+  ],
+  "zones": [
+    {"id": "A", "shape": "circle", "pos": [-120, 0, -40], "radius": 22},
+    {"id": "B", "shape": "circle", "pos": [0, 0, 0], "radius": 24},
+    {"id": "C", "shape": "circle", "pos": [120, 0, 40], "radius": 22}
+  ],
+  "objects": [
+    {"shape": "box", "type": "wall",  "size": [24, 8, 140], "pos": [0, 4, -60]},
+    {"shape": "box", "type": "wall",  "size": [24, 8, 140], "pos": [0, 4,  60]},
+
+    {"shape": "box", "type": "wall",  "size": [180, 10, 18], "pos": [0, 5, 0]},
+
+    {"shape": "box", "type": "cover", "size": [12, 6, 12], "pos": [-90, 3, -10]},
+    {"shape": "box", "type": "cover", "size": [12, 6, 12], "pos": [-60, 3,  20]},
+    {"shape": "box", "type": "cover", "size": [12, 6, 12], "pos": [-30, 3, -20]},
+
+    {"shape": "box", "type": "cover", "size": [14, 7, 14], "pos": [ 90, 3.5, 10]},
+    {"shape": "box", "type": "cover", "size": [14, 7, 14], "pos": [ 60, 3.5, -20]},
+    {"shape": "box", "type": "cover", "size": [14, 7, 14], "pos": [ 30, 3.5, 20]},
+
+    {"shape": "box", "type": "wall",  "size": [70, 10, 12], "pos": [-130, 5, -60]},
+    {"shape": "box", "type": "wall",  "size": [70, 10, 12], "pos": [ 130, 5,  60]},
+
+    {"shape": "box", "type": "cover", "size": [10, 4, 24], "pos": [0, 2, -130]},
+    {"shape": "box", "type": "cover", "size": [10, 4, 24], "pos": [0, 2,  130]}
+  ]
+}

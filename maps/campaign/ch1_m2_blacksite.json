@@ -1,0 +1,232 @@
+{
+  "name": "CH1 M2 Blacksite (Facility)",
+  "world": {
+    "groundSize": [
+      200,
+      160
+    ],
+    "visualProfile": "indoor_facility"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -80,
+        2,
+        -60
+      ],
+      "yaw": 30
+    },
+    {
+      "team": "red",
+      "pos": [
+        70,
+        2,
+        50
+      ],
+      "yaw": 210
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        200,
+        12,
+        3
+      ],
+      "pos": [
+        0,
+        6.0,
+        -80.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        200,
+        12,
+        3
+      ],
+      "pos": [
+        0,
+        6.0,
+        80.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        160
+      ],
+      "pos": [
+        -100.0,
+        6.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        160
+      ],
+      "pos": [
+        100.0,
+        6.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        2,
+        9,
+        120
+      ],
+      "pos": [
+        -40,
+        4.5,
+        -10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        2,
+        9,
+        120
+      ],
+      "pos": [
+        0,
+        4.5,
+        -30
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        2,
+        9,
+        120
+      ],
+      "pos": [
+        40,
+        4.5,
+        -10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        80,
+        9,
+        2
+      ],
+      "pos": [
+        -20,
+        4.5,
+        20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        100,
+        9,
+        2
+      ],
+      "pos": [
+        30,
+        4.5,
+        40
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        6,
+        2.5,
+        3
+      ],
+      "pos": [
+        -55,
+        1.25,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        6,
+        2.5,
+        3
+      ],
+      "pos": [
+        -10,
+        1.25,
+        5
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        8,
+        2.5,
+        4
+      ],
+      "pos": [
+        35,
+        1.25,
+        25
+      ]
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "breach": {
+        "pos": [
+          -70,
+          2,
+          -40
+        ],
+        "r": 9
+      },
+      "intel": {
+        "pos": [
+          0,
+          2,
+          10
+        ],
+        "r": 10
+      },
+      "exfil": {
+        "pos": [
+          80,
+          2,
+          60
+        ],
+        "r": 10
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}

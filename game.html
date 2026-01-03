@@ -4,6 +4,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Strikegy — Game</title>
+
+  <!-- Import map: Three.js examples/jsm modules imported from CDN still use the bare specifier "three".
+       This lets the browser resolve it without a bundler, while keeping a single Three.js instance. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
   <style>
     :root{
       --bg:#0b0f17; --text:#eaf0ff; --muted:#9fb0d0; --line:rgba(255,255,255,.12);
@@ -774,16 +785,38 @@
     import { ShopSystem } from './src/game/ShopSystem.js';
   import { AmmoRefillService } from './src/game/AmmoRefillService.js';
   import { ClassItemSystem } from './src/game/ClassItemSystem.js';
-  import { initMPBootstrap } from './src/net/MPBootstrap.js';
+  // Patch 0-F: 멀티플레이 제거 (싱글 전용)
     
   import { EconomyManager } from "./src/game/EconomyManager.js";
   import { LoadoutManager } from "./src/game/LoadoutManager.js";
   import { WeaponSwitchManager } from "./src/game/WeaponSwitchManager.js";
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+  // Patch 1-G2: lightweight post-processing (performance-first)
+  import { EffectComposer } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js";
+  import { RenderPass } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/RenderPass.js";
+  import { ShaderPass } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js";
+  import { FXAAShader } from "https://unpkg.com/three@0.160.0/examples/jsm/shaders/FXAAShader.js";
+  import { UnrealBloomPass } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js";
+
+  // Patch 1-G2 HF2: 일부 GPU에서 FXAA 셰이더의 과도한 LOD bias(-100.0)가 경고를 유발함.
+  // 브라우저(WebGL)에서는 bias 범위가 [-16, 15.99]로 제한되므로, 안전한 값으로 클램프.
+  try {
+    if (FXAAShader?.fragmentShader && FXAAShader.fragmentShader.includes('-100.0')) {
+      FXAAShader.fragmentShader = FXAAShader.fragmentShader.replace(/-100\.0/g, '-8.0');
+    }
+  } catch (e) {}
   import WeaponSystem from "./src/weapons/WeaponSystem.js";
   import ThrowablesSystem from "./src/weapons/ThrowablesSystem.js";
+  // Patch 2-FP: 1인칭 뷰모델(장갑 손 + 무기) 시스템
+  import ViewModelSystem from "./src/fp/ViewModelSystem.js";
   import DecalManager from "./src/effects/DecalManager.js";
   import { CLASS_KEY, normalizeClassId, initInventoryForClass, CLASSES } from "./src/data/classes.js";
+  // Patch 3-CAMP+: Campaign runtime (dialogue/cutscenes/objectives/checkpoints)
+  import { CampaignRuntime } from "./src/campaign/CampaignRuntime.js";
+  import { CampaignDB } from "./src/campaign/CampaignData.js";
+
+  // Patch 1-G: color management (stable PBR + tone mapping)
+  THREE.ColorManagement.enabled = true;
     // Patch 6-2a: economy manager instance (declared early to avoid TDZ)
     let economyManager = null;
     let ammoRefillService = null;
@@ -800,6 +833,43 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       conquest: "maps/conquest_5_v1.json",
       frontline: "maps/frontline_6_lane_v1.json",
     };
+
+    // ---------------------------
+    // Campaign v1 (Patch 3-CAMP): mission registry + difficulty
+    // - Campaign uses a separate map namespace: maps/campaign/...
+    // - Difficulty scales damage dealt/received (bots & player).
+    // ---------------------------
+    const CAMPAIGN_KEY = "strikegy_campaign_v1";
+    // Single source of truth for missions
+    const CAMPAIGN_MISSIONS = CampaignDB?.missions || {};
+
+    function getCampaignSession(){
+      try{
+        const raw = localStorage.getItem(CAMPAIGN_KEY);
+        if(!raw) return null;
+        const s = JSON.parse(raw);
+        return (s && typeof s === 'object') ? s : null;
+      }catch{ return null; }
+    }
+
+    function isCampaign(){
+      try{
+        const url = new URL(window.location.href);
+        return url.searchParams.get('campaign') === '1';
+      }catch{ return false; }
+    }
+
+    function getCampaignDifficulty(){
+      const s = getCampaignSession();
+      const d = s?.difficulty;
+      const pd = Math.max(0.1, Math.min(3, Number(d?.playerDamage ?? 1)));
+      const ed = Math.max(0.1, Math.min(3, Number(d?.enemyDamage ?? 1)));
+      const id = String(d?.id || 'normal');
+      return { id, playerDamage: pd, enemyDamage: ed };
+    }
+
+    // Expose for debugging / UI overlay
+    window.__campaign = { isCampaign, getCampaignSession, getCampaignDifficulty, CAMPAIGN_MISSIONS };
 
     function safeGetLocal(key, fallback=null){
       try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
@@ -822,8 +892,16 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     function resolveMapPath(){
       // (확장용) 쿼리로 map=... 지정 가능. 없으면 모드 기본맵.
       const url = new URL(window.location.href);
-      const map = url.searchParams.get("map");
       const mode = getSelectedMode();
+      if(url.searchParams.get('campaign') === '1'){
+        // Allow forcing a mission via ?mission=... (useful for dev / next-mission transition)
+        const s = getCampaignSession();
+        const mid = String(url.searchParams.get('mission') || s?.missionId || 'c1_m1_insertion');
+        const entry = CAMPAIGN_MISSIONS[mid] || CAMPAIGN_MISSIONS.c1_m1_insertion;
+        return entry.map;
+      }
+
+      const map = url.searchParams.get("map");
       if (map && map.startsWith("maps/") && map.endsWith(".json")) return map;
       return DEFAULT_MAP_BY_MODE[mode] || DEFAULT_MAP_BY_MODE.zone;
     }
@@ -849,11 +927,1042 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     // ---------------------------
     // Patch 3: SceneBuilder (JSON -> Three)
     // ---------------------------
-    const MATERIAL_BY_TYPE = {
-      ground: new THREE.MeshStandardMaterial({ color: 0xd6d6d6, roughness: 0.95, metalness: 0 }),
-      wall:   new THREE.MeshStandardMaterial({ color: 0xb8b8b8, roughness: 0.95, metalness: 0 }),
-      cover:  new THREE.MeshStandardMaterial({ color: 0x8f8f8f, roughness: 0.95, metalness: 0 }),
+
+    // ---------------------------
+    // Patch 1-G: Graphics Baseline (Outdoor Day + Indoor)
+    // ---------------------------
+    const __gfx = {
+      maxAniso: 1,
+      textures: [],
+      envCache: Object.create(null),
     };
+
+
+    // Non-color textures (bump/roughness/etc.): keep in linear space
+    const __NON_COLOR = (typeof THREE.NoColorSpace !== 'undefined')
+      ? THREE.NoColorSpace
+      : ((typeof THREE.LinearSRGBColorSpace !== 'undefined') ? THREE.LinearSRGBColorSpace : null);
+
+    function __gfxSetMaxAniso(n){
+      __gfx.maxAniso = Math.max(1, (n|0) || 1);
+      for (const t of __gfx.textures) t.anisotropy = __gfx.maxAniso;
+    }
+
+    function _mulberry32(seed){
+      return function(){
+        let t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function _makeCanvasTexture(drawFn, { size=512, repeat=4, colorSpace=THREE.SRGBColorSpace } = {}){
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      drawFn(ctx, size);
+      const tex = new THREE.CanvasTexture(c);
+      if (colorSpace !== null && typeof colorSpace !== 'undefined') tex.colorSpace = colorSpace;
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(repeat, repeat);
+      tex.anisotropy = __gfx.maxAniso;
+      tex.needsUpdate = true;
+      __gfx.textures.push(tex);
+      return tex;
+    }
+
+    function _drawNoise(ctx, S, count, alpha255, seed){
+      const rng = _mulberry32(seed);
+      for(let i=0;i<count;i++){
+        const x = (rng()*S)|0;
+        const y = (rng()*S)|0;
+        const v = (80 + rng()*160)|0;
+        const a = (alpha255/255) * (0.4 + rng()*0.6);
+        ctx.fillStyle = `rgba(${v},${v},${v},${a})`;
+        ctx.fillRect(x,y,1,1);
+      }
+    }
+
+    function _texConcrete(){
+      const rng = _mulberry32(1337);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = '#b9bcc1';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,26000,30,9001);
+        // stains
+        for(let i=0;i<220;i++){
+          const x=rng()*S, y=rng()*S, r=12+rng()*54;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0,'rgba(110,110,110,0.10)');
+          g.addColorStop(1,'rgba(110,110,110,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+        // thin cracks
+        ctx.globalAlpha = 0.10;
+        ctx.strokeStyle = '#1a1a1a';
+        for(let i=0;i<70;i++){
+          ctx.beginPath();
+          let x=rng()*S, y=rng()*S;
+          ctx.moveTo(x,y);
+          for(let k=0;k<7;k++){
+            x += (rng()*2-1)*26;
+            y += (rng()*2-1)*26;
+            ctx.lineTo(x,y);
+          }
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }, { size:512, repeat:6, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = 'rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,24000,70,9002);
+      }, { size:512, repeat:6, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    function _texDirt(){
+      const rng = _mulberry32(4242);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = '#6b6a66';
+        ctx.fillRect(0,0,S,S);
+        // colored noise
+        for(let i=0;i<42000;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const r = 85 + (rng()*60)|0;
+          const g = 80 + (rng()*55)|0;
+          const b = 70 + (rng()*50)|0;
+          const a = 0.05 + rng()*0.10;
+          ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+        // darker patches
+        for(let i=0;i<180;i++){
+          const x=rng()*S, y=rng()*S, r=18+rng()*78;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0,'rgba(40,35,30,0.22)');
+          g.addColorStop(1,'rgba(40,35,30,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+      }, { size:512, repeat:10, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = 'rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,36000,95,4243);
+      }, { size:512, repeat:10, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    function _texMetal(){
+      const rng = _mulberry32(7777);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = '#3b4048';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,22000,50,7778);
+        // worn scratches
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = '#c6bfb5';
+        for(let i=0;i<180;i++){
+          const x=rng()*S, y=rng()*S;
+          ctx.fillRect(x,y,1+rng()*14, 1+rng()*2);
+        }
+        ctx.globalAlpha = 1;
+      }, { size:512, repeat:8, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = 'rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,26000,85,7779);
+      }, { size:512, repeat:8, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    
+    function _texSand(){
+      const rng = _mulberry32(424242);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        // warm sand base
+        ctx.fillStyle = '#d8c48a';
+        ctx.fillRect(0,0,S,S);
+        // fine grain
+        for(let i=0;i<42000;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const v = 170 + (rng()*70)|0;
+          const a = 0.04 + rng()*0.10;
+          ctx.fillStyle = `rgba(${v},${v-8},${v-28},${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+        // small pebbles
+        for(let i=0;i<480;i++){
+          const x=rng()*S, y=rng()*S;
+          const r=0.8 + rng()*2.6;
+          const v=120 + (rng()*60)|0;
+          ctx.fillStyle = `rgba(${v},${v},${v},${0.18 + rng()*0.22})`;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+      }, { size:512, repeat:8, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = 'rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,42000,55,424243);
+      }, { size:512, repeat:8, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    function _texAsphalt(){
+      const rng = _mulberry32(515151);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = '#3a3a3c';
+        ctx.fillRect(0,0,S,S);
+        // aggregate specks
+        for(let i=0;i<52000;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const v = 40 + (rng()*80)|0;
+          const a = 0.05 + rng()*0.14;
+          ctx.fillStyle = `rgba(${v},${v},${v},${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+        // faint wear streaks
+        for(let i=0;i<120;i++){
+          const y=(rng()*S)|0;
+          const w = 40 + (rng()*120);
+          const a = 0.03 + rng()*0.05;
+          ctx.fillStyle = `rgba(255,255,255,${a})`;
+          ctx.fillRect((rng()*S)|0, y, w, 2);
+        }
+        // occasional cracks
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = 'rgba(10,10,10,0.35)';
+        for(let i=0;i<14;i++){
+          ctx.beginPath();
+          let x=rng()*S, y=rng()*S;
+          ctx.moveTo(x,y);
+          const steps = 6 + (rng()*10)|0;
+          for(let j=0;j<steps;j++){
+            x += (rng()*2-1)*26;
+            y += (rng()*2-1)*26;
+            ctx.lineTo(x,y);
+          }
+          ctx.stroke();
+        }
+      }, { size:512, repeat:10, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle = 'rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,52000,75,515152);
+      }, { size:512, repeat:10, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    function _texTiles(){
+      const rng = _mulberry32(616161);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle='#b8c0c8';
+        ctx.fillRect(0,0,S,S);
+        const tile = S/8;
+        // grout
+        ctx.strokeStyle='rgba(60,60,60,0.55)';
+        ctx.lineWidth = 3.0;
+        for(let i=0;i<=8;i++){
+          const p = i*tile;
+          ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,S); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(S,p); ctx.stroke();
+        }
+        // subtle per-tile variation
+        for(let gy=0;gy<8;gy++){
+          for(let gx=0;gx<8;gx++){
+            const v = 170 + (rng()*50)|0;
+            ctx.fillStyle = `rgba(${v},${v+4},${v+10},0.20)`;
+            ctx.fillRect(gx*tile+2, gy*tile+2, tile-4, tile-4);
+          }
+        }
+        // light scuffs
+        for(let i=0;i<1800;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const a=0.02+rng()*0.06;
+          ctx.fillStyle=`rgba(255,255,255,${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+      }, { size:512, repeat:6, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle='rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        // grout as height
+        const tile = S/8;
+        ctx.strokeStyle='rgba(90,90,90,0.9)';
+        ctx.lineWidth=4.0;
+        for(let i=0;i<=8;i++){
+          const p=i*tile;
+          ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,S); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(S,p); ctx.stroke();
+        }
+        _drawNoise(ctx,S,9000,45,616162);
+      }, { size:512, repeat:6, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    function _texPlaster(){
+      const rng = _mulberry32(717171);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle='#d6d6d2';
+        ctx.fillRect(0,0,S,S);
+        for(let i=0;i<28000;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const v=200+(rng()*40)|0;
+          const a=0.03+rng()*0.08;
+          ctx.fillStyle=`rgba(${v},${v},${v-6},${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+        // faint stains
+        for(let i=0;i<60;i++){
+          const x=rng()*S, y=rng()*S;
+          const r=20+rng()*90;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0,'rgba(120,120,110,0.12)');
+          g.addColorStop(1,'rgba(120,120,110,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+      }, { size:512, repeat:8, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle='rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        _drawNoise(ctx,S,28000,60,717172);
+      }, { size:512, repeat:8, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+
+    function _texBrick(){
+      const rng = _mulberry32(818181);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle='#6f4b3b';
+        ctx.fillRect(0,0,S,S);
+        const bw = S/10;
+        const bh = S/20;
+        // bricks
+        for(let y=0;y<20;y++){
+          const offset = (y%2)*bw*0.5;
+          for(let x=0;x<11;x++){
+            const px = x*bw - offset;
+            const py = y*bh;
+            const v = 90 + (rng()*60)|0;
+            ctx.fillStyle = `rgb(${v+40},${v+10},${v})`;
+            ctx.fillRect(px+1, py+1, bw-2, bh-2);
+          }
+        }
+        // mortar lines
+        ctx.strokeStyle='rgba(210,210,210,0.55)';
+        ctx.lineWidth=2.2;
+        for(let y=0;y<=20;y++){
+          const py=y*bh;
+          ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(S,py); ctx.stroke();
+        }
+        for(let x=0;x<=10;x++){
+          const px=x*bw;
+          ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,S); ctx.stroke();
+        }
+        // grime
+        for(let i=0;i<14000;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const a=0.02+rng()*0.08;
+          ctx.fillStyle=`rgba(0,0,0,${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+      }, { size:512, repeat:6, colorSpace:THREE.SRGBColorSpace });
+
+      const bump = _makeCanvasTexture((ctx,S)=>{
+        ctx.fillStyle='rgb(128,128,128)';
+        ctx.fillRect(0,0,S,S);
+        // mortar as lower
+        const bw=S/10, bh=S/20;
+        ctx.strokeStyle='rgba(90,90,90,0.9)';
+        ctx.lineWidth=3.0;
+        for(let y=0;y<=20;y++){
+          const py=y*bh;
+          ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(S,py); ctx.stroke();
+        }
+        for(let x=0;x<=10;x++){
+          const px=x*bw;
+          ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,S); ctx.stroke();
+        }
+        _drawNoise(ctx,S,14000,70,818182);
+      }, { size:512, repeat:6, colorSpace: __NON_COLOR });
+
+      return { map, bump };
+    }
+const __TEX = {
+      dirt: _texDirt(),
+      concrete: _texConcrete(),
+      metal: _texMetal(),
+      sand: _texSand(),
+      asphalt: _texAsphalt(),
+      tiles: _texTiles(),
+      plaster: _texPlaster(),
+      brick: _texBrick(),
+    };
+
+    // Patch 1-G3: Macro variation texture (breaks tiling at mid/long range)
+    // - very cheap (single low-frequency noise lookup)
+    // - applied in shader via onBeforeCompile (world-position based)
+    function _texMacro(){
+      const rng = _mulberry32(909090);
+      const map = _makeCanvasTexture((ctx,S)=>{
+        // base
+        ctx.fillStyle = '#808080';
+        ctx.fillRect(0,0,S,S);
+        // big blobs (low frequency)
+        for(let i=0;i<90;i++){
+          const x=rng()*S, y=rng()*S;
+          const r=18+rng()*78;
+          const v = 110 + (rng()*70)|0;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0, `rgba(${v},${v},${v},0.55)`);
+          g.addColorStop(1, 'rgba(128,128,128,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+        // subtle grain
+        for(let i=0;i<12000;i++){
+          const x=(rng()*S)|0, y=(rng()*S)|0;
+          const v = 120 + (rng()*40)|0;
+          const a = 0.06 + rng()*0.08;
+          ctx.fillStyle = `rgba(${v},${v},${v},${a})`;
+          ctx.fillRect(x,y,1,1);
+        }
+      }, { size:256, repeat:1, colorSpace: __NON_COLOR });
+
+      map.wrapS = map.wrapT = THREE.RepeatWrapping;
+      map.repeat.set(1,1);
+      return map;
+    }
+
+    const __MACRO_TEX = _texMacro();
+
+    function _applyMacroVariation(mat, opts={}){
+      if(!mat || !mat.isMeshStandardMaterial) return mat;
+      if(mat.userData.__macroApplied) return mat;
+      mat.userData.__macroApplied = true;
+
+      mat.userData.__macro = {
+        map: __MACRO_TEX,
+        scale: Number(opts.scale ?? 0.008),     // world scale (bigger number = tighter noise)
+        strength: Number(opts.strength ?? 0.16) // 0..1 (subtle)
+      };
+
+      mat.onBeforeCompile = (shader)=>{
+        shader.uniforms.macroMap = { value: mat.userData.__macro.map };
+        shader.uniforms.macroScale = { value: mat.userData.__macro.scale };
+        shader.uniforms.macroStrength = { value: mat.userData.__macro.strength };
+
+        // Vertex: add world-position varying
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', `#include <common>
+varying vec3 vWorldPos;`)
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+vec4 wp = modelMatrix * vec4(position, 1.0);
+vWorldPos = wp.xyz;`);
+
+        // Fragment: sample macro noise in XZ world space and modulate albedo
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', `#include <common>
+varying vec3 vWorldPos;
+uniform sampler2D macroMap;
+uniform float macroScale;
+uniform float macroStrength;`)
+          .replace('#include <map_fragment>', `#include <map_fragment>
+// Patch 1-G3: macro variation (break tiling)
+vec2 muv = vWorldPos.xz * macroScale;
+vec3 m = texture2D(macroMap, muv).rgb;
+float mf = (m.r - 0.5) * 2.0;
+diffuseColor.rgb *= (1.0 + mf * macroStrength);`);
+      };
+
+      mat.needsUpdate = true;
+      return mat;
+    }
+
+    const MATERIAL_BY_TYPE = {
+      ground: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: __TEX.dirt.map,
+        bumpMap: __TEX.dirt.bump,
+        bumpScale: 0.25,
+        roughness: 0.98,
+        metalness: 0.0,
+      }),
+      wall: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: __TEX.concrete.map,
+        bumpMap: __TEX.concrete.bump,
+        bumpScale: 0.20,
+        roughness: 0.93,
+        metalness: 0.0,
+      }),
+      cover: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: __TEX.metal.map,
+        bumpMap: __TEX.metal.bump,
+        bumpScale: 0.15,
+        roughness: 0.72,
+        metalness: 0.65,
+      }),
+    };
+
+    // Patch 3-CAMP HF5: Material sets per map/profile (more variety per campaign map)
+    const MATERIAL_SETS = {
+      // default outdoor
+      outdoor_day: {
+        ground: { tex: __TEX.dirt,     bumpScale: 0.25, roughness: 0.98, metalness: 0.0 },
+        wall:   { tex: __TEX.concrete, bumpScale: 0.20, roughness: 0.93, metalness: 0.0 },
+        cover:  { tex: __TEX.metal,    bumpScale: 0.15, roughness: 0.72, metalness: 0.65 },
+      },
+      // desert / sand
+      desert: {
+        ground: { tex: __TEX.sand,     bumpScale: 0.20, roughness: 0.99, metalness: 0.0 },
+        wall:   { tex: __TEX.concrete, bumpScale: 0.18, roughness: 0.92, metalness: 0.0 },
+        cover:  { tex: __TEX.metal,    bumpScale: 0.14, roughness: 0.70, metalness: 0.60 },
+      },
+      // urban asphalt
+      urban: {
+        ground: { tex: __TEX.asphalt,  bumpScale: 0.18, roughness: 0.96, metalness: 0.0 },
+        wall:   { tex: __TEX.brick,    bumpScale: 0.16, roughness: 0.92, metalness: 0.0 },
+        cover:  { tex: __TEX.metal,    bumpScale: 0.16, roughness: 0.68, metalness: 0.62 },
+      },
+      // industrial yard
+      industrial: {
+        ground: { tex: __TEX.concrete, bumpScale: 0.16, roughness: 0.95, metalness: 0.0 },
+        wall:   { tex: __TEX.metal,    bumpScale: 0.10, roughness: 0.78, metalness: 0.55 },
+        cover:  { tex: __TEX.metal,    bumpScale: 0.16, roughness: 0.70, metalness: 0.65 },
+      },
+      // indoor facility
+      facility: {
+        ground: { tex: __TEX.tiles,    bumpScale: 0.10, roughness: 0.90, metalness: 0.0 },
+        wall:   { tex: __TEX.plaster,  bumpScale: 0.10, roughness: 0.92, metalness: 0.0 },
+        cover:  { tex: __TEX.metal,    bumpScale: 0.14, roughness: 0.70, metalness: 0.62 },
+      },
+      // trench / mud
+      trench: {
+        ground: { tex: __TEX.dirt,     bumpScale: 0.30, roughness: 0.995, metalness: 0.0, tint: 0x3b332a },
+        wall:   { tex: __TEX.dirt,     bumpScale: 0.26, roughness: 0.995, metalness: 0.0, tint: 0x40372c },
+        cover:  { tex: __TEX.metal,    bumpScale: 0.16, roughness: 0.78, metalness: 0.55 },
+      },
+    };
+
+    function _applyMaterialSet(setId){
+      const id = String(setId || 'outdoor_day');
+      const s = MATERIAL_SETS[id] || MATERIAL_SETS.outdoor_day;
+
+      for(const key of ['ground','wall','cover']){
+        const mat = MATERIAL_BY_TYPE[key];
+        const info = s[key];
+        if(!mat || !info) continue;
+
+        const tex = info.tex?.map;
+        const bump = info.tex?.bump;
+        if(tex) mat.map = tex;
+        if(bump) mat.bumpMap = bump;
+
+        mat.bumpScale = Number(info.bumpScale ?? mat.bumpScale ?? 0.15);
+        mat.roughness = Number(info.roughness ?? mat.roughness ?? 0.9);
+        mat.metalness = Number(info.metalness ?? mat.metalness ?? 0.0);
+
+        // optional tint for mood (keep texture detail)
+        if(info.tint){
+          mat.color.setHex(Number(info.tint) >>> 0);
+        }else{
+          mat.color.setHex(0xffffff);
+        }
+
+        mat.needsUpdate = true;
+      }
+
+      // Re-apply macro variation only once per material instance (keeps onBeforeCompile)
+      try{
+        _applyMacroVariation(MATERIAL_BY_TYPE.ground, { scale: 0.006, strength: 0.20 });
+        _applyMacroVariation(MATERIAL_BY_TYPE.wall,   { scale: 0.010, strength: 0.14 });
+        _applyMacroVariation(MATERIAL_BY_TYPE.cover,  { scale: 0.012, strength: 0.10 });
+      }catch(e){}
+    }
+
+
+    // Patch 1-G3: apply macro variation to core materials (break tiling, cheap realism boost)
+    _applyMacroVariation(MATERIAL_BY_TYPE.ground, { scale: 0.006, strength: 0.20 });
+    _applyMacroVariation(MATERIAL_BY_TYPE.wall,   { scale: 0.010, strength: 0.14 });
+    _applyMacroVariation(MATERIAL_BY_TYPE.cover,  { scale: 0.012, strength: 0.10 });
+
+    // Patch 1-G3: Decals (stains/cracks/scorch/bullets) to add "battlefield grime"
+    // - performance-first: small transparent planes, pooled per scene, no shadows, no collision
+    function _texDecal(kind){
+      const k = String(kind||"stain");
+      const rng = _mulberry32((k==='bullet')?9901:(k==='crack')?9902:(k==='scorch')?9903:9900);
+
+      const tex = _makeCanvasTexture((ctx,S)=>{
+        ctx.clearRect(0,0,S,S);
+
+        if(k === 'scorch'){
+          const x=S*0.5, y=S*0.5;
+          const r=S*0.46;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0,'rgba(0,0,0,0.60)');
+          g.addColorStop(0.5,'rgba(20,12,8,0.25)');
+          g.addColorStop(1,'rgba(0,0,0,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+
+          // small soot specks
+          for(let i=0;i<2400;i++){
+            const px=(rng()*S)|0, py=(rng()*S)|0;
+            const a=0.02+rng()*0.10;
+            ctx.fillStyle=`rgba(0,0,0,${a})`;
+            ctx.fillRect(px,py,1,1);
+          }
+          return;
+        }
+
+        if(k === 'crack'){
+          ctx.lineWidth = 1.6;
+          ctx.strokeStyle = 'rgba(20,20,20,0.55)';
+          for(let i=0;i<22;i++){
+            ctx.beginPath();
+            let x = rng()*S, y = rng()*S;
+            ctx.moveTo(x,y);
+            const steps = 7 + (rng()*10)|0;
+            for(let j=0;j<steps;j++){
+              x += (rng()*2-1)*20;
+              y += (rng()*2-1)*20;
+              ctx.lineTo(x,y);
+            }
+            ctx.stroke();
+          }
+          // faint dust
+          for(let i=0;i<9000;i++){
+            const px=(rng()*S)|0, py=(rng()*S)|0;
+            const v=120+(rng()*50)|0;
+            const a=0.02+rng()*0.06;
+            ctx.fillStyle=`rgba(${v},${v},${v},${a})`;
+            ctx.fillRect(px,py,1,1);
+          }
+          return;
+        }
+
+        if(k === 'bullet'){
+          const x=S*0.5, y=S*0.5;
+          const r=S*0.12;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0,'rgba(0,0,0,0.75)');
+          g.addColorStop(0.55,'rgba(30,30,30,0.35)');
+          g.addColorStop(1,'rgba(0,0,0,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+          // tiny chips
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = '#e5e1d8';
+          for(let i=0;i<30;i++){
+            const px=x+(rng()*2-1)*r*1.2;
+            const py=y+(rng()*2-1)*r*1.2;
+            ctx.fillRect(px,py,1+rng()*2,1+rng()*2);
+          }
+          ctx.globalAlpha = 1;
+          return;
+        }
+
+        // default: stain/mud
+        ctx.fillStyle = 'rgba(0,0,0,0)';
+        ctx.fillRect(0,0,S,S);
+
+        // splat blobs
+        for(let i=0;i<120;i++){
+          const x=rng()*S, y=rng()*S;
+          const r=6+rng()*36;
+          const rr=40+(rng()*60)|0;
+          const gg=30+(rng()*50)|0;
+          const bb=20+(rng()*40)|0;
+          const a=0.05+rng()*0.16;
+          const g=ctx.createRadialGradient(x,y,0,x,y,r);
+          g.addColorStop(0,`rgba(${rr},${gg},${bb},${a})`);
+          g.addColorStop(1,'rgba(0,0,0,0)');
+          ctx.fillStyle=g;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+        // fine specks
+        for(let i=0;i<14000;i++){
+          const px=(rng()*S)|0, py=(rng()*S)|0;
+          const a=0.02+rng()*0.07;
+          ctx.fillStyle=`rgba(60,45,32,${a})`;
+          ctx.fillRect(px,py,1,1);
+        }
+      }, { size:256, repeat:1, colorSpace:THREE.SRGBColorSpace });
+
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.repeat.set(1,1);
+      return tex;
+    }
+
+    const __DECAL_TEX = {
+      stain:  _texDecal('stain'),
+      crack:  _texDecal('crack'),
+      scorch: _texDecal('scorch'),
+      bullet: _texDecal('bullet'),
+    };
+
+    const __DECAL_MAT = {
+      stain: new THREE.MeshStandardMaterial({
+        color: 0xffffff, map: __DECAL_TEX.stain, transparent:true, depthWrite:false,
+        roughness: 1.0, metalness: 0.0
+      }),
+      crack: new THREE.MeshStandardMaterial({
+        color: 0xffffff, map: __DECAL_TEX.crack, transparent:true, depthWrite:false,
+        roughness: 1.0, metalness: 0.0
+      }),
+      scorch: new THREE.MeshStandardMaterial({
+        color: 0xffffff, map: __DECAL_TEX.scorch, transparent:true, depthWrite:false,
+        roughness: 1.0, metalness: 0.0
+      }),
+      bullet: new THREE.MeshStandardMaterial({
+        color: 0xffffff, map: __DECAL_TEX.bullet, transparent:true, depthWrite:false,
+        roughness: 1.0, metalness: 0.0
+      }),
+    };
+
+    for(const k in __DECAL_MAT){
+      const m = __DECAL_MAT[k];
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = -2;
+      m.polygonOffsetUnits = -2;
+    }
+
+    const __VZ = new THREE.Vector3(0,0,1);
+    const __DECAL_GEO = new THREE.PlaneGeometry(1, 1);
+
+    function _spawnDecal(scene, kind, pos, normal, size, rot){
+      const mat = __DECAL_MAT[kind] || __DECAL_MAT.stain;
+      const mesh = new THREE.Mesh(__DECAL_GEO, mat);
+      mesh.scale.set(size[0], size[1], 1);
+      mesh.renderOrder = 10;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+
+      const n = normal.clone().normalize();
+      mesh.quaternion.setFromUnitVectors(__VZ, n);
+      if(rot) mesh.rotateOnAxis(n, rot);
+
+      mesh.position.copy(pos);
+      scene.add(mesh);
+
+      if(!scene.userData.__decals) scene.userData.__decals = [];
+      scene.userData.__decals.push(mesh);
+      return mesh;
+    }
+
+    function _clearDecals(scene){
+      const arr = scene.userData.__decals;
+      if(!Array.isArray(arr)) return;
+      for(const m of arr){
+        try{
+          scene.remove(m);
+        }catch(e){}
+      }
+      scene.userData.__decals = [];
+    }
+
+    function _scatterGroundDecals(scene, gw, gd, preset='outdoor'){
+      const rng = _mulberry32(preset === 'indoor' ? 13579 : 97531);
+      const up = new THREE.Vector3(0,1,0);
+      const count = (preset === 'indoor') ? 28 : 70;
+
+      for(let i=0;i<count;i++){
+        const x = (rng()*gw - gw/2);
+        const z = (rng()*gd - gd/2);
+        const y = 0.02 + rng()*0.02;
+        const kindRoll = rng();
+        const kind = (kindRoll < 0.60) ? 'stain' : (kindRoll < 0.85) ? 'crack' : 'scorch';
+        const s = (kind === 'bullet') ? 0.6 : (kind === 'scorch') ? (2.2 + rng()*6.5) : (1.4 + rng()*5.0);
+        const rot = rng()*Math.PI*2;
+        _spawnDecal(scene, kind, new THREE.Vector3(x,y,z), up, [s,s], rot);
+      }
+    }
+
+    function _scatterWallBullets(scene, objects){
+      const rng = _mulberry32(24680);
+      if(!Array.isArray(objects)) return;
+
+      for(const obj of objects){
+        if(obj.shape !== 'box') continue;
+        const t = String(obj.type||'').toLowerCase();
+        if(t !== 'wall' && t !== 'cover') continue;
+
+        const [sx, sy, sz] = obj.size;
+        const [px, py, pz] = obj.pos;
+
+        const thinX = sx < sz;
+        const thickness = thinX ? sx : sz;
+        const halfT = thickness/2;
+
+        const n = thinX ? new THREE.Vector3((rng()<0.5)?1:-1, 0, 0)
+                        : new THREE.Vector3(0, 0, (rng()<0.5)?1:-1);
+
+        const shots = 1 + ((rng()*3)|0);
+        for(let i=0;i<shots;i++){
+          const y = (py - sy/2) + 1.2 + rng()*(sy-2.4);
+          const along = (thinX ? (pz - sz/2 + 1.0 + rng()*(sz-2.0))
+                               : (px - sx/2 + 1.0 + rng()*(sx-2.0)));
+          const x = thinX ? (px + n.x*(halfT+0.03)) : along;
+          const z = thinX ? along : (pz + n.z*(halfT+0.03));
+          const rot = rng()*Math.PI*2;
+          const s = 0.45 + rng()*0.55;
+          _spawnDecal(scene, 'bullet', new THREE.Vector3(x,y,z), n, [s,s], rot);
+        }
+      }
+    }
+
+    function applyDecalsForMap(scene, map){
+      _clearDecals(scene);
+      const gw = map?.world?.groundSize?.[0] ?? 200;
+      const gd = map?.world?.groundSize?.[1] ?? 200;
+      const prof = _getProfile(map, 'outdoor_day');
+      const preset = (prof?.envKind === 'indoor') ? 'indoor' : 'outdoor';
+      _scatterGroundDecals(scene, gw, gd, preset);
+      _scatterWallBullets(scene, map?.objects);
+    }
+
+    const VISUAL_PROFILES = {
+      outdoor_day: {
+        id: 'outdoor_day',
+        background: 0x87b4e0,
+        fog: { color: 0xcfe4ff, near: 220, far: 920 },
+        hemi: { sky: 0xd8efff, ground: 0x6f6a5f, intensity: 0.85 },
+        sun: { color: 0xffffff, intensity: 3.2, pos: [-90, 150, -40] },
+        shadow: { mapSize: 2048, cam: { near: 1, far: 520, left: -220, right: 220, top: 220, bottom: -220 } },
+        envKind: 'outdoor',
+        exposure: 1.05,
+        materialSet: 'outdoor_day',
+      },
+
+      desert_noon: {
+        id: 'desert_noon',
+        background: 0xb7d7ff,
+        fog: { color: 0xdaf0ff, near: 260, far: 980 },
+        hemi: { sky: 0xe8fbff, ground: 0xa78f63, intensity: 0.92 },
+        sun: { color: 0xffffff, intensity: 3.6, pos: [-120, 165, 30] },
+        shadow: { mapSize: 2048, cam: { near: 1, far: 560, left: -260, right: 260, top: 260, bottom: -260 } },
+        envKind: 'outdoor',
+        exposure: 1.08,
+        materialSet: 'desert',
+      },
+
+      urban_day: {
+        id: 'urban_day',
+        background: 0x9cc1e8,
+        fog: { color: 0xcadcf0, near: 120, far: 640 },
+        hemi: { sky: 0xe7f4ff, ground: 0x5f5a52, intensity: 0.70 },
+        sun: { color: 0xffffff, intensity: 2.6, pos: [120, 140, -40] },
+        shadow: { mapSize: 2048, cam: { near: 1, far: 420, left: -200, right: 200, top: 200, bottom: -200 } },
+        envKind: 'outdoor',
+        exposure: 1.02,
+        materialSet: 'urban',
+      },
+
+      industrial_haze: {
+        id: 'industrial_haze',
+        background: 0x8ea3b4,
+        fog: { color: 0xa8b3bd, near: 80, far: 520 },
+        hemi: { sky: 0xd9e7f2, ground: 0x3e3f42, intensity: 0.55 },
+        sun: { color: 0xffffff, intensity: 2.0, pos: [-40, 120, 90] },
+        shadow: { mapSize: 2048, cam: { near: 1, far: 360, left: -180, right: 180, top: 180, bottom: -180 } },
+        envKind: 'outdoor',
+        exposure: 0.98,
+        materialSet: 'industrial',
+      },
+
+      trench_overcast: {
+        id: 'trench_overcast',
+        background: 0x9fb1b8,
+        fog: { color: 0xb7c1c6, near: 60, far: 420 },
+        hemi: { sky: 0xd9e3e8, ground: 0x2f2a23, intensity: 0.48 },
+        sun: { color: 0xffffff, intensity: 1.6, pos: [60, 110, 40] },
+        shadow: { mapSize: 2048, cam: { near: 1, far: 340, left: -170, right: 170, top: 170, bottom: -170 } },
+        envKind: 'outdoor',
+        exposure: 0.96,
+        materialSet: 'trench',
+      },
+
+      indoor_facility: {
+        id: 'indoor_facility',
+        background: 0x141a22,
+        fog: { color: 0x141a22, near: 30, far: 190 },
+        hemi: { sky: 0x9fb6d6, ground: 0x14171c, intensity: 0.12 },
+        sun: { color: 0xffffff, intensity: 0.65, pos: [40, 70, 20] },
+        shadow: { mapSize: 1024, cam: { near: 1, far: 220, left: -90, right: 90, top: 90, bottom: -90 } },
+        envKind: 'indoor',
+        exposure: 0.95,
+        materialSet: 'facility',
+      },
+
+      // Backward-compat id used by earlier patches
+      indoor: {
+        id: 'indoor',
+        background: 0x0f1622,
+        fog: { color: 0x0f1622, near: 36, far: 210 },
+        hemi: { sky: 0x9fb6d6, ground: 0x14171c, intensity: 0.12 },
+        sun: { color: 0xffffff, intensity: 0.55, pos: [40, 70, 20] },
+        shadow: { mapSize: 1024, cam: { near: 1, far: 220, left: -90, right: 90, top: 90, bottom: -90 } },
+        envKind: 'indoor',
+        exposure: 0.95,
+        materialSet: 'facility',
+      },
+    };
+
+    // Patch 1-G2: PostFX (FXAA + subtle bloom). Performance-first.
+    let postFX = null;
+    // Patch 3-CAMP+: Campaign runtime instance (only when campaign=1)
+    let campaignRuntime = null;
+
+    function _getProfile(map, fallback='outdoor_day'){
+      const id = String(map?.world?.visualProfile || map?.world?.profile || fallback);
+      return VISUAL_PROFILES[id] || VISUAL_PROFILES[fallback];
+    }
+
+    function _ensureEnv(renderer, kind){
+      const k = String(kind || 'outdoor');
+      if(__gfx.envCache[k]) return __gfx.envCache[k];
+
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      pmrem.compileEquirectangularShader();
+
+      const s = new THREE.Scene();
+      const domeGeo = new THREE.SphereGeometry(50, 32, 16);
+      const tex = _makeCanvasTexture((ctx, S)=>{
+        const g = ctx.createLinearGradient(0,0,0,S);
+        if(k === 'indoor'){
+          g.addColorStop(0,'#1b2433');
+          g.addColorStop(1,'#0f1622');
+        }else{
+          g.addColorStop(0,'#9fd3ff');
+          g.addColorStop(0.55,'#87b4e0');
+          g.addColorStop(1,'#d6e6ff');
+        }
+        ctx.fillStyle = g;
+        ctx.fillRect(0,0,S,S);
+      }, { size:512, repeat:1, colorSpace:THREE.SRGBColorSpace });
+
+      // no tiling for dome
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.repeat.set(1,1);
+
+      const domeMat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide });
+      const dome = new THREE.Mesh(domeGeo, domeMat);
+      s.add(dome);
+
+      // Patch 1-G2 HF2: sigmaRadians가 크면 내부 샘플 수가 최대치를 넘어 경고가 발생할 수 있음.
+      // 성능/안정성을 위해 0.04로 낮춰도 IBL 품질은 충분함.
+      const envRT = pmrem.fromScene(s, 0.04);
+      const env = envRT.texture;
+
+      domeGeo.dispose();
+      domeMat.dispose();
+      pmrem.dispose();
+
+      __gfx.envCache[k] = env;
+      return env;
+    }
+
+    function applyVisualProfile(scene, renderer, map){
+      const prof = _getProfile(map, 'outdoor_day');
+      // Patch 1-G2: sync postFX tuning to profile (bloom params)
+      try{ postFX?.applyProfile?.(prof); }catch(e){}
+
+      // Patch 3-CAMP HF5: swap materials per visual profile
+      try{ _applyMaterialSet(prof.materialSet || prof.id); }catch(e){}
+
+      // --- renderer baseline (stable outdoor/day by default) ---
+      if('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
+      // Patch 1-G2 HF2: three r155+에서 useLegacyLights는 deprecated.
+      // 설정을 건드리면 경고가 발생하므로 기본 동작(현대 조명) 그대로 둔다.
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = prof.exposure ?? 1.0;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      // --- scene baseline ---
+      scene.background = new THREE.Color(prof.background);
+      scene.fog = new THREE.Fog(prof.fog.color, prof.fog.near, prof.fog.far);
+      scene.environment = _ensureEnv(renderer, prof.envKind);
+
+      // --- baseline lights (hemi + sun) ---
+      // Keep stable references so we don't stack lights on reload.
+      if(!scene.userData.__gfxLights) scene.userData.__gfxLights = {};
+      const L = scene.userData.__gfxLights;
+
+      if(!L.hemi){
+        L.hemi = new THREE.HemisphereLight(0xffffff, 0x111111, 1);
+        scene.add(L.hemi);
+      }
+      L.hemi.color.setHex(prof.hemi.sky);
+      L.hemi.groundColor.setHex(prof.hemi.ground);
+      L.hemi.intensity = prof.hemi.intensity;
+
+      if(!L.sun){
+        L.sun = new THREE.DirectionalLight(0xffffff, 1);
+        L.sun.castShadow = true;
+        // slightly soften shadows
+        L.sun.shadow.bias = -0.0002;
+        L.sun.shadow.normalBias = 0.02;
+        scene.add(L.sun);
+      }
+      L.sun.color.setHex(prof.sun.color);
+      L.sun.intensity = prof.sun.intensity;
+      L.sun.position.set(prof.sun.pos[0], prof.sun.pos[1], prof.sun.pos[2]);
+
+      // shadow settings
+      const sm = prof.shadow?.mapSize ?? 1024;
+      L.sun.shadow.mapSize.set(sm, sm);
+      const cam = L.sun.shadow.camera;
+      cam.near = prof.shadow.cam.near;
+      cam.far  = prof.shadow.cam.far;
+      cam.left = prof.shadow.cam.left;
+      cam.right = prof.shadow.cam.right;
+      cam.top = prof.shadow.cam.top;
+      cam.bottom = prof.shadow.cam.bottom;
+      cam.updateProjectionMatrix();
+
+      // --- optional extra lights (campaign indoor, etc.) ---
+      // clear previous extra lights
+      if(Array.isArray(scene.userData.__extraPointLights)){
+        for(const pl of scene.userData.__extraPointLights) scene.remove(pl);
+      }
+      scene.userData.__extraPointLights = [];
+
+      const pts = map?.world?.pointLights;
+      if(Array.isArray(pts)){
+        for(const def of pts){
+          const col = new THREE.Color(def.color ?? 0xffffff);
+          const pl = new THREE.PointLight(col, def.intensity ?? 25, def.distance ?? 40, def.decay ?? 2);
+          const pos = def.pos || [0,5,0];
+          pl.position.set(pos[0], pos[1], pos[2]);
+          pl.castShadow = !!def.castShadow;
+          scene.add(pl);
+          scene.userData.__extraPointLights.push(pl);
+        }
+      }
+
+      scene.userData.__visualProfile = prof.id;
+    }
 
     const ZONE_MAT = new THREE.MeshStandardMaterial({ color: 0x4fa3ff, transparent: true, opacity: 0.22, roughness: 1, metalness: 0 });
     const ZONE_EDGE = new THREE.LineBasicMaterial({ color: 0x4fa3ff, transparent: true, opacity: 0.9 });
@@ -863,7 +1972,108 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       red:  0xff5b5b
     };
 
-    function makeGround(w, d){
+    
+    // ---------------------------
+    // Patch 1-G2: Post-processing (Performance-first)
+    // - FXAA: cheap anti-aliasing (keeps edges clean)
+    // - Subtle Bloom: tiny highlight glow (10% "A" vibe without killing FPS)
+    // ---------------------------
+    function createPostFX(renderer, camera){
+      const KEY = "strikegy_postfx_v1";
+      const state = {
+        enabled: true,
+        fxaa: true,
+        bloom: true,
+        // subtle defaults (B 90% / A 10%)
+        bloomOutdoor: { strength: 0.16, radius: 0.35, threshold: 0.88 },
+        bloomIndoor:  { strength: 0.22, radius: 0.40, threshold: 0.78 },
+      };
+
+      try{
+        const saved = JSON.parse(localStorage.getItem(KEY) || "null");
+        if(saved && typeof saved === "object"){
+          // shallow merge
+          Object.assign(state, saved);
+        }
+      }catch(e){}
+
+      const composer = new EffectComposer(renderer);
+      const renderPass = new RenderPass(new THREE.Scene(), camera);
+      composer.addPass(renderPass);
+
+      const fxaaPass = new ShaderPass(FXAAShader);
+      composer.addPass(fxaaPass);
+
+      // Use half-res bloom internally for performance.
+      const bloomPass = new UnrealBloomPass(new THREE.Vector2(1,1), 0.16, 0.35, 0.88);
+      composer.addPass(bloomPass);
+
+      function _save(){
+        try{
+          localStorage.setItem(KEY, JSON.stringify({
+            enabled: state.enabled,
+            fxaa: state.fxaa,
+            bloom: state.bloom,
+            bloomOutdoor: state.bloomOutdoor,
+            bloomIndoor: state.bloomIndoor,
+          }));
+        }catch(e){}
+      }
+
+      function setScene(scene){
+        renderPass.scene = scene;
+      }
+
+      function applyProfile(prof){
+        const kind = String(prof?.envKind || "outdoor");
+        const B = (kind === "indoor") ? state.bloomIndoor : state.bloomOutdoor;
+        bloomPass.strength = Number(B?.strength ?? 0.16);
+        bloomPass.radius = Number(B?.radius ?? 0.35);
+        bloomPass.threshold = Number(B?.threshold ?? 0.88);
+      }
+
+      function setOptions(opts){
+        if(!opts || typeof opts !== "object") return;
+        Object.assign(state, opts);
+        fxaaPass.enabled = !!state.fxaa;
+        bloomPass.enabled = !!state.bloom;
+        _save();
+      }
+
+      function resize(){
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        composer.setSize(w, h);
+
+        const pr = renderer.getPixelRatio();
+        // FXAA expects inverse resolution in screen space
+        if(fxaaPass.material?.uniforms?.resolution?.value){
+          fxaaPass.material.uniforms.resolution.value.set(1/(w*pr), 1/(h*pr));
+        }
+        // Bloom pass setSize (half res for perf)
+        if(typeof bloomPass.setSize === "function"){
+          bloomPass.setSize(Math.max(1, Math.floor(w/2)), Math.max(1, Math.floor(h/2)));
+        }
+      }
+
+      function render(){
+        if(state.enabled) composer.render();
+        else renderer.render(renderPass.scene, camera);
+      }
+
+      // expose simple runtime toggle
+      window.__postfx = { state, setOptions, applyProfile, resize };
+      window.setPostFX = (opts)=>{ setOptions(opts); };
+
+      // init
+      fxaaPass.enabled = !!state.fxaa;
+      bloomPass.enabled = !!state.bloom;
+      resize();
+
+      return { state, composer, renderPass, fxaaPass, bloomPass, setScene, applyProfile, resize, render, setOptions };
+    }
+
+function makeGround(w, d){
       const geo = new THREE.PlaneGeometry(w, d);
       const mesh = new THREE.Mesh(geo, MATERIAL_BY_TYPE.ground);
       mesh.rotation.x = -Math.PI / 2;
@@ -936,24 +2146,10 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     function buildScene(map){
       const scene = new THREE.Scene();
       const collisionWorld = new CollisionWorld();
-      scene.background = new THREE.Color(0x0b0f17);
 
-      // lights (밝게)
-      const amb = new THREE.AmbientLight(0xffffff, map.world?.ambientLight ?? 0.75);
-      scene.add(amb);
+      // Patch 1-G: apply visual profile (default = outdoor_day)
+      applyVisualProfile(scene, renderer, map);
 
-      const dlPos = map.world?.dirLight?.pos ?? [80, 140, 60];
-      const dl = new THREE.DirectionalLight(0xffffff, map.world?.dirLight?.intensity ?? 1.1);
-      dl.position.set(dlPos[0], dlPos[1], dlPos[2]);
-      dl.castShadow = true;
-      dl.shadow.mapSize.set(1024, 1024);
-      dl.shadow.camera.near = 1;
-      dl.shadow.camera.far = 400;
-      dl.shadow.camera.left = -160;
-      dl.shadow.camera.right = 160;
-      dl.shadow.camera.top = 160;
-      dl.shadow.camera.bottom = -160;
-      scene.add(dl);
 
       const [gw, gd] = map.world.groundSize;
       scene.add(makeGround(gw, gd));
@@ -973,6 +2169,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
           }
         }
       }
+
+      // Patch 1-G3: decals (grime/bullets) — cheap realism boost
+      applyDecalsForMap(scene, map);
 
       // zones (표시용)
       const zones = [];
@@ -999,9 +2198,18 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     // Renderer / Camera
     // ---------------------------
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
+    // Patch 1-G: renderer quality defaults
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.physicallyCorrectLights = true;
+    // Patch 1-G: texture anisotropy
+    __gfxSetMaxAniso(renderer.capabilities.getMaxAnisotropy());
+
     document.body.appendChild(renderer.domElement);
 
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -1010,6 +2218,10 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     // Patch 4 managers
     const settingsStore = new SettingsStore();
     const inputManager = new InputManager({ domElement: renderer.domElement, settingsStore });
+
+    // Patch 1-G2: enable lightweight postFX (FXAA + subtle bloom)
+    postFX = createPostFX(renderer, camera);
+
 
     
 
@@ -1154,6 +2366,11 @@ const minimap = new MinimapUI(document.getElementById("minimapCanvas"), __mmCfg)
     let bandageHealRate = 0;       // HP per second
     let bandageHealStopOnDamage = true;
 
+    // Campaign: auto HP regeneration
+    let playerLastDamagedAt = 0;
+    const CAMP_REGEN_DELAY = 5.0;  // seconds after last damage
+    const CAMP_REGEN_RATE = 18.0;  // HP per second
+
     function isMedic(){
       return (window.playerProfile?.classId === "medic");
     }
@@ -1162,6 +2379,12 @@ const minimap = new MinimapUI(document.getElementById("minimapCanvas"), __mmCfg)
     }
     function syncBandageUI(){
       try{
+        const rules = window.__campaignRules || {};
+        if(rules.noBandage){
+          window.combatUI?.setBandageCount?.(0);
+          window.combatUI?.setBandageHintActive?.(false);
+          return;
+        }
         window.combatUI?.setBandageCount?.(getBandageCount());
         const canUse = (!playerDead) && (playerHP < playerHPMax) && (!bandageHealing) && (isMedic() || bandageCount > 0);
         window.combatUI?.setBandageHintActive?.(!!canUse);
@@ -1174,6 +2397,8 @@ const minimap = new MinimapUI(document.getElementById("minimapCanvas"), __mmCfg)
       syncBandageUI();
     }
     function startBandageHealing(){
+      const rules = window.__campaignRules || {};
+      if(rules.noBandage) return;
       if(playerDead) return;
       try{
         const myTeam = String(window.playerProfile?.team || 'blue').toLowerCase();
@@ -1247,11 +2472,22 @@ const minimap = new MinimapUI(document.getElementById("minimapCanvas"), __mmCfg)
     function killPlayer(){
       if(playerDead) return;
       playerDead = true;
+
+      const _isCampaign = !!(window.__campaign?.isCampaign?.());
+      // Campaign: dying fails mission (no auto respawn)
+      if(_isCampaign){
+        try{ window.campaignRuntime?.onPlayerDeath?.(); }catch{}
+        // keep corpse + ammo reset, but do not start respawn countdown
+        respawnLeft = 999999;
+      }else{
+        respawnLeft = 5.0;
+      }
+
       try{ modeSystem?.onDeath?.(window.playerProfile?.team || 'blue'); }catch{}
       // Patch 9-1: Zone tickets
       try{ modeSystem?.onDeath?.(window.playerProfile?.team || "blue"); }catch(e){}
 
-      respawnLeft = 5.0;
+
       stopBandageHealing();
 
       // Patch 7-4B+: class-item ammo/mag resets immediately on death (per design)
@@ -1378,7 +2614,8 @@ function respawnPlayer(){
           const d = mpos.distanceTo(pos);
           if(d > radius) continue;
           const t = 1 - (d / Math.max(0.001, radius)); // 1..0
-          const dmg = Math.round((min ?? 0) + ((max ?? 0) - (min ?? 0)) * t);
+          const diff = window.__difficulty || { playerDamage: 1, enemyDamage: 1 };
+          const dmg = Math.round(((min ?? 0) + ((max ?? 0) - (min ?? 0)) * t) * (Number(diff.playerDamage) || 1));
           if(dmg <= 0) continue;
           const res = ds.applyDamage(ent.id, dmg, { weaponId: "grenade", sourceTeam: srcTeam, headshot: false });
           try{ economyManager?.rewardDamage?.(dmg, false); }catch{}
@@ -1395,10 +2632,12 @@ function respawnPlayer(){
     function applyBulletDamageToLocal({ amount, headshot=false, weaponId=null, sourceTeam=null, sourceId=null } = {}){
       if(playerDead) return;
       const base = Math.max(0, Number(amount) || 0);
-      const dmg = Math.round(base);
+      const diff = window.__difficulty || { playerDamage: 1, enemyDamage: 1 };
+      const dmg = Math.round(base * (Number(diff.enemyDamage) || 1));
       const ratio = Math.min(1, Math.max(0, dmg / playerHPMax));
       window.combatUI?.flashDamage?.(ratio);
       stopBandageHealing();
+      playerLastDamagedAt = (performance.now() || 0) / 1000;
       setHP(playerHP - dmg);
       // Economy for bots: bot gains money for damage dealt (and kill if applicable)
       try{
@@ -1496,26 +2735,33 @@ const shopModal = new ShopModal({
     function updateInvBagVisibility(){
       const p = settingsStore.controlPreset;
       const show = (p === "mobile" || p === "mobile_kb");
-      invBagBtn.style.display = show ? "block" : "none";
-      shopCartBtn.style.display = show ? "block" : "none";
-      moneyHUD.style.display = "block";
+      const camp = !!(window.__campaign?.isCampaign?.());
+      const rules = window.__campaignRules || {};
+      invBagBtn.style.display = (show && !camp) ? "block" : "none";
+      shopCartBtn.style.display = (show && !camp && !rules.noShop) ? "block" : "none";
+      moneyHUD.style.display = (camp ? "none" : "block");
     }
 
     // Key bindings (PC + mobile_kb)
     window.addEventListener("keydown", (e)=>{
+      const _camp = !!(window.__campaign?.isCampaign?.());
+      const _rules = window.__campaignRules || {};
       if(e.code === "KeyB"){
+        if(_camp || _rules.noShop) return;
         if(e.repeat) return;
         const tag = document.activeElement?.tagName;
         if(tag === "INPUT" || tag === "TEXTAREA") return;
         try{ shopModal.toggle(); }catch{}
         e.preventDefault();
       }else if(e.code === "KeyI"){
+        if(_camp) return;
         if(e.repeat) return;
         const tag = document.activeElement?.tagName;
         if(tag === "INPUT" || tag === "TEXTAREA") return;
         inventoryModal.toggle();
         e.preventDefault();
       }else if(e.code === "KeyC"){
+        if(_camp || _rules.noBandage) return;
         if(e.repeat) return;
         const tag = document.activeElement?.tagName;
         if(tag === "INPUT" || tag === "TEXTAREA") return;
@@ -1551,6 +2797,8 @@ const shopModal = new ShopModal({
   let weaponSystem = null;
   let soundSystem = null;
   let weaponSwitchManager = null;
+  // Patch 2-FP: 1인칭 뷰모델
+  let viewModelSystem = null;
   let muzzleFlash = null;
   let casingSystem = null;
   let decalManager = null;
@@ -1642,11 +2890,49 @@ let _roundShown = false;
     }
 
     async function boot(){
-      const mode = getSelectedMode();
+      let mode = getSelectedMode();
+      const campaignOn = isCampaign();
+      const camp = campaignOn ? getCampaignSession() : null;
+      const diff = campaignOn ? getCampaignDifficulty() : { id:'normal', playerDamage:1, enemyDamage:1 };
+      // Campaign: override mode label (rules are mission-scripted; no Zone/Conquest/Frontline logic)
+      if(campaignOn) mode = 'campaign';
+
       const path = resolveMapPath();
 
-      document.getElementById("modeLabel").textContent = mode;
-      document.getElementById("mapLabel").textContent = path;
+      document.getElementById("modeLabel").textContent = campaignOn ? `campaign (${diff.id})` : mode;
+      if(campaignOn){
+        const url = new URL(window.location.href);
+        const forceMid = String(url.searchParams.get('mission') || '');
+        const entry = CAMPAIGN_MISSIONS[forceMid] || CAMPAIGN_MISSIONS[String(camp?.missionId || '')] || CAMPAIGN_MISSIONS.c1_m1_insertion;
+        document.getElementById("mapLabel").textContent = entry?.title ? `${entry.title} · ${entry.map}` : path;
+
+        // Apply per-mission campaign rules & fixed loadout (no shop / no class / no bandage)
+        try{
+          const rules = entry?.rules || { noShop:true, noClass:true, noBandage:true, autoRegen:true };
+          window.__campaignRules = rules;
+          // Force a neutral "campaign" class state (prevents class-items logic from leaking in)
+          window.playerProfile.classId = 'campaign';
+          window.playerProfile.className = 'CAMPAIGN';
+
+          const lo = entry?.loadout || { primary:'ar1', secondary:'pistol1', grenades:['frag','flash','smoke'] };
+          const inv = window.playerProfile.inventory;
+          // Keep slot structure, just rewrite content.
+          if(inv){
+            inv.primary = [lo.primary || 'ar1'];
+            inv.secondary = [lo.secondary || 'pistol1'];
+            inv.grenades = Array.isArray(lo.grenades) ? lo.grenades.slice(0,3) : ['frag','flash','smoke'];
+            inv.special = [];
+            inv.tools = [];
+          }
+          window.playerProfile.activeSlot = { type:'primary', index:0 };
+        }catch(e){ console.warn('[Campaign] apply rules/loadout failed', e); }
+      }else{
+        document.getElementById("mapLabel").textContent = path;
+        window.__campaignRules = null;
+      }
+
+      // Expose for damage scaling
+      window.__difficulty = diff;
 
       try{
         hideError();
@@ -1674,16 +2960,22 @@ let _roundShown = false;
         }catch(e){ /* ignore minimap failures */ }
 
         // Patch 9-1: Mode rules init (Zone / Conquest / Frontline)
-        try{
-          modeSystem = new ModeSystem({ mode, zones: map.zones, opts: { ticketsBlue:200, ticketsRed:200, conquestTimeLimit: 15*60, frontlineSwapSec: 5*60, frontlineTimeLimit: 15*60 } });
-          window.modeSystem = modeSystem;
-          // initial HUD render
-          window.combatUI?.setModeState?.(modeSystem.getUIState({ playerPos: playerObject?.position || null }));
-          if(!_roundShown && modeSystem?.roundEnded){
-            _roundShown = true;
-            window.combatUI?.showRoundResult?.(modeSystem?.getRoundResult?.());
-          }
-        }catch(e){ console.warn("ModeSystem init failed:", e); }
+        // Campaign에서는 미션 스크립트가 룰을 제어하므로 ModeSystem을 비활성화.
+        if(mode !== 'campaign'){
+          try{
+            modeSystem = new ModeSystem({ mode, zones: map.zones, opts: { ticketsBlue:200, ticketsRed:200, conquestTimeLimit: 15*60, frontlineSwapSec: 5*60, frontlineTimeLimit: 15*60 } });
+            window.modeSystem = modeSystem;
+            // initial HUD render
+            window.combatUI?.setModeState?.(modeSystem.getUIState({ playerPos: playerObject?.position || null }));
+            if(!_roundShown && modeSystem?.roundEnded){
+              _roundShown = true;
+              window.combatUI?.showRoundResult?.(modeSystem?.getRoundResult?.());
+            }
+          }catch(e){ console.warn("ModeSystem init failed:", e); }
+        }else{
+          modeSystem = null;
+          window.modeSystem = null;
+        }
 
 
 
@@ -1691,12 +2983,53 @@ let _roundShown = false;
         const blue = current.spawns.blue ?? map.spawns[0];
         initPlayerFromSpawn(blue);
 
+        // Patch 3-CAMP+: Campaign runtime (dialogue/cutscenes/objectives/checkpoints)
+        if(campaignOn){
+          try{
+            campaignRuntime = new CampaignRuntime({
+              THREE,
+              camera,
+              inputManager,
+              playerController,
+              getPlayerObject: ()=> playerObject,
+              getPlayerTeam: ()=> (window.playerProfile?.team || 'blue'),
+              getSceneRoot: ()=> (current?.scene || null),
+              lockPointer: (enabled)=>{
+                // For cutscenes we exit pointer lock. We don't force re-lock.
+                if(!enabled){
+                  try{ document.exitPointerLock?.(); }catch{}
+                }
+              }
+            });
+            // Best-effort hook: count kills for mission objectives.
+            try{
+              const ds = window.damageSystem;
+              if(ds && !ds.__campWrapped){
+                const _orig = ds.applyDamage.bind(ds);
+                ds.applyDamage = (id, amount, meta={})=>{
+                  const res = _orig(id, amount, meta);
+                  try{ if(res?.killed) campaignRuntime?.onKill?.({ team: res?.ent?.team || null }); }catch{}
+                  return res;
+                };
+                ds.__campWrapped = true;
+              }
+            }catch{}
+
+            campaignRuntime.start({ mapJson: map, continueFromSave: true });
+            window.campaignRuntime = campaignRuntime;
+          }catch(e){ console.warn('[Campaign] init failed', e); }
+        }else{
+          campaignRuntime = null;
+          window.campaignRuntime = null;
+        }
+
         // Patch 8-3A: Bots (spawn at team spawns, roam between zones)
         try{
           if(botManager){
             botManager.clear?.();
           }
           const _botAim = new THREE.Vector3();
+          const campEntry = campaignOn ? (CAMPAIGN_MISSIONS[String(camp?.missionId || '')] || CAMPAIGN_MISSIONS.c1_m1_insertion) : null;
           botManager = new BotManager({
             scene: current.scene,
             collisionWorld: collisionWorld,
@@ -1704,9 +3037,9 @@ let _roundShown = false;
             mode,
             difficultyId: settingsStore.botDifficulty,
             playerBaseSpeed: (playerController?.baseSpeed ?? 6),
-            // Default bot counts (5v5 feel: player+4 vs 5)
-            botCountBlue: 4,
-            botCountRed: 5,
+            // Default bot counts (PvE: campaign may override per-mission)
+            botCountBlue: campaignOn ? (campEntry?.bots?.blue ?? 0) : 4,
+            botCountRed: campaignOn ? (campEntry?.bots?.red ?? 6) : 5,
             getPlayerPosition: ()=> playerObject?.position || null,
             getPlayerTeam: ()=> (window.playerProfile?.team || 'blue'),
             damageSystem: window.damageSystem,
@@ -1724,6 +3057,28 @@ let _roundShown = false;
               try{ window.applyBulletDamageToLocal?.({ amount, headshot, weaponId, sourceTeam, sourceId }); }catch{}
             },
           });
+          // Campaign: allow mission maps to define additional enemy spawn points
+          if(campaignOn && (map?.campaign?.enemySpawns?.length || map?.campaign?.friendlySpawns?.length)){
+            try{
+              const spE = map.campaign.enemySpawns || [];
+              const spF = map.campaign.friendlySpawns || [];
+              const _origGet = botManager._getSpawnPosForTeam.bind(botManager);
+              botManager._getSpawnPosForTeam = (team)=>{
+                if(String(team).toLowerCase() === 'red'){
+                  const pick = spE[Math.floor(Math.random()*Math.max(1,spE.length))];
+                  if(pick && Array.isArray(pick.pos)){
+                    return { x: Number(pick.pos[0])||0, z: Number(pick.pos[2])||0 };
+                  }
+                }else if(String(team).toLowerCase() === 'blue'){
+                  const pick = spF[Math.floor(Math.random()*Math.max(1,spF.length))];
+                  if(pick && Array.isArray(pick.pos)){
+                    return { x: Number(pick.pos[0])||0, z: Number(pick.pos[2])||0 };
+                  }
+                }
+                return _origGet(team);
+              };
+            }catch(e){ console.warn('[Campaign] enemy spawns override failed', e); }
+          }
           botManager.init?.();
           window.botManager = botManager;
         }catch(e){ console.warn("[Strikegy] BotManager init failed", e); }
@@ -1766,7 +3121,8 @@ let _roundShown = false;
           const isHead = ds.isHeadshot(hit, ent);
           const base = Number(weapon?.damage) || 25;
           const mult = isHead ? (Number(weapon?.headshotMult) || 1.5) : 1;
-          const dmg = Math.round(base * mult);
+          const diff = window.__difficulty || { playerDamage: 1, enemyDamage: 1 };
+          const dmg = Math.round(base * mult * (Number(diff.playerDamage) || 1));
 
           const res = ds.applyDamage(ent.id, dmg, { weaponId: weapon?.id || null, sourceTeam: myTeam, headshot: isHead });
           // Economy: damage pays per damage; headshot damage pays 2x
@@ -1790,6 +3146,8 @@ let _roundShown = false;
       // Patch 7-2B: muzzle flash + recoil kick
       onShot: (payload)=>{
         muzzleFlash.spawn();
+        // Patch 2-FP: viewmodel recoil kick
+        try{ viewModelSystem?.onShot?.(payload); }catch(e){}
         if(!cameraController) return;
         const wid = payload?.weaponId || weaponSystem?.currentId;
         const isADSNow = !!(payload?.isADS ?? weaponSystem?.isADS);
@@ -1813,6 +3171,17 @@ let _roundShown = false;
     weaponSwitchManager.ensureActiveSlot?.();
     // sync to current slot
     weaponSwitchManager.togglePrimarySecondary?.(); // will settle to owned slot
+
+    // Patch 2-FP: create first-person viewmodel (hands + weapon)
+    try{
+      viewModelSystem = new ViewModelSystem({
+        camera,
+        weaponSystem,
+        getActiveSlot: ()=> (weaponSwitchManager?.meleeActive ? { type:'melee', index:0 } : window.playerProfile?.activeSlot),
+        getInventory: ()=> window.playerProfile?.inventory,
+      });
+      window.viewModelSystem = viewModelSystem;
+    }catch(e){ console.warn('[ViewModel] init failed', e); }
 
 	    // Patch 7-2A: smooth ADS FOV (initialize)
 	    lastFov = camera.fov;
@@ -1876,7 +3245,10 @@ let _roundShown = false;
             try{ window.playerProfile.ammoRefillService = ammoRefillService; }catch{}
 
             // Patch 7-4B: class item system (Key6/7 use + binocular zoom)
-            classItemSystem = new ClassItemSystem({
+            // Campaign mode disables classes entirely.
+            if(campaignOn || (window.__campaignRules && window.__campaignRules.noClass)){
+              classItemSystem = null;
+            }else classItemSystem = new ClassItemSystem({
               profile: window.playerProfile,
               camera,
               scene: current.scene,
@@ -1971,6 +3343,8 @@ document.getElementById("status").textContent =
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
       try{ rewardFloat?.update?.(dt); }catch(e){}
+      // Patch 3-CAMP+: campaign update (cutscenes/dialogue/objectives/checkpoints)
+      try{ campaignRuntime?.update?.(dt); }catch(e){}
       // Patch 9-1: Mode rules tick + objective/capture HUD update (throttled)
       try{
         modeSystem?.update?.(dt, {
@@ -2019,9 +3393,14 @@ document.getElementById("status").textContent =
       try{
       // Patch 8-0PRO: respawn timer tick
       if(playerDead){
-        respawnLeft -= dt;
-        window.combatUI?.setRespawning?.(Math.max(0, Math.ceil(respawnLeft)));
-        if(respawnLeft <= 0) respawnPlayer();
+        // Campaign: no auto-respawn (use checkpoint restart)
+        if(window.__campaign?.isCampaign?.() && window.campaignRuntime){
+          window.combatUI?.setRespawning?.('');
+        }else{
+          respawnLeft -= dt;
+          window.combatUI?.setRespawning?.(Math.max(0, Math.ceil(respawnLeft)));
+          if(respawnLeft <= 0) respawnPlayer();
+        }
       }
       // Patch 8-2PRO: Bandage healing tick
       if(!playerDead && bandageHealing){
@@ -2031,6 +3410,14 @@ document.getElementById("status").textContent =
           stopBandageHealing();
         }else{
           setHP(next);
+        }
+      }
+      // Campaign: automatic HP regeneration (no bandage)
+      const _rules = window.__campaignRules || {};
+      if(!playerDead && _rules.autoRegen && (_rules.noBandage || !bandageHealing)){
+        const nowS = (performance.now()||0)/1000;
+        if(playerHP < playerHPMax && (nowS - playerLastDamagedAt) >= CAMP_REGEN_DELAY){
+          setHP(Math.min(playerHPMax, playerHP + CAMP_REGEN_RATE * dt));
         }
       }
       // Patch 8-1PROA: keep world simulation running even when dead
@@ -2146,7 +3533,13 @@ document.getElementById("status").textContent =
           const halfH = playerController.isCrouched ? playerController.halfHeightCrouch : playerController.halfHeightStand;
           playerController.groundY = computePlatformGroundY(playerObject.position, halfH);
         }
-        playerController.update(dt, st, camera, collisionWorld);
+        // Campaign cutscene lock: freeze player movement/inputs (camera is driven by script)
+        const _campLocked = !!(campaignRuntime?.isPlayerLocked?.());
+        if(!_campLocked){
+          playerController.update(dt, st, camera, collisionWorld);
+        }else{
+          st.moveX = 0; st.moveZ = 0;
+        }
 
 
         // Patch 8-1: minimap tick
@@ -2289,7 +3682,10 @@ document.getElementById("status").textContent =
         mobileHUD.consumePulses?.();
       }
 weaponSwitchManager?.update?.(dt);
-weaponSystem.update(dt);
+// Campaign cutscene lock: block firing/reload/weapon logic
+if(!(campaignRuntime?.isPlayerLocked?.())){
+  weaponSystem.update(dt);
+}
       // (moved) throwablesSystem update handled earlier
 if(decalManager) decalManager.update(dt);
       if(muzzleFlash) muzzleFlash.update(dt);
@@ -2297,7 +3693,8 @@ if(decalManager) decalManager.update(dt);
       if(casingSystem) casingSystem.update(dt);
 
       // Patch 7-2B: recoil recovery (frame independent)
-      if(cameraController){
+      // Campaign cutscenes drive the camera via keyframes, so recoil must not overwrite view.
+      if(cameraController && !(campaignRuntime?.isPlayerLocked?.())){
         const wid = (weaponSystem?.currentId || weaponSystem?.current?.id || "");
         const p = recoilPresetFor(wid);
         const rs = weaponSystem.isADS ? p.retAds : p.retHip;
@@ -2390,6 +3787,14 @@ if(decalManager) decalManager.update(dt);
       }
     }
 
+      // Patch 2-FP: viewmodel tick (항상 업데이트 / 죽으면 숨김)
+      try{
+        if(viewModelSystem){
+          viewModelSystem.setVisible?.(!playerDead);
+          viewModelSystem.update?.(dt, st, { playerDead });
+        }
+      }catch(e){}
+
             }catch(e){
         console.error("animate error", e);
       }
@@ -2414,13 +3819,21 @@ if(decalManager) decalManager.update(dt);
         }
       }catch(e){ /* ignore minimap */ }
 
-if(current?.scene) renderer.render(current.scene, camera);
+if(current?.scene){
+        if(postFX){
+          postFX.setScene(current.scene);
+          postFX.render();
+        }else{
+          renderer.render(current.scene, camera);
+        }
+      }
     }
 
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      try{ postFX?.resize?.(); }catch(e){}
     });
 
     // Patch 10: in-game menu
@@ -2469,7 +3882,8 @@ if(current?.scene) renderer.render(current.scene, camera);
   
 
   // Patch 11-A: multiplayer bootstrap banner (no sync yet)
-  initMPBootstrap();</script>
+  // Patch 0-F: 멀티플레이 부트스트랩 제거
+  </script>
   <!-- Patch 7-2B: scope overlay (shown only when ADS + weapon has scope) -->
   <div id="scopeOverlay" data-scope="3x">
     <div class="mask"></div>
