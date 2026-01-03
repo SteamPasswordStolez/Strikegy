@@ -13,6 +13,27 @@ export class CampaignUI {
         <div class="campFade" id="campFade"></div>
       </div>
 
+      <div class="campBrief" id="campBrief">
+        <div class="campBrief__panel">
+          <div class="campBrief__top">
+            <div>
+              <div class="campBrief__title" id="campBriefTitle"></div>
+              <div class="campBrief__meta" id="campBriefMeta"></div>
+            </div>
+            <div class="campBrief__badge">BRIEFING</div>
+          </div>
+          <div class="campBrief__grid">
+            <div class="campBrief__map">
+              <div class="campBrief__mapGrid" id="campBriefMap"></div>
+            </div>
+            <div class="campBrief__text">
+              <div class="campBrief__intel" id="campBriefIntel"></div>
+              <div class="campBrief__obj" id="campBriefObj"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="campObjective" id="campObjective"></div>
 
       <div class="campWaypoint" id="campWaypoint">
@@ -60,6 +81,14 @@ export class CampaignUI {
     this.toastEl = this.wrap.querySelector('#campToast');
 
     this.fadeEl = this.wrap.querySelector('#campFade');
+
+    this.briefWrap = this.wrap.querySelector('#campBrief');
+    this.briefTitle = this.wrap.querySelector('#campBriefTitle');
+    this.briefMeta = this.wrap.querySelector('#campBriefMeta');
+    this.briefIntel = this.wrap.querySelector('#campBriefIntel');
+    this.briefObj = this.wrap.querySelector('#campBriefObj');
+    this.briefMap = this.wrap.querySelector('#campBriefMap');
+
     this.resultWrap = this.wrap.querySelector('#campResult');
     this.resultTitle = this.wrap.querySelector('#campResultTitle');
     this.resultDesc = this.wrap.querySelector('#campResultDesc');
@@ -91,6 +120,7 @@ export class CampaignUI {
     this.hideSubtitle();
     this.hideToast();
     this.setCinematic(false);
+    this.hideBriefing();
     this.hideResult();
   }
 
@@ -153,6 +183,55 @@ export class CampaignUI {
         box-shadow:0 12px 26px rgba(0,0,0,.35);
         backdrop-filter: blur(10px);
       }
+      
+
+      #campaignHUD .campBrief{position:fixed;inset:0;display:none;align-items:center;justify-content:center;pointer-events:none;z-index:70;}
+      #campaignHUD .campBrief__panel{width:min(980px,calc(100vw-32px));
+        padding:14px 14px;border-radius:18px;
+        background:linear-gradient(180deg, rgba(10,12,18,.76), rgba(10,12,18,.56));
+        border:1px solid rgba(255,255,255,.16);
+        box-shadow:0 18px 70px rgba(0,0,0,.55);
+        backdrop-filter: blur(12px);
+      }
+      #campaignHUD .campBrief__top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+      #campaignHUD .campBrief__title{font-weight:1000;font-size:22px;letter-spacing:.10em}
+      #campaignHUD .campBrief__meta{margin-top:4px;font-weight:850;opacity:.8}
+      #campaignHUD .campBrief__badge{font-weight:1000;letter-spacing:.18em;font-size:11px;opacity:.9;padding:6px 10px;border-radius:999px;
+        border:1px solid rgba(255,255,255,.16);background:rgba(31,79,255,.18);
+      }
+      #campaignHUD .campBrief__grid{display:grid;grid-template-columns: 1.1fr .9fr;gap:12px;margin-top:12px}
+      #campaignHUD .campBrief__map{height:280px;border-radius:16px;border:1px solid rgba(255,255,255,.12);
+        background:radial-gradient(900px 520px at 20% 15%, rgba(31,79,255,.22), transparent 55%),
+                   radial-gradient(700px 520px at 80% 80%, rgba(57,255,209,.08), transparent 60%),
+                   linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+        overflow:hidden;position:relative;
+      }
+      #campaignHUD .campBrief__mapGrid{position:absolute;inset:0;
+        background-image: linear-gradient(rgba(255,255,255,.10) 1px, transparent 1px),
+                          linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px);
+        background-size: 22px 22px;
+        opacity:.55;
+      }
+      #campaignHUD .campBrief__mark{position:absolute;width:10px;height:10px;border-radius:999px;
+        background:rgba(255,255,255,.88);box-shadow:0 0 0 4px rgba(31,79,255,.22), 0 0 28px rgba(31,79,255,.25);
+      }
+      #campaignHUD .campBrief__mark.obj{background:rgba(255,210,120,.92);box-shadow:0 0 0 4px rgba(255,210,120,.22),0 0 30px rgba(255,210,120,.25)}
+      #campaignHUD .campBrief__mark.you{background:rgba(120,255,160,.95);box-shadow:0 0 0 4px rgba(120,255,160,.22),0 0 30px rgba(120,255,160,.22)}
+      #campaignHUD .campBrief__text{padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.12);
+        background:rgba(0,0,0,.18);
+      }
+      #campaignHUD .campBrief__intel{font-weight:850;opacity:.92;line-height:1.5;min-height:88px}
+      #campaignHUD .campBrief__obj{margin-top:10px;font-weight:900;opacity:.95}
+      #campaignHUD .campBrief__obj b{letter-spacing:.14em;font-size:11px;opacity:.78}
+      #campaignHUD .campBrief__obj ul{margin:6px 0 0 18px;padding:0}
+      #campaignHUD .campBrief__obj li{margin:4px 0}
+
+      @media (max-width:720px){
+        #campaignHUD .campBrief__grid{grid-template-columns:1fr}
+        #campaignHUD .campBrief__map{height:220px}
+      }
+
+
       #campaignHUD .campToast:empty{display:none;}
 
       #campaignHUD .campCinematic{position:fixed;inset:0;pointer-events:none;}
@@ -268,6 +347,40 @@ export class CampaignUI {
   hideResult() {
     this.resultWrap.style.display = 'none';
   }
+
+
+  showBriefing(data = {}) {
+    this.ensureStyles();
+    const d = data || {};
+    this.briefTitle.textContent = d.title || '작전 브리핑';
+    this.briefMeta.textContent = [d.location, d.time, d.tag].filter(Boolean).join(' · ');
+    this.briefIntel.innerHTML = this._esc(d.intel || '').replace(/\n/g, '<br>');
+    const objs = Array.isArray(d.objectives) ? d.objectives : [];
+    this.briefObj.innerHTML = '<b>OBJECTIVES</b><ul>' + objs.map(x => '<li>' + this._esc(x) + '</li>').join('') + '</ul>';
+
+    // map marks: { you:[0..1,0..1], obj:[0..1,0..1] }
+    const marks = d.marks || {};
+    this.briefMap.innerHTML = '';
+    const addMark = (cls, pt) => {
+      if (!pt || pt.length < 2) return;
+      const x = Math.max(0, Math.min(1, Number(pt[0])));
+      const y = Math.max(0, Math.min(1, Number(pt[1])));
+      const el = document.createElement('div');
+      el.className = 'campBrief__mark ' + cls;
+      el.style.left = (x * 100).toFixed(1) + '%';
+      el.style.top = (y * 100).toFixed(1) + '%';
+      this.briefMap.appendChild(el);
+    };
+    addMark('you', marks.you);
+    addMark('obj', marks.obj);
+
+    this.briefWrap.style.display = 'flex';
+  }
+
+  hideBriefing() {
+    if (this.briefWrap) this.briefWrap.style.display = 'none';
+  }
+
 
   update(dt) {
     if (this._subHideT > 0) {

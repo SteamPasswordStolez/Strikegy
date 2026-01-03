@@ -146,6 +146,7 @@ export class CampaignRuntime {
   }
 
   attachMap(mapJson) {
+    this.mapJson = mapJson;
     // Campaign triggers can be defined inside map JSON:
     // { campaign: { triggers: { rally:{pos:[...], r:..}, exfil:{pos:[...], r:..} } } }
     this.triggers = {};
@@ -173,6 +174,9 @@ export class CampaignRuntime {
     this.missionTime = 0;
 
     this.stepIndex = continueFromSave ? Math.max(0, Number(this.session?.stepIndex || 0)) : 0;
+
+    // Inject per-mission intro briefing cutscene (>=15s).
+    this._injectIntroStepIfNeeded(!!continueFromSave);
     this.stepState = null;
     this._inCutscene = false;
 
@@ -291,6 +295,108 @@ export class CampaignRuntime {
     }
   }
 
+
+  _buildIntroCameraFrames() {
+    const sp = (this.mapJson?.spawns || []).find(s=>String(s.team||'')==='blue');
+    const spawn = sp?.pos || [0,2,0];
+    const sPos = [spawn[0], Math.max(2.2, (spawn[1]||2) + 1.0), spawn[2]];
+
+    // Pick a target trigger from the mission script (first reach)
+    let trgName = null;
+    const scr = this._baseScript || this.mission?.script || [];
+    for (const st of scr) {
+      if (st && st.type === 'reach' && st.trigger) { trgName = String(st.trigger); break; }
+    }
+    const trg = (trgName && this.triggers?.[trgName]) ? this.triggers[trgName] : null;
+    const tPos = trg?.pos || [spawn[0]+40, 2, spawn[2]+40];
+
+    // Cinematic camera rail (15.5s)
+    return [
+      { t: 0.0,  pos: [sPos[0]-18, 14, sPos[2]-22], look: [sPos[0], 2.2, sPos[2]] },
+      { t: 5.0,  pos: [sPos[0]-6,  10, sPos[2]-10], look: [sPos[0]+10, 2.4, sPos[2]+12] },
+      { t: 9.0,  pos: [tPos[0]-80, 90, tPos[2]-40], look: [tPos[0], 2.3, tPos[2]] },
+      { t: 12.5, pos: [tPos[0]-35, 28, tPos[2]-28], look: [tPos[0], 2.4, tPos[2]] },
+      { t: 15.5, pos: [tPos[0]-18, 16, tPos[2]-18], look: [tPos[0], 2.4, tPos[2]] },
+    ];
+  }
+
+  _injectIntroStepIfNeeded(isContinue) {
+    const m = this.mission;
+    if (!m) return;
+    // Keep original script for target pick
+    this._baseScript = Array.isArray(m.script) ? m.script.slice() : [];
+
+    const sess = this.session || {};
+    const already = !!sess.introInjected;
+
+    // If continuing from an old save (pre-HF7), step indices need to shift
+    if (isContinue && !already && Number(sess.stepIndex||0) > 0) {
+      sess.stepIndex = Number(sess.stepIndex||0) + 1;
+    }
+    sess.introInjected = true;
+
+    const first = this._baseScript?.[0];
+    if (first && first.type === 'cutscene' && String(first.id||'').startsWith('intro_brief')) {
+      m.script = this._baseScript;
+      this.session = sess;
+      return;
+    }
+
+    const briefing = (m.briefing || {});
+    const title = briefing.title || m.title || 'OPERATION BRIEFING';
+    const location = briefing.location || 'UNKNOWN AO';
+    const time = briefing.time || 'LOCAL';
+    const intel = briefing.intel || '목표 지역 진입 후 상황을 확인하고, 지정 목표를 달성하라.';
+    const objectives = briefing.objectives || (this._baseScript.filter(s=>s.type==='objective').slice(0,3).map(s=>s.text).filter(Boolean));
+
+    // show briefing overlay during intro cutscene
+    try {
+      this.ui.showBriefing({
+        title: title,
+        location,
+        time,
+        intel,
+        objectives,
+        marks: this._computeBriefingMarks(),
+      });
+    } catch {}
+
+    const introStep = {
+      id: 'intro_brief_15s',
+      type: 'cutscene',
+      duration: 15.5,
+      lockPlayer: true,
+      cinematic: { bars: true, fadeIn: 0.6, fadeOut: 0.6 },
+      camera: this._buildIntroCameraFrames(),
+      __isBriefing: true,
+    };
+
+    m.script = [introStep, ...this._baseScript];
+    this.session = sess;
+  }
+
+  _computeBriefingMarks(){
+    // normalize positions into 0..1 for UI marks (rough)
+    const gw = this.mapJson?.world?.groundSize?.[0] ?? 240;
+    const gd = this.mapJson?.world?.groundSize?.[1] ?? 240;
+    const toUV = (pos)=>{
+      const x = (pos[0] + gw/2) / gw;
+      const y = 1 - ((pos[2] + gd/2) / gd);
+      return [x,y];
+    };
+    const sp = (this.mapJson?.spawns || []).find(s=>String(s.team||'')==='blue');
+    const spawn = sp?.pos || [0,2,0];
+
+    let trgName = null;
+    for (const st of (this._baseScript || [])) {
+      if (st && st.type === 'reach' && st.trigger) { trgName = String(st.trigger); break; }
+    }
+    const trg = (trgName && this.triggers?.[trgName]) ? this.triggers[trgName] : null;
+    const tPos = trg?.pos || [spawn[0]+40, 2, spawn[2]+40];
+
+    return { you: toUV(spawn), obj: toUV(tPos) };
+  }
+
   _enterStep() {
     const steps = this.mission?.script || [];
     const step = steps[this.stepIndex];
@@ -396,6 +502,8 @@ export class CampaignRuntime {
   _endCutscene(step){
     const cam = this.camera;
     const snap = this._cutsceneSnap;
+
+    try{ if(step?.__isBriefing) this.ui.hideBriefing(); }catch{}
 
     // fade out bars quickly
     const cine = step?.cinematic || {};

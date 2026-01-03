@@ -143,6 +143,20 @@ export class BotManager {
       };
     });
 
+    // Campaign mode: if no capture zones exist, derive simple AI target zones from campaign triggers.
+    if(String(this.mode)==='campaign' && (!this.zones || this.zones.length===0)) {
+      try {
+        const t = this.map?.campaign?.triggers || this.map?.meta?.campaign?.triggers;
+        if (t && typeof t === 'object') {
+          this.zones = Object.entries(t).map(([id,v])=>{
+            const p = v?.pos || [0,0,0];
+            return { id: String(id), x: Number(p[0])||0, z: Number(p[2])||0, radius: Math.max(6, Number(v?.r)||10) };
+          });
+        }
+      } catch { /* ignore */ }
+    }
+
+
     // Spawns
     const sp = map?.spawns || [];
     // buildScene uses current.spawns, but map.json keeps array; support both
@@ -477,6 +491,7 @@ export class BotManager {
     return best;
   }
 
+  
   _botRepath(bot, force=false){
     if(!this.navigator) return;
     if(!force && bot.repathLeft > 0) return;
@@ -485,9 +500,40 @@ export class BotManager {
     if(path && path.length >= 2){
       bot.path = path;
       bot.pathIdx = 1; // [0] is current cell
+      bot._pathFail = 0;
     }else{
       bot.path = null;
       bot.pathIdx = 0;
+      bot._pathFail = (bot._pathFail||0) + 1;
+      const by = bot.target?.y ?? bot.pos.y;
+
+      // Campaign/urban maps can have tight choke points. Try nearby alternatives so bots
+      // don't cluster forever in a dead corner.
+      if(bot._pathFail <= 6){
+        const bx = bot.target?.x ?? 0;
+        const bz = bot.target?.z ?? 0;
+        for(let i=0;i<4;i++){
+          const ang = Math.random()*Math.PI*2;
+          const rad = 6 + Math.random()*18;
+          const alt = new THREE.Vector3(bx + Math.cos(ang)*rad, by, bz + Math.sin(ang)*rad);
+          const p2 = this.navigator.findPathWorld(bot.pos, alt, { maxExpansions: 14000 });
+          if(p2 && p2.length >= 2){
+            bot.target.copy(alt);
+            bot.path = p2;
+            bot.pathIdx = 1;
+            break;
+          }
+        }
+      } else {
+        // Hard reset: retarget to a random derived zone
+        try{
+          if(this.zones && this.zones.length){
+            const z = this.zones[Math.floor(Math.random()*this.zones.length)];
+            bot.target.set(z.x, by, z.z);
+          }
+        }catch{}
+        bot._pathFail = 0;
+      }
     }
   }
 
