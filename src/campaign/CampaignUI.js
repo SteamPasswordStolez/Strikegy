@@ -212,6 +212,39 @@ export class CampaignUI {
         background-size: 22px 22px;
         opacity:.55;
       }
+
+      /* HF8: dynamic briefing map (grid drift + scanline + pulsing marks + route) */
+      @keyframes campBriefGridDrift{
+        0%{ background-position: 0px 0px, 0px 0px; }
+        100%{ background-position: 44px 44px, 44px 44px; }
+      }
+      @keyframes campBriefScan{
+        0%{ transform: translateY(-120%); opacity:0; }
+        10%{ opacity:.55; }
+        90%{ opacity:.55; }
+        100%{ transform: translateY(120%); opacity:0; }
+      }
+      @keyframes campBriefPulse{
+        0%,100%{ transform: translate(-50%,-50%) scale(1); filter:brightness(1); }
+        50%{ transform: translate(-50%,-50%) scale(1.22); filter:brightness(1.2); }
+      }
+      #campaignHUD .campBrief__map::before{
+        content:""; position:absolute; inset:-40px 0;
+        background: linear-gradient(180deg, transparent, rgba(255,255,255,.22), transparent);
+        animation: campBriefScan 2.2s linear infinite;
+        pointer-events:none; mix-blend-mode: screen; opacity:.35;
+      }
+      #campaignHUD .campBrief__mapGrid{ animation: campBriefGridDrift 6s linear infinite; }
+      #campaignHUD .campBrief__mark{ animation: campBriefPulse 1.1s ease-in-out infinite; }
+      #campaignHUD .campBrief__route{ position:absolute; inset:0; pointer-events:none; }
+      #campaignHUD .campBrief__route path{
+        fill:none; stroke: rgba(255,255,255,.62); stroke-width: 2.2;
+        stroke-dasharray: 7 7; stroke-linecap: round;
+        animation: campRouteDash 1.0s linear infinite;
+        filter: drop-shadow(0 0 10px rgba(31,79,255,.25));
+      }
+      @keyframes campRouteDash{ to{ stroke-dashoffset:-28; } }
+
       #campaignHUD .campBrief__mark{position:absolute;width:10px;height:10px;border-radius:999px;
         background:rgba(255,255,255,.88);box-shadow:0 0 0 4px rgba(31,79,255,.22), 0 0 28px rgba(31,79,255,.25);
       }
@@ -361,6 +394,28 @@ export class CampaignUI {
     // map marks: { you:[0..1,0..1], obj:[0..1,0..1] }
     const marks = d.marks || {};
     this.briefMap.innerHTML = '';
+
+    // Route overlay (you -> obj)
+    try{
+      const you = marks.you;
+      const obj = marks.obj;
+      if(you && obj && you.length>=2 && obj.length>=2){
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.classList.add('campBrief__route');
+        svg.setAttribute('viewBox', '0 0 100 100');
+        svg.setAttribute('preserveAspectRatio', 'none');
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const x1 = (Math.max(0, Math.min(1, Number(you[0]))) * 100).toFixed(2);
+        const y1 = (Math.max(0, Math.min(1, Number(you[1]))) * 100).toFixed(2);
+        const x2 = (Math.max(0, Math.min(1, Number(obj[0]))) * 100).toFixed(2);
+        const y2 = (Math.max(0, Math.min(1, Number(obj[1]))) * 100).toFixed(2);
+        path.setAttribute('d', `M ${x1} ${y1} L ${x2} ${y2}`);
+        svg.appendChild(path);
+        this.briefMap.appendChild(svg);
+      }
+    }catch{}
+
     const addMark = (cls, pt) => {
       if (!pt || pt.length < 2) return;
       const x = Math.max(0, Math.min(1, Number(pt[0])));

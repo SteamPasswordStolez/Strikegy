@@ -713,6 +713,19 @@
   @media (max-width: 820px){
     #minimapWrap{ width:160px; height:160px; top:12px; right:12px; }
   }
+
+/* Campaign HF8: hide in-game HUD during campaign cutscenes (Chapter 1 only) */
+body[data-camp-cutscene="1"] #minimapWrap,
+body[data-camp-cutscene="1"] #crosshair,
+body[data-camp-cutscene="1"] #ammoHUD,
+body[data-camp-cutscene="1"] #mobileHUD,
+body[data-camp-cutscene="1"] #hud-root,
+body[data-camp-cutscene="1"] #modeUIRoot,
+body[data-camp-cutscene="1"] .shopOverlay,
+body[data-camp-cutscene="1"] .invOverlay{
+  display:none !important;
+}
+
 </style>
 </head>
 <body>

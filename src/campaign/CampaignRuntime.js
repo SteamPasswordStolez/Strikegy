@@ -59,6 +59,9 @@ export class CampaignRuntime {
     this.killCount = 0;
     this._inCutscene = false;
 
+    // 3D waypoint marker (HF8: improved navigation)
+    this._wp3d = null;
+
     // Interaction key (E)
     this._interactPressed = false;
     this._onKeyDown = (e)=>{
@@ -320,23 +323,26 @@ export class CampaignRuntime {
     ];
   }
 
+
   _injectIntroStepIfNeeded(isContinue) {
     const m = this.mission;
     if (!m) return;
-    // Keep original script for target pick
+
+    // HF8 scope: Chapter 1 only (Chapter 2 cutscenes get rebuilt in HF9).
     this._baseScript = Array.isArray(m.script) ? m.script.slice() : [];
+    if (Number(m.chapter || 0) !== 1) return;
 
     const sess = this.session || {};
     const already = !!sess.introInjected;
 
     // If continuing from an old save (pre-HF7), step indices need to shift
-    if (isContinue && !already && Number(sess.stepIndex||0) > 0) {
-      sess.stepIndex = Number(sess.stepIndex||0) + 1;
+    if (isContinue && !already && Number(sess.stepIndex || 0) > 0) {
+      sess.stepIndex = Number(sess.stepIndex || 0) + 1;
     }
     sess.introInjected = true;
 
     const first = this._baseScript?.[0];
-    if (first && first.type === 'cutscene' && String(first.id||'').startsWith('intro_brief')) {
+    if (first && first.type === 'cutscene' && String(first.id || '').startsWith('intro_brief')) {
       m.script = this._baseScript;
       this.session = sess;
       return;
@@ -346,20 +352,17 @@ export class CampaignRuntime {
     const title = briefing.title || m.title || 'OPERATION BRIEFING';
     const location = briefing.location || 'UNKNOWN AO';
     const time = briefing.time || 'LOCAL';
-    const intel = briefing.intel || '목표 지역 진입 후 상황을 확인하고, 지정 목표를 달성하라.';
-    const objectives = briefing.objectives || (this._baseScript.filter(s=>s.type==='objective').slice(0,3).map(s=>s.text).filter(Boolean));
+    const tag = briefing.tag || briefing.op || '';
 
-    // show briefing overlay during intro cutscene
-    try {
-      this.ui.showBriefing({
-        title: title,
-        location,
-        time,
-        intel,
-        objectives,
-        marks: this._computeBriefingMarks(),
-      });
-    } catch {}
+    const intel = briefing.intel || '목표 지역 진입 후 상황을 확인하고, 지정 목표를 달성하라.';
+
+    const objectives =
+      briefing.objectives ||
+      (this._baseScript
+        .filter(s => s.type === 'objective')
+        .slice(0, 4)
+        .map(s => s.text)
+        .filter(Boolean));
 
     const introStep = {
       id: 'intro_brief_15s',
@@ -369,6 +372,15 @@ export class CampaignRuntime {
       cinematic: { bars: true, fadeIn: 0.6, fadeOut: 0.6 },
       camera: this._buildIntroCameraFrames(),
       __isBriefing: true,
+      __briefingData: {
+        title,
+        location,
+        time,
+        tag,
+        intel,
+        objectives,
+        marks: this._computeBriefingMarks(),
+      },
     };
 
     m.script = [introStep, ...this._baseScript];
@@ -396,6 +408,67 @@ export class CampaignRuntime {
 
     return { you: toUV(spawn), obj: toUV(tPos) };
   }
+
+
+  _ensureWorldWaypoint3D(){
+    if (this._wp3d) return;
+    const THREE = this.THREE;
+    const scene = this.getSceneRoot?.();
+    if (!THREE || !scene) return;
+
+    const group = new THREE.Group();
+    group.name = 'campaignWaypoint3D';
+    group.visible = false;
+
+    // Ring + beam (simple, cheap)
+    const ringGeo = new THREE.TorusGeometry(1.9, 0.08, 10, 26);
+    const ringMat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.55, depthWrite:false });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.15;
+
+    const beamGeo = new THREE.CylinderGeometry(0.20, 0.20, 6.2, 10, 1, true);
+    const beamMat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.22, depthWrite:false });
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.y = 3.2;
+
+    const tipGeo = new THREE.ConeGeometry(0.35, 0.9, 10);
+    const tipMat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.35, depthWrite:false });
+    const tip = new THREE.Mesh(tipGeo, tipMat);
+    tip.position.y = 6.6;
+
+    group.add(ring, beam, tip);
+    scene.add(group);
+
+    this._wp3d = { group, ring, beam, tip, t: 0, active: false };
+  }
+
+  _setWorldWaypoint(pos){
+    if (!pos || pos.length < 3) return;
+    this._ensureWorldWaypoint3D();
+    if (!this._wp3d) return;
+    const g = this._wp3d.group;
+    g.position.set(Number(pos[0])||0, Number(pos[1]||2), Number(pos[2])||0);
+    g.visible = true;
+    this._wp3d.active = true;
+  }
+
+  _clearWorldWaypoint(){
+    if (!this._wp3d) return;
+    this._wp3d.group.visible = false;
+    this._wp3d.active = false;
+  }
+
+  _tickWorldWaypoint(dt){
+    if (!this._wp3d || !this._wp3d.active) return;
+    this._wp3d.t += dt;
+    const t = this._wp3d.t;
+    const pulse = 1.0 + Math.sin(t * 3.1) * 0.09;
+    try{ this._wp3d.ring.scale.set(pulse, pulse, pulse); }catch{}
+    try{ this._wp3d.tip.position.y = 6.6 + (0.25 * Math.sin(t * 2.3)); }catch{}
+    try{ this._wp3d.beam.material.opacity = 0.18 + 0.10 * (0.5 + 0.5 * Math.sin(t * 2.7)); }catch{}
+  }
+
 
   _enterStep() {
     const steps = this.mission?.script || [];
@@ -497,6 +570,22 @@ export class CampaignRuntime {
     if (cine?.fadeIn) this.ui.setFade(0, 14);
 
     this._setPlayerLock(!!step.lockPlayer);
+
+    // Cutscene should not show in-game HUD (HF8: Chapter 1 only).
+    try{
+      if (Number(this.mission?.chapter || 0) === 1) {
+        document.body.dataset.campCutscene = '1';
+        window.dispatchEvent(new CustomEvent('campaign:cutscene', { detail: { active:true, chapter: this.mission?.chapter || 0, missionId: this.mission?.id || '' } }));
+      }
+    }catch{}
+
+    // Briefing overlay is shown only when the briefing cutscene actually starts.
+    try{
+      if(step?.__isBriefing){
+        const bd = step.__briefingData || step.briefingData || null;
+        if(bd) this.ui.showBriefing(bd);
+      }
+    }catch{}
   }
 
   _endCutscene(step){
@@ -504,6 +593,13 @@ export class CampaignRuntime {
     const snap = this._cutsceneSnap;
 
     try{ if(step?.__isBriefing) this.ui.hideBriefing(); }catch{}
+
+    try{
+      if (Number(this.mission?.chapter || 0) === 1) {
+        delete document.body.dataset.campCutscene;
+        window.dispatchEvent(new CustomEvent('campaign:cutscene', { detail: { active:false, chapter: this.mission?.chapter || 0, missionId: this.mission?.id || '' } }));
+      }
+    }catch{}
 
     // fade out bars quickly
     const cine = step?.cinematic || {};
@@ -558,6 +654,7 @@ export class CampaignRuntime {
 
   update(dt) {
     this.ui.update(dt);
+    this._tickWorldWaypoint(dt);
     if (!this.mission) return;
 
     // Mission timer
@@ -579,6 +676,11 @@ export class CampaignRuntime {
       return;
     }
 
+    // World waypoint is only for navigation steps.
+    if (step.type !== 'reach' && step.type !== 'interact') {
+      this._clearWorldWaypoint();
+    }
+
     if (step.type === 'reach') {
       const po = this.getPlayerObject?.();
       const p = po?.position || null;
@@ -587,6 +689,7 @@ export class CampaignRuntime {
 
       if (p && this.triggers?.[step.trigger]) {
         const trg = this.triggers[step.trigger];
+        this._setWorldWaypoint(trg.pos);
         const dx = trg.pos[0] - p.x;
         const dz = trg.pos[2] - p.z;
         const dist = Math.sqrt(dx*dx + dz*dz);
@@ -612,6 +715,8 @@ export class CampaignRuntime {
         this.saveSession({ checkpointId: String(step.trigger || 'reach') });
         this.ui.toast('체크포인트 저장', 1.6);
         this.ui.setWaypoint(null);
+        this._clearWorldWaypoint();
+        this._clearWorldWaypoint();
         // mark corresponding objective done (if any)
         if (String(step.trigger) === 'rally') this._markObjectiveDone('rally');
         if (String(step.trigger) === 'exfil') this._markObjectiveDone('exfil');
@@ -643,6 +748,7 @@ export class CampaignRuntime {
       // reuse waypoint panel for prompt
       if (p && this.triggers?.[trgName]) {
         const trg = this.triggers[trgName];
+        this._setWorldWaypoint(trg.pos);
         const dx = trg.pos[0] - p.x;
         const dz = trg.pos[2] - p.z;
         const dist = Math.sqrt(dx*dx + dz*dz);

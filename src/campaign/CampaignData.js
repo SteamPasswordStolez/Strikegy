@@ -39,6 +39,20 @@ export const CampaignDB = {
       failOnDeath: true,
       // Optional: mission time limit (seconds). 0 = none.
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M1: INSERTION',
+        location: 'Sable Coast · Arakhan Delta (AO: SANDGLASS)',
+        time: '05:10 LOCAL',
+        tag: 'LOW VIS · RADIO SILENCE',
+        intel: '명분: ‘블랙사이트’의 위치를 확정하기 위한 첫 침투.\n상황: 적 캠프 통신이 루프를 돌고 있다. 임시 중계기를 끊으면 감시망이 30초 정도 흔들린다.\n결과: 루프 차단 후 흔적을 지우고 탈출. 데이터는 다음 작전(블랙사이트) 접근 루트로 연결된다.\n규칙: 불필요한 교전 금지. 발견되면 즉시 이탈 루트로 전환.',
+        objectives: [
+          '집결 지점으로 이동',
+          '임시 중계기 해킹',
+          '추격 적 제거 (필요 최소)',
+          '탈출 지점 확보',
+        ],
+      },
+
 
       // Script sequence (10~20min target; MVP is short but structured for expansion)
       script: [
@@ -55,6 +69,8 @@ export const CampaignDB = {
           en:"Raven—sun’s up. We’re late, so we stay quiet.",
           ko:'레이븐—해가 떴다. 늦었으니 조용히 간다.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'확인. 교전은 최소화해. 소음 나면 추적이 붙는다.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'중계기만 끊으면 감시망이 잠깐 비어. 그 틈에 흔적 지우고 빠져.'},
         { id:'obj_rally', type:'objective', key:'rally', text:'집결 지점으로 이동' },
         { id:'reach_rally', type:'reach', trigger:'rally', label:'집결 지점' },
         { id:'dlg_2', type:'say', speaker:CAST.SHADE,
@@ -92,6 +108,19 @@ export const CampaignDB = {
         loadout: { primary: 'ar1', secondary: 'pistol1', grenades: ['frag','flash','smoke'], extras: ['impact'] },
         failOnDeath: true,
         timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M1 (ALT): DUST CONTACT',
+        location: 'Sable Coast · Arakhan Delta',
+        time: '05:12 LOCAL',
+        tag: 'LOW VIS',
+        intel: '명분: 정규 루트가 막혔다. 대체 경로로 집결 후 흔적을 남기지 않고 빠져나간다.\n상황: 순찰 2개 팀이 먼지 속을 훑고 있다.\n결과: 최소 교전으로 경계선을 정리하고 북쪽 이탈 지점으로 이동.',
+        objectives: [
+          '집결 지점으로 이동',
+          '경계선 정리(필요 최소)',
+          '탈출 지점 확보',
+        ],
+      },
+
         script: [
           {
             id: 'dlg_1',
@@ -169,6 +198,20 @@ export const CampaignDB = {
       loadout: { primary: 'smg1', secondary: 'pistol1', grenades: ['flash','frag','smoke'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M2: BLACKSITE',
+        location: 'Greyline Annex · Sublevel Facility (AO: COLDWALL)',
+        time: '05:48 LOCAL',
+        tag: 'SILENT ENTRY',
+        intel: '명분: 적 지휘망의 ‘진짜 중심’을 확인한다.\n상황: 구식 카메라 그리드. 조명 사이의 사각을 이용해 자료실까지 도달.\n결과: 데이터 확보 후, 추적이 붙기 전에 반대편으로 이탈. 확보 데이터는 ‘호송대(Convoy)’ 시간표를 포함한다.',
+        objectives: [
+          '출입문 돌파',
+          '자료실에서 데이터 확보',
+          '복도 방어',
+          '탈출 지점으로 이동',
+        ],
+      },
+
       script: [
         { id:'cs_entry', type:'cutscene', duration:6.6, lockPlayer:true,
           cinematic:{ bars:true, fadeIn:0.4, fadeOut:0.25 },
@@ -183,6 +226,8 @@ export const CampaignDB = {
           en:"Blacksite door. No shop, no kit—just what you carry.",
           ko:'블랙사이트 문이다. 상점/키트 없음—들고 있는 걸로 간다.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'대체 루트 확인. 순찰 두 팀, 간격 넓어. 조용히 지나가.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'눈에 띄면 바로 이탈이야. 목적은 전투가 아니라 ‘진입’이다.'},
         { id:'obj_breach', type:'objective', key:'breach', text:'출입문 돌파' },
         { id:'breach', type:'interact', trigger:'breach', label:'출입문', hint:'E로 돌파',
           toast:'문 개방', objectiveKey:'breach', checkpointId:'breach' },
@@ -222,6 +267,19 @@ export const CampaignDB = {
       loadout: { primary: 'ar2', secondary: 'pistol1', grenades: ['frag','smoke','flash'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M3: CONVOY',
+        location: 'Kharif Road · Dry Canal (AO: CINDER)',
+        time: '06:22 LOCAL',
+        tag: 'ONE SHOT',
+        intel: '명분: 호송대가 운반하는 ‘케이스’를 회수하면 다음 구역(교량/도시)로 이어지는 권한을 얻는다.\n상황: 호송대는 짧게 정차한다. 매복-회수-이탈, 세 단계로 끝낸다.\n결과: 케이스 회수 성공 시, 적은 통신을 끊고 지역 봉쇄를 시도할 것이다. 즉시 루트 변경.',
+        objectives: [
+          '매복 지점 확보',
+          '케이스 회수',
+          '추격 적 저지(필요 최소)',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"Convoy’s rolling. We don’t stop it—we cut its memory.",
@@ -234,6 +292,8 @@ export const CampaignDB = {
           en:"Target case—rear truck. Take it and burn the route.",
           ko:'목표 케이스—후미 트럭. 회수하고 루트를 태워.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'호송대는 30초만 멈춘다. 매복-회수-이탈. 세 박자.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'케이스만 챙겨. 쓸데없이 오래 싸우지 마.'},
         { id:'obj_disable', type:'objective', key:'case', text:'케이스 회수' },
         { id:'pickup', type:'interact', trigger:'pickup', label:'케이스', hint:'E로 회수',
           toast:'케이스 확보', objectiveKey:'case', checkpointId:'case' },
@@ -258,6 +318,19 @@ export const CampaignDB = {
       loadout: { primary: 'lmg1', secondary: 'pistol1', grenades: ['smoke','frag','flash'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M4: BRIDGE',
+        location: 'Ravel Crossing · Span-7 Bridge (AO: KNOT)',
+        time: '06:54 LOCAL',
+        tag: 'FAST PUSH',
+        intel: '명분: 강을 건너지 못하면 도시권 진입이 불가능하다.\n상황: 교량 위 시야가 길다. 연막/섬광으로 시선만 끊고 전진.\n결과: 교량 끝 확보 후, 도심 진입로가 열린다.',
+        objectives: [
+          '교량 진입',
+          '교량 돌파',
+          '교량 끝 확보',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"Bridge is the throat. We cross, or we choke.",
@@ -269,6 +342,8 @@ export const CampaignDB = {
           en:"Smoke then sprint. Don’t bunch up.",
           ko:'연막 치고 전력 질주. 뭉치지 마.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'교량은 시야가 길어. 연막/섬광으로 ‘눈’만 끊고 밀어.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'끝까지 끊기면 도시권 진입로가 열린다.'},
         { id:'obj_push', type:'objective', key:'push', text:'교량 돌파' },
         { id:'defend_mid', type:'defend', sec:22, text:'중간 지점 돌파', objectiveKey:'push', checkpointId:'bridge_mid' },
         { id:'obj_exfil', type:'objective', key:'exfil', text:'교량 끝 확보' },
@@ -288,6 +363,19 @@ export const CampaignDB = {
       loadout: { primary: 'ar1', secondary: 'pistol1', grenades: ['flash','smoke','frag'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M5: CITY',
+        location: 'Novar District · Old Market Blocks (AO: VEIL)',
+        time: '07:25 LOCAL',
+        tag: 'GHOST WALK',
+        intel: '명분: 도심에 숨겨진 중계거점(다음 참호 구역 지시)을 찾는다.\n상황: 골목은 좁고 소음이 크게 울린다. 고지를 잡으면 이동이 쉬워진다.\n결과: 외곽으로 빠져나가며 다음 전장(참호선)으로 연결.',
+        objectives: [
+          '골목길로 진입',
+          '고지 확보',
+          '도시 외곽으로 탈출',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"City’s awake. Civilians gone—only echoes left.",
@@ -299,6 +387,8 @@ export const CampaignDB = {
           en:"We need eyes. Rooftop gives angles—take it.",
           ko:'시야가 필요해. 옥상에서 각을 잡아—올라가.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'골목은 소리가 크게 울려. 한 번 들키면 추적이 길다.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'고지 잡으면 시야 확보돼. 그다음 외곽으로 빠져.'},
         { id:'obj_roof', type:'objective', key:'roof', text:'고지 확보' },
         { id:'reach_roof', type:'reach', trigger:'rooftop', label:'고지' },
         { id:'dlg_2', type:'say', speaker:CAST.HART,
@@ -322,6 +412,19 @@ export const CampaignDB = {
       loadout: { primary: 'sg1', secondary: 'pistol1', grenades: ['smoke','frag','flash'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M6: TRENCH',
+        location: 'Hollow Front · Abandoned Lines (AO: IRONFURROW)',
+        time: '08:05 LOCAL',
+        tag: 'LINE BY LINE',
+        intel: '명분: 적이 버린 참호선을 ‘통로’로 바꾼다.\n상황: 참호는 안전하지만 출구마다 매복이 있다. 한 줄씩 밀어낸다.\n결과: 3차 참호선 확보 시, 능선 방향의 장비 야적장이 노출된다.',
+        objectives: [
+          '1차 참호선 확보',
+          '2차 참호선 확보',
+          '3차 참호선 확보',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"No-man’s-land. Keep your head down—sound carries.",
@@ -333,6 +436,8 @@ export const CampaignDB = {
           en:"They’re dug in. Push by segments—don’t overextend.",
           ko:'파고들어있다. 구간별로 밀어—깊게 나가지 마.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'참호는 엄폐가 되지만 출구마다 매복이 있다. 모서리 조심.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'라인을 한 줄씩 밀면 된다. 급하게 뛰지 마.'},
         { id:'obj_l2', type:'objective', key:'line2', text:'2차 참호선 확보' },
         { id:'reach_l2', type:'reach', trigger:'line2', label:'2차 참호선' },
         { id:'obj_l3', type:'objective', key:'line3', text:'3차 참호선 확보' },
@@ -352,6 +457,19 @@ export const CampaignDB = {
       loadout: { primary: 'sr1', secondary: 'pistol1', grenades: ['smoke','flash','frag'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M7: RIDGE',
+        location: 'Scree Ridge · Scrap Yard (AO: SIGNALBREAK)',
+        time: '08:44 LOCAL',
+        tag: 'CUT THE LINE',
+        intel: '명분: 적이 산 능선에서 루프 신호를 증폭 중. 끊으면 추적이 급격히 느려진다.\n상황: 야적장 내부는 시야가 끊긴다. 소리로 위치를 잡는다.\n결과: 중계장치 파괴 후 즉시 이탈. 지역 봉쇄 전 2분.',
+        objectives: [
+          '야적장 진입',
+          '중계장치 파괴',
+          '이탈',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"Relay tower. If it stays up, they see everything.",
@@ -363,6 +481,8 @@ export const CampaignDB = {
           en:"Plant a charge—make it look like an accident.",
           ko:'폭약 설치해. 사고처럼 보이게.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'중계장치 파괴하면 이 구역이 잠깐 ‘침묵’한다. 그때 이탈.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'장비만 부수고 바로 빠져. 교전 오래 하면 봉쇄 걸린다.'},
         { id:'obj_tower', type:'objective', key:'tower', text:'중계장치 파괴' },
         { id:'inter_tower', type:'interact', trigger:'tower', label:'중계장치', hint:'E로 폭약 설치',
           toast:'폭약 설치', objectiveKey:'tower', checkpointId:'tower_charge' },
@@ -384,6 +504,19 @@ export const CampaignDB = {
       loadout: { primary: 'lmg2', secondary: 'pistol1', grenades: ['smoke','frag','flash'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M8: COUNTER',
+        location: 'Rail Platform · Switchyard (AO: TURNKEY)',
+        time: '09:12 LOCAL',
+        tag: 'NOISE WINDOW',
+        intel: '명분: 적 철도망을 역이용해 ‘터널 루트’를 연다.\n상황: 전환기 조작 순간 경보가 뜬다. 소음 시간(Noise Window) 20초.\n결과: 터널로 빠져나가면 감시망에서 사라진다.',
+        objectives: [
+          '플랫폼 접근',
+          '전환기 조작',
+          '터널을 빠져나가기',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"Subway’s a straight line—until it isn’t. Stay sharp.",
@@ -395,6 +528,8 @@ export const CampaignDB = {
           en:"Switch room. We reroute the gates.",
           ko:'전환실. 게이트 우회한다.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'전환기 조작 순간 경보가 뜰 거야. 소음 시간 20초.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'터널로 들어가면 시야에서 사라진다. 거기까지만 버텨.'},
         { id:'obj_switch', type:'objective', key:'switch', text:'전환기 조작' },
         { id:'inter_switch', type:'interact', trigger:'switch', label:'전환기', hint:'E로 조작',
           toast:'선로 전환', objectiveKey:'switch', checkpointId:'switch' },
@@ -416,6 +551,19 @@ export const CampaignDB = {
       loadout: { primary: 'smg4', secondary: 'pistol1', grenades: ['flash','smoke','frag'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M9: LAB',
+        location: 'Harrow Complex · Research Wing (AO: WHITEGLASS)',
+        time: '09:48 LOCAL',
+        tag: 'SNATCH & RUN',
+        intel: '명분: VIP 확보가 최우선. 정보를 ‘사람’에서 빼낸다.\n상황: 정문은 함정일 수 있다. 짧게 치고 들어가서 바로 빼낸다.\n결과: VIP 생존 확보 시, 최종 탈출(Exodus) 좌표가 열린다.',
+        objectives: [
+          '정문 접근',
+          'VIP 확보',
+          '호위하며 탈출',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"Embassy’s a symbol. We extract the person, not the pride.",
@@ -427,6 +575,8 @@ export const CampaignDB = {
           en:"VIP is inside. Quiet hands.",
           ko:'VIP는 안쪽이다. 손을 조용히.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'VIP는 ‘살아있는’ 정보다. 확보 후 바로 이탈 루트로.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'정문은 함정일 수 있어. 들어가면 빠르게 끝내.'},
         { id:'obj_vip', type:'objective', key:'vip', text:'VIP 확보' },
         { id:'inter_vip', type:'interact', trigger:'vip', label:'VIP', hint:'E로 확보',
           toast:'VIP 확보', objectiveKey:'vip', checkpointId:'vip' },
@@ -447,6 +597,19 @@ export const CampaignDB = {
       loadout: { primary: 'ar3', secondary: 'pistol1', grenades: ['smoke','flash','frag'], extras: ['impact'] },
       failOnDeath: true,
       timeLimitSec: 0,
+      briefing: {
+        title: 'OP DUSTLINE — M10: EXODUS',
+        location: 'Salt Flat · LZ ‘EMBER’ (AO: LASTLIGHT)',
+        time: '10:20 LOCAL',
+        tag: 'EXFIL ONLY',
+        intel: '명분: 작전 종료. 철수만 성공하면 된다.\n상황: 착륙지점은 열린 공간. 방어는 ‘시간 벌기’가 목적.\n결과: 탑승 성공 시, 챕터 1 종료. 챕터 2에서 후속 작전으로 전환된다.',
+        objectives: [
+          '전진',
+          '착륙지점 방어',
+          '착륙지점 진입',
+        ],
+      },
+
       script: [
         { id:'dlg_0', type:'say', speaker:CAST.HART,
           en:"Canyon LZ. If we miss the window, we’re buried here.",
@@ -458,6 +621,8 @@ export const CampaignDB = {
           en:"Hold the bowl—eyes on the ridges.",
           ko:'분지에서 버텨. 능선 주시.',
         },
+      {id:'dlg_1b', type:'say', speaker:'SHADE', text:'여기서부턴 철수만 성공하면 된다. 불필요한 교전 금지.'},
+      {id:'dlg_1c', type:'say', speaker:'HART', text:'착륙지점은 열린 공간이야. 시간을 벌고 탑승해.'},
         { id:'obj_hold', type:'objective', key:'hold', text:'착륙지점 방어' },
         { id:'def_hold', type:'defend', sec:35, text:'착륙지점 사수', objectiveKey:'hold', checkpointId:'lz_hold' },
         { id:'dlg_2', type:'say', speaker:CAST.HART,
