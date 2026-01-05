@@ -782,6 +782,7 @@ body[data-camp-cutscene="1"] .invOverlay{
   import MuzzleFlash from "./src/effects/MuzzleFlash.js";
   import CasingSystem from "./src/effects/CasingSystem.js";
   import SoundSystem from "./src/audio/SoundSystem.js";
+  import { TTSManager } from "./src/audio/TTSManager.js";
     import { SettingsStore } from "./src/core/SettingsStore.js";
     import { InputManager } from "./src/input/InputManager.js";
     import { CameraController } from "./src/camera/CameraController.js";
@@ -2643,6 +2644,8 @@ function respawnPlayer(){
     
     // Patch 8-2: Bullet damage for local player (bots will call this later)
     function applyBulletDamageToLocal({ amount, headshot=false, weaponId=null, sourceTeam=null, sourceId=null } = {}){
+      // HF9-B2: 컷신 중에는 월드가 정지 (피격/사망 방지)
+      try{ if(document?.body?.dataset?.campCutscene === '1') return; }catch(e){}
       if(playerDead) return;
       const base = Math.max(0, Number(amount) || 0);
       const diff = window.__difficulty || { playerDamage: 1, enemyDamage: 1 };
@@ -3110,6 +3113,10 @@ let _roundShown = false;
     decalManager = new DecalManager(current.scene);
     soundSystem = new SoundSystem();
     window.soundSystem = soundSystem;
+    // HF9-B2: high-quality TTS (via proxy endpoint; disabled until configured)
+    try{
+      window.ttsManager = new TTSManager({ soundSystem });
+    }catch(e){ console.warn('[TTS] init failed', e); }
     // WebAudio unlock: browsers block sound until a user gesture
     window.addEventListener('mousedown', ()=> soundSystem?.unlock?.(), { once:true });
     window.addEventListener('touchstart', ()=> soundSystem?.unlock?.(), { once:true, passive:true });
@@ -3355,6 +3362,7 @@ document.getElementById("status").textContent =
     function animate(){
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
+      try{ soundSystem?.update?.(dt); }catch(e){}
       try{ rewardFloat?.update?.(dt); }catch(e){}
       // Patch 3-CAMP+: campaign update (cutscenes/dialogue/objectives/checkpoints)
       try{ campaignRuntime?.update?.(dt); }catch(e){}
@@ -3404,8 +3412,9 @@ document.getElementById("status").textContent =
       }catch(e){}
 
       try{
+      const __campPaused = (document?.body?.dataset?.campCutscene === '1');
       // Patch 8-0PRO: respawn timer tick
-      if(playerDead){
+      if(!__campPaused && playerDead){
         // Campaign: no auto-respawn (use checkpoint restart)
         if(window.__campaign?.isCampaign?.() && window.campaignRuntime){
           window.combatUI?.setRespawning?.('');
@@ -3416,7 +3425,7 @@ document.getElementById("status").textContent =
         }
       }
       // Patch 8-2PRO: Bandage healing tick
-      if(!playerDead && bandageHealing){
+      if(!__campPaused && !playerDead && bandageHealing){
         const next = playerHP + (bandageHealRate * dt);
         if(next >= playerHPMax){
           setHP(playerHPMax);
@@ -3427,20 +3436,23 @@ document.getElementById("status").textContent =
       }
       // Campaign: automatic HP regeneration (no bandage)
       const _rules = window.__campaignRules || {};
-      if(!playerDead && _rules.autoRegen && (_rules.noBandage || !bandageHealing)){
+      if(!__campPaused && !playerDead && _rules.autoRegen && (_rules.noBandage || !bandageHealing)){
         const nowS = (performance.now()||0)/1000;
         if(playerHP < playerHPMax && (nowS - playerLastDamagedAt) >= CAMP_REGEN_DELAY){
           setHP(Math.min(playerHPMax, playerHP + CAMP_REGEN_RATE * dt));
         }
       }
       // Patch 8-1PROA: keep world simulation running even when dead
-      if(throwablesSystem) throwablesSystem.update(dt);
-      if(classItemSystem) classItemSystem.update(dt);
-      // Patch 8-3C: bots tick even when player is dead
-      try{ botManager?.update?.(dt); }catch{}
+      // HF9-B2: 컷신 중에는 월드 정지
+      if(!__campPaused){
+        if(throwablesSystem) throwablesSystem.update(dt);
+        if(classItemSystem) classItemSystem.update(dt);
+        // Patch 8-3C: bots tick even when player is dead
+        try{ botManager?.update?.(dt); }catch{}
 
-      economyManager?.tick?.(dt);
-      try{ moneyHUD.textContent = `$${Math.floor(window.playerProfile?.money||0)}`; }catch{}
+        economyManager?.tick?.(dt);
+        try{ moneyHUD.textContent = `$${Math.floor(window.playerProfile?.money||0)}`; }catch{}
+      }
 
       // Patch 4: 입력/카메라/플레이어 업데이트
       settingsStore.refresh();
@@ -3449,7 +3461,7 @@ document.getElementById("status").textContent =
       const invOpen = inventoryModal.isOpen();
       if(invOpen) mobileHUD.hide(); else if(controlPreset === 'mobile' || controlPreset === 'mobile_kb') mobileHUD.show(); else mobileHUD.hide();
       const st = inputManager.poll(controlPreset);
-      if(cameraController){
+      if(cameraController && !__campPaused){
         cameraController.applyLookDelta(st.lookDX, st.lookDY, controlPreset !== "pc");
         const dbg = cameraController.getDebug?.();
         if(dbg){
@@ -3459,7 +3471,7 @@ document.getElementById("status").textContent =
           if(pEl) pEl.textContent = dbg.pitchDeg;
         }
       }
-      if(playerController && !playerDead){
+      if(playerController && !playerDead && !__campPaused){
         // Patch 7-4I: platform-aware groundY.
         // Our PlayerController uses a simple ground plane (groundY). To let players *stand on top*
         // of inner walls after climbing, we dynamically set groundY to the highest nearby wall top.
@@ -3585,7 +3597,7 @@ document.getElementById("status").textContent =
         // nothing heavy
       }
     // Patch 5B-2: weapons tick (PC + Mobile HUD)
-    if(weaponSystem && !playerDead){
+    if(weaponSystem && !playerDead && !__campPaused){
       const preset = settingsStore.controlPreset;
       // Patch 7-3C: casing limit per platform (PC 80 / Mobile 30)
       const casingMax = (preset === 'pc') ? 80 : 30;
@@ -3803,8 +3815,9 @@ if(decalManager) decalManager.update(dt);
       // Patch 2-FP: viewmodel tick (항상 업데이트 / 죽으면 숨김)
       try{
         if(viewModelSystem){
-          viewModelSystem.setVisible?.(!playerDead);
-          viewModelSystem.update?.(dt, st, { playerDead });
+          const _cine = (document?.body?.dataset?.campCutscene === '1');
+          viewModelSystem.setVisible?.(!playerDead && !_cine);
+          if(!_cine) viewModelSystem.update?.(dt, st, { playerDead });
         }
       }catch(e){}
 

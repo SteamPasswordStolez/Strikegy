@@ -51,6 +51,10 @@ export class CampaignRuntime {
 
     this.ui = new CampaignUI({ root: document.body });
 
+    // HF9-B2: audio hooks
+    this.soundSystem = (typeof window !== 'undefined') ? window.soundSystem : null;
+    this.ttsManager = (typeof window !== 'undefined') ? window.ttsManager : null;
+
     this.session = null;
     this.mission = null;
     this.stepIndex = 0;
@@ -85,6 +89,13 @@ export class CampaignRuntime {
 
     // Mission timer
     this.missionTime = 0;
+
+    // HF9-B2: simple combat music bump timer
+    this._combatMusicTimer = 0;
+
+    // HF9-C2: Dialogue gate for TTS/subtitle sync
+    this._dialogueChain = Promise.resolve();
+    this._dialoguePending = 0;
 
     // Restart events (UI buttons)
     window.addEventListener('campaign:restart', (ev)=>{
@@ -145,7 +156,62 @@ export class CampaignRuntime {
     const m = CampaignDB?.missions?.[missionId];
     if (!m) return null;
     this.mission = m;
+    // HF9-C2: reset dialogue queue per mission load
+    this._dialogueChain = Promise.resolve();
+    this._dialoguePending = 0;
     return m;
+  }
+
+  // HF9-B2: mission-level audio preset (ambience + initial music state)
+  _applyMissionAudioPreset(){
+    try{
+      const mid = String(this.mission?.id || this.mission?.map || '').toLowerCase();
+      const ss = this.soundSystem || (typeof window !== 'undefined' ? window.soundSystem : null);
+      if(!ss) return;
+
+      const amb = this._inferAmbiencePreset(mid);
+      ss.setAmbiencePreset?.(amb);
+
+      // Default: stealth pacing unless mission screams otherwise.
+      const base = (mid.includes('escape') || mid.includes('exfil') || mid.includes('exodus')) ? 'escape'
+        : (mid.includes('assault') || mid.includes('siege') || mid.includes('bridge') || mid.includes('final')) ? 'combat'
+        : 'stealth';
+      ss.setMusicState?.(base);
+    }catch{}
+  }
+
+  _inferAmbiencePreset(mid){
+    const s = String(mid||'').toLowerCase();
+    if(s.includes('beach') || s.includes('coast') || s.includes('shore') || s.includes('insertion')) return 'coast';
+    if(s.includes('facility') || s.includes('blacksite') || s.includes('lab') || s.includes('data') || s.includes('tower')) return 'facility';
+    if(s.includes('city') || s.includes('street') || s.includes('port') || s.includes('harbor')) return 'city';
+    if(s.includes('trench') || s.includes('front') || s.includes('hold') || s.includes('war')) return 'trench';
+    return 'none';
+  }
+
+  _musicForStep(step){
+    const t = String(step?.type||'');
+    const txt = String(step?.text||'').toLowerCase();
+    if(t === 'complete') return 'success';
+    if(t === 'kill') return 'combat';
+    if(t === 'defend') return 'combat';
+    if(t === 'interact'){
+      if(txt.includes('해킹') || txt.includes('데이터') || txt.includes('잠입')) return 'stealth';
+    }
+    if(t === 'reach'){
+      if(txt.includes('탈출') || txt.includes('철수') || txt.includes('exfil') || txt.includes('escape')) return 'escape';
+    }
+    // Default stays
+    return null;
+  }
+
+  _channelFromText(text){
+    const s = String(text||'');
+    if(s.includes('[속삭임]')) return 'WHISPER';
+    if(s.includes('[내선]') || s.includes('[인터컴]')) return 'INTERCOM';
+    if(s.includes('[잡음]')) return 'UNKNOWN';
+    if(s.includes('[무전]')) return 'RADIO';
+    return 'RADIO';
   }
 
   attachMap(mapJson) {
@@ -164,7 +230,53 @@ export class CampaignRuntime {
     // sensible defaults if missing
     if (!this.triggers.rally) this.triggers.rally = { pos: [-110, 2, 0], r: 8 };
     if (!this.triggers.exfil) this.triggers.exfil = { pos: [-20, 2, 0], r: 10 };
+  
+
+    // HF9-B: scripts may reference new triggers before maps are rebuilt.
+    // Create deterministic fallback trigger positions so missions remain playable.
+    this._ensureFallbackTriggersFromScript?.();
+}
+
+  _ensureFallbackTriggersFromScript() {
+    try {
+      const steps = Array.isArray(this.mission?.script) ? this.mission.script : [];
+      const want = [];
+      const seen = new Set();
+      for (const s of steps) {
+        const t = String(s?.trigger || '').trim();
+        if (!t) continue;
+        if (s?.type !== 'reach' && s?.type !== 'interact') continue;
+        if (this.triggers?.[t]) continue;
+        if (seen.has(t)) continue;
+        seen.add(t);
+        want.push(t);
+      }
+      if (!want.length) return;
+
+      const a = (this.triggers?.rally?.pos || [-110, 2, 0]).slice();
+      const b = (this.triggers?.exfil?.pos || [-20, 2, 0]).slice();
+      const ax = Number(a[0]) || 0, ay = Number(a[1]) || 2, az = Number(a[2]) || 0;
+      const bx = Number(b[0]) || 0, by = Number(b[1]) || 2, bz = Number(b[2]) || 0;
+      const vx = bx - ax, vz = bz - az;
+      // perpendicular for small separation
+      const len = Math.hypot(vx, vz) || 1;
+      const px = -vz / len, pz = vx / len;
+
+      const n = want.length;
+      for (let i = 0; i < n; i++) {
+        const key = want[i];
+        // spread between 0.30 ~ 0.80 of the line from rally to exfil
+        const f = n === 1 ? 0.55 : (0.30 + 0.50 * (i / (n - 1)));
+        const side = (i % 2 === 0) ? 1 : -1;
+        const off = 10 + (i * 2);
+        const x = ax + vx * f + px * off * side;
+        const z = az + vz * f + pz * off * side;
+        const y = (ay + by) * 0.5;
+        this.triggers[key] = { pos: [x, y, z], r: 7 };
+      }
+    } catch { /* ignore */ }
   }
+
 
   start({ mapJson, continueFromSave = true } = {}) {
     this.loadSession({ createIfMissing: true });
@@ -177,9 +289,7 @@ export class CampaignRuntime {
     this.missionTime = 0;
 
     this.stepIndex = continueFromSave ? Math.max(0, Number(this.session?.stepIndex || 0)) : 0;
-
-    // Inject per-mission intro briefing cutscene (>=15s).
-    this._injectIntroStepIfNeeded(!!continueFromSave);
+    // HF9-A: 기존 '브리핑 오버레이 컷신' 자동 삽입은 제거. (스크립트에서 컷신/대사 흐름을 직접 구성)
     this.stepState = null;
     this._inCutscene = false;
 
@@ -194,6 +304,10 @@ export class CampaignRuntime {
     this.ui.hideResult();
 
     this.ui.toast(`캠페인 시작 · ${this.mission.title}`, 2.2);
+
+    // HF9-B2: ambience + baseline music for the mission
+    try{ this._applyMissionAudioPreset(); }catch{}
+
     this._enterStep();
   }
 
@@ -202,6 +316,14 @@ export class CampaignRuntime {
     if (!team) return;
     if (String(team) !== 'red') return;
     this.killCount++;
+
+    // HF9-B2: quick combat bump (prevents dead-silent moments)
+    try{
+      this._combatMusicTimer = Math.max(0, Number(this._combatMusicTimer) || 0);
+      this._combatMusicTimer = Math.max(this._combatMusicTimer, 6.0);
+      const ss = (this.soundSystem||window.soundSystem);
+      ss?.setMusicState?.('combat');
+    }catch{}
   }
 
   // Called by game when local player dies (campaign fail)
@@ -214,6 +336,11 @@ export class CampaignRuntime {
     this._setPlayerLock(true);
     this.ui.setCinematic(true);
     this.ui.setFade(0.35, 12);
+    try{
+      const ss = (this.soundSystem||window.soundSystem);
+      ss?.setMusicState?.('none');
+      ss?.stinger?.('fail');
+    }catch{}
     this.ui.showResult({ title: 'MISSION FAILED', desc: '작전이 중단되었습니다. 체크포인트에서 재시작하세요.' });
   }
 
@@ -249,44 +376,232 @@ export class CampaignRuntime {
     } catch { /* ignore */ }
   }
 
-  async _say(step) {
-    const speaker = step?.speaker || '';
-    const ko = step?.ko || '';
-    const en = step?.en || '';
-    this.ui.showSubtitle({ speaker, text: ko, holdSec: 4.2 });
+  _speakerTag(speaker){
+    const s = String(speaker||'').trim();
+    if(!s) return '';
+    const parts = s.split(/\s+/).filter(Boolean);
+    const tag = parts[parts.length-1] || s;
+    return String(tag).toUpperCase();
+  }
 
-    // Web Speech API (TTS) — English voice, best-effort.
-    const canSpeak = typeof window !== 'undefined' && !!window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined';
-    if (!canSpeak || !en) {
-      await new Promise(r => setTimeout(r, 1200));
-      return;
+  _stripTagAndDetectChannel(raw){
+    let txt = String(raw || '');
+    let ch = null;
+
+    // Accept: [무전], [속삭임], [잡음], [HQ], [오버워치] ... (markdown의 *[무전]* 형태도 흡수)
+    const m = txt.match(/\[([^\]]+)\]/);
+    if(m){
+      ch = String(m[1]||'').trim();
+      txt = txt.replace(m[0], '').trim();
     }
 
-    await new Promise(resolve => {
-      try {
-        const utt = new SpeechSynthesisUtterance(String(en));
-        utt.lang = 'en-US';
-        utt.rate = 1.02;
-        utt.pitch = 1.0;
-        utt.volume = 0.85;
-        utt.onend = () => resolve();
-        utt.onerror = () => resolve();
+    // Leading patterns like "*[무전]*:" or "(무전):" etc.
+    txt = txt.replace(/^\*?\s*\(?\s*(무전|속삭임|잡음|hq|본부|오버워치|내부통신|인터콤)\s*\)?\s*\*?\s*[:：-]?\s*/i, '').trim();
+    return { text: txt, channel: ch };
+  }
 
-        const pickVoice = () => {
-          const voices = window.speechSynthesis.getVoices?.() || [];
-          const v = voices.find(v => /en/i.test(v.lang)) || voices[0];
-          if (v) utt.voice = v;
-        };
-        pickVoice();
-        window.speechSynthesis.onvoiceschanged = () => pickVoice();
+  _normalizeChannelLabel(ch, speakerTag=''){
+    const c = String(ch||'').toLowerCase();
+    const st = String(speakerTag||'').toUpperCase();
 
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utt);
-      } catch {
-        resolve();
-      }
+    if(!c){
+      if(st==='NOVA') return 'HQ';
+      if(st==='KESTREL') return 'OVERWATCH';
+      if(st==='???' || st==='UNKNOWN') return 'UNKNOWN';
+      return 'RADIO';
+    }
+
+    if(c.includes('무전') || c==='radio') return 'RADIO';
+    if(c.includes('속삭') || c==='whisper') return 'WHISPER';
+    if(c.includes('잡음') || c.includes('noise') || c.includes('static')) return 'NOISE';
+    if(c.includes('hq') || c.includes('본부') || c.includes('analysis')) return 'HQ';
+    if(c.includes('오버워치') || c.includes('overwatch') || c.includes('drone')) return 'OVERWATCH';
+    if(c.includes('내부') || c.includes('인터콤') || c.includes('intercom')) return 'INTERCOM';
+    if(c.includes('미상') || c.includes('unknown')) return 'UNKNOWN';
+
+    return String(ch).toUpperCase();
+  }
+
+  _playCommsSfx(label, urgent=false){
+    try{
+      const ss = window.soundSystem;
+      if(!ss || typeof ss.play !== 'function') return;
+      const L = String(label||'').toUpperCase();
+      if(urgent) { ss.play('comms_urgent'); return; }
+      if(L==='WHISPER') { ss.play('whisper'); return; }
+      if(L==='INTERCOM' || L==='HQ') { ss.play('intercom'); return; }
+      if(L==='NOISE' || L==='UNKNOWN') { ss.play('radio_static'); ss.play('radio_in'); return; }
+      ss.play('radio_in');
+    }catch{}
+  }
+
+
+  // HF9-C2: queue dialogue so subtitles never overlap; wait until voice ends
+  _queueDialogue(task){
+    try{
+      this._dialoguePending = (Number(this._dialoguePending)||0) + 1;
+      const run = async () => {
+        try { await task(); }
+        finally { this._dialoguePending = Math.max(0, (Number(this._dialoguePending)||0) - 1); }
+      };
+      this._dialogueChain = (this._dialogueChain || Promise.resolve()).catch(()=>{}).then(run);
+      return this._dialogueChain;
+    }catch{
+      this._dialoguePending = Math.max(0, (Number(this._dialoguePending)||0) - 1);
+      return Promise.resolve();
+    }
+  }
+
+  _estimateSpeechSec(text, channel='RADIO', urgent=false){
+    const t = String(text||'').trim();
+    if(!t) return 0;
+    const words = t.split(/\s+/).filter(Boolean).length;
+    const base = (words / 2.6) + 0.45;
+    const rate = (String(channel).toUpperCase()==='WHISPER') ? 0.96 : (urgent ? 1.05 : 1.0);
+    return Math.max(0.8, base / rate);
+  }
+
+  // HF9-B2: high-quality TTS (via /tts proxy). Best-effort and cancellable.
+  _voiceForSpeaker(tag){
+    const t = String(tag||'').toUpperCase();
+    // These are symbolic IDs; your TTS proxy can map them to real provider voices.
+    const map = {
+      'RAVEN': 'en_male_01',
+      'GHOST': 'en_male_02',
+      'NOVA': 'en_female_01',
+      'KESTREL': 'en_female_02',
+      'JIN': 'en_male_03',
+      'ECHO': 'en_male_04',
+    };
+    return map[t] || 'en_neutral_01';
+  }
+
+  _ttsSpeakLine({ speakerTag='', label='RADIO', text='', urgent=false, volume=1.0, maxWaitMs=null } = {}){
+    const tts = this.ttsManager || (typeof window !== 'undefined' ? window.ttsManager : null);
+    if(!tts || !text) return null;
+    const voice = this._voiceForSpeaker(speakerTag);
+
+    // Map UI labels to FX channels
+    let channel = String(label||'RADIO').toUpperCase();
+    if(channel === 'HQ') channel = 'INTERCOM';
+    if(channel === 'OVERWATCH') channel = 'RADIO';
+    if(channel === 'NOISE') channel = 'UNKNOWN';
+
+    const lang = String((this.mission?.lang || 'en-GB'));
+    return tts.speak({
+      text: String(text),
+      lang,
+      speakerTag: String(speakerTag||''),
+      voice,
+      channel,
+      urgent: !!urgent,
+      volume: (volume==null?1.0:Number(volume)||1.0),
+      maxWaitMs: (maxWaitMs!=null?maxWaitMs:undefined),
     });
   }
+
+
+  _getSubtitleLangPref(){
+    try{
+      const w = (typeof window !== 'undefined') ? window : null;
+      const forced = w?.__strikegySubtitleLang;
+      const ls = w?.localStorage?.getItem?.('strikegy_subtitle_lang');
+      return String(forced || ls || 'auto').toLowerCase();
+    }catch{
+      return 'auto';
+    }
+  }
+
+  _pickDialogueText(obj){
+    const mode = this._getSubtitleLangPref();
+    if(mode === 'en') return (obj?.en ?? obj?.text ?? obj?.ko ?? '');
+    if(mode === 'ko') return (obj?.ko ?? obj?.text ?? obj?.en ?? '');
+    return (obj?.text ?? obj?.ko ?? obj?.en ?? '');
+  }
+
+  _showCommsLine(line){
+    const speaker = line?.speaker ?? '';
+    const speakerTag = this._speakerTag(speaker);
+    const raw = this._pickDialogueText(line);
+    const parsed = this._stripTagAndDetectChannel(raw);
+    const label = this._normalizeChannelLabel(line?.channel ?? parsed.channel, speakerTag);
+    const urgent = !!(line?.urgent || line?.priority==='high');
+
+    const text = String(parsed.text || '').trim();
+    if(!text) return;
+
+    // HF9-C2: queue so we never show a new subtitle while the previous voice is still playing.
+    this._queueDialogue(async () => {
+      const est = this._estimateSpeechSec(text, label, urgent);
+      const baseHold = Number(line?.holdSec) || (2.2 + Math.min(3.2, text.length/26));
+      const hold = Math.max(1.6, Math.min(9.5, Math.max(baseHold, est + 0.45)));
+
+      this._playCommsSfx(label, urgent);
+      this.ui.showSubtitle({ channel: label, speaker: speakerTag, text, holdSec: hold, urgent });
+
+      const startMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const ttsAllowed = (line?.tts !== false);
+      if(ttsAllowed){
+        try{
+          const maxWaitMs = Math.max(1800, Math.min(25000, Math.round((est + 1.2) * 1000)));
+          const p = this._ttsSpeakLine({ speakerTag, label, text, urgent, maxWaitMs });
+          if(p) await p;
+        }catch{}
+      }
+
+      // Always enforce a minimum on-screen time so lines don't "skip" even if TTS fails.
+      const endMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const elapsed = Math.max(0, endMs - startMs);
+      const target = Math.max(600, Math.round(hold * 1000));
+      const remain = target - elapsed;
+      if(remain > 0) await new Promise(r => setTimeout(r, remain));
+
+      // tiny gap so consecutive lines don't feel "snapped"
+      await new Promise(r => setTimeout(r, 90));
+    });
+  }
+
+  async _say(step) {
+    const speaker = step?.speaker || '';
+    const speakerTag = this._speakerTag(speaker);
+
+    const rawText = this._pickDialogueText(step);
+    const parsed = this._stripTagAndDetectChannel(rawText);
+    const label = this._normalizeChannelLabel(step?.channel ?? parsed.channel, speakerTag);
+    const urgent = !!(step?.urgent || step?.priority==='high');
+    const text = String(parsed.text || '').trim();
+    if(!text) return;
+
+    // HF9-C2: Queue dialogue so the subtitle and voice stay in sync.
+    await this._queueDialogue(async () => {
+      const est = this._estimateSpeechSec(text, label, urgent);
+      const baseHold = Number(step?.holdSec) || (2.2 + Math.min(3.2, text.length/26));
+      const hold = Math.max(1.6, Math.min(9.5, Math.max(baseHold, est + 0.45)));
+
+      this._playCommsSfx(label, urgent);
+      this.ui.showSubtitle({ channel: label, speaker: speakerTag, text, holdSec: hold, urgent });
+
+      const startMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const ttsAllowed = (step?.tts !== false);
+      if(ttsAllowed){
+        try{
+          const maxWaitMs = Math.max(1800, Math.min(25000, Math.round((est + 1.2) * 1000)));
+          const p = this._ttsSpeakLine({ speakerTag, label, text, urgent, maxWaitMs });
+          if(p) await p;
+        }catch{}
+      }
+
+      // Always enforce a minimum on-screen time so lines don't "skip" even if TTS fails.
+      const endMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const elapsed = Math.max(0, endMs - startMs);
+      const target = Math.max(600, Math.round(hold * 1000));
+      const remain = target - elapsed;
+      if(remain > 0) await new Promise(r => setTimeout(r, remain));
+
+      await new Promise(r => setTimeout(r, 90));
+    });
+  }
+
 
   _markObjectiveDone(key) {
     const k = String(key || '');
@@ -298,117 +613,7 @@ export class CampaignRuntime {
     }
   }
 
-
-  _buildIntroCameraFrames() {
-    const sp = (this.mapJson?.spawns || []).find(s=>String(s.team||'')==='blue');
-    const spawn = sp?.pos || [0,2,0];
-    const sPos = [spawn[0], Math.max(2.2, (spawn[1]||2) + 1.0), spawn[2]];
-
-    // Pick a target trigger from the mission script (first reach)
-    let trgName = null;
-    const scr = this._baseScript || this.mission?.script || [];
-    for (const st of scr) {
-      if (st && st.type === 'reach' && st.trigger) { trgName = String(st.trigger); break; }
-    }
-    const trg = (trgName && this.triggers?.[trgName]) ? this.triggers[trgName] : null;
-    const tPos = trg?.pos || [spawn[0]+40, 2, spawn[2]+40];
-
-    // Cinematic camera rail (15.5s)
-    return [
-      { t: 0.0,  pos: [sPos[0]-18, 14, sPos[2]-22], look: [sPos[0], 2.2, sPos[2]] },
-      { t: 5.0,  pos: [sPos[0]-6,  10, sPos[2]-10], look: [sPos[0]+10, 2.4, sPos[2]+12] },
-      { t: 9.0,  pos: [tPos[0]-80, 90, tPos[2]-40], look: [tPos[0], 2.3, tPos[2]] },
-      { t: 12.5, pos: [tPos[0]-35, 28, tPos[2]-28], look: [tPos[0], 2.4, tPos[2]] },
-      { t: 15.5, pos: [tPos[0]-18, 16, tPos[2]-18], look: [tPos[0], 2.4, tPos[2]] },
-    ];
-  }
-
-
-  _injectIntroStepIfNeeded(isContinue) {
-    const m = this.mission;
-    if (!m) return;
-
-    // HF8 scope: Chapter 1 only (Chapter 2 cutscenes get rebuilt in HF9).
-    this._baseScript = Array.isArray(m.script) ? m.script.slice() : [];
-    if (Number(m.chapter || 0) !== 1) return;
-
-    const sess = this.session || {};
-    const already = !!sess.introInjected;
-
-    // If continuing from an old save (pre-HF7), step indices need to shift
-    if (isContinue && !already && Number(sess.stepIndex || 0) > 0) {
-      sess.stepIndex = Number(sess.stepIndex || 0) + 1;
-    }
-    sess.introInjected = true;
-
-    const first = this._baseScript?.[0];
-    if (first && first.type === 'cutscene' && String(first.id || '').startsWith('intro_brief')) {
-      m.script = this._baseScript;
-      this.session = sess;
-      return;
-    }
-
-    const briefing = (m.briefing || {});
-    const title = briefing.title || m.title || 'OPERATION BRIEFING';
-    const location = briefing.location || 'UNKNOWN AO';
-    const time = briefing.time || 'LOCAL';
-    const tag = briefing.tag || briefing.op || '';
-
-    const intel = briefing.intel || '목표 지역 진입 후 상황을 확인하고, 지정 목표를 달성하라.';
-
-    const objectives =
-      briefing.objectives ||
-      (this._baseScript
-        .filter(s => s.type === 'objective')
-        .slice(0, 4)
-        .map(s => s.text)
-        .filter(Boolean));
-
-    const introStep = {
-      id: 'intro_brief_15s',
-      type: 'cutscene',
-      duration: 15.5,
-      lockPlayer: true,
-      cinematic: { bars: true, fadeIn: 0.6, fadeOut: 0.6 },
-      camera: this._buildIntroCameraFrames(),
-      __isBriefing: true,
-      __briefingData: {
-        title,
-        location,
-        time,
-        tag,
-        intel,
-        objectives,
-        marks: this._computeBriefingMarks(),
-      },
-    };
-
-    m.script = [introStep, ...this._baseScript];
-    this.session = sess;
-  }
-
-  _computeBriefingMarks(){
-    // normalize positions into 0..1 for UI marks (rough)
-    const gw = this.mapJson?.world?.groundSize?.[0] ?? 240;
-    const gd = this.mapJson?.world?.groundSize?.[1] ?? 240;
-    const toUV = (pos)=>{
-      const x = (pos[0] + gw/2) / gw;
-      const y = 1 - ((pos[2] + gd/2) / gd);
-      return [x,y];
-    };
-    const sp = (this.mapJson?.spawns || []).find(s=>String(s.team||'')==='blue');
-    const spawn = sp?.pos || [0,2,0];
-
-    let trgName = null;
-    for (const st of (this._baseScript || [])) {
-      if (st && st.type === 'reach' && st.trigger) { trgName = String(st.trigger); break; }
-    }
-    const trg = (trgName && this.triggers?.[trgName]) ? this.triggers[trgName] : null;
-    const tPos = trg?.pos || [spawn[0]+40, 2, spawn[2]+40];
-
-    return { you: toUV(spawn), obj: toUV(tPos) };
-  }
-
+  // (HF8 브리핑 오버레이 컷신/자동 주입 로직은 HF9-A에서 제거됨)
 
   _ensureWorldWaypoint3D(){
     if (this._wp3d) return;
@@ -451,12 +656,14 @@ export class CampaignRuntime {
     g.position.set(Number(pos[0])||0, Number(pos[1]||2), Number(pos[2])||0);
     g.visible = true;
     this._wp3d.active = true;
+    // 2D marker will be updated each tick
   }
 
   _clearWorldWaypoint(){
     if (!this._wp3d) return;
     this._wp3d.group.visible = false;
     this._wp3d.active = false;
+    try{ this.ui?.setWaypointMarker?.({ visible:false }); }catch{}
   }
 
   _tickWorldWaypoint(dt){
@@ -467,6 +674,59 @@ export class CampaignRuntime {
     try{ this._wp3d.ring.scale.set(pulse, pulse, pulse); }catch{}
     try{ this._wp3d.tip.position.y = 6.6 + (0.25 * Math.sin(t * 2.3)); }catch{}
     try{ this._wp3d.beam.material.opacity = 0.18 + 0.10 * (0.5 + 0.5 * Math.sin(t * 2.7)); }catch{}
+
+    // HF9-B2: screen-space waypoint marker (MW-style)
+    this._tickWaypointMarker();
+  }
+
+  _tickWaypointMarker(){
+    const ui = this.ui;
+    const camera = this.camera;
+    const THREE = this.THREE;
+    if(!ui?.setWaypointMarker || !camera || !THREE || !this._wp3d?.group?.visible) {
+      try{ ui?.setWaypointMarker?.({ visible:false }); }catch{}
+      return;
+    }
+
+    const w = Math.max(1, window.innerWidth || 1);
+    const h = Math.max(1, window.innerHeight || 1);
+    const margin = 56;
+
+    // world -> screen
+    const target = this._tmpA;
+    target.copy?.(this._wp3d.group.position) || target.set(this._wp3d.group.position.x, this._wp3d.group.position.y, this._wp3d.group.position.z);
+    target.y += 1.8; // aim slightly above ground marker
+
+    const camPos = this._tmpB;
+    camera.getWorldPosition?.(camPos);
+    const camDir = this._tmpC;
+    camera.getWorldDirection?.(camDir);
+    const to = target.clone?.() ? target.clone().sub(camPos) : { x: target.x-camPos.x, y: target.y-camPos.y, z: target.z-camPos.z };
+    const dot = (to.x*camDir.x + to.y*camDir.y + to.z*camDir.z);
+    const inFront = dot > 0;
+
+    const ndc = new THREE.Vector3(target.x, target.y, target.z).project(camera);
+    let sx = (ndc.x * 0.5 + 0.5) * w;
+    let sy = (-ndc.y * 0.5 + 0.5) * h;
+
+    // if behind camera, flip direction so arrow still points correctly
+    if(!inFront){
+      sx = w - sx;
+      sy = h - sy;
+    }
+
+    const offscreen = !inFront || sx < margin || sx > (w - margin) || sy < margin || sy > (h - margin);
+    let x = sx, y = sy;
+    if(offscreen){
+      x = clamp(sx, margin, w - margin);
+      y = clamp(sy, margin, h - margin);
+      const dx = sx - (w/2);
+      const dy = sy - (h/2);
+      const ang = Math.atan2(dy, dx);
+      ui.setWaypointMarker({ visible:true, x, y, offscreen:true, angleRad: ang });
+    }else{
+      ui.setWaypointMarker({ visible:true, x, y, offscreen:false, angleRad: 0 });
+    }
   }
 
 
@@ -474,6 +734,15 @@ export class CampaignRuntime {
     const steps = this.mission?.script || [];
     const step = steps[this.stepIndex];
     if (!step) return;
+
+    // HF9-B2: step-based music state (unless a recent combat bump is active)
+    try{
+      const ss = this.soundSystem || (typeof window !== 'undefined' ? window.soundSystem : null);
+      if(ss && !(this._combatMusicTimer > 0)){
+        const ms = this._musicForStep(step);
+        if(ms) ss.setMusicState?.(ms);
+      }
+    }catch{}
 
     this.stepState = { t: 0, done: false };
     this.saveSession({ stepIndex: this.stepIndex });
@@ -502,6 +771,11 @@ export class CampaignRuntime {
     if (step.type === 'complete') {
       this.ui.setObjective('미션 완료');
       this.ui.toast('미션 완료!', 2.6);
+      try{
+        const ss = (this.soundSystem||window.soundSystem);
+        ss?.setMusicState?.('success');
+        ss?.stinger?.('success');
+      }catch{}
       this.ui.setWaypoint(null);
       this.ui.setCinematic(false);
       this.ui.setFade(0, 10);
@@ -569,21 +843,29 @@ export class CampaignRuntime {
     this.ui.setCinematic(!!cine?.bars);
     if (cine?.fadeIn) this.ui.setFade(0, 14);
 
-    this._setPlayerLock(!!step.lockPlayer);
+    // HF9-B2: 컷신 중에는 게임 진행이 멈추게 (항상 플레이어/월드 잠금)
+    // - 컷신 중 피격/사망 문제 방지
+    // - presentation 안정화
+    this._setPlayerLock(true);
 
-    // Cutscene should not show in-game HUD (HF8: Chapter 1 only).
+    // HF9-B2: soften BGM during cutscenes (dialogue focus)
+    try{ (this.soundSystem||window.soundSystem)?.setMusicState?.('stealth'); }catch{}
+
+    // Timed comms lines inside cutscenes
+    try{ this.stepState._lineIdx = 0; }catch{}
+
+    // HF9-A: 컷신 중에는 모든 챕터에서 HUD 숨김
     try{
-      if (Number(this.mission?.chapter || 0) === 1) {
-        document.body.dataset.campCutscene = '1';
-        window.dispatchEvent(new CustomEvent('campaign:cutscene', { detail: { active:true, chapter: this.mission?.chapter || 0, missionId: this.mission?.id || '' } }));
-      }
+      document.body.dataset.campCutscene = '1';
+      window.dispatchEvent(new CustomEvent('campaign:cutscene', { detail: { active:true, chapter: this.mission?.chapter || 0, missionId: this.mission?.id || '' } }));
     }catch{}
 
-    // Briefing overlay is shown only when the briefing cutscene actually starts.
+    // Optional: title card
     try{
-      if(step?.__isBriefing){
-        const bd = step.__briefingData || step.briefingData || null;
-        if(bd) this.ui.showBriefing(bd);
+      if(step?.titleCard){
+        const tc = step.titleCard;
+        if(typeof tc === 'string') this.ui.showTitleCard({ title: tc });
+        else this.ui.showTitleCard(tc);
       }
     }catch{}
   }
@@ -591,14 +873,11 @@ export class CampaignRuntime {
   _endCutscene(step){
     const cam = this.camera;
     const snap = this._cutsceneSnap;
-
-    try{ if(step?.__isBriefing) this.ui.hideBriefing(); }catch{}
+    try{ this.ui.hideTitleCard(); }catch{}
 
     try{
-      if (Number(this.mission?.chapter || 0) === 1) {
-        delete document.body.dataset.campCutscene;
-        window.dispatchEvent(new CustomEvent('campaign:cutscene', { detail: { active:false, chapter: this.mission?.chapter || 0, missionId: this.mission?.id || '' } }));
-      }
+      delete document.body.dataset.campCutscene;
+      window.dispatchEvent(new CustomEvent('campaign:cutscene', { detail: { active:false, chapter: this.mission?.chapter || 0, missionId: this.mission?.id || '' } }));
     }catch{}
 
     // fade out bars quickly
@@ -647,10 +926,48 @@ export class CampaignRuntime {
       this.camera.lookAt(look);
     }
 
+    // HF9-A: 컷신 타임라인 기반 대사(line) 지원
+    try{
+      const lines = Array.isArray(step?.lines) ? step.lines : null;
+      if(lines){
+        if(typeof this.stepState._lineIdx !== 'number') this.stepState._lineIdx = 0;
+        while(this.stepState._lineIdx < lines.length){
+          const ln = lines[this.stepState._lineIdx];
+          const at = Number(ln?.t ?? ln?.at ?? 0);
+          if (t + 1e-3 < at) break;
+          this._showCommsLine(ln);
+          this.stepState._lineIdx++;
+        }
+      }
+    }catch(e){}
+
+
     if (this.stepState.t >= tMax) {
-      this._endCutscene(step);
+      // HF9-C2: don't end cutscene while a comms line is still speaking
+      const pending = Number(this._dialoguePending)||0;
+      const lines = Array.isArray(step?.lines) ? step.lines : null;
+      const allScheduled = !lines || (typeof this.stepState._lineIdx === 'number' && this.stepState._lineIdx >= lines.length);
+      if (pending <= 0 && allScheduled) {
+        this._endCutscene(step);
+      }
     }
   }
+
+  _tickStepLines(step, t) {
+    try {
+      const lines = Array.isArray(step?.lines) ? step.lines : null;
+      if (!lines) return;
+      if (typeof this.stepState._lineIdx !== 'number') this.stepState._lineIdx = 0;
+      while (this.stepState._lineIdx < lines.length) {
+        const ln = lines[this.stepState._lineIdx];
+        const at = Number(ln?.t ?? ln?.at ?? 0);
+        if (t + 1e-3 < at) break;
+        this._showCommsLine(ln);
+        this.stepState._lineIdx++;
+      }
+    } catch { /* ignore */ }
+  }
+
 
   update(dt) {
     this.ui.update(dt);
@@ -669,7 +986,33 @@ export class CampaignRuntime {
     const step = steps[this.stepIndex];
     if (!step) return;
 
+    // HF9-B2: combat bump timer decay
+    if(this._combatMusicTimer > 0){
+      this._combatMusicTimer = Math.max(0, (Number(this._combatMusicTimer) || 0) - dt);
+      if(this._combatMusicTimer <= 0.001){
+        try{
+          const ss = (this.soundSystem||window.soundSystem);
+          const ms = this._musicForStep(step);
+          if(ms) ss?.setMusicState?.(ms);
+          else {
+            // fall back to mission baseline
+            const mid = String(this.mission?.id || this.mission?.map || '').toLowerCase();
+            const base = (mid.includes('escape') || mid.includes('exfil') || mid.includes('exodus')) ? 'escape'
+              : (mid.includes('assault') || mid.includes('siege') || mid.includes('bridge') || mid.includes('final')) ? 'combat'
+              : 'stealth';
+            ss?.setMusicState?.(base);
+          }
+        }catch{}
+      }
+    }
+
     if (!this.stepState) this.stepState = { t: 0, done: false };
+
+    // HF9-B: allow timed dialogue lines during any step (reach/interact/kill/defend/wait)
+    if (step.type !== 'cutscene') {
+      this.stepState.t = (this.stepState.t || 0) + dt;
+      this._tickStepLines(step, this.stepState.t);
+    }
 
     if (step.type === 'cutscene') {
       this._updateCutscene(step, dt);
@@ -716,10 +1059,11 @@ export class CampaignRuntime {
         this.ui.toast('체크포인트 저장', 1.6);
         this.ui.setWaypoint(null);
         this._clearWorldWaypoint();
-        this._clearWorldWaypoint();
         // mark corresponding objective done (if any)
-        if (String(step.trigger) === 'rally') this._markObjectiveDone('rally');
-        if (String(step.trigger) === 'exfil') this._markObjectiveDone('exfil');
+        try{
+          const ok = step.objectiveKey || step.key || step.trigger || '';
+          if (ok) this._markObjectiveDone(ok);
+        }catch{}
         this._advance();
       }
       return;
@@ -730,7 +1074,15 @@ export class CampaignRuntime {
       if (this.killCount >= need) {
         this.saveSession({ checkpointId: `kill_${need}` });
         this.ui.toast('체크포인트 저장', 1.6);
-        this._markObjectiveDone('elim5');
+        // objective auto-mark (preferred: objectiveKey)
+        try{
+          let ok = step.objectiveKey || step.key || '';
+          if(!ok){
+            const cand = `elim${need}`;
+            if(this.checklist?.some(x=>x.key===cand)) ok = cand;
+          }
+          if(ok) this._markObjectiveDone(ok);
+        }catch{}
         this._advance();
       } else {
         this.ui.setObjective(`적 제거 ${this.killCount}/${need}`);
@@ -771,8 +1123,7 @@ export class CampaignRuntime {
 
     if (step.type === 'wait') {
       const total = Math.max(0.1, Number(step.sec) || 1);
-      this.stepState.t = (this.stepState.t || 0) + dt;
-      const left = Math.max(0, total - this.stepState.t);
+      const left = Math.max(0, total - (this.stepState.t || 0));
       this.ui.setObjective(step.text ? `${step.text} (${left.toFixed(1)}s)` : `대기... (${left.toFixed(1)}s)`);
       if (left <= 0) {
         if (step.objectiveKey) this._markObjectiveDone(step.objectiveKey);
@@ -784,9 +1135,8 @@ export class CampaignRuntime {
 
     if (step.type === 'defend') {
       const total = Math.max(1, Number(step.sec) || 30);
-      this.stepState.t = (this.stepState.t || 0) + dt;
 
-      const left = Math.max(0, total - this.stepState.t);
+      const left = Math.max(0, total - (this.stepState.t || 0));
       const label = step.text || '버텨라';
       this.ui.setObjective(`${label} (${Math.ceil(left)}s)`);
 
