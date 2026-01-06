@@ -301,7 +301,11 @@ export class TTSManager {
         if (v) u.voice = v;
         // Tune by channel
         const ch = String(channel||'RADIO').toUpperCase();
-        u.rate = ch==='WHISPER' ? 0.96 : (urgent ? 1.05 : 1.0);
+        // HF9-C3a-3: slightly faster pacing for dialogue (more back-and-forth feel)
+        const baseRate = 1.15;
+        const whisperRate = 1.08;
+        const urgentBoost = 0.08;
+        u.rate = ch==='WHISPER' ? whisperRate : (urgent ? (baseRate + urgentBoost) : baseRate);
         u.pitch = ch==='WHISPER' ? 0.92 : 1.0;
         u.volume = Math.max(0, Math.min(1, Number(volume)||1)) * 0.95;
         u.onend = () => {

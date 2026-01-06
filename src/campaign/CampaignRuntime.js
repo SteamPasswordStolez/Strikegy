@@ -2,6 +2,7 @@
 
 import { CampaignDB, CAMPAIGN_KEY } from './CampaignData.js';
 import { CampaignUI } from './CampaignUI.js';
+import { translateKOtoEN } from './CampaignTranslationKOEN.js';
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
@@ -129,20 +130,35 @@ export class CampaignRuntime {
     const s = raw ? safeJSONParse(raw) : null;
     if (s && typeof s === 'object') {
       this.session = s;
+      // HF9-C3a: migrate to v2 (objective completion persistence)
+      this._ensureSessionV2();
       return this.session;
     }
     if (!createIfMissing) return null;
     this.session = {
-      version: 1,
+      version: 2,
       chapter: 1,
       missionId: 'c1_m1_insertion',
       stepIndex: 0,
       checkpointId: 'start',
       difficulty: { id: 'normal', playerDamage: 1, enemyDamage: 1 },
+      progress: { missionStates: {} },
       updatedAt: Date.now(),
     };
     this.saveSession();
     return this.session;
+  }
+
+  _ensureSessionV2(){
+    try{
+      if(!this.session || typeof this.session !== 'object') return;
+      const v = Math.max(1, Number(this.session.version) || 1);
+      if(v < 2) this.session.version = 2;
+      if(!this.session.progress || typeof this.session.progress !== 'object') this.session.progress = {};
+      if(!this.session.progress.missionStates || typeof this.session.progress.missionStates !== 'object') {
+        this.session.progress.missionStates = {};
+      }
+    }catch{ /* ignore */ }
   }
 
   saveSession(patch = {}) {
@@ -300,6 +316,9 @@ export class CampaignRuntime {
         this.checklist.push({ key: String(s.key || s.id || ''), text: String(s.text || ''), done: false });
       }
     }
+
+    // HF9-C3a: restore objective checkmarks from save + infer from stepIndex
+    try{ this._restoreObjectiveChecklistState(mid); }catch{}
     this.ui.setChecklist(this.checklist);
     this.ui.hideResult();
 
@@ -457,7 +476,10 @@ export class CampaignRuntime {
     if(!t) return 0;
     const words = t.split(/\s+/).filter(Boolean).length;
     const base = (words / 2.6) + 0.45;
-    const rate = (String(channel).toUpperCase()==='WHISPER') ? 0.96 : (urgent ? 1.05 : 1.0);
+    // HF9-C3a-3: keep estimate consistent with WebSpeech tuning in TTSManager
+    const baseRate = 1.15;
+    const whisperRate = 1.08;
+    const rate = (String(channel).toUpperCase()==='WHISPER') ? whisperRate : (urgent ? (baseRate + 0.08) : baseRate);
     return Math.max(0.8, base / rate);
   }
 
@@ -500,104 +522,125 @@ export class CampaignRuntime {
     });
   }
 
-
-  _getSubtitleLangPref(){
-    try{
-      const w = (typeof window !== 'undefined') ? window : null;
-      const forced = w?.__strikegySubtitleLang;
-      const ls = w?.localStorage?.getItem?.('strikegy_subtitle_lang');
-      return String(forced || ls || 'auto').toLowerCase();
-    }catch{
-      return 'auto';
-    }
+  // HF9-C3a-3: Subtitles stay Korean, TTS speaks English (via KO->EN translation table)
+  _hasHangul(s){
+    return /[가-힣]/.test(String(s||''));
   }
 
-  _pickDialogueText(obj){
-    const mode = this._getSubtitleLangPref();
-    if(mode === 'en') return (obj?.en ?? obj?.text ?? obj?.ko ?? '');
-    if(mode === 'ko') return (obj?.ko ?? obj?.text ?? obj?.en ?? '');
-    return (obj?.text ?? obj?.ko ?? obj?.en ?? '');
+  _pickSubtitleRaw(obj){
+    // Prefer original Korean script for on-screen subtitles
+    return String(obj?.text ?? obj?.ko ?? obj?.en ?? '');
+  }
+
+  _pickTTSTextRaw(obj){
+    // Prefer explicit English line if provided; else translate KO -> EN
+    const enRaw = (typeof obj?.en === 'string' && obj.en.trim().length) ? obj.en.trim() : '';
+    if(enRaw) return enRaw;
+
+    const base = this._pickSubtitleRaw(obj);
+    const mid = String(this.mission?.id || this.session?.missionId || '');
+    try{
+      return translateKOtoEN(base, mid) || base;
+    }catch{
+      return base;
+    }
   }
 
   _showCommsLine(line){
     const speaker = line?.speaker ?? '';
     const speakerTag = this._speakerTag(speaker);
-    const raw = this._pickDialogueText(line);
-    const parsed = this._stripTagAndDetectChannel(raw);
-    const label = this._normalizeChannelLabel(line?.channel ?? parsed.channel, speakerTag);
+
+    // Subtitle: keep original Korean
+    const subtitleRaw = this._pickSubtitleRaw(line);
+    const parsedSub = this._stripTagAndDetectChannel(subtitleRaw);
+    const label = this._normalizeChannelLabel(line?.channel ?? parsedSub.channel, speakerTag);
     const urgent = !!(line?.urgent || line?.priority==='high');
 
-    const text = String(parsed.text || '').trim();
-    if(!text) return;
+    const subText = String(parsedSub.text || '').trim();
+    if(!subText) return;
+
+    // TTS: speak English (translated) while subtitle stays Korean
+    const ttsRaw = this._pickTTSTextRaw(line);
+    const parsedTTS = this._stripTagAndDetectChannel(ttsRaw);
+    let ttsText = String(parsedTTS.text || '').trim();
+    if(this._hasHangul(ttsText)) ttsText = ''; // avoid Korean TTS when unmapped
 
     // HF9-C2: queue so we never show a new subtitle while the previous voice is still playing.
     this._queueDialogue(async () => {
-      const est = this._estimateSpeechSec(text, label, urgent);
-      const baseHold = Number(line?.holdSec) || (2.2 + Math.min(3.2, text.length/26));
-      const hold = Math.max(1.6, Math.min(9.5, Math.max(baseHold, est + 0.45)));
+      const est = this._estimateSpeechSec(ttsText || subText, label, urgent);
+      const baseHold = Number(line?.holdSec) || (2.2 + Math.min(3.2, subText.length/26));
+      const minHold = Math.max(900, Math.round(baseHold * 1000));
 
       this._playCommsSfx(label, urgent);
-      this.ui.showSubtitle({ channel: label, speaker: speakerTag, text, holdSec: hold, urgent });
+      // Hold big; we will hide manually when the voice is done.
+      this.ui.showSubtitle({ channel: label, speaker: speakerTag, text: subText, holdSec: 999, urgent });
 
       const startMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const ttsAllowed = (line?.tts !== false);
-      if(ttsAllowed){
+      if(ttsAllowed && ttsText){
         try{
           const maxWaitMs = Math.max(1800, Math.min(25000, Math.round((est + 1.2) * 1000)));
-          const p = this._ttsSpeakLine({ speakerTag, label, text, urgent, maxWaitMs });
+          const p = this._ttsSpeakLine({ speakerTag, label, text: ttsText, urgent, maxWaitMs });
           if(p) await p;
         }catch{}
       }
 
-      // Always enforce a minimum on-screen time so lines don't "skip" even if TTS fails.
+      // Ensure minimum on-screen time so it doesn't flicker if TTS fails instantly
       const endMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const elapsed = Math.max(0, endMs - startMs);
-      const target = Math.max(600, Math.round(hold * 1000));
-      const remain = target - elapsed;
+      const remain = minHold - elapsed;
       if(remain > 0) await new Promise(r => setTimeout(r, remain));
 
-      // tiny gap so consecutive lines don't feel "snapped"
+      this.ui.hideSubtitle();
       await new Promise(r => setTimeout(r, 90));
     });
   }
 
+
   async _say(step) {
     const speaker = step?.speaker || '';
     const speakerTag = this._speakerTag(speaker);
-
-    const rawText = this._pickDialogueText(step);
-    const parsed = this._stripTagAndDetectChannel(rawText);
-    const label = this._normalizeChannelLabel(step?.channel ?? parsed.channel, speakerTag);
+    // Subtitle: keep original Korean
+    const subtitleRaw = this._pickSubtitleRaw(step);
+    const parsedSub = this._stripTagAndDetectChannel(subtitleRaw);
+    const label = this._normalizeChannelLabel(step?.channel ?? parsedSub.channel, speakerTag);
     const urgent = !!(step?.urgent || step?.priority==='high');
-    const text = String(parsed.text || '').trim();
-    if(!text) return;
+    const subText = String(parsedSub.text || '').trim();
+    if(!subText) return;
+
+    // TTS: speak English while subtitle remains Korean
+    const ttsRaw = this._pickTTSTextRaw(step);
+    const parsedTTS = this._stripTagAndDetectChannel(ttsRaw);
+    let ttsText = String(parsedTTS.text || '').trim();
+    if(this._hasHangul(ttsText)) ttsText = '';
 
     // HF9-C2: Queue dialogue so the subtitle and voice stay in sync.
     await this._queueDialogue(async () => {
-      const est = this._estimateSpeechSec(text, label, urgent);
-      const baseHold = Number(step?.holdSec) || (2.2 + Math.min(3.2, text.length/26));
-      const hold = Math.max(1.6, Math.min(9.5, Math.max(baseHold, est + 0.45)));
+      const est = this._estimateSpeechSec(ttsText || subText, label, urgent);
+      const baseHold = Number(step?.holdSec) || (2.2 + Math.min(3.2, subText.length/26));
+      const minHold = Math.max(900, Math.round(baseHold * 1000));
 
       this._playCommsSfx(label, urgent);
-      this.ui.showSubtitle({ channel: label, speaker: speakerTag, text, holdSec: hold, urgent });
+      // Hold big; we will hide manually when the voice is done.
+      this.ui.showSubtitle({ channel: label, speaker: speakerTag, text: subText, holdSec: 999, urgent });
 
       const startMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const ttsAllowed = (step?.tts !== false);
-      if(ttsAllowed){
+      if(ttsAllowed && ttsText){
         try{
           const maxWaitMs = Math.max(1800, Math.min(25000, Math.round((est + 1.2) * 1000)));
-          const p = this._ttsSpeakLine({ speakerTag, label, text, urgent, maxWaitMs });
+          const p = this._ttsSpeakLine({ speakerTag, label, text: ttsText, urgent, maxWaitMs });
           if(p) await p;
         }catch{}
       }
 
-      // Always enforce a minimum on-screen time so lines don't "skip" even if TTS fails.
+      // Ensure minimum on-screen time so it doesn't flicker if TTS fails instantly
       const endMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const elapsed = Math.max(0, endMs - startMs);
-      const target = Math.max(600, Math.round(hold * 1000));
-      const remain = target - elapsed;
+      const remain = minHold - elapsed;
       if(remain > 0) await new Promise(r => setTimeout(r, remain));
 
+      this.ui.hideSubtitle();
       await new Promise(r => setTimeout(r, 90));
     });
   }
@@ -611,6 +654,49 @@ export class CampaignRuntime {
       it.done = true;
       this.ui.setChecklist(this.checklist);
     }
+
+    // HF9-C3a: persist objective completion so checkpoint restart/continue keeps checks
+    try{
+      this._ensureSessionV2();
+      const mid = String(this.mission?.id || this.session?.missionId || '');
+      if(mid){
+        const ms = (this.session.progress.missionStates[mid] ||= {});
+        ms.objectivesDone = (ms.objectivesDone && typeof ms.objectivesDone === 'object') ? ms.objectivesDone : {};
+        ms.objectivesDone[k] = true;
+        this.saveSession({ progress: this.session.progress });
+      }
+    }catch{ /* ignore */ }
+  }
+
+  // HF9-C3a: when loading/restarting from a checkpoint, previously completed
+  // objectives should stay checked.
+  _restoreObjectiveChecklistState(missionId){
+    try{
+      this._ensureSessionV2();
+      const mid = String(missionId || this.mission?.id || this.session?.missionId || '');
+      if(!mid) return;
+      const ms = (this.session.progress.missionStates[mid] ||= {});
+      const done = (ms.objectivesDone && typeof ms.objectivesDone === 'object') ? ms.objectivesDone : {};
+      ms.objectivesDone = done;
+
+      // Infer completion from the current step index: all steps < stepIndex are assumed executed.
+      const steps = Array.isArray(this.mission?.script) ? this.mission.script : [];
+      const upto = Math.max(0, Math.min(steps.length, Number(this.stepIndex) || 0));
+      for(let i=0;i<upto;i++){
+        const s = steps[i];
+        const ok = String(s?.objectiveKey || '');
+        if(ok) done[ok] = true;
+      }
+
+      // Apply to checklist UI model
+      for(const it of (this.checklist||[])){
+        const k = String(it?.key||'');
+        if(!k) continue;
+        it.done = !!done[k];
+      }
+
+      this.saveSession({ progress: this.session.progress });
+    }catch{ /* ignore */ }
   }
 
   // (HF8 브리핑 오버레이 컷신/자동 주입 로직은 HF9-A에서 제거됨)
