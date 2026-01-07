@@ -174,7 +174,16 @@ export class TTSManager {
     shaper.oversample = '2x';
 
     // Channel tuning
-    if (ch === 'WHISPER') {
+    if (ch === 'LOCAL') {
+      // LOCAL: close-range speech (minimal radio coloration)
+      hp.frequency.value = 90;
+      lp.frequency.value = 7200;
+      bp.frequency.value = 1700;
+      bp.Q.value = 0.55;
+      output.gain.value = 1.0;
+      // Soften saturation for natural tone
+      shaper.curve = makeSaturationCurve(0.25);
+    } else if (ch === 'WHISPER') {
       hp.frequency.value = 240;
       lp.frequency.value = 1800;
       bp.frequency.value = 900;
@@ -232,9 +241,11 @@ export class TTSManager {
     if (typeof window === 'undefined' || !window.speechSynthesis) return false;
     const t = String(text || '').trim();
     if (!t) return false;
-    // Small radio cues
+    // Small radio cues (skip for LOCAL/WHISPER)
+    const chUp = String(channel||'RADIO').toUpperCase();
+    const allowBeep = !(chUp === 'LOCAL' || chUp === 'WHISPER');
     try {
-      if (this.soundSystem?.play) this.soundSystem.play(urgent ? 'comms_urgent' : 'radio_in');
+      if (allowBeep && this.soundSystem?.play) this.soundSystem.play(urgent ? 'comms_urgent' : 'radio_in');
     } catch {}
 
     const synth = window.speechSynthesis;
@@ -300,7 +311,7 @@ export class TTSManager {
         const v = pickVoice();
         if (v) u.voice = v;
         // Tune by channel
-        const ch = String(channel||'RADIO').toUpperCase();
+        const ch = chUp;
         // HF9-C3a-3: slightly faster pacing for dialogue (more back-and-forth feel)
         const baseRate = 1.15;
         const whisperRate = 1.08;
@@ -309,7 +320,7 @@ export class TTSManager {
         u.pitch = ch==='WHISPER' ? 0.92 : 1.0;
         u.volume = Math.max(0, Math.min(1, Number(volume)||1)) * 0.95;
         u.onend = () => {
-          try { if (this.soundSystem?.play) this.soundSystem.play('radio_out'); } catch {}
+          try { if (allowBeep && this.soundSystem?.play) this.soundSystem.play('radio_out'); } catch {}
           resolve(true);
         };
         u.onerror = () => resolve(false);

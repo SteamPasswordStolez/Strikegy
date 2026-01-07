@@ -123,6 +123,15 @@ export class CampaignRuntime {
         window.location.href = url.toString();
       }catch(e){}
     });
+
+    // HF9-C3b: Open campaign menu from the in-game overlay
+    window.addEventListener('campaign:menu', ()=>{
+      try {
+        // Ensure the latest session is persisted (unless in replay)
+        this.saveSession({});
+      } catch { /* ignore */ }
+      try { window.location.href = 'campaign.html'; } catch { /* ignore */ }
+    });
   }
 
   loadSession({ createIfMissing = true } = {}) {
@@ -164,6 +173,8 @@ export class CampaignRuntime {
   saveSession(patch = {}) {
     try {
       this.session = Object.assign(this.session || {}, patch || {}, { updatedAt: Date.now() });
+      // HF9-C3b: replay mode should not overwrite the player's campaign progress
+      if (this._saveEnabled === false) return;
       localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(this.session));
     } catch { /* ignore */ }
   }
@@ -294,9 +305,30 @@ export class CampaignRuntime {
   }
 
 
-  start({ mapJson, continueFromSave = true } = {}) {
+  // HF9-C3b: supports mission select / replay / continue flags
+  start({ mapJson, continueFromSave = true, missionId = null, replayMode = false } = {}) {
     this.loadSession({ createIfMissing: true });
-    const mid = String(this.session?.missionId || 'c1_m1_insertion');
+
+    const requested = String(missionId || '').trim();
+    const sessionMid = String(this.session?.missionId || 'c1_m1_insertion');
+    const mid = requested || sessionMid;
+
+    // Replay mode: do not overwrite campaign progress in localStorage
+    this._replayMode = !!replayMode;
+    this._saveEnabled = !this._replayMode;
+
+    // If a specific mission was requested (non-replay), switch the session's active mission
+    if (requested && !this._replayMode) {
+      const m = CampaignDB?.missions?.[mid];
+      const chap = Number(m?.chapter || this.session?.chapter || 1);
+      const patch = { missionId: mid, chapter: chap };
+      if (!continueFromSave) {
+        patch.stepIndex = 0;
+        patch.checkpointId = 'start';
+      }
+      this.saveSession(patch);
+    }
+
     this.loadMission(mid);
     if (!this.mission) return;
 
@@ -304,7 +336,9 @@ export class CampaignRuntime {
     this.killCount = 0;
     this.missionTime = 0;
 
-    this.stepIndex = continueFromSave ? Math.max(0, Number(this.session?.stepIndex || 0)) : 0;
+    // Replay always starts fresh.
+    const allowContinue = !!continueFromSave && !this._replayMode && (!requested || requested === sessionMid);
+    this.stepIndex = allowContinue ? Math.max(0, Number(this.session?.stepIndex || 0)) : 0;
     // HF9-A: 기존 '브리핑 오버레이 컷신' 자동 삽입은 제거. (스크립트에서 컷신/대사 흐름을 직접 구성)
     this.stepState = null;
     this._inCutscene = false;
@@ -317,12 +351,14 @@ export class CampaignRuntime {
       }
     }
 
-    // HF9-C3a: restore objective checkmarks from save + infer from stepIndex
-    try{ this._restoreObjectiveChecklistState(mid); }catch{}
+    // Restore objective checkmarks from save (skip in replay)
+    if (!this._replayMode) {
+      try{ this._restoreObjectiveChecklistState(mid); }catch{}
+    }
     this.ui.setChecklist(this.checklist);
     this.ui.hideResult();
 
-    this.ui.toast(`캠페인 시작 · ${this.mission.title}`, 2.2);
+    this.ui.toast(`${this._replayMode ? '리플레이' : '캠페인'} 시작 · ${this.mission.title}`, 2.2);
 
     // HF9-B2: ambience + baseline music for the mission
     try{ this._applyMissionAudioPreset(); }catch{}
@@ -415,7 +451,7 @@ export class CampaignRuntime {
     }
 
     // Leading patterns like "*[무전]*:" or "(무전):" etc.
-    txt = txt.replace(/^\*?\s*\(?\s*(무전|속삭임|잡음|hq|본부|오버워치|내부통신|인터콤)\s*\)?\s*\*?\s*[:：-]?\s*/i, '').trim();
+    txt = txt.replace(/^\*?\s*\(?\s*(무전|속삭임|잡음|hq|본부|오버워치|내부통신|인터콤|로컬|대화|local)\s*\)?\s*\*?\s*[:：-]?\s*/i, '').trim();
     return { text: txt, channel: ch };
   }
 
@@ -436,6 +472,7 @@ export class CampaignRuntime {
     if(c.includes('hq') || c.includes('본부') || c.includes('analysis')) return 'HQ';
     if(c.includes('오버워치') || c.includes('overwatch') || c.includes('drone')) return 'OVERWATCH';
     if(c.includes('내부') || c.includes('인터콤') || c.includes('intercom')) return 'INTERCOM';
+    if(c.includes('로컬') || c.includes('대화') || c === 'local') return 'LOCAL';
     if(c.includes('미상') || c.includes('unknown')) return 'UNKNOWN';
 
     return String(ch).toUpperCase();
@@ -446,6 +483,7 @@ export class CampaignRuntime {
       const ss = window.soundSystem;
       if(!ss || typeof ss.play !== 'function') return;
       const L = String(label||'').toUpperCase();
+      if(L==='LOCAL') return;
       if(urgent) { ss.play('comms_urgent'); return; }
       if(L==='WHISPER') { ss.play('whisper'); return; }
       if(L==='INTERCOM' || L==='HQ') { ss.play('intercom'); return; }
@@ -866,12 +904,34 @@ export class CampaignRuntime {
       this.ui.setCinematic(false);
       this.ui.setFade(0, 10);
       const nextId = this.mission?.nextMissionId || null;
+
+      // HF9-C3b: persist mission clear/unlock (skip in replay)
+      if (!this._replayMode) {
+        try {
+          this._ensureSessionV2();
+          const mid = String(this.mission?.id || this.session?.missionId || '');
+          if (mid) {
+            const ms = (this.session.progress.missionStates[mid] ||= {});
+            ms.unlocked = true;
+            ms.cleared = true;
+            ms.clearedAt = Date.now();
+          }
+          if (nextId) {
+            const ns = (this.session.progress.missionStates[nextId] ||= {});
+            ns.unlocked = true;
+          }
+        } catch { /* ignore */ }
+      }
       this.ui.showResult({
         title: 'MISSION COMPLETE',
-        desc: nextId ? '작전 성공. 다음 미션으로 이동할 수 있습니다.' : '작전 성공. (다음 미션은 확장 예정)',
+        desc: this._replayMode
+          ? '리플레이 완료. 캠페인 진행도에는 반영되지 않습니다.'
+          : (nextId ? '작전 성공. 다음 미션으로 이동할 수 있습니다.' : '작전 성공. (다음 미션은 확장 예정)'),
         canNext: !!nextId,
       });
-      this.saveSession({ checkpointId: 'complete', nextMissionId: nextId || null });
+      if (!this._replayMode) {
+        this.saveSession({ checkpointId: 'complete', nextMissionId: nextId || null, progress: this.session?.progress });
+      }
       this._setPlayerLock(true);
       return;
     }

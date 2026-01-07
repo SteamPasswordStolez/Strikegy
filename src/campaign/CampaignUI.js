@@ -50,6 +50,7 @@ export class CampaignUI {
           <div class="campResult__title" id="campResultTitle"></div>
           <div class="campResult__desc" id="campResultDesc"></div>
           <div class="campResult__buttons">
+            <button class="campBtn" id="campBtnCampaignMenu">캠페인 메뉴</button>
             <button class="campBtn" id="campBtnNextMission" style="display:none">다음 미션</button>
             <button class="campBtn" id="campBtnRestartCP">체크포인트 재시작</button>
             <button class="campBtn" id="campBtnRestartMission">미션 재시작</button>
@@ -93,6 +94,7 @@ export class CampaignUI {
     this.btnRestartCP = this.wrap.querySelector('#campBtnRestartCP');
     this.btnRestartMission = this.wrap.querySelector('#campBtnRestartMission');
     this.btnNextMission = this.wrap.querySelector('#campBtnNextMission');
+    this.btnCampaignMenu = this.wrap.querySelector('#campBtnCampaignMenu');
 
     this._subHideT = 0;
     this._toastHideT = 0;
@@ -112,6 +114,19 @@ export class CampaignUI {
     });
     this.btnNextMission.addEventListener('click', () => {
       window.dispatchEvent(new CustomEvent('campaign:next'));
+    });
+
+    // HF9-C3b: Campaign menu button (MW-style "Mission Select")
+    this.btnCampaignMenu.addEventListener('click', () => {
+      try {
+        window.dispatchEvent(new CustomEvent('campaign:menu'));
+      } catch { /* ignore */ }
+      // Fallback (if no handler is attached)
+      try {
+        setTimeout(() => {
+          try { window.location.href = 'campaign.html'; } catch { /* ignore */ }
+        }, 30);
+      } catch { /* ignore */ }
     });
 
     this.ensureStyles();

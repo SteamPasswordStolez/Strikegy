@@ -2918,8 +2918,20 @@ let _roundShown = false;
       document.getElementById("modeLabel").textContent = campaignOn ? `campaign (${diff.id})` : mode;
       if(campaignOn){
         const url = new URL(window.location.href);
-        const forceMid = String(url.searchParams.get('mission') || '');
-        const entry = CAMPAIGN_MISSIONS[forceMid] || CAMPAIGN_MISSIONS[String(camp?.missionId || '')] || CAMPAIGN_MISSIONS.c1_m1_insertion;
+        const missionParam = String(url.searchParams.get('mission') || '').trim();
+        const replayMode = (url.searchParams.get('replay') === '1');
+        const continueParam = (url.searchParams.get('continue') === '1');
+
+        // Active mission for this run (mission param > session > default)
+        const activeMid = missionParam || String(camp?.missionId || '') || 'c1_m1_insertion';
+        window.__campaignLaunch = {
+          missionId: missionParam || null,
+          replayMode: !!replayMode,
+          continueFromSave: (!!continueParam && !replayMode),
+          activeMissionId: activeMid,
+        };
+
+        const entry = CAMPAIGN_MISSIONS[activeMid] || CAMPAIGN_MISSIONS.c1_m1_insertion;
         document.getElementById("mapLabel").textContent = entry?.title ? `${entry.title} · ${entry.map}` : path;
 
         // Apply per-mission campaign rules & fixed loadout (no shop / no class / no bandage)
@@ -3031,7 +3043,13 @@ let _roundShown = false;
               }
             }catch{}
 
-            campaignRuntime.start({ mapJson: map, continueFromSave: true });
+            const launch = window.__campaignLaunch || {};
+            campaignRuntime.start({
+              mapJson: map,
+              continueFromSave: !!launch.continueFromSave,
+              missionId: launch.missionId || null,
+              replayMode: !!launch.replayMode,
+            });
             window.campaignRuntime = campaignRuntime;
           }catch(e){ console.warn('[Campaign] init failed', e); }
         }else{
@@ -3045,7 +3063,9 @@ let _roundShown = false;
             botManager.clear?.();
           }
           const _botAim = new THREE.Vector3();
-          const campEntry = campaignOn ? (CAMPAIGN_MISSIONS[String(camp?.missionId || '')] || CAMPAIGN_MISSIONS.c1_m1_insertion) : null;
+          const _launch = window.__campaignLaunch || {};
+          const _mid = String(_launch.activeMissionId || camp?.missionId || '') || 'c1_m1_insertion';
+          const campEntry = campaignOn ? (CAMPAIGN_MISSIONS[_mid] || CAMPAIGN_MISSIONS.c1_m1_insertion) : null;
           botManager = new BotManager({
             scene: current.scene,
             collisionWorld: collisionWorld,
