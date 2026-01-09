@@ -1,0 +1,246 @@
+{
+  "name": "CH1 M8 Subway (Tunnels)",
+  "world": {
+    "groundSize": [
+      320,
+      180
+    ],
+    "visualProfile": "indoor_facility"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -140,
+        2,
+        0
+      ],
+      "yaw": 0
+    },
+    {
+      "team": "red",
+      "pos": [
+        140,
+        2,
+        0
+      ],
+      "yaw": 180
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        320,
+        12,
+        3
+      ],
+      "pos": [
+        0,
+        6.0,
+        -90.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        320,
+        12,
+        3
+      ],
+      "pos": [
+        0,
+        6.0,
+        90.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        180
+      ],
+      "pos": [
+        -160.0,
+        6.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        12,
+        180
+      ],
+      "pos": [
+        160.0,
+        6.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        280,
+        8,
+        3
+      ],
+      "pos": [
+        0,
+        4,
+        -22
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        280,
+        8,
+        3
+      ],
+      "pos": [
+        0,
+        4,
+        22
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        4,
+        8,
+        4
+      ],
+      "pos": [
+        -90,
+        4,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        4,
+        8,
+        4
+      ],
+      "pos": [
+        -45,
+        4,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        4,
+        8,
+        4
+      ],
+      "pos": [
+        0,
+        4,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        4,
+        8,
+        4
+      ],
+      "pos": [
+        45,
+        4,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        4,
+        8,
+        4
+      ],
+      "pos": [
+        90,
+        4,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        3,
+        3
+      ],
+      "pos": [
+        -30,
+        1.5,
+        -10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        3,
+        3
+      ],
+      "pos": [
+        30,
+        1.5,
+        10
+      ]
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "platform": {
+        "pos": [
+          -80,
+          2,
+          0
+        ],
+        "r": 10
+      },
+      "switch": {
+        "pos": [
+          0,
+          2,
+          0
+        ],
+        "r": 10
+      },
+      "escape": {
+        "pos": [
+          150,
+          2,
+          -60
+        ],
+        "r": 12
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}

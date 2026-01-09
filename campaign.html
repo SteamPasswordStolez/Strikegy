@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Strikegy · Campaign</title>
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --panel:#0f1620;
+      --panel2:#101b28;
+      --txt:#e8eef7;
+      --muted:#a7b3c4;
+      --line:rgba(255,255,255,.08);
+      --accent:#4aa3ff;
+      --good:#35d07f;
+      --warn:#ffcc66;
+      --bad:#ff5a6a;
+      --chip:#132235;
+
+      /* Pre2: drop your campaign image into assets/ui/bg/campaign.webp */
+      --sg-bg-image: url('./assets/ui/bg/campaign.webp');
+      --sg-hero-image: url('./assets/ui/bg/campaign.webp');
+    }
+    *{box-sizing:border-box;}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Arial, sans-serif;
+      background: transparent;
+      color:var(--txt);
+    }
+
+    /* Pre2: BF-style background + overlay */
+    .sg-bg{
+      position:fixed; inset:0;
+      background-image: var(--sg-bg-image);
+      background-size:cover;
+      background-position:center;
+      filter: saturate(.95) contrast(1.05);
+      transform: scale(1.02);
+      z-index:-2;
+    }
+    .sg-bg::before{
+      content:"";
+      position:absolute; inset:0;
+      background:
+        radial-gradient(900px 520px at 18% 12%, rgba(74,163,255,.18), transparent 60%),
+        radial-gradient(780px 520px at 78% 88%, rgba(53,208,127,.08), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.05), transparent 35%),
+        linear-gradient(90deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.52) 34%, rgba(0,0,0,.22) 62%, rgba(0,0,0,.18) 100%);
+    }
+    .sg-bg::after{
+      content:"";
+      position:absolute; inset:0;
+      background: repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 1px, transparent 1px 10px);
+      opacity:.26;
+      mix-blend-mode: overlay;
+    }
+
+    .audioHint{
+      position:fixed;
+      right:18px;
+      top:18px;
+      z-index:9999;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.45);
+      color:rgba(234,240,255,.82);
+      font-size:12px;
+      font-weight:800;
+      display:none;
+    }
+    .audioHint.show{ display:inline-flex; }
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:14px 16px;
+      border-bottom:1px solid var(--line);
+      background: linear-gradient(180deg, rgba(15,22,32,.92), rgba(15,22,32,.72));
+      position:sticky;
+      top:0;
+      backdrop-filter: blur(10px);
+      z-index:10;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      min-width:0;
+    }
+    .badge{
+      font-weight:800;
+      letter-spacing:.12em;
+      font-size:12px;
+      color:rgba(255,255,255,.88);
+      padding:6px 10px;
+      border:1px solid var(--line);
+      border-radius:999px;
+      background:rgba(0,0,0,.22);
+      white-space:nowrap;
+    }
+    .title{
+      font-weight:800;
+      letter-spacing:.02em;
+      font-size:15px;
+      opacity:.95;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .actions{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .btn{
+      cursor:pointer;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.06);
+      color:var(--txt);
+      padding:8px 10px;
+      border-radius:12px;
+      font-weight:700;
+      font-size:13px;
+    }
+    .btn:hover{ background:rgba(255,255,255,.10); }
+    .btn.primary{ border-color:rgba(74,163,255,.55); background:rgba(74,163,255,.16); }
+    .btn.primary:hover{ background:rgba(74,163,255,.22); }
+    .btn.good{ border-color:rgba(53,208,127,.55); background:rgba(53,208,127,.14); }
+    .btn.good:hover{ background:rgba(53,208,127,.20); }
+    .btn.warn{ border-color:rgba(255,204,102,.55); background:rgba(255,204,102,.14); }
+    .btn.warn:hover{ background:rgba(255,204,102,.20); }
+    .btn.ghost{ background:transparent; }
+    .btn:disabled{ opacity:.45; cursor:not-allowed; }
+
+    .wrap{
+      display:grid;
+      grid-template-columns: 240px 360px 1fr;
+      gap:14px;
+      padding:14px;
+      max-width:1320px;
+      margin:0 auto;
+    }
+    @media (max-width: 980px){
+      .wrap{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      border:1px solid var(--line);
+      background: linear-gradient(180deg, rgba(16,27,40,.86), rgba(16,27,40,.70));
+      border-radius:18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.32);
+      overflow:hidden;
+    }
+    .card h2{
+      margin:0;
+      padding:12px 14px;
+      border-bottom:1px solid var(--line);
+      font-size:13px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:rgba(255,255,255,.82);
+    }
+    .panel{
+      padding:12px 12px 14px;
+    }
+
+    /* Pre2: left chapter nav */
+    .chapNav{ display:flex; flex-direction:column; gap:8px; }
+    .chapBtn{
+      text-align:left;
+      width:100%;
+      padding:12px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.18);
+      color:var(--txt);
+      cursor:pointer;
+      font-weight:900;
+      transition: transform .08s ease, border-color .12s ease, background .12s ease;
+    }
+    .chapBtn:hover{ transform: translateY(-1px); border-color:rgba(255,255,255,.22); }
+    .chapBtn.active{
+      border-color: rgba(74,163,255,.75);
+      background: rgba(74,163,255,.16);
+      box-shadow:0 0 0 2px rgba(74,163,255,.18) inset;
+    }
+    .chapBtn small{ display:block; margin-top:4px; color:rgba(255,255,255,.60); font-weight:700; }
+
+    .row{ display:flex; gap:10px; align-items:center; }
+    .row.wrap{ flex-wrap:wrap; }
+
+    .input{
+      width:100%;
+      padding:10px 11px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.22);
+      color:var(--txt);
+      outline:none;
+    }
+
+    .missionList{ display:flex; flex-direction:column; gap:8px; }
+    .chapterLabel{
+      margin:10px 2px 0;
+      font-weight:900;
+      letter-spacing:.10em;
+      font-size:12px;
+      color:rgba(255,255,255,.72);
+    }
+
+    .mBtn{
+      width:100%;
+      text-align:left;
+      padding:10px 10px;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      cursor:pointer;
+      display:flex;
+      gap:10px;
+      align-items:flex-start;
+    }
+    .mBtn:hover{ background:rgba(255,255,255,.08); }
+    .mBtn.active{ border-color:rgba(74,163,255,.55); background:rgba(74,163,255,.12); }
+
+    .mNo{
+      width:32px;
+      height:32px;
+      border-radius:10px;
+      background:rgba(255,255,255,.06);
+      border:1px solid var(--line);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:900;
+      color:rgba(255,255,255,.86);
+      flex:0 0 auto;
+    }
+
+    .mMeta{ flex:1 1 auto; min-width:0; }
+    .mTitle{
+      font-weight:900;
+      font-size:14px;
+      line-height:1.2;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .mSub{
+      margin-top:3px;
+      font-size:12px;
+      color:var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .chips{ margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; }
+    .chip{
+      font-size:11px;
+      font-weight:800;
+      padding:4px 8px;
+      border-radius:999px;
+      background:var(--chip);
+      border:1px solid var(--line);
+      color:rgba(255,255,255,.86);
+    }
+    .chip.good{ border-color:rgba(53,208,127,.5); color:rgba(53,208,127,.95); }
+    .chip.warn{ border-color:rgba(255,204,102,.5); color:rgba(255,204,102,.95); }
+    .chip.bad{ border-color:rgba(255,90,106,.5); color:rgba(255,90,106,.95); }
+    .chip.accent{ border-color:rgba(74,163,255,.5); color:rgba(74,163,255,.95); }
+
+    .detailTitle{
+      font-size:18px;
+      font-weight:950;
+      margin:0;
+    }
+    .detailSub{ margin-top:6px; color:var(--muted); font-size:13px; line-height:1.5; }
+
+    .kv{
+      display:grid;
+      grid-template-columns: 120px 1fr;
+      gap:8px 10px;
+      margin-top:12px;
+      padding-top:12px;
+      border-top:1px solid var(--line);
+    }
+    .k{ color:rgba(255,255,255,.65); font-weight:800; font-size:12px; letter-spacing:.06em; }
+    .v{ font-size:13px; color:rgba(255,255,255,.92); }
+
+    .footBtns{ display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    .hint{ margin-top:10px; color:rgba(255,255,255,.55); font-size:12px; }
+
+    .small{ font-size:12px; color:rgba(255,255,255,.70); }
+  </style>
+</head>
+<body>
+  <div class="sg-bg" aria-hidden="true"></div>
+	  <div class="audioHint" id="audioHint">클릭해서 사운드 활성화</div>
+  <header>
+    <div class="brand">
+      <div class="badge">STRIKEGY</div>
+      <div class="title">CAMPAIGN · Timeline</div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="btnBack">로비로</button>
+      <button class="btn" id="btnReset">세이브 초기화</button>
+      <button class="btn primary" id="btnContinue">이어하기</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="card">
+      <h2>CHAPTERS</h2>
+      <div class="panel">
+        <div class="chapNav" id="chapNav"></div>
+        <div class="hint">* 챕터를 선택하면 오른쪽 미션 목록이 필터됩니다.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>MISSIONS</h2>
+      <div class="panel">
+        <div class="row wrap" style="margin-bottom:10px">
+          <input class="input" id="search" placeholder="미션 검색 (제목/ID)" />
+          <select class="input" id="chapterFilter" style="max-width:180px">
+            <option value="all">전체 챕터</option>
+          </select>
+        </div>
+        <div class="missionList" id="list"></div>
+        <div class="hint">* 잠금 미션은 <b>미리보기</b>만 가능. 클리어한 미션은 <b>리플레이</b> 가능.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>MISSION BRIEF</h2>
+      <div class="panel" id="detail">
+        <p class="small">왼쪽에서 미션을 선택하세요.</p>
+      </div>
+    </section>
+  </div>
+
+<script type="module">
+  import { CampaignDB, CAMPAIGN_KEY } from './src/campaign/CampaignData.js';
+  import { initLobbyBGM } from './src/audio/LobbyBGM.js';
+
+  const $ = (sel)=>document.querySelector(sel);
+  const listEl = $('#list');
+  const detailEl = $('#detail');
+  const searchEl = $('#search');
+  const chapEl = $('#chapterFilter');
+  const chapNavEl = $('#chapNav');
+
+  // Patch 4.0 Pre: Lobby BGM (캠페인 메뉴에서도 Lobby.mp3 루프 재생)
+  initLobbyBGM();
+
+  function readSession(){
+    try{ return JSON.parse(localStorage.getItem(CAMPAIGN_KEY) || 'null'); }catch{ return null; }
+  }
+  function writeSession(obj){
+    try{ localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(obj)); }catch{}
+  }
+  function clearSession(){
+    try{ localStorage.removeItem(CAMPAIGN_KEY); }catch{}
+  }
+
+  const order = Array.isArray(CampaignDB.order) ? CampaignDB.order.slice() : Object.keys(CampaignDB.missions||{});
+  const missions = CampaignDB.missions || {};
+
+  const chapters = Array.from(new Set(order.map(id => missions[id]?.chapter).filter(Boolean))).sort((a,b)=>a-b);
+
+  // Pre2: build left chapter nav buttons (syncs with the existing select filter)
+  function setActiveChapterBtn(val){
+    for(const b of chapNavEl.querySelectorAll('.chapBtn')){
+      b.classList.toggle('active', b.dataset.value === String(val));
+    }
+  }
+
+  function buildChapterNav(){
+    chapNavEl.innerHTML = '';
+    const mk = (value, title, sub)=>{
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chapBtn';
+      b.dataset.value = String(value);
+      b.innerHTML = `${title}${sub ? `<small>${sub}</small>` : ''}`;
+      b.addEventListener('click', ()=>{
+        chapEl.value = String(value);
+        setActiveChapterBtn(value);
+        rebuildList();
+      });
+      return b;
+    };
+    chapNavEl.appendChild(mk('all', '전체', '모든 챕터 표시'));
+    for(const c of chapters){
+      chapNavEl.appendChild(mk(String(c), `CH ${c}`, `챕터 ${c}`));
+    }
+    setActiveChapterBtn(chapEl.value || 'all');
+  }
+
+  for(const c of chapters){
+    const opt = document.createElement('option');
+    opt.value = String(c);
+    opt.textContent = `챕터 ${c}`;
+    chapEl.appendChild(opt);
+  }
+
+  buildChapterNav();
+
+  function getState(session, id){
+    const ms = session?.progress?.missionStates?.[id] || {};
+    const cleared = !!ms.cleared;
+    const unlocked = !!ms.unlocked || cleared;
+    return { cleared, unlocked, ms };
+  }
+
+  function computeUnlockedFallback(session){
+    // If missionStates are not populated yet, unlock sequentially based on clears.
+    const unlocked = new Set();
+    if(order.length) unlocked.add(order[0]);
+    for(let i=0;i<order.length;i++){
+      const id = order[i];
+      const st = getState(session, id);
+      if(st.unlocked) unlocked.add(id);
+      if(st.cleared && order[i+1]) unlocked.add(order[i+1]);
+    }
+    return unlocked;
+  }
+
+  let selectedId = null;
+
+
+    // HF: rebuildList alias (used by chapter nav buttons)
+    function rebuildList(){
+      buildList();
+    }
+
+  function buildList(){
+    const session = readSession();
+    const q = String(searchEl.value||'').trim().toLowerCase();
+    const chap = String(chapEl.value||'all');
+    const unlockedFallback = computeUnlockedFallback(session);
+
+    listEl.innerHTML = '';
+
+    let lastChap = null;
+    order.forEach((id, idx)=>{
+      const m = missions[id];
+      if(!m) return;
+      if(chap !== 'all' && String(m.chapter) !== chap) return;
+      if(q && !(String(m.title||'').toLowerCase().includes(q) || String(id).toLowerCase().includes(q))) return;
+
+      if(lastChap !== m.chapter){
+        lastChap = m.chapter;
+        const lab = document.createElement('div');
+        lab.className = 'chapterLabel';
+        lab.textContent = `CHAPTER ${m.chapter}`;
+        listEl.appendChild(lab);
+      }
+
+      const st = getState(session, id);
+      const isUnlocked = st.unlocked || unlockedFallback.has(id);
+      const isCleared = st.cleared;
+      const isCurrent = (session?.missionId === id) && (session?.checkpointId !== 'complete');
+
+      const btn = document.createElement('button');
+      btn.className = 'mBtn' + (id===selectedId ? ' active' : '');
+      btn.type = 'button';
+      btn.dataset.mid = id;
+
+      const no = document.createElement('div');
+      no.className = 'mNo';
+      no.textContent = String(idx+1);
+
+      const meta = document.createElement('div');
+      meta.className = 'mMeta';
+
+      const t = document.createElement('div');
+      t.className = 'mTitle';
+      t.textContent = m.title || id;
+
+      const sub = document.createElement('div');
+      sub.className = 'mSub';
+      sub.textContent = `${id} · ${m.map}`;
+
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+
+      const chipChap = document.createElement('span');
+      chipChap.className = 'chip accent';
+      chipChap.textContent = `CH${m.chapter}`;
+      chips.appendChild(chipChap);
+
+      if(isCurrent){
+        const c = document.createElement('span');
+        c.className = 'chip warn';
+        c.textContent = 'IN PROGRESS';
+        chips.appendChild(c);
+      } else if(isCleared){
+        const c = document.createElement('span');
+        c.className = 'chip good';
+        c.textContent = 'CLEARED';
+        chips.appendChild(c);
+      } else if(isUnlocked){
+        const c = document.createElement('span');
+        c.className = 'chip';
+        c.textContent = 'UNLOCKED';
+        chips.appendChild(c);
+      } else {
+        const c = document.createElement('span');
+        c.className = 'chip bad';
+        c.textContent = 'LOCKED';
+        chips.appendChild(c);
+      }
+
+      meta.appendChild(t);
+      meta.appendChild(sub);
+      meta.appendChild(chips);
+
+      btn.appendChild(no);
+      btn.appendChild(meta);
+
+      btn.addEventListener('click', ()=>{
+        selectedId = id;
+        buildList();
+        renderDetail(id);
+        history.replaceState(null, '', `#${encodeURIComponent(id)}`);
+      });
+
+      listEl.appendChild(btn);
+    });
+  }
+
+  function gotoGame({ mid, replay=false, cont=false } = {}){
+    const params = new URLSearchParams();
+    params.set('campaign','1');
+    if(mid) params.set('mission', mid);
+    if(replay) params.set('replay','1');
+    if(cont) params.set('continue','1');
+    location.href = `game.html?${params.toString()}`;
+  }
+
+  function renderDetail(id){
+    const session = readSession();
+    const unlockedFallback = computeUnlockedFallback(session);
+    const m = missions[id];
+    if(!m){ detailEl.innerHTML = '<p class="small">미션 정보를 찾을 수 없습니다.</p>'; return; }
+
+    const st = getState(session, id);
+    const isUnlocked = st.unlocked || unlockedFallback.has(id);
+    const isCleared = st.cleared;
+    const isCurrent = (session?.missionId === id);
+    // Show 'Continue' whenever this mission is IN PROGRESS.
+    // game.html will restore from save when ?continue=1 is present.
+    // Even checkpointId==='start' is a valid resume case (you'll just spawn at start).
+    const canContinue = isCurrent && !isCleared;
+
+    const statusChip = isCleared
+      ? '<span class="chip good">CLEARED</span>'
+      : (isUnlocked ? '<span class="chip">UNLOCKED</span>' : '<span class="chip bad">LOCKED</span>');
+
+    detailEl.innerHTML = `
+      <h3 class="detailTitle">${escapeHtml(m.title || id)}</h3>
+      <div class="chips" style="margin-top:10px">
+        <span class="chip accent">CHAPTER ${escapeHtml(String(m.chapter))}</span>
+        ${statusChip}
+        ${isCurrent && !isCleared ? '<span class="chip warn">IN PROGRESS</span>' : ''}
+      </div>
+      <div class="detailSub">${escapeHtml(String(m.briefing || ''))}</div>
+
+      <div class="kv">
+        <div class="k">MISSION ID</div><div class="v">${escapeHtml(id)}</div>
+        <div class="k">MAP</div><div class="v">${escapeHtml(m.map || '-')}</div>
+        <div class="k">BOTS</div><div class="v">BLUE ${escapeHtml(String(m?.bots?.blue ?? 0))} / RED ${escapeHtml(String(m?.bots?.red ?? 0))}</div>
+        <div class="k">LOADOUT</div><div class="v">${escapeHtml(`${m?.loadout?.primary||'-'} / ${m?.loadout?.secondary||'-'}`)}</div>
+      </div>
+
+      <div class="footBtns" id="footBtns"></div>
+      <div class="hint">
+        ${isCleared ? '리플레이는 진행도에 반영되지 않습니다.' : (isUnlocked ? '이 미션은 플레이할 수 있습니다.' : '아직 잠금 상태입니다. 미리보기만 가능합니다.')}
+      </div>
+    `;
+
+    const foot = detailEl.querySelector('#footBtns');
+
+    const bStart = mkBtn('처음부터 시작', 'btn primary', ()=> gotoGame({ mid:id, replay:false, cont:false }));
+    const bCont = mkBtn('이어하기', 'btn good', ()=> gotoGame({ mid:id, replay:false, cont:true }));
+    const bReplay = mkBtn('리플레이', 'btn warn', ()=> gotoGame({ mid:id, replay:true, cont:false }));
+
+    if(isUnlocked){
+      foot.appendChild(bStart);
+      if(canContinue) foot.appendChild(bCont);
+    } else {
+      const bPreview = mkBtn('미리보기', 'btn', ()=>{});
+      bPreview.disabled = true;
+      foot.appendChild(bPreview);
+    }
+
+    if(isCleared) foot.appendChild(bReplay);
+  }
+
+  function mkBtn(text, cls, onClick){
+    const b = document.createElement('button');
+    b.className = cls;
+    b.textContent = text;
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function continueLatest(){
+    const session = readSession();
+    if(!session?.missionId){
+      gotoGame({ mid: order[0], replay:false, cont:false });
+      return;
+    }
+    // If mission complete, open next unlocked mission (if any) from start
+    if(session.checkpointId === 'complete'){
+      const idx = order.indexOf(session.missionId);
+      const next = (idx>=0 && order[idx+1]) ? order[idx+1] : session.nextMissionId;
+      if(next){
+        gotoGame({ mid: next, replay:false, cont:false });
+      } else {
+        // Stay on current, replay from start
+        gotoGame({ mid: session.missionId, replay:false, cont:false });
+      }
+      return;
+    }
+    // Otherwise continue
+    gotoGame({ mid: session.missionId, replay:false, cont:true });
+  }
+
+  // Header actions
+  $('#btnBack').addEventListener('click', ()=> location.href = 'index.html');
+  $('#btnReset').addEventListener('click', ()=>{
+    if(confirm('캠페인 진행 데이터를 초기화할까요?')){
+      clearSession();
+      selectedId = order[0] || null;
+      buildList();
+      if(selectedId) renderDetail(selectedId);
+    }
+  });
+  $('#btnContinue').addEventListener('click', continueLatest);
+
+  // Search/filter
+  searchEl.addEventListener('input', ()=> buildList());
+  chapEl.addEventListener('change', ()=> buildList());
+
+  // Initial select
+  const hash = decodeURIComponent((location.hash||'').replace('#','')).trim();
+  const session = readSession();
+  selectedId = (hash && missions[hash]) ? hash : (session?.missionId || order[0] || null);
+  buildList();
+  if(selectedId) renderDetail(selectedId);
+</script>
+
+<script type="module">
+  import { initLobbyBGM } from "./src/audio/LobbyBGM.js";
+
+  const audioHint = document.getElementById('audioHint');
+  let hintVisible = false;
+  const showHint = () => {
+    if(!audioHint || hintVisible) return;
+    hintVisible = true;
+    audioHint.classList.add('show');
+  };
+  const hideHint = () => {
+    if(!audioHint || !hintVisible) return;
+    hintVisible = false;
+    audioHint.classList.remove('show');
+  };
+
+  // Start immediately (browser may block; then we show hint)
+  initLobbyBGM({
+    onAutoplayBlocked: showHint,
+    onPlaying: hideHint,
+  });
+</script>
+</body>
+</html>

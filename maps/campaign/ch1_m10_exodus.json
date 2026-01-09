@@ -1,0 +1,345 @@
+{
+  "name": "CH1 M10 Finale (Canyon LZ)",
+  "world": {
+    "groundSize": [
+      420,
+      260
+    ],
+    "visualProfile": "desert_noon"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -160,
+        2,
+        -80
+      ],
+      "yaw": 20
+    },
+    {
+      "team": "red",
+      "pos": [
+        170,
+        2,
+        90
+      ],
+      "yaw": 200
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        420,
+        18,
+        3
+      ],
+      "pos": [
+        0,
+        9.0,
+        -130.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        420,
+        18,
+        3
+      ],
+      "pos": [
+        0,
+        9.0,
+        130.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        18,
+        260
+      ],
+      "pos": [
+        -210.0,
+        9.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        18,
+        260
+      ],
+      "pos": [
+        210.0,
+        9.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        420,
+        20,
+        20
+      ],
+      "pos": [
+        0,
+        10,
+        -110
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        420,
+        20,
+        20
+      ],
+      "pos": [
+        0,
+        10,
+        110
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        20,
+        20,
+        220
+      ],
+      "pos": [
+        -190,
+        10,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        4,
+        10
+      ],
+      "pos": [
+        -80,
+        2,
+        10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        4,
+        10
+      ],
+      "pos": [
+        -20,
+        2,
+        30
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        4,
+        10
+      ],
+      "pos": [
+        40,
+        2,
+        10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        4,
+        10
+      ],
+      "pos": [
+        100,
+        2,
+        40
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        10,
+        4,
+        10
+      ],
+      "pos": [
+        140,
+        2,
+        70
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "deco",
+      "size": [
+        30,
+        0.6,
+        30
+      ],
+      "pos": [
+        0,
+        0.3,
+        20
+      ],
+      "collision": false
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        18,
+        4,
+        10
+      ],
+      "pos": [
+        -20,
+        2,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        18,
+        4,
+        10
+      ],
+      "pos": [
+        20,
+        2,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "deco",
+      "size": [
+        2,
+        2.8,
+        2
+      ],
+      "pos": [
+        60,
+        1.4,
+        40
+      ],
+      "collision": false
+    },
+    {
+      "shape": "box",
+      "type": "deco",
+      "size": [
+        6,
+        3,
+        6
+      ],
+      "pos": [
+        150,
+        1.5,
+        90
+      ],
+      "collision": false
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "push": {
+        "pos": [
+          40,
+          2,
+          40
+        ],
+        "r": 12
+      },
+      "hold": {
+        "pos": [
+          40,
+          2,
+          40
+        ],
+        "r": 12
+      },
+      "lz": {
+        "pos": [
+          160,
+          2,
+          85
+        ],
+        "r": 14
+      },
+      "o1": {
+        "pos": [
+          -60,
+          2,
+          -20
+        ],
+        "r": 14
+      },
+      "o3": {
+        "pos": [
+          60,
+          2,
+          40
+        ],
+        "r": 10
+      },
+      "o4": {
+        "pos": [
+          150,
+          2,
+          90
+        ],
+        "r": 14
+      },
+      "rally": {
+        "pos": [
+          -60,
+          2,
+          -20
+        ],
+        "r": 14
+      },
+      "exfil": {
+        "pos": [
+          150,
+          2,
+          90
+        ],
+        "r": 14
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}

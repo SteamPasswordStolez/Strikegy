@@ -4,665 +4,536 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Strikegy — Lobby</title>
-  <style>
-    :root{
-      --bg:#070a12;
-      --panel:#0f1729;
-      --panel2:#0b1220;
-      --text:#eaf0ff;
-      --muted:#9fb0d0;
-      --line:rgba(255,255,255,.12);
-      --blue:#1f4fff;
-      --blue2:#163dd6;
-      --red:#ff3b3b;
-      --cyan:#4dffd4;
-    }
-    *{box-sizing:border-box}
-    body{
-      margin:0; font-family:system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Arial, sans-serif;
-      background:
-        radial-gradient(900px 520px at 18% 12%, rgba(31,79,255,.26), transparent 60%),
-        radial-gradient(780px 520px at 78% 88%, rgba(57,255,209,.10), transparent 60%),
-        linear-gradient(180deg, rgba(255,255,255,.04), transparent 35%),
-        repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 1px, transparent 1px 10px),
-        var(--bg);
-      color:var(--text);
-      min-height:100vh;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:24px;
-    }
-    .wrap{width:min(980px, 100%); display:grid; gap:16px}
-    .top{
-      display:flex; align-items:flex-end; justify-content:space-between; gap:12px;
-    }
-    .title{
-      line-height:1.05;
-    }
-    .title h1{margin:0; font-size:34px; letter-spacing:.2px}
-    .title p{margin:8px 0 0; color:var(--muted); font-size:14px}
-    .grid{
-      display:grid;
-      grid-template-columns: 1.15fr .85fr;
-      gap:16px;
-    }
-    @media (max-width: 860px){
-      .grid{grid-template-columns:1fr}
-    }
-    .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
-      border:1px solid var(--line);
-      border-radius:18px;
-      padding:18px;
-      box-shadow:0 16px 40px rgba(0,0,0,.35);
-      backdrop-filter: blur(6px);
-    }
-    .sectionTitle{margin:0 0 10px; font-size:14px; color:var(--muted); letter-spacing:.5px}
-    .modes{display:grid; gap:10px}
-    .mode{
-      display:flex; align-items:flex-start; gap:12px;
-      padding:14px 14px;
-      border-radius:14px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      cursor:pointer;
-      transition:transform .06s ease, border-color .12s ease, background .12s ease;
-      user-select:none;
-    }
-    .mode:hover{transform:translateY(-1px); border-color:rgba(255,255,255,.22)}
-    .mode[aria-checked="true"]{
-      border-color: rgba(31,79,255,.65);
-      background: rgba(31,79,255,.15);
-      outline: 2px solid rgba(31,79,255,.25);
-    }
-    .badge{
-      min-width:44px; height:28px;
-      display:flex; align-items:center; justify-content:center;
-      border-radius:999px;
-      border:1px solid var(--line);
-      color:var(--text);
-      font-weight:700;
-      letter-spacing:.4px;
-      font-size:12px;
-      background:rgba(255,255,255,.05);
-    
-    .mode[data-mode="zone"] .badge{border-color:rgba(77,255,212,.35); background:rgba(77,255,212,.10);} 
-    .mode[data-mode="conquest"] .badge{border-color:rgba(31,79,255,.45); background:rgba(31,79,255,.10);} 
-    .mode[data-mode="frontline"] .badge{border-color:rgba(255,59,59,.35); background:rgba(255,59,59,.10);}
-}
-    .mode h3{margin:0; font-size:16px}
-    .mode p{margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.35}
-    .right{
-      display:grid; gap:12px;
-      align-content:start;
-    }
-    .btnRow{display:grid; gap:10px}
-    .btn{
-      border:1px solid var(--line);
-      border-radius:14px;
-      padding:14px 14px;
-      font-weight:800;
-      cursor:pointer;
-      background:var(--btn2);
-      color:var(--text);
-      transition:transform .06s ease, filter .12s ease, border-color .12s ease;
-    }
-    .btn:hover{transform:translateY(-1px); border-color:rgba(255,255,255,.22)}
-    .btn.primary{background:linear-gradient(180deg, var(--blue), var(--blue2)); border-color:rgba(31,79,255,.65)}
-    .btn.disabled{
-      opacity:.55; cursor:not-allowed;
-    }
-    .meta{
-      display:grid; gap:8px;
-      border-top:1px solid var(--line);
-      padding-top:12px;
-      color:var(--muted);
-      font-size:12.5px;
-    }
-    .row{display:flex; justify-content:space-between; gap:10px}
-    .pill{
-      display:inline-flex; align-items:center; gap:8px;
-      padding:10px 12px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      color:var(--muted);
-      font-size:12px;
-    }
-    .warn{
-      color:#ffd3d3;
-      background:rgba(255,59,59,.10);
-      border-color:rgba(255,59,59,.35);
-    }
-    .hint{color:var(--muted); font-size:12px; margin:0}
-  
-    /* Settings modal (Patch 2) */
-    .overlay{
-      position:fixed; inset:0;
-      background:rgba(0,0,0,.55);
-      display:none;
-      align-items:center;
-      justify-content:center;
-      padding:24px;
-      z-index:50;
-    }
-    .overlay.open{display:flex}
-    .modal{
-      width:min(720px, 100%);
-      background:linear-gradient(180deg, rgba(17,26,43,.95), rgba(10,14,22,.95));
-      border:1px solid var(--line);
-      border-radius:18px;
-      box-shadow:0 24px 70px rgba(0,0,0,.55);
-      overflow:hidden;
-      /* Hotfix 9-4E.2: allow settings to scroll on small screens */
-      display:flex;
-      flex-direction:column;
-      max-height:calc(100vh - 48px);
-    }
-    .modalHeader{
-      padding:14px 16px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-      border-bottom:1px solid var(--line);
-    }
-    .modalHeader h2{margin:0; font-size:16px; letter-spacing:.2px}
-    .iconBtn{
-      width:38px; height:38px;
-      border-radius:12px;
-      border:1px solid var(--line);
-      background:rgba(255,255,255,.06);
-      color:var(--text);
-      cursor:pointer;
-      font-weight:900;
-    }
-    .modalBody{
-      padding:16px;
-      display:grid;
-      gap:14px;
-      /* scroll inside modal instead of freezing the page */
-      overflow-y:auto;
-      -webkit-overflow-scrolling:touch;
-	      overscroll-behavior: contain;
-	      touch-action: pan-y;
-      flex:1;
-      min-height:0;
-    }
-    .field{
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      border-radius:14px;
-      padding:14px;
-      display:grid;
-      gap:10px;
-    }
-    .fieldTitle{display:flex; justify-content:space-between; gap:10px; align-items:baseline}
-    .fieldTitle b{font-size:14px}
-    .fieldTitle span{color:var(--muted); font-size:12px}
-    .presetGrid{display:grid; gap:10px}
-    .preset{
-      display:flex; gap:10px; align-items:flex-start;
-      border:1px solid var(--line);
-      background:rgba(255,255,255,.05);
-      padding:12px;
-      border-radius:12px;
-      cursor:pointer;
-      user-select:none;
-    }
-    .preset:hover{border-color:rgba(255,255,255,.22)}
-    .preset input{margin-top:2px}
-    .preset .desc{margin:2px 0 0; color:var(--muted); font-size:12.5px; line-height:1.35}
-    .sliderRow{display:flex; gap:12px; align-items:center}
-    input[type="range"]{width:100%}
-    .modalFooter{
-      padding:14px 16px;
-      display:flex;
-      justify-content:flex-end;
-      gap:10px;
-      border-top:1px solid var(--line);
-      background:rgba(0,0,0,.12);
-    }
-    .btn.small{padding:10px 12px; border-radius:12px; font-weight:900}
-    .btn.ghost{background:transparent}
-
-  </style>
+  <link rel="stylesheet" href="./assets/ui/shell.css" />
 </head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div class="title">
-        <h1>Strikegy</h1>
-        <p>AI 교전 · 모드 규칙 · 장기 프로젝트 빌드</p>
+<body class="sg">
+  <div class="sg-bg" aria-hidden="true"></div>
+
+  <div class="sg-audioHint" id="audioHint">클릭해서 사운드 활성화</div>
+
+  <div class="sg-shell">
+    <header class="sg-top">
+      <div class="sg-brand">STRIKEGY <span class="sg-tag">P4 · PRE2</span></div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span class="sg-chip" id="modeChip">MODE: <b id="selectedModeLabel">zone</b></span>
+        <span class="sg-chip">AUDIO: <b id="audioState">ON</b></span>
       </div>
-      <div class="pill" id="buildPill" style="display:none"></div>
-    </div>
+    </header>
 
-    <div class="grid">
-      <section class="card">
-        <p class="sectionTitle">MODE SELECT</p>
-        <div class="modes" id="modes">
-          <div class="mode" role="radio" tabindex="0" data-mode="zone" aria-checked="true">
-            <div class="badge">ZONE</div>
+    <main class="sg-main">
+      <nav class="sg-nav" aria-label="메인 메뉴">
+        <div class="sg-navHead">
+          <div class="hint">↑↓ 이동 · Enter 선택</div>
+          <div class="hint">ESC: 닫기</div>
+        </div>
+        <div class="sg-navList" id="navList">
+          <button class="sg-item" data-action="campaign" data-hero="campaign" type="button">
             <div>
-              <h3>Zone Control</h3>
-              <p>티켓 기반. 거점 점령으로 전선을 만든다.</p>
+              <div class="label">캠페인</div>
+              <div class="sub">싱글 플레이 · 챕터 진행</div>
+            </div>
+            <div class="meta">PLAY</div>
+          </button>
+
+          <div class="sg-groupLabel">MULTIPLAYER</div>
+
+          <button class="sg-item" data-action="mode" data-mode="zone" data-hero="lobby" type="button">
+            <div>
+              <div class="label">Zone Control</div>
+              <div class="sub">거점 점령으로 전선 압박</div>
+            </div>
+            <div class="meta">ZONE</div>
+          </button>
+
+          <button class="sg-item" data-action="mode" data-mode="conquest" data-hero="lobby" type="button">
+            <div>
+              <div class="label">Conquest</div>
+              <div class="sub">티켓·점령·시간 싸움</div>
+            </div>
+            <div class="meta">CONQ</div>
+          </button>
+
+          <button class="sg-item" data-action="mode" data-mode="frontline" data-hero="lobby" type="button">
+            <div>
+              <div class="label">Frontline</div>
+              <div class="sub">최전선 유지/후퇴</div>
+            </div>
+            <div class="meta">FRONT</div>
+          </button>
+
+          <div class="sg-groupLabel">SYSTEM</div>
+
+          <button class="sg-item" data-action="settings" data-hero="lobby" type="button">
+            <div>
+              <div class="label">설정</div>
+              <div class="sub">조작·감도·봇·BGM</div>
+            </div>
+            <div class="meta">OPT</div>
+          </button>
+
+          <button class="sg-item" data-action="help" data-hero="lobby" type="button">
+            <div>
+              <div class="label">도움말</div>
+              <div class="sub">조작법·규칙 요약</div>
+            </div>
+            <div class="meta">INFO</div>
+          </button>
+
+          <button class="sg-item" data-action="credits" data-hero="lobby" type="button">
+            <div>
+              <div class="label">크레딧</div>
+              <div class="sub">제작/라이선스 정보</div>
+            </div>
+            <div class="meta">BY</div>
+          </button>
+        </div>
+      </nav>
+
+      <section class="sg-right">
+        <div class="sg-hero" id="hero">
+          <div class="sg-heroContent">
+            <div class="sg-heroTitle" id="heroTitle">STRIKEGY</div>
+            <div class="sg-heroDesc" id="heroDesc">배틀필드식 UI + CoD식 톤을 섞은 새로운 로비 셸.</div>
+            <div class="sg-heroMeta" id="heroMeta">
+              <span class="sg-chip">Patch 4.0 Pre2</span>
+              <span class="sg-chip">Autoplay BGM: Lobby.mp3</span>
+              <span class="sg-chip">Keyboard + Mouse</span>
             </div>
           </div>
+        </div>
 
-          <div class="mode" role="radio" tabindex="0" data-mode="conquest" aria-checked="false">
-            <div class="badge">CONQ</div>
-            <div>
-              <h3>Conquest</h3>
-              <p>티켓 없음. 제한 시간 내 전 거점 점령이 목표.</p>
+        <div class="sg-panels">
+          <div class="sg-panel">
+            <div class="sg-panelTitle">STATUS</div>
+            <div class="sg-panelBody" id="statusText">
+              캠페인 진행도: <b id="campStatus">-</b><br>
+              마지막 선택 모드: <b id="modeStatus">-</b>
             </div>
           </div>
-
-          <div class="mode" role="radio" tabindex="0" data-mode="frontline" aria-checked="false">
-            <div class="badge">FRONT</div>
-            <div>
-              <h3>Frontline</h3>
-              <p>티켓 없음. 제한 시간 종료 시 더 많은 거점 보유 팀 승리.</p>
+          <div class="sg-panel">
+            <div class="sg-panelTitle">PATCH NOTE</div>
+            <div class="sg-panelBody">
+              <b>Pre2</b>: 로비/캠페인 메뉴 UI 리마스터(셸), 배경 이미지 슬롯, 즉시 BGM 시도(차단 시 첫 입력에서 재시도).<br>
+              * 배경 이미지는 <b>assets/ui/bg/</b>에 넣으면 자동 적용됩니다.
             </div>
           </div>
         </div>
       </section>
+    </main>
 
-      <aside class="card right">
-        <p class="sectionTitle">ACTIONS</p>
-        <div class="btnRow">
-          <button class="btn primary" id="startBtn">싱글플레이 시작</button>
-          <button class="btn" id="mpBtn">멀티플레이</button>
-          <button class="btn" id="howtoBtn">조작법 · 규칙</button>
-          <button class="btn" id="settingsBtn">설정</button>
-        </div>
-
-        <div class="meta">
-          <div class="row"><span>Selected Mode</span><b id="selectedModeLabel">zone</b></div>
-          <div class="row"><span>Control Preset</span><b id="controlPresetLabel">pc</b></div>
-          <div class="row"><span>Sensitivity</span><b id="sensitivityLabel">1.00</b></div>
-          <div class="row"><span>Bot Difficulty</span><b id="botDifficultyLabel">normal</b></div>
-          <div class="row"><span>Store</span><span>localStorage.selectedMode</span></div>
-          <p class="hint">※ 설정/선택값은 기기에 저장됩니다 (localStorage).</p>
-        </div>
-      </aside>
-    </div>
+    <footer class="sg-status">
+      <div>Tip: Enter로 선택 · 마우스로 바로 클릭도 가능</div>
+      <div>selectedMode = <b>localStorage.selectedMode</b></div>
+    </footer>
   </div>
 
-
-  <!-- Settings Modal -->
-  <div class="overlay" id="settingsOverlay" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-      <div class="modalHeader">
-        <h2 id="settingsTitle">Settings</h2>
-        <button class="iconBtn" id="settingsCloseBtn" aria-label="Close">✕</button>
+  <!-- SETTINGS MODAL -->
+  <div class="sg-overlay" id="settingsOverlay" aria-hidden="true">
+    <div class="sg-modal" role="dialog" aria-modal="true" aria-label="설정">
+      <div class="sg-modalHeader">
+        <div class="title">SETTINGS</div>
+        <button class="sg-iconBtn" id="settingsCloseBtn" type="button">✕</button>
       </div>
-
-      <div class="modalBody">
-        <div class="field">
-          <div class="fieldTitle">
-            <b>Control Preset</b>
-            <span>선택값은 게임에 적용됩니다</span>
-          </div>
-
-          <div class="presetGrid" id="presetGrid">
-            <label class="preset">
-              <input type="radio" name="controlPreset" value="pc">
-              <div>
-                <b>PC</b>
-                <div class="desc">키보드+마우스 조작</div>
-              </div>
+      <div class="sg-modalBody">
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>BGM</b><span>Lobby.mp3</span></div>
+          <div class="sg-row" style="margin-top:10px">
+            <label style="display:flex;gap:10px;align-items:center;">
+              <input id="bgmEnabled" type="checkbox" checked />
+              <span>Enable</span>
             </label>
-
-            <label class="preset">
-              <input type="radio" name="controlPreset" value="mobile_kb">
-              <div>
-                <b>Mobile + Keyboard</b>
-                <div class="desc">키보드 이동 + 터치/스와이프 시점</div>
-              </div>
-            </label>
-
-            <label class="preset">
-              <input type="radio" name="controlPreset" value="mobile">
-              <div>
-                <b>Mobile</b>
-                <div class="desc">버튼식 이동 + 터치/스와이프 시점</div>
-              </div>
-            </label>
+            <div style="display:flex;gap:10px;align-items:center;min-width:220px;flex:1;">
+              <input id="bgmVolumeRange" type="range" min="0" max="1" step="0.01" style="width:100%" />
+              <b id="bgmVolumeValue" style="min-width:48px;text-align:right">35%</b>
+            </div>
           </div>
         </div>
 
-        <div class="field">
-          <div class="fieldTitle">
-            <b>Sensitivity</b>
-            <span>시점 회전에 곱해 적용</span>
-          </div>
-
-          <div class="sliderRow">
-            <input id="sensitivityRange" type="range" min="0.2" max="3.0" step="0.05" value="1.0" />
-            <b id="sensitivityValue" style="min-width:64px; text-align:right;">1.00</b>
-          </div>
-          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;">
-            추천 범위: 0.6 ~ 1.6 (원하면 더 올려도 됨)
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>조작 프리셋</b><span>로비 저장값</span></div>
+          <div style="display:grid;gap:10px;margin-top:10px">
+            <label><input type="radio" name="controlPreset" value="pc" checked /> PC</label>
+            <label><input type="radio" name="controlPreset" value="mobile" /> Mobile</label>
+            <label><input type="radio" name="controlPreset" value="mobile_kb" /> Mobile + Keyboard</label>
           </div>
         </div>
 
-        <!-- Bot difficulty -->
-        <div class="field">
-          <div class="fieldTitle">
-            <b>Bot Difficulty</b>
-            <span>봇 교전/길찾기 공격성·정확도에 영향</span>
-          </div>
-
-          <div class="presetGrid" id="botDiffGrid">
-            <label class="preset">
-              <input type="radio" name="botDifficulty" value="very_easy">
-              <div>
-                <b>Very Easy</b>
-                <div class="desc">느린 반응 · 낮은 정확도 · 공격성 낮음</div>
-              </div>
-            </label>
-            <label class="preset">
-              <input type="radio" name="botDifficulty" value="easy">
-              <div>
-                <b>Easy</b>
-                <div class="desc">초보용 · 교전 빈도 보통 · 실수 많음</div>
-              </div>
-            </label>
-            <label class="preset">
-              <input type="radio" name="botDifficulty" value="normal">
-              <div>
-                <b>Normal</b>
-                <div class="desc">기본값 · 무난한 교전/정확도</div>
-              </div>
-            </label>
-            <label class="preset">
-              <input type="radio" name="botDifficulty" value="hard">
-              <div>
-                <b>Hard</b>
-                <div class="desc">반응 빠름 · 추격 적극 · 실수 적음</div>
-              </div>
-            </label>
-            <label class="preset">
-              <input type="radio" name="botDifficulty" value="expert">
-              <div>
-                <b>Expert</b>
-                <div class="desc">강함 · Bot vs Bot 교전도 더 잦음</div>
-              </div>
-            </label>
-            <label class="preset">
-              <input type="radio" name="botDifficulty" value="nightmare">
-              <div>
-                <b>Nightmare</b>
-                <div class="desc">매우 강함 · 공격성/정확도 극대화</div>
-              </div>
-            </label>
-          </div>
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>마우스 감도</b><span id="sensitivityValue">1.00</span></div>
+          <input class="sg-input" id="sensitivityRange" type="range" min="0.2" max="3.0" step="0.01" />
         </div>
-      </div>
 
-      <div class="modalFooter">
-        <button class="btn small ghost" id="settingsResetBtn" title="기본값으로 되돌리기">Reset</button>
-        <button class="btn small" id="settingsCancelBtn">Cancel</button>
-        <button class="btn small primary" id="settingsSaveBtn">Save</button>
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>봇 난이도</b><span>싱글/테스트</span></div>
+          <select class="sg-select" id="botDifficultySelect">
+            <option value="very_easy">very_easy</option>
+            <option value="easy">easy</option>
+            <option value="normal" selected>normal</option>
+            <option value="hard">hard</option>
+            <option value="expert">expert</option>
+            <option value="nightmare">nightmare</option>
+          </select>
+        </div>
+
+        <div class="sg-row" style="justify-content:flex-end;">
+          <button class="sg-btn" id="settingsResetBtn" type="button">Reset</button>
+          <button class="sg-btn primary" id="settingsSaveBtn" type="button">Save</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- How-to / Rules Modal -->
-  <div class="overlay" id="howtoOverlay" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="howtoTitle">
-      <div class="modalHeader">
-        <h2 id="howtoTitle">조작법 · 규칙</h2>
-        <button class="iconBtn" id="howtoCloseBtn" aria-label="Close">✕</button>
+  <!-- HELP MODAL -->
+  <div class="sg-overlay" id="helpOverlay" aria-hidden="true">
+    <div class="sg-modal" role="dialog" aria-modal="true" aria-label="도움말">
+      <div class="sg-modalHeader">
+        <div class="title">HELP</div>
+        <button class="sg-iconBtn" id="helpCloseBtn" type="button">✕</button>
       </div>
-      <div class="modalBody">
-        <div class="field">
-          <div class="fieldTitle"><b>PC 조작</b><span>기본</span></div>
-          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;line-height:1.6">
+      <div class="sg-modalBody">
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>PC 조작</b><span>기본</span></div>
+          <div style="color:rgba(234,240,255,.72);font-size:13px;line-height:1.7;margin-top:10px">
             이동: <b>WASD</b> · 점프: <b>Space</b> · 달리기(홀드): <b>Shift</b> · 앉기(토글): <b>X</b> · 슬라이드: <b>달리기 중 X</b><br>
             발사: <b>좌클릭</b> · 조준: <b>우클릭</b> · 재장전: <b>R</b> · 무기/장비: <b>I</b> · 근접: <b>F</b>
           </div>
         </div>
-        <div class="field">
-          <div class="fieldTitle"><b>모바일 조작</b><span>환경에 따라 다름</span></div>
-          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;line-height:1.6">
-            설정에서 <b>Mobile</b> 또는 <b>Mobile + Keyboard</b> 선택 가능.<br>
-            모바일 HUD 버튼으로 이동/사격/조준/재장전/장비 사용을 지원합니다.
-          </div>
-        </div>
-        <div class="field">
-          <div class="fieldTitle"><b>게임 규칙</b><span>요약</span></div>
-          <div class="desc" style="margin:0;color:var(--muted);font-size:12.5px;line-height:1.6">
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>모드 요약</b><span>Patch 11 룰 기반</span></div>
+          <div style="color:rgba(234,240,255,.72);font-size:13px;line-height:1.7;margin-top:10px">
             <b>Zone Control</b>: 거점을 점령해 전선을 만든다 (점령/중립화 진행).<br>
-            <b>Conquest</b>: 제한 시간 내 거점을 더 많이 확보하면 유리.<br>
-            <b>Frontline</b>: 시간 종료 시 더 많은 거점 보유 팀 승리.<br>
-            리스폰 대기시간: <b>5초</b>.
+            <b>Conquest</b>: 거점을 점령해 티켓을 깎는다.<br>
+            <b>Frontline</b>: 전선을 밀고 당기며 점령을 유지한다.<br>
+            리스폰 대기시간: <b>5초</b>
           </div>
         </div>
-      </div>
-      <div class="modalFooter">
-        <button class="btn small" id="howtoOkBtn">확인</button>
       </div>
     </div>
   </div>
 
+  <!-- CREDITS MODAL -->
+  <div class="sg-overlay" id="creditsOverlay" aria-hidden="true">
+    <div class="sg-modal" role="dialog" aria-modal="true" aria-label="크레딧">
+      <div class="sg-modalHeader">
+        <div class="title">CREDITS</div>
+        <button class="sg-iconBtn" id="creditsCloseBtn" type="button">✕</button>
+      </div>
+      <div class="sg-modalBody">
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>Strikegy</b><span>Web FPS Prototype</span></div>
+          <div style="color:rgba(234,240,255,.72);font-size:13px;line-height:1.7;margin-top:10px">
+            제작: Strikegy Dev (User) + ChatGPT 협업<br>
+            BGM: AI 생성 음원 (Lobby/Briefing/Sneaking/Engaging)<br>
+            엔진: three.js 기반(프로젝트 내 모듈)
+          </div>
+        </div>
+        <div class="sg-field">
+          <div class="sg-fieldTitle"><b>이미지</b><span>AI 생성</span></div>
+          <div style="color:rgba(234,240,255,.72);font-size:13px;line-height:1.7;margin-top:10px">
+            로비/캠페인 표지 이미지는 <b>assets/ui/bg/</b>에 추가하면 자동으로 적용됩니다.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module">
     import ClassSelectModal from "./src/ui/ClassSelectModal.js";
     import { CLASS_KEY, normalizeClassId } from "./src/data/classes.js";
+    import { initLobbyBGM } from "./src/audio/LobbyBGM.js";
+    import { CampaignDB, CAMPAIGN_KEY } from "./src/campaign/CampaignData.js";
 
-    // Lobby UI + 설정 저장 + game.html 이동
-    const modesEl = document.getElementById('modes');
-    const selectedModeLabel = document.getElementById('selectedModeLabel');
-    const startBtn = document.getElementById('startBtn');
-    // Patch 2: Settings (control preset + sensitivity) 저장/유지
-    const settingsBtn = document.getElementById('settingsBtn');
+    const MODE_KEY = "selectedMode";
+    const DEFAULT_MODE = "zone";
 
-    // Patch 11-A: 멀티플레이 페이지로 이동
-    const mpBtn = document.getElementById('mpBtn');
-    mpBtn?.addEventListener('click', () => {
-      location.href = './multiplay.html';
-    });
-    const howtoBtn = document.getElementById('howtoBtn');
-    const howtoOverlay = document.getElementById('howtoOverlay');
-    const howtoCloseBtn = document.getElementById('howtoCloseBtn');
-    const howtoOkBtn = document.getElementById('howtoOkBtn');
-    const settingsOverlay = document.getElementById('settingsOverlay');
-    const settingsCloseBtn = document.getElementById('settingsCloseBtn');
-    const settingsCancelBtn = document.getElementById('settingsCancelBtn');
-    const settingsSaveBtn = document.getElementById('settingsSaveBtn');
-    const settingsResetBtn = document.getElementById('settingsResetBtn');
+    const $ = (s) => document.querySelector(s);
 
-    // How-to / Rules modal
-    howtoBtn?.addEventListener('click', ()=>openOverlay(howtoOverlay));
-    howtoCloseBtn?.addEventListener('click', ()=>closeOverlay(howtoOverlay));
-    howtoOkBtn?.addEventListener('click', ()=>closeOverlay(howtoOverlay));
+    // Elements
+    const navList = $("#navList");
+    const items = Array.from(navList.querySelectorAll(".sg-item"));
+    const selectedModeLabel = $("#selectedModeLabel");
+    const modeStatus = $("#modeStatus");
+    const campStatus = $("#campStatus");
 
-    function openOverlay(el){
-      if(!el) return;
-      el.classList.add('open');
-      el.setAttribute('aria-hidden','false');
-      document.body.style.overflow = 'hidden';
+    const heroTitle = $("#heroTitle");
+    const heroDesc = $("#heroDesc");
+
+    const audioHint = $("#audioHint");
+    const audioState = $("#audioState");
+
+    // Modals
+    const settingsOverlay = $("#settingsOverlay");
+    const helpOverlay = $("#helpOverlay");
+    const creditsOverlay = $("#creditsOverlay");
+
+    // Settings inputs
+    const bgmEnabledEl = $("#bgmEnabled");
+    const bgmVolumeEl = $("#bgmVolumeRange");
+    const bgmVolumeValueEl = $("#bgmVolumeValue");
+
+    const sensitivityRange = $("#sensitivityRange");
+    const sensitivityValue = $("#sensitivityValue");
+    const botDifficultySelect = $("#botDifficultySelect");
+
+    const SETTINGS_KEY = "strikegy_settings";
+    const DEFAULT_SETTINGS = { controlPreset: "pc", sensitivity: 1.0, botDifficulty: "normal" };
+
+    function clamp(n, min, max){
+      n = Number(n);
+      if(Number.isNaN(n)) return min;
+      return Math.max(min, Math.min(max, n));
     }
-    function closeOverlay(el){
-      if(!el) return;
-      el.classList.remove('open');
-      el.setAttribute('aria-hidden','true');
-      document.body.style.overflow = '';
-    }
-
-    const controlPresetLabel = document.getElementById('controlPresetLabel');
-    const sensitivityLabel = document.getElementById('sensitivityLabel');
-    const botDifficultyLabel = document.getElementById('botDifficultyLabel');
-
-    const sensitivityRange = document.getElementById('sensitivityRange');
-    const sensitivityValue = document.getElementById('sensitivityValue');
-
-    const SETTINGS_KEY = 'strikegy_settings';
-    const DEFAULT_SETTINGS = { controlPreset: 'pc', sensitivity: 1.0, botDifficulty: 'normal' };
-
-    let draftSettings = null; // 모달에서 편집 중인 값(저장 전)
-
-    function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
 
     function loadSettings(){
       try{
         const raw = localStorage.getItem(SETTINGS_KEY);
         if(!raw) return { ...DEFAULT_SETTINGS };
         const parsed = JSON.parse(raw);
-        const cp = (parsed.controlPreset === 'pc' || parsed.controlPreset === 'mobile' || parsed.controlPreset === 'mobile_kb')
+        const cp = (parsed.controlPreset === "pc" || parsed.controlPreset === "mobile" || parsed.controlPreset === "mobile_kb")
           ? parsed.controlPreset : DEFAULT_SETTINGS.controlPreset;
         const sens = clamp(Number(parsed.sensitivity ?? DEFAULT_SETTINGS.sensitivity), 0.2, 3.0);
         const bdRaw = String(parsed.botDifficulty ?? DEFAULT_SETTINGS.botDifficulty).toLowerCase();
-        const bdAllowed = ['very_easy','easy','normal','hard','expert','nightmare'];
+        const bdAllowed = ["very_easy","easy","normal","hard","expert","nightmare"];
         const bd = bdAllowed.includes(bdRaw) ? bdRaw : DEFAULT_SETTINGS.botDifficulty;
         return { controlPreset: cp, sensitivity: sens, botDifficulty: bd };
-      }catch(e){
-        return { ...DEFAULT_SETTINGS };
-      }
+      }catch{ return { ...DEFAULT_SETTINGS }; }
     }
 
     function saveSettings(s){
-      try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }catch(e){}
-    }
-
-    function updateSettingsLabels(s){
-      controlPresetLabel.textContent = s.controlPreset;
-      sensitivityLabel.textContent = Number(s.sensitivity).toFixed(2);
-      botDifficultyLabel.textContent = s.botDifficulty;
+      try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }catch{}
     }
 
     function setRadio(name, value){
-      const radios = document.querySelectorAll(`input[name="${name}"]`);
-      radios.forEach(r => { r.checked = (r.value === value); });
+      document.querySelectorAll(`input[name="${name}"]`).forEach(r => r.checked = (r.value === value));
     }
 
     function getRadio(name){
-      const checked = document.querySelector(`input[name="${name}"]:checked`);
-      return checked ? checked.value : null;
+      const c = document.querySelector(`input[name="${name}"]:checked`);
+      return c ? c.value : null;
     }
 
-    function syncFormFromSettings(s){
-      setRadio('controlPreset', s.controlPreset);
-      setRadio('botDifficulty', s.botDifficulty);
+    function syncSettingsToForm(s){
+      setRadio("controlPreset", s.controlPreset);
       sensitivityRange.value = String(s.sensitivity);
       sensitivityValue.textContent = Number(s.sensitivity).toFixed(2);
+      botDifficultySelect.value = s.botDifficulty;
     }
 
     function readSettingsFromForm(){
-      const cp = getRadio('controlPreset') || DEFAULT_SETTINGS.controlPreset;
-      const bd = getRadio('botDifficulty') || DEFAULT_SETTINGS.botDifficulty;
-      const sens = clamp(Number(sensitivityRange.value), 0.2, 3.0);
+      const cp = getRadio("controlPreset") || DEFAULT_SETTINGS.controlPreset;
+      const sens = clamp(sensitivityRange.value, 0.2, 3.0);
+      const bd = String(botDifficultySelect.value || DEFAULT_SETTINGS.botDifficulty);
       return { controlPreset: cp, sensitivity: sens, botDifficulty: bd };
     }
 
-    function openSettings(){
-      draftSettings = loadSettings(); // 현재 저장값을 초안으로
-      syncFormFromSettings(draftSettings);
-      settingsOverlay.classList.add('open');
-      settingsOverlay.setAttribute('aria-hidden','false');
+    function openOverlay(el){
+      if(!el) return;
+      el.classList.add("open");
+      el.setAttribute("aria-hidden","false");
+      document.body.style.overflow = "hidden";
     }
 
-    function closeSettings(){
-      settingsOverlay.classList.remove('open');
-      settingsOverlay.setAttribute('aria-hidden','true');
-      draftSettings = null;
+    function closeOverlay(el){
+      if(!el) return;
+      el.classList.remove("open");
+      el.setAttribute("aria-hidden","true");
+      document.body.style.overflow = "";
     }
 
-    settingsBtn.addEventListener('click', () => openSettings());
-    settingsCloseBtn.addEventListener('click', () => closeSettings());
-    settingsCancelBtn.addEventListener('click', () => closeSettings());
+    // Close buttons
+    $("#settingsCloseBtn").addEventListener("click", ()=>closeOverlay(settingsOverlay));
+    $("#helpCloseBtn").addEventListener("click", ()=>closeOverlay(helpOverlay));
+    $("#creditsCloseBtn").addEventListener("click", ()=>closeOverlay(creditsOverlay));
 
-    // 오버레이 바깥 클릭으로 닫기
-    settingsOverlay.addEventListener('click', (e) => {
-      if(e.target === settingsOverlay) closeSettings();
+    // Click outside modal closes
+    [settingsOverlay, helpOverlay, creditsOverlay].forEach(ov => {
+      ov.addEventListener("click", (e)=>{ if(e.target === ov) closeOverlay(ov); });
     });
 
-    // ESC로 닫기
-    window.addEventListener('keydown', (e) => {
-      if(e.key === 'Escape' && settingsOverlay.classList.contains('open')) closeSettings();
+    // ESC closes
+    window.addEventListener("keydown", (e)=>{
+      if(e.key !== "Escape") return;
+      if(settingsOverlay.classList.contains("open")) return closeOverlay(settingsOverlay);
+      if(helpOverlay.classList.contains("open")) return closeOverlay(helpOverlay);
+      if(creditsOverlay.classList.contains("open")) return closeOverlay(creditsOverlay);
     });
 
-    sensitivityRange.addEventListener('input', () => {
-      const val = clamp(Number(sensitivityRange.value), 0.2, 3.0);
-      sensitivityValue.textContent = val.toFixed(2);
+    // Settings save/reset
+    $("#settingsResetBtn").addEventListener("click", ()=>{
+      syncSettingsToForm({ ...DEFAULT_SETTINGS });
     });
-
-    settingsResetBtn.addEventListener('click', () => {
-      draftSettings = { ...DEFAULT_SETTINGS };
-      syncFormFromSettings(draftSettings);
-    });
-
-    settingsSaveBtn.addEventListener('click', () => {
+    $("#settingsSaveBtn").addEventListener("click", ()=>{
       const s = readSettingsFromForm();
       saveSettings(s);
-      updateSettingsLabels(s);
-      closeSettings();
+      closeOverlay(settingsOverlay);
     });
 
+    sensitivityRange.addEventListener("input", ()=>{
+      sensitivityValue.textContent = clamp(sensitivityRange.value, 0.2, 3.0).toFixed(2);
+    });
 
-    const MODE_KEY = 'selectedMode';
-    const DEFAULT_MODE = 'zone';
-
-    function setSelected(mode){
-      // UI 업데이트
-      [...modesEl.querySelectorAll('.mode')].forEach(el => {
-        const on = el.dataset.mode === mode;
-        el.setAttribute('aria-checked', on ? 'true' : 'false');
-      });
-      selectedModeLabel.textContent = mode;
-
-      // 저장
-      try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+    // BGM: try autoplay immediately; if blocked, show hint ONLY when blocked (A안)
+    let hintVisible = false;
+    function showHint(){
+      if(hintVisible) return;
+      hintVisible = true;
+      audioHint.classList.add("show");
+    }
+    function hideHint(){
+      if(!hintVisible) return;
+      hintVisible = false;
+      audioHint.classList.remove("show");
     }
 
-    function getSelected(){
-      try {
-        return localStorage.getItem(MODE_KEY) || DEFAULT_MODE;
-      } catch (e) {
-        return DEFAULT_MODE;
-      }
+    const bgm = initLobbyBGM({
+      enabledEl: bgmEnabledEl,
+      volumeEl: bgmVolumeEl,
+      volumeValueEl: bgmVolumeValueEl,
+      onAutoplayBlocked: showHint,
+      onPlaying: hideHint,
+    });
+
+    // Audio state indicator (enabled only)
+    function refreshAudioState(){
+      audioState.textContent = bgm?.state?.enabled ? "ON" : "OFF";
+    }
+    refreshAudioState();
+    bgmEnabledEl.addEventListener("change", refreshAudioState);
+
+    // Mode persistence
+    function getSelectedMode(){
+      try{ return localStorage.getItem(MODE_KEY) || DEFAULT_MODE; }catch{ return DEFAULT_MODE; }
+    }
+    function setSelectedMode(mode){
+      const v = (mode === "zone" || mode === "conquest" || mode === "frontline") ? mode : DEFAULT_MODE;
+      try{ localStorage.setItem(MODE_KEY, v); }catch{}
+      selectedModeLabel.textContent = v;
+      modeStatus.textContent = v;
     }
 
-    function handlePick(el){
-      const mode = el?.dataset?.mode;
-      if(!mode) return;
-      setSelected(mode);
+    setSelectedMode(getSelectedMode());
+
+    // Campaign progress summary
+    function readCampaignSession(){
+      try{ return JSON.parse(localStorage.getItem(CAMPAIGN_KEY) || "null"); }catch{ return null; }
     }
+    function computeCampaignStatus(){
+      const s = readCampaignSession();
+      if(!s?.progress?.missionStates) return "NEW";
+      const ms = Object.values(s.progress.missionStates);
+      const cleared = ms.filter(x=>x?.cleared).length;
+      const total = Object.keys(CampaignDB?.missions || {}).length;
+      return `${cleared}/${total} cleared`;
+    }
+    try{ campStatus.textContent = computeCampaignStatus(); }catch{ campStatus.textContent = "-"; }
 
-    modesEl.addEventListener('click', (e) => {
-      const el = e.target.closest('.mode');
-      if(el) handlePick(el);
-    });
-
-    // 키보드 선택(엔터/스페이스)
-    modesEl.addEventListener('keydown', (e) => {
-      const el = e.target.closest('.mode');
-      if(!el) return;
-      if(e.key === 'Enter' || e.key === ' '){
-        e.preventDefault();
-        handlePick(el);
-      }
-    });
-
-    startBtn.addEventListener('click', () => {
-      // Patch 6-1a: 병과 선택(필수) -> game.html 이동
-      classSelect.open();
-    });
-
+    // Class selection modal
     const classSelect = new ClassSelectModal({
       onConfirm: (classId)=>{
         const normalized = normalizeClassId(classId);
         try{ localStorage.setItem(CLASS_KEY, normalized); }catch{}
-        window.location.href = `game.html`;
+        window.location.href = "game.html";
       }
     });
 
-// 초기값 반영
-    setSelected(getSelected());
-    updateSettingsLabels(loadSettings());
+    // Hero data
+    const HERO = {
+      campaign: {
+        title: "CAMPAIGN",
+        desc: "임무 브리핑과 체크포인트를 기반으로 진행되는 싱글 플레이.",
+        heroVar: "--sg-campaign-image",
+      },
+      zone: {
+        title: "ZONE CONTROL",
+        desc: "거점 점령으로 전선을 만들고 유지한다.",
+        heroVar: "--sg-bg-image",
+      },
+      conquest: {
+        title: "CONQUEST",
+        desc: "거점을 점령해 티켓을 깎고, 제한 시간 안에 승리한다.",
+        heroVar: "--sg-bg-image",
+      },
+      frontline: {
+        title: "FRONTLINE",
+        desc: "최전선 유지/후퇴를 반복하며 승부를 만든다.",
+        heroVar: "--sg-bg-image",
+      },
+      settings: {
+        title: "SETTINGS",
+        desc: "조작 프리셋, 감도, 봇 난이도, BGM을 설정한다.",
+        heroVar: "--sg-bg-image",
+      },
+      help: {
+        title: "HELP",
+        desc: "조작법/규칙을 빠르게 확인한다.",
+        heroVar: "--sg-bg-image",
+      },
+      credits: {
+        title: "CREDITS",
+        desc: "제작 정보와 리소스 구성을 확인한다.",
+        heroVar: "--sg-bg-image",
+      },
+    };
+
+    function setHero(key){
+      const h = HERO[key] || HERO.zone;
+      heroTitle.textContent = h.title;
+      heroDesc.textContent = h.desc;
+      const img = getComputedStyle(document.documentElement).getPropertyValue(h.heroVar).trim();
+      if(img) document.documentElement.style.setProperty("--sg-hero-image", img);
+    }
+
+    // Keyboard nav focus
+    let activeIndex = 0;
+    function setActiveIndex(idx){
+      activeIndex = Math.max(0, Math.min(items.length - 1, idx));
+      items.forEach((it,i)=>it.classList.toggle("is-active", i === activeIndex));
+      const it = items[activeIndex];
+      const action = it.dataset.action;
+      if(action === "mode") setHero(it.dataset.mode);
+      else setHero(action);
+      it.scrollIntoView({ block: "nearest" });
+    }
+
+    setActiveIndex(0);
+
+    window.addEventListener("keydown", (e)=>{
+      if(settingsOverlay.classList.contains("open") || helpOverlay.classList.contains("open") || creditsOverlay.classList.contains("open")) return;
+      if(e.key === "ArrowDown"){ e.preventDefault(); setActiveIndex(activeIndex + 1); }
+      if(e.key === "ArrowUp"){ e.preventDefault(); setActiveIndex(activeIndex - 1); }
+      if(e.key === "Enter"){ e.preventDefault(); trigger(items[activeIndex]); }
+    });
+
+    function trigger(item){
+      const action = item.dataset.action;
+      if(action === "campaign"){
+        window.location.href = "./campaign.html";
+        return;
+      }
+      if(action === "mode"){
+        const mode = item.dataset.mode;
+        setSelectedMode(mode);
+        classSelect.open();
+        return;
+      }
+      if(action === "settings") return openOverlay(settingsOverlay);
+      if(action === "help") return openOverlay(helpOverlay);
+      if(action === "credits") return openOverlay(creditsOverlay);
+    }
+
+    navList.addEventListener("click", (e)=>{
+      const it = e.target.closest(".sg-item");
+      if(!it) return;
+      const idx = items.indexOf(it);
+      if(idx >= 0) setActiveIndex(idx);
+      trigger(it);
+    });
+
+    // Initialize settings form with saved values
+    syncSettingsToForm(loadSettings());
+
+    // Default hero to selected mode
+    setHero(getSelectedMode());
   </script>
 </body>
 </html>

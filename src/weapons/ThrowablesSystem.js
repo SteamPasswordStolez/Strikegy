@@ -6,7 +6,7 @@
 // - Flash: angle-based whiteout + ringing
 // - Teamkill/self-damage OFF by design (damage callback optional)
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
 const _v0 = new THREE.Vector3();
 const _v1 = new THREE.Vector3();

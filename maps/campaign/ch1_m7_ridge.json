@@ -1,0 +1,322 @@
+{
+  "name": "CH1 M7 Tower (Relay)",
+  "world": {
+    "groundSize": [
+      260,
+      240
+    ],
+    "visualProfile": "industrial_haze"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -110,
+        2,
+        -80
+      ],
+      "yaw": 20
+    },
+    {
+      "team": "red",
+      "pos": [
+        90,
+        2,
+        80
+      ],
+      "yaw": 200
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        260,
+        16,
+        3
+      ],
+      "pos": [
+        0,
+        8.0,
+        -120.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        260,
+        16,
+        3
+      ],
+      "pos": [
+        0,
+        8.0,
+        120.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        16,
+        240
+      ],
+      "pos": [
+        -130.0,
+        8.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        16,
+        240
+      ],
+      "pos": [
+        130.0,
+        8.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        18,
+        18,
+        18
+      ],
+      "pos": [
+        0,
+        9,
+        40
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        42,
+        8,
+        6
+      ],
+      "pos": [
+        0,
+        4,
+        10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        5,
+        6
+      ],
+      "pos": [
+        -60,
+        2.5,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        5,
+        6
+      ],
+      "pos": [
+        -30,
+        2.5,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        5,
+        6
+      ],
+      "pos": [
+        30,
+        2.5,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        5,
+        6
+      ],
+      "pos": [
+        60,
+        2.5,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        120,
+        3,
+        3
+      ],
+      "pos": [
+        -40,
+        1.5,
+        60
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        120,
+        3,
+        3
+      ],
+      "pos": [
+        40,
+        1.5,
+        20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "deco",
+      "size": [
+        4,
+        16,
+        4
+      ],
+      "pos": [
+        20,
+        8,
+        20
+      ],
+      "collision": false
+    },
+    {
+      "shape": "box",
+      "type": "deco",
+      "size": [
+        3,
+        1.2,
+        2
+      ],
+      "pos": [
+        18,
+        0.6,
+        22
+      ],
+      "collision": false
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        14,
+        4,
+        10
+      ],
+      "pos": [
+        30,
+        2,
+        10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        14,
+        4,
+        10
+      ],
+      "pos": [
+        -10,
+        2,
+        30
+      ]
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "yard": {
+        "pos": [
+          -60,
+          2,
+          -20
+        ],
+        "r": 10
+      },
+      "tower": {
+        "pos": [
+          0,
+          2,
+          40
+        ],
+        "r": 10
+      },
+      "exfil": {
+        "pos": [
+          110,
+          2,
+          -90
+        ],
+        "r": 14
+      },
+      "o1": {
+        "pos": [
+          -80,
+          2,
+          -40
+        ],
+        "r": 12
+      },
+      "o2": {
+        "pos": [
+          20,
+          2,
+          20
+        ],
+        "r": 10
+      },
+      "o4": {
+        "pos": [
+          110,
+          2,
+          -90
+        ],
+        "r": 14
+      },
+      "rally": {
+        "pos": [
+          -80,
+          2,
+          -40
+        ],
+        "r": 12
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}

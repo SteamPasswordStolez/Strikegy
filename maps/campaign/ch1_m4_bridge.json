@@ -1,0 +1,357 @@
+{
+  "name": "CH1 M4 Bridge (Crossing)",
+  "world": {
+    "groundSize": [
+      420,
+      180
+    ],
+    "visualProfile": "urban_day"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -190,
+        2,
+        0
+      ],
+      "yaw": 0
+    },
+    {
+      "team": "red",
+      "pos": [
+        190,
+        2,
+        0
+      ],
+      "yaw": 180
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        420,
+        16,
+        3
+      ],
+      "pos": [
+        0,
+        8.0,
+        -90.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        420,
+        16,
+        3
+      ],
+      "pos": [
+        0,
+        8.0,
+        90.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        16,
+        180
+      ],
+      "pos": [
+        -210.0,
+        8.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        16,
+        180
+      ],
+      "pos": [
+        210.0,
+        8.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        380,
+        3.0,
+        4
+      ],
+      "pos": [
+        0,
+        1.5,
+        -25
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        380,
+        3.0,
+        4
+      ],
+      "pos": [
+        0,
+        1.5,
+        25
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        6,
+        10,
+        6
+      ],
+      "pos": [
+        -120,
+        5,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        6,
+        10,
+        6
+      ],
+      "pos": [
+        -60,
+        5,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        6,
+        10,
+        6
+      ],
+      "pos": [
+        0,
+        5,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        6,
+        10,
+        6
+      ],
+      "pos": [
+        60,
+        5,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        6,
+        10,
+        6
+      ],
+      "pos": [
+        120,
+        5,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        8,
+        3,
+        4
+      ],
+      "pos": [
+        -40,
+        1.5,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        8,
+        3,
+        4
+      ],
+      "pos": [
+        20,
+        1.5,
+        10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        8,
+        3,
+        4
+      ],
+      "pos": [
+        80,
+        1.5,
+        -10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        16,
+        6,
+        8
+      ],
+      "pos": [
+        -120,
+        3,
+        20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        16,
+        6,
+        8
+      ],
+      "pos": [
+        -60,
+        3,
+        -20
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "deco",
+      "size": [
+        8,
+        1.5,
+        4
+      ],
+      "pos": [
+        -15,
+        0.75,
+        0
+      ],
+      "collision": false
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        20,
+        6,
+        10
+      ],
+      "pos": [
+        80,
+        3,
+        0
+      ]
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "bridge": {
+        "pos": [
+          -140,
+          2,
+          0
+        ],
+        "r": 10
+      },
+      "exfil": {
+        "pos": [
+          185,
+          2,
+          0
+        ],
+        "r": 14
+      },
+      "o1": {
+        "pos": [
+          -185,
+          2,
+          0
+        ],
+        "r": 14
+      },
+      "o2": {
+        "pos": [
+          -90,
+          2,
+          0
+        ],
+        "r": 12
+      },
+      "o3": {
+        "pos": [
+          -15,
+          2,
+          0
+        ],
+        "r": 12
+      },
+      "o4": {
+        "pos": [
+          85,
+          2,
+          0
+        ],
+        "r": 12
+      },
+      "o5": {
+        "pos": [
+          185,
+          2,
+          0
+        ],
+        "r": 14
+      },
+      "rally": {
+        "pos": [
+          -185,
+          2,
+          0
+        ],
+        "r": 14
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}

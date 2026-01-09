@@ -1,0 +1,204 @@
+{
+  "name": "CH1 M9 Embassy (Courtyard)",
+  "world": {
+    "groundSize": [
+      280,
+      220
+    ],
+    "visualProfile": "urban_day"
+  },
+  "spawns": [
+    {
+      "team": "blue",
+      "pos": [
+        -120,
+        2,
+        -70
+      ],
+      "yaw": 30
+    },
+    {
+      "team": "red",
+      "pos": [
+        110,
+        2,
+        60
+      ],
+      "yaw": 210
+    }
+  ],
+  "zones": [],
+  "objects": [
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        280,
+        16,
+        3
+      ],
+      "pos": [
+        0,
+        8.0,
+        -110.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        280,
+        16,
+        3
+      ],
+      "pos": [
+        0,
+        8.0,
+        110.0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        16,
+        220
+      ],
+      "pos": [
+        -140.0,
+        8.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        3,
+        16,
+        220
+      ],
+      "pos": [
+        140.0,
+        8.0,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        220,
+        8,
+        3
+      ],
+      "pos": [
+        0,
+        4.0,
+        -10
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        140,
+        8,
+        3
+      ],
+      "pos": [
+        -40,
+        4.0,
+        30
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "wall",
+      "size": [
+        100,
+        8,
+        3
+      ],
+      "pos": [
+        60,
+        4.0,
+        30
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        2.5,
+        6
+      ],
+      "pos": [
+        -40,
+        1.25,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        2.5,
+        6
+      ],
+      "pos": [
+        0,
+        1.25,
+        0
+      ]
+    },
+    {
+      "shape": "box",
+      "type": "cover",
+      "size": [
+        12,
+        2.5,
+        6
+      ],
+      "pos": [
+        40,
+        1.25,
+        0
+      ]
+    }
+  ],
+  "campaign": {
+    "triggers": {
+      "gate": {
+        "pos": [
+          -90,
+          2,
+          -40
+        ],
+        "r": 10
+      },
+      "vip": {
+        "pos": [
+          40,
+          2,
+          10
+        ],
+        "r": 12
+      },
+      "exfil": {
+        "pos": [
+          110,
+          2,
+          80
+        ],
+        "r": 12
+      }
+    }
+  },
+  "meta": {
+    "mode": "campaign"
+  }
+}
