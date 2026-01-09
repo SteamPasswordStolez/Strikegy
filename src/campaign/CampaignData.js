@@ -7504,7 +7504,7 @@ export const CampaignDB = {
             { t: 3.1, speaker: CAST.VIPER, text: "말이 돼? 우린 방금까지 ‘아군’이었잖아.", en: "How is that real? We were friendly an hour ago." },
             { t: 4.3, speaker: CAST.KADE, text: "BLACKLIST 서버가 돌아가요. 기록을 지우고 새로 씁니다.", en: "A BLACKLIST server is active. It erases and rewrites records." },
             { t: 5.5, speaker: CAST.WARDEN, text: "그럼 우리도 ‘없는 사람’이다.", en: "Then we’re ghosts." },
-            { t: 6.7, speaker: CAST., text: "“격리 대상. 접촉 금지. 필요 시 제거.”", en: "“Isolate them. No contact. Eliminate if necessary.”" },
+            { t: 6.7, speaker: CAST.HAVELOCK, text: "“격리 대상. 접촉 금지. 필요 시 제거.”", en: "“Isolate them. No contact. Eliminate if necessary.”" },
             { t: 7.9, speaker: CAST.RAVEN, text: "목표?", en: "Objective?" },
             { t: 9.1, speaker: CAST.WARDEN, text: "서버 백업을 뽑는다. 우리를 지운 ‘증거’가 필요해.", en: "Pull the backup. We need proof they erased us." },
             { t: 10.3, speaker: CAST.KADE, text: "들어가면 3분. 그 뒤엔 추적이 붙어요.", en: "Once in, you have three minutes. Then you’re tracked." },

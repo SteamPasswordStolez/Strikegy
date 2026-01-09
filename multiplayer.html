@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Strikegy · Multiplayer Lobby</title>
+  <link rel="icon" href="./favicon.ico" />
+  <style>
+    :root{
+      --bg0:#070a10;
+      --bg1:#0d1220;
+      --panel: rgba(255,255,255,.06);
+      --panel2: rgba(255,255,255,.09);
+      --text:#eaf0ff;
+      --muted: rgba(234,240,255,.7);
+      --line: rgba(255,255,255,.12);
+      --good: rgba(100,255,180,.9);
+      --bad: rgba(255,120,120,.95);
+      --accent: rgba(120,190,255,.95);
+    }
+    html,body{ height:100%; background: radial-gradient(1200px 700px at 30% 25%, #121b32 0%, var(--bg0) 55%, #05060a 100%); color:var(--text); margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans KR', sans-serif; }
+    .wrap{ max-width:1100px; margin:0 auto; padding:20px; }
+    .topbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .brand{ display:flex; flex-direction:column; gap:2px; }
+    .brand .t{ font-weight:800; letter-spacing:.08em; }
+    .brand .s{ font-size:12px; color:var(--muted); }
+    .pill{ display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:999px; background: rgba(0,0,0,.35); font-size:12px; color:var(--muted); }
+    .btn{ cursor:pointer; user-select:none; border:1px solid var(--line); background: rgba(0,0,0,.35); color:var(--text); border-radius:12px; padding:10px 12px; transition: .15s transform, .15s background; }
+    .btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,.08); }
+    .btn.primary{ border-color: rgba(120,190,255,.45); background: rgba(120,190,255,.12); }
+    .btn.danger{ border-color: rgba(255,120,120,.45); background: rgba(255,120,120,.10); }
+    .grid{ display:grid; grid-template-columns: 1.05fr .95fr; gap:14px; }
+    @media (max-width: 980px){ .grid{ grid-template-columns:1fr; } }
+    .card{ border:1px solid var(--line); border-radius:18px; background: var(--panel); overflow:hidden; }
+    .card .hd{ padding:14px 14px 10px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .card .hd .title{ font-weight:750; }
+    .card .bd{ padding:14px; }
+    .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .field{ display:flex; flex-direction:column; gap:6px; min-width: 220px; }
+    label{ font-size:12px; color:var(--muted); }
+    input, select{
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:10px 10px;
+      background: rgba(0,0,0,.35);
+      color: var(--text);
+      outline:none;
+    }
+    .rooms{ display:flex; flex-direction:column; gap:10px; }
+    .room{ border:1px solid var(--line); border-radius:14px; padding:12px; background: rgba(0,0,0,.25); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .room .meta{ font-size:12px; color:var(--muted); }
+    .room .id{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; letter-spacing:.02em; }
+    .players{ display:flex; flex-direction:column; gap:8px; }
+    .player{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border-radius:12px; border:1px solid var(--line); background: rgba(0,0,0,.25); }
+    .tag{ font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+    .tag.good{ color: var(--good); border-color: rgba(100,255,180,.35); background: rgba(100,255,180,.06); }
+    .tag.bad{ color: var(--bad); border-color: rgba(255,120,120,.35); background: rgba(255,120,120,.05); }
+    .notice{ font-size:12px; color:var(--muted); line-height:1.5; }
+    .err{ color: var(--bad); }
+    .ok{ color: var(--good); }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .spacer{ height:8px; }
+  
+    .miniSelect{
+      background: transparent;
+      border: none;
+      color: inherit;
+      font: inherit;
+      padding: 0 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    .miniSelect option{ color: #111; }
+
+    /* modal */
+    .modalOverlay{
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.55);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 18px;
+      z-index: 9999;
+    }
+    .modalCard{
+      width: min(720px, 96vw);
+      border:1px solid var(--line);
+      border-radius:18px;
+      background: rgba(10,12,18,.92);
+      box-shadow: 0 18px 60px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    .modalHd{
+      padding: 14px;
+      border-bottom:1px solid var(--line);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      background: rgba(255,255,255,.04);
+    }
+    .modalTitle{ font-weight:800; letter-spacing:.02em; }
+    .modalBd{ padding:14px; }
+
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div class="t">STRIKEGY · MULTIPLAYER</div>
+        <div class="s">Lobby / Room management via Firebase (Patch 4.5Beta)</div>
+      </div>
+      <div class="row">
+        <div class="pill">MODE: <span id="modePill" class="mono">-</span></div>
+        <button class="btn" id="btnBack">← 메인으로</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="hd">
+          <div class="title">방 찾기</div>
+          <div class="row">
+            <button class="btn" id="btnRefresh">새로고침</button>
+            <button class="btn primary" id="btnCreate">방 만들기</button>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>닉네임</label>
+              <input id="nameInput" maxlength="16" placeholder="예: RAVEN" />
+            </div>
+            <div class="field">
+              <label>선택 병과</label>
+              <select id="classSelect"></select>
+            </div>
+            <div class="field">
+              <label>코드로 참가</label>
+              <div class="row">
+                <input id="joinCode" class="mono" placeholder="6자리 (a-z,0-9)" maxlength="6" />
+                <button class="btn" id="btnJoin">참가</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="spacer"></div>
+          <div class="notice" id="statusLine">Firebase 연결 중…</div>
+          <div class="spacer"></div>
+
+          <div class="rooms" id="rooms"></div>
+
+          <div class="spacer"></div>
+          <div class="notice">
+            • 방 목록은 <span class="mono">rooms</span> 컬렉션에서 <span class="mono">modeStatus=MODE|lobby</span> 로 조회합니다.<br/>
+            • Firebase 설정이 비어있으면 로비가 작동하지 않습니다. (<span class="mono">src/mp/firebaseConfig.js</span>)
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="roomCard" style="display:none;">
+        <div class="hd">
+          <div class="title">현재 방</div>
+          <div class="row">
+            <span class="pill">ROOM: <span id="roomIdLabel" class="mono">-</span></span>
+            <button class="btn" id="btnCopyCode">코드 복사</button>
+            <button class="btn danger" id="btnLeave">나가기</button>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="notice" id="roomStatus">-</div>
+          <div class="spacer"></div>
+
+          
+          <div class="row" id="hostControls0" style="display:none;">
+            <div class="field">
+              <label>게임 모드</label>
+              <select id="modeSelect">
+                <option value="zone">Zone</option>
+                <option value="conquest">Conquest</option>
+                <option value="frontline">Frontline</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>리스폰 딜레이(초)</label>
+              <input id="respawnDelayInput" type="number" min="0" max="60" value="5"/>
+            </div>
+            <div class="field">
+              <label>Zone 점령 시간(초)</label>
+              <input id="captureTimeInput" type="number" min="1" max="60" value="8"/>
+            </div>
+            <div class="field">
+              <label>비공개</label>
+              <select id="privateSelect">
+                <option value="0" selected>OFF</option>
+                <option value="1">ON</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>비밀번호</label>
+              <input id="passwordInput" type="password" placeholder="비공개일 때만" />
+            </div>
+          </div>
+
+
+          <div class="row" id="hostControls" style="display:none;">
+            <div class="field">
+              <label>맵</label>
+              <select id="mapSelect">
+                <option value="zone_5_v1">zone_5_v1</option>
+                <option value="conquest_5_v1">conquest_5_v1</option>
+                <option value="frontline_6_lane_v1">frontline_6_lane_v1</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>최대 인원</label>
+              <select id="maxPlayersSelect">
+                <option value="4">4</option>
+                <option value="6">6</option>
+                <option value="8" selected>8</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn primary" id="btnStart">게임 시작</button>
+            </div>
+          </div>
+
+
+          <div class="row" id="hostControls2" style="display:none;">
+            <div class="field">
+              <label>아군피해</label>
+              <select id="ffSelect">
+                <option value="0">OFF</option>
+                <option value="1">ON</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>중간참가</label>
+              <select id="jipSelect">
+                <option value="1">ON</option>
+                <option value="0">OFF</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>시간(분)</label>
+              <select id="timeLimitSelect">
+                <option value="10">10</option>
+                <option value="15" selected>15</option>
+                <option value="20">20</option>
+                <option value="30">30</option>
+              </select>
+            </div>
+            <div class="field" id="ticketField">
+              <label>티켓 (ZONE 전용)</label>
+              <input id="ticketLimitInput" type="number" min="10" max="999" value="200"/>
+            </div>
+          </div>
+
+          
+          
+          <div class="row" id="hostControls3" style="display:none;">
+            <div class="field">
+              <label>봇 추가</label>
+              <select id="botsSelect">
+                <option value="0">OFF</option>
+                <option value="1">ON</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn" id="btnAddBotBlue">+ 봇 (BLUE)</button>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn" id="btnAddBotRed">+ 봇 (RED)</button>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn" id="btnEconomy">경제 설정…</button>
+            </div>
+          </div>
+
+
+          <div class="row">
+            <button class="btn" id="btnReady">READY</button>
+
+            <span class="pill">TEAM:
+              <select id="teamSelect" class="miniSelect">
+                <option value="R" selected>RANDOM</option>
+                <option value="A">BLUE</option>
+                <option value="B">RED</option>
+              </select>
+            </span>
+
+            <span class="pill">
+              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--text);font-size:12px;user-select:none;">
+                <input id="spectatorCheck" type="checkbox" />
+                관전모드
+              </label>
+            </span>
+
+            <span class="pill">CLASS:
+              <select id="roomClassSelect" class="miniSelect"></select>
+            </span>
+
+            <span class="pill">UID: <span id="uidLabel" class="mono">-</span></span>
+          </div>
+
+
+          <div class="spacer"></div>
+          <div class="players" id="players"></div>
+
+          <div class="spacer"></div>
+          <div class="notice">
+            • 시작 버튼은 지금 단계에선 <span class="mono">game.html</span>로만 이동합니다. 전투 WS/보간은 다음 단계에서 붙입니다.<br/>
+            • 호스트가 나가면 방은 종료(<span class="mono">ended</span>) 처리됩니다.
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+
+  <!-- Economy Modal -->
+  <div id="ecoModal" class="modalOverlay" style="display:none;">
+    <div class="modalCard">
+      <div class="modalHd">
+        <div class="modalTitle">경제 설정</div>
+        <button class="btn" id="btnEcoClose">닫기</button>
+      </div>
+      <div class="modalBd">
+        <div class="notice">호스트만 변경 가능. 값은 방 설정(<span class="mono">settings.economy</span>)에 저장됩니다.</div>
+        <div class="spacer"></div>
+
+        <div class="row">
+          <div class="field">
+            <label>기본 수당 (30초마다, $)</label>
+            <input id="ecoBaseIncome" type="number" min="0" max="9999" value="100"/>
+          </div>
+          <div class="field">
+            <label>킬 보상 ($)</label>
+            <input id="ecoKillReward" type="number" min="0" max="9999" value="300"/>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>데미지 보상 배수</label>
+            <input id="ecoDamageMul" type="number" min="0" max="10" step="0.1" value="1"/>
+          </div>
+          <div class="field">
+            <label>헤드샷 보상 배수</label>
+            <input id="ecoHeadshotMul" type="number" min="0" max="10" step="0.1" value="2"/>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+        <div class="row" style="justify-content:flex-end;">
+          <button class="btn primary" id="btnEcoSave">저장</button>
+        </div>
+        <div class="spacer"></div>
+        <div class="notice" id="ecoStatus"></div>
+      </div>
+    </div>
+  </div>
+
+    <script type="module">
+    import { CLASSES, CLASS_KEY, normalizeClassId } from "./src/data/classes.js";
+    import { FirebaseLobby } from "./src/mp/FirebaseLobby.js";
+
+    const $ = (s)=>document.querySelector(s);
+
+    const MODE_KEY = "selectedMode";
+    const NAME_KEY = "strikegy_playerName";
+    const ROOM_KEY = "strikegy_lastRoomId";
+    const TEAM_PREF_KEY = "strikegy_teamPref";      // R/A/B
+    const SPEC_KEY = "strikegy_spectator";          // "1" | "0"
+
+    const qs = new URLSearchParams(location.search);
+    let mode = (qs.get("mode") || localStorage.getItem(MODE_KEY) || "zone").trim();
+
+    $("#modePill").textContent = mode;
+
+    const nameInput = $("#nameInput");
+    const classSelect = $("#classSelect");
+    const joinCode = $("#joinCode");
+    const roomsEl = $("#rooms");
+    const statusLine = $("#statusLine");
+
+    const roomCard = $("#roomCard");
+    const roomIdLabel = $("#roomIdLabel");
+    const btnCopyCode = $("#btnCopyCode");
+    const roomStatus = $("#roomStatus");
+    const playersEl = $("#players");
+
+    // Host controls
+    const hostControls0 = $("#hostControls0");
+    const modeSelect = $("#modeSelect");
+    const respawnDelayInput = $("#respawnDelayInput");
+    const captureTimeInput = $("#captureTimeInput");
+    const privateSelect = $("#privateSelect");
+    const passwordInput = $("#passwordInput");
+
+    const hostControls = $("#hostControls");
+    const mapSelect = $("#mapSelect");
+    const maxPlayersSelect = $("#maxPlayersSelect");
+    const btnStart = $("#btnStart");
+
+    const hostControls2 = $("#hostControls2");
+    const ffSelect = $("#ffSelect");
+    const jipSelect = $("#jipSelect");
+    const timeLimitSelect = $("#timeLimitSelect");
+    const ticketField = $("#ticketField");
+    const ticketLimitInput = $("#ticketLimitInput");
+
+    const hostControls3 = $("#hostControls3");
+    const botsSelect = $("#botsSelect");
+    const btnAddBotBlue = $("#btnAddBotBlue");
+    const btnAddBotRed = $("#btnAddBotRed");
+    const btnEconomy = $("#btnEconomy");
+
+    // Player controls (in-room)
+    const btnReady = $("#btnReady");
+    const teamSelect = $("#teamSelect");
+    const spectatorCheck = $("#spectatorCheck");
+    const roomClassSelect = $("#roomClassSelect");
+    const uidLabel = $("#uidLabel");
+
+    // Economy modal
+    const ecoModal = $("#ecoModal");
+    const btnEcoClose = $("#btnEcoClose");
+    const btnEcoSave = $("#btnEcoSave");
+    const ecoStatus = $("#ecoStatus");
+    const ecoBaseIncome = $("#ecoBaseIncome");
+    const ecoKillReward = $("#ecoKillReward");
+    const ecoDamageMul = $("#ecoDamageMul");
+    const ecoHeadshotMul = $("#ecoHeadshotMul");
+
+    // Populate classes
+    const classEntries = Object.values(CLASSES);
+    classSelect.innerHTML = classEntries.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+    roomClassSelect.innerHTML = classSelect.innerHTML;
+
+    // Load saved profile
+    const savedName = localStorage.getItem(NAME_KEY) || "";
+    const savedClass = localStorage.getItem(CLASS_KEY) || "assault";
+    nameInput.value = savedName || ("Player" + Math.floor(Math.random()*900+100));
+    classSelect.value = savedClass;
+
+    let myClass = normalizeClassId(savedClass);
+    roomClassSelect.value = myClass;
+
+    let myTeam = "?";            // A/B/S
+    let myReady = false;
+    let mySpectator = (localStorage.getItem(SPEC_KEY) === "1");
+    let myTeamPref = (localStorage.getItem(TEAM_PREF_KEY) || "R"); // R/A/B
+
+    // Apply saved pref to UI
+    teamSelect.value = (myTeamPref === "A" || myTeamPref === "B") ? myTeamPref : "R";
+    spectatorCheck.checked = !!mySpectator;
+
+    const savedRoom = localStorage.getItem(ROOM_KEY);
+    if(savedRoom) joinCode.value = normalizeRoomCode(savedRoom);
+
+    let lobby = new FirebaseLobby({ mode });
+    let uid = null;
+    let currentRoomId = null;
+    let currentRoom = null;
+    let currentPlayers = [];
+
+    function normalizeRoomCode(s){
+      return String(s || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .slice(0, 6);
+    }
+
+    joinCode.addEventListener("input", ()=>{
+      const n = normalizeRoomCode(joinCode.value);
+      if(joinCode.value !== n) joinCode.value = n;
+    });
+
+    function setStatus(text, isError=false){
+      statusLine.innerHTML = isError ? `<span class="err">${text}</span>` : `<span class="ok">${text}</span>`;
+    }
+
+    function persistProfile(){
+      const n = nameInput.value.trim().slice(0,16) || "Player";
+      const cls = normalizeClassId(classSelect.value);
+      try{
+        localStorage.setItem(NAME_KEY, n);
+        localStorage.setItem(CLASS_KEY, cls);
+      }catch{}
+      return { name:n, classId:cls };
+    }
+
+    function persistPrefs(){
+      try{
+        localStorage.setItem(TEAM_PREF_KEY, teamSelect.value);
+        localStorage.setItem(SPEC_KEY, spectatorCheck.checked ? "1" : "0");
+      }catch{}
+    }
+
+    function isHost(){
+      return !!currentRoom && currentRoom.hostUid === uid;
+    }
+
+    function setEcoStatus(t, bad=false){
+      ecoStatus.innerHTML = bad ? `<span class="err">${t}</span>` : `<span class="ok">${t}</span>`;
+    }
+
+    function openEcoModal(){
+      if(!currentRoomId || !currentRoom) return;
+      const eco = currentRoom.settings?.economy || {};
+      ecoBaseIncome.value = String(eco.baseIncomePer30Sec ?? 100);
+      ecoKillReward.value = String(eco.killReward ?? 300);
+      ecoDamageMul.value = String(eco.damageRewardMul ?? 1);
+      ecoHeadshotMul.value = String(eco.headshotRewardMul ?? 2);
+      setEcoStatus("");
+      ecoModal.style.display = "flex";
+    }
+    function closeEcoModal(){
+      ecoModal.style.display = "none";
+    }
+
+    function renderRooms(rooms){
+      if(currentRoomId){
+        roomsEl.innerHTML = `<div class="notice">현재 방에 참가 중입니다. (방 목록 표시 중지)</div>`;
+        return;
+      }
+      if(!rooms.length){
+        roomsEl.innerHTML = `<div class="notice">열린 방이 없습니다. 방 만들기를 눌러주세요.</div>`;
+        return;
+      }
+      roomsEl.innerHTML = "";
+      for(const r of rooms){
+        const el = document.createElement("div");
+        el.className = "room";
+        const mapId = r.settings?.mapId ?? "-";
+        const mp = r.settings?.maxPlayers ?? "-";
+        const locked = !!r.settings?.isPrivate;
+        el.innerHTML = `
+          <div>
+            <div><b>${String(r.mode||"").toUpperCase()}</b> <span class="tag">${mapId}</span> ${locked?'<span class="tag bad">PRIVATE</span>':''}</div>
+            <div class="meta">id: <span class="id">${r.id}</span> · max: ${mp} · host: ${r.hostUid?.slice(0,6) ?? "-"}</div>
+          </div>
+          <button class="btn" data-join="${r.id}">참가</button>
+        `;
+        el.querySelector("button").addEventListener("click", ()=> joinRoom(r.id, locked));
+        roomsEl.appendChild(el);
+      }
+    }
+
+    function renderRoom(){
+      if(!currentRoomId || !currentRoom){
+        roomCard.style.display = "none";
+        return;
+      }
+      roomCard.style.display = "block";
+      roomIdLabel.textContent = currentRoomId;
+
+      const s = currentRoom.settings || {};
+      const eco = s.economy || {};
+      const modeNow = currentRoom.mode || mode;
+
+      roomStatus.textContent =
+        `status=${currentRoom.status} · mode=${modeNow} · map=${s.mapId ?? "-"} · max=${s.maxPlayers ?? "-"} · ff=${s.friendlyFire ? "ON":"OFF"} · jip=${(s.joinInProgress===false)?"OFF":"ON"} · respawn=${s.respawnDelaySec ?? 5}s · capture=${s.captureStepSec ?? "-"}s · private=${s.isPrivate?"ON":"OFF"} · ticket=${s.ticketLimit ?? "-"}`;
+
+      const host = isHost();
+      hostControls0.style.display = host && currentRoom.status === "lobby" ? "flex" : "none";
+      hostControls.style.display  = host && currentRoom.status === "lobby" ? "flex" : "none";
+      hostControls2.style.display = host && currentRoom.status === "lobby" ? "flex" : "none";
+      hostControls3.style.display = host && currentRoom.status === "lobby" ? "flex" : "none";
+
+      if(host){
+        modeSelect.value = modeNow;
+        mapSelect.value = s.mapId ?? mapSelect.value;
+        maxPlayersSelect.value = String(s.maxPlayers ?? 8);
+
+        ffSelect.value = (s.friendlyFire ? "1" : "0");
+        jipSelect.value = (s.joinInProgress === false ? "0" : "1");
+        timeLimitSelect.value = String(Math.round((s.timeLimitSec ?? 900)/60));
+        // Tickets: Zone-only
+        if(modeNow === "zone"){
+          ticketField.style.display = "flex";
+          ticketLimitInput.disabled = false;
+          ticketLimitInput.value = String((s.ticketLimit ?? 200) || 200);
+        }else{
+          ticketField.style.display = "none";
+          ticketLimitInput.disabled = true;
+          ticketLimitInput.value = "";
+        }
+
+        respawnDelayInput.value = String(s.respawnDelaySec ?? 5);
+
+        privateSelect.value = s.isPrivate ? "1" : "0";
+        passwordInput.value = String(s.password ?? "");
+        passwordInput.disabled = (privateSelect.value !== "1");
+
+        botsSelect.value = s.botsEnabled ? "1" : "0";
+        const botsOn = (botsSelect.value === "1");
+        btnAddBotBlue.disabled = !botsOn;
+        btnAddBotRed.disabled = !botsOn;
+
+        // capture time rules
+        captureTimeInput.value = String(s.captureStepSec ?? (modeNow==="conquest"?15:8));
+        if(modeNow === "frontline"){
+          captureTimeInput.disabled = true;
+        }else{
+          captureTimeInput.disabled = false;
+        }
+      }
+
+      uidLabel.textContent = uid ? uid.slice(0,10) : "-";
+      btnReady.textContent = myReady ? "UNREADY" : "READY";
+
+      // spectator rules
+      teamSelect.disabled = !!mySpectator;
+      spectatorCheck.checked = !!mySpectator;
+
+      // players list
+      playersEl.innerHTML = "";
+      const hostUid = currentRoom.hostUid;
+
+      for(const p of currentPlayers){
+        const isMe = p.uid === uid;
+        const tag = p.ready ? "good" : "bad";
+        const readyText = p.ready ? "READY" : "NOT READY";
+        const hostMark = (p.uid === hostUid) ? "HOST" : "";
+        const isBot = !!p.isBot;
+        const isSpec = !!p.spectator || p.team === "S";
+        const teamText = isSpec ? "SPECTATOR" : (p.team === "A" ? "BLUE" : (p.team === "B" ? "RED" : (p.team ?? "?")));
+
+        const el = document.createElement("div");
+        el.className = "player";
+        el.innerHTML = `
+          <div>
+            <div>
+              <b>${p.name ?? "Player"}</b>
+              ${isMe?'<span class="tag good">YOU</span>':''}
+              ${hostMark?'<span class="tag">HOST</span>':''}
+              ${isBot?'<span class="tag">BOT</span>':''}
+              ${isSpec?'<span class="tag">SPEC</span>':''}
+            </div>
+            <div class="meta">team: ${teamText} · class: ${p.classId ?? "-"} · uid: ${(p.uid||"").slice(0,10)}</div>
+          </div>
+          <div class="row" style="gap:8px;">
+            <div class="tag ${tag}">${readyText}</div>
+            ${(host && isBot) ? `
+              <span class="pill">BOT TEAM:
+                <select class="miniSelect" data-botteam="${p.uid}">
+                  <option value="A" ${p.team==="A"?"selected":""}>BLUE</option>
+                  <option value="B" ${p.team==="B"?"selected":""}>RED</option>
+                </select>
+              </span>
+              <button class="btn danger" data-rmbot="${p.uid}">X</button>
+            ` : ``}
+          </div>
+        `;
+        if(host && isBot){
+          el.querySelector("[data-rmbot]")?.addEventListener("click", async ()=>{
+            try{ await lobby.removeBot(currentRoomId, p.uid); }catch(e){ setStatus(e?.message||String(e), true); }
+          });
+          el.querySelector("[data-botteam]")?.addEventListener("change", async (ev)=>{
+            const team = String(ev.target.value || "A");
+            try{ await lobby.setBotTeam(currentRoomId, p.uid, team); }catch(e){ setStatus(e?.message||String(e), true); }
+          });
+        }
+        playersEl.appendChild(el);
+      }
+    }
+
+    function exitRoomLocal(){
+      currentRoomId = null;
+      currentRoom = null;
+      currentPlayers = [];
+      myTeam = "?";
+      myReady = false;
+      renderRoom();
+      roomCard.style.display = "none";
+
+      // Re-subscribe rooms list
+      lobby.subscribeRooms((rooms, err)=>{
+        if(err) setStatus(err?.message || String(err), true);
+        else setStatus("방 목록 갱신됨");
+        renderRooms(rooms);
+      });
+    }
+
+    async function enterRoom(roomId){
+      currentRoomId = roomId;
+      localStorage.setItem(ROOM_KEY, roomId);
+      setStatus(`방 참가 완료: ${roomId}`);
+      roomsEl.innerHTML = `<div class="notice">방 정보를 불러오는 중…</div>`;
+
+      lobby.subscribeRoom(roomId, {
+        onRoom: (room, err)=>{
+          if(err){
+            setStatus(err?.message || String(err), true);
+            return;
+          }
+          if(!room){
+            setStatus("방이 삭제되었거나 존재하지 않습니다.", true);
+            exitRoomLocal();
+            return;
+          }
+          currentRoom = room;
+
+          // keep mode in sync (host may change)
+          const modeNow = currentRoom.mode || mode;
+          if(modeNow !== mode){
+            mode = modeNow;
+            $("#modePill").textContent = modeNow;
+          }
+
+          // Auto leave if ended
+          if(room.status === "ended"){
+            setStatus("방이 종료되었습니다.", true);
+            exitRoomLocal();
+            return;
+          }
+
+          // Auto start
+          if(room.status === "in_game"){
+            try{
+              localStorage.setItem("strikegy_net_roomId", currentRoomId);
+              localStorage.setItem("strikegy_net_uid", uid);
+              localStorage.setItem("strikegy_net_mode", modeNow);
+              localStorage.setItem("strikegy_net_team", myTeam);
+              localStorage.setItem("strikegy_net_spectator", mySpectator ? "1" : "0");
+            }catch{}
+            window.location.href = "./game.html?net=1&roomId=" + encodeURIComponent(currentRoomId);
+          }
+
+          renderRoom();
+        },
+        onPlayers: (players)=>{
+          currentPlayers = players || [];
+          const me = currentPlayers.find(p=>p.uid === uid);
+          myTeam = me?.team ?? myTeam;
+          myReady = !!me?.ready;
+          mySpectator = !!me?.spectator || (me?.team === "S");
+          myClass = normalizeClassId(me?.classId ?? myClass);
+
+          classSelect.value = myClass;
+          roomClassSelect.value = myClass;
+
+          // reflect spectator/team
+          spectatorCheck.checked = mySpectator;
+          teamSelect.disabled = mySpectator;
+
+          renderRoom();
+        }
+      });
+
+      roomCard.style.display = "block";
+    }
+
+    async function joinRoom(roomId, locked){
+      const profile = persistProfile();
+      persistPrefs();
+
+      const tryJoin = async (password)=> {
+        await lobby.joinRoom(roomId, profile, { teamPref: teamSelect.value, spectator: spectatorCheck.checked, password });
+        await enterRoom(roomId);
+      };
+
+      try{
+        if(locked){
+          const password = prompt("비공개 방 비밀번호를 입력하세요") || "";
+          if(!password) return;
+          await tryJoin(password);
+        }else{
+          await tryJoin("");
+        }
+      }catch(e){
+        const msg = e?.message || String(e);
+
+        // If user typed a code directly, we might not know it's private yet.
+        if(!locked && msg.includes("비밀번호")){
+          const password = prompt("이 방은 비공개입니다. 비밀번호를 입력하세요") || "";
+          if(!password) return;
+          try{
+            await tryJoin(password);
+            return;
+          }catch(e2){
+            setStatus(e2?.message || String(e2), true);
+            return;
+          }
+        }
+
+        setStatus(msg, true);
+      }
+    }
+
+    async function createRoom(){
+      const profile = persistProfile();
+      persistPrefs();
+
+      try{
+        const roomId = await lobby.createRoom(profile, { teamPref: teamSelect.value, spectator: spectatorCheck.checked });
+        await enterRoom(roomId);
+      }catch(e){
+        setStatus(e?.message || String(e), true);
+      }
+    }
+
+    // Buttons (global)
+    $("#btnBack").addEventListener("click", ()=> window.location.href = "./index.html");
+    $("#btnRefresh").addEventListener("click", ()=>{
+      if(currentRoomId) return;
+      lobby.subscribeRooms((rooms, err)=>{
+        if(err) setStatus(err?.message || String(err), true);
+        else setStatus("방 목록 갱신됨");
+        renderRooms(rooms);
+      });
+    });
+    $("#btnCreate").addEventListener("click", createRoom);
+    $("#btnJoin").addEventListener("click", ()=>{
+      const code = normalizeRoomCode(joinCode.value);
+      joinCode.value = code;
+      if(!code) return;
+      joinRoom(code, false);
+    });
+
+    $("#btnLeave").addEventListener("click", async ()=>{
+      if(!currentRoomId) return;
+      const rid = currentRoomId;
+      try{ await lobby.leaveRoom(rid); }catch{}
+      exitRoomLocal();
+      setStatus("나감");
+    });
+
+    // Copy room code
+    btnCopyCode.addEventListener("click", async ()=>{
+      if(!currentRoomId) return;
+      try{
+        await navigator.clipboard.writeText(currentRoomId);
+        setStatus("룸 코드 복사됨: " + currentRoomId);
+      }catch{
+        prompt("룸 코드", currentRoomId);
+      }
+    });
+
+    // Ready toggle
+    btnReady.addEventListener("click", async ()=>{
+      if(!currentRoomId) return;
+      try{
+        myReady = !myReady;
+        await lobby.setReady(currentRoomId, myReady);
+      }catch(e){
+        setStatus(e?.message || String(e), true);
+      }
+    });
+
+    // Class change (in-room)
+    async function applyMyClassChange(newClassId){
+      const cid = normalizeClassId(newClassId);
+      myClass = cid;
+      classSelect.value = cid;
+      roomClassSelect.value = cid;
+      try{ localStorage.setItem(CLASS_KEY, cid); }catch{}
+      if(!currentRoomId) return;
+      try{
+        await lobby.updateMyPlayer(currentRoomId, { classId: cid });
+      }catch(e){
+        setStatus(e?.message || String(e), true);
+      }
+    }
+    roomClassSelect.addEventListener("change", ()=> applyMyClassChange(roomClassSelect.value));
+    classSelect.addEventListener("change", ()=>{
+      if(currentRoomId) applyMyClassChange(classSelect.value);
+      else{ try{ localStorage.setItem(CLASS_KEY, normalizeClassId(classSelect.value)); }catch{} }
+    });
+
+    // Team / spectator selection
+    teamSelect.addEventListener("change", async ()=>{
+      persistPrefs();
+      if(!currentRoomId) return;
+      if(mySpectator) return;
+      const pref = teamSelect.value;
+      // apply immediately (R will still assign by uid hash on client side later; keep as pref here)
+      const patch = { teamPref: pref };
+      if(pref === "A" || pref === "B"){
+        patch.team = pref;
+      }else{
+        // random -> choose by uid hash (no extra reads)
+        let hash = 0;
+        for(let i=0;i<uid.length;i++) hash = (hash*31 + uid.charCodeAt(i))|0;
+        patch.team = (hash & 1) ? "A" : "B";
+      }
+      try{
+        await lobby.updateMyPlayer(currentRoomId, patch);
+      }catch(e){
+        setStatus(e?.message || String(e), true);
+      }
+    });
+
+    spectatorCheck.addEventListener("change", async ()=>{
+      persistPrefs();
+      if(!currentRoomId) return;
+      mySpectator = spectatorCheck.checked;
+      try{
+        if(mySpectator){
+          await lobby.updateMyPlayer(currentRoomId, { spectator: true, team: "S", teamPref: "S", ready: false });
+          myReady = false;
+        }else{
+          // back to pref
+          const pref = teamSelect.value;
+          let team = "A";
+          if(pref === "A" || pref === "B") team = pref;
+          else{
+            let hash = 0;
+            for(let i=0;i<uid.length;i++) hash = (hash*31 + uid.charCodeAt(i))|0;
+            team = (hash & 1) ? "A" : "B";
+          }
+          await lobby.updateMyPlayer(currentRoomId, { spectator: false, team, teamPref: pref });
+        }
+      }catch(e){
+        setStatus(e?.message || String(e), true);
+      }
+    });
+
+    // Host settings handlers
+    async function hostOnly(fn){
+      if(!currentRoomId) return;
+      if(!isHost()) return;
+      try{ await fn(); }catch(e){ setStatus(e?.message || String(e), true); }
+    }
+
+    modeSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      const newMode = modeSelect.value;
+      await lobby.updateRoomMode(currentRoomId, newMode);
+    }));
+
+    mapSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      await lobby.updateSettings(currentRoomId, { mapId: mapSelect.value });
+    }));
+
+    maxPlayersSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      await lobby.updateSettings(currentRoomId, { maxPlayers: Number(maxPlayersSelect.value) });
+    }));
+
+    ffSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      await lobby.updateSettings(currentRoomId, { friendlyFire: (ffSelect.value === "1") });
+    }));
+
+    jipSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      await lobby.updateSettings(currentRoomId, { joinInProgress: (jipSelect.value !== "0") });
+    }));
+
+    timeLimitSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      const mins = Number(timeLimitSelect.value) || 15;
+      await lobby.updateSettings(currentRoomId, { timeLimitSec: mins * 60 });
+    }));
+
+    ticketLimitInput.addEventListener("change", ()=> hostOnly(async ()=>{
+      if(currentRoom?.mode !== "zone") return;
+      let v = Number(ticketLimitInput.value);
+      if(!Number.isFinite(v)) v = 200;
+      v = Math.max(10, Math.min(999, Math.round(v)));
+      ticketLimitInput.value = String(v);
+      await lobby.updateSettings(currentRoomId, { ticketLimit: v });
+    }));
+    ticketLimitInput.addEventListener("blur", ()=> ticketLimitInput.dispatchEvent(new Event("change")));
+
+    respawnDelayInput.addEventListener("change", ()=> hostOnly(async ()=>{
+      let v = Number(respawnDelayInput.value);
+      if(!Number.isFinite(v)) v = 5;
+      v = Math.max(0, Math.min(60, Math.round(v)));
+      respawnDelayInput.value = String(v);
+      await lobby.updateSettings(currentRoomId, { respawnDelaySec: v });
+    }));
+    respawnDelayInput.addEventListener("blur", ()=> respawnDelayInput.dispatchEvent(new Event("change")));
+
+    captureTimeInput.addEventListener("change", ()=> hostOnly(async ()=>{
+      if(currentRoom?.mode === "frontline") return;
+      let v = Number(captureTimeInput.value);
+      if(!Number.isFinite(v)) v = (currentRoom?.mode === "conquest") ? 15 : 8;
+      v = Math.max(1, Math.min(60, Math.round(v)));
+      captureTimeInput.value = String(v);
+      await lobby.updateSettings(currentRoomId, { captureStepSec: v });
+    }));
+    captureTimeInput.addEventListener("blur", ()=> captureTimeInput.dispatchEvent(new Event("change")));
+
+    privateSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      const on = (privateSelect.value === "1");
+      passwordInput.disabled = !on;
+      if(!on){
+        passwordInput.value = "";
+        await lobby.updateSettings(currentRoomId, { isPrivate: false, password: "" });
+      }else{
+        // don't force pw immediately; user can type then blur
+        await lobby.updateSettings(currentRoomId, { isPrivate: true });
+      }
+    }));
+
+    passwordInput.addEventListener("change", ()=> hostOnly(async ()=>{
+      if(privateSelect.value !== "1") return;
+      const pw = String(passwordInput.value || "").trim();
+      await lobby.updateSettings(currentRoomId, { password: pw });
+    }));
+    passwordInput.addEventListener("blur", ()=> passwordInput.dispatchEvent(new Event("change")));
+
+    botsSelect.addEventListener("change", ()=> hostOnly(async ()=>{
+      const on = (botsSelect.value === "1");
+      btnAddBotBlue.disabled = !on;
+      btnAddBotRed.disabled = !on;
+      await lobby.updateSettings(currentRoomId, { botsEnabled: on });
+    }));
+
+    btnAddBotBlue.addEventListener("click", ()=> hostOnly(async ()=>{
+      await lobby.addBot(currentRoomId, "A");
+    }));
+    btnAddBotRed.addEventListener("click", ()=> hostOnly(async ()=>{
+      await lobby.addBot(currentRoomId, "B");
+    }));
+
+    btnEconomy.addEventListener("click", ()=> openEcoModal());
+    btnEcoClose.addEventListener("click", closeEcoModal);
+    ecoModal.addEventListener("click", (e)=>{ if(e.target === ecoModal) closeEcoModal(); });
+
+    btnEcoSave.addEventListener("click", ()=> hostOnly(async ()=>{
+      const base = Number(ecoBaseIncome.value);
+      const kill = Number(ecoKillReward.value);
+      const dmg = Number(ecoDamageMul.value);
+      const hs  = Number(ecoHeadshotMul.value);
+
+      const patch = {
+        "economy.baseIncomePer30Sec": (Number.isFinite(base)? Math.max(0, Math.round(base)) : 100),
+        "economy.killReward": (Number.isFinite(kill)? Math.max(0, Math.round(kill)) : 300),
+        "economy.damageRewardMul": (Number.isFinite(dmg)? Math.max(0, Math.min(10, Math.round(dmg*10)/10)) : 1),
+        "economy.headshotRewardMul": (Number.isFinite(hs)? Math.max(0, Math.min(10, Math.round(hs*10)/10)) : 2),
+      };
+
+      await lobby.updateSettings(currentRoomId, patch);
+      setEcoStatus("저장 완료");
+      setTimeout(()=> closeEcoModal(), 250);
+    }));
+
+    btnStart.addEventListener("click", ()=> hostOnly(async ()=>{
+      await lobby.startGame(currentRoomId);
+    }));
+
+    // Init
+    (async ()=>{
+      try{
+        const user = await lobby.init();
+        uid = user.uid;
+        setStatus("Firebase 연결됨 · uid=" + uid.slice(0,10));
+        lobby.subscribeRooms((rooms, err)=>{
+          if(err) setStatus(err?.message || String(err), true);
+          else setStatus("방 목록 로드됨");
+          renderRooms(rooms);
+        });
+      }catch(e){
+        setStatus(e?.message || String(e), true);
+        roomsEl.innerHTML = `
+          <div class="notice err">
+            Firebase 초기화 실패.<br/>
+            1) <span class="mono">src/mp/firebaseConfig.js</span> 설정 확인<br/>
+            2) Firestore/Anonymous Auth 활성화 확인<br/>
+            3) 콘솔 에러 확인
+          </div>
+        `;
+      }
+    })();
+  </script>
+</body>
+</html>
