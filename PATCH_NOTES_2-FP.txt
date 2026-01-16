@@ -1,8 +1,0 @@
-Patch 2-FP (First-Person ViewModel Core)
-- Added ViewModelSystem: low-poly glove hands + procedural weapon placeholders
-- Supports: primary/secondary guns (AR/SMG/LMG/SG/DMR/SR/PISTOL), grenade, class gadget, melee knife
-- Animations: idle micro-movement, look sway, move bob, ADS lerp, reload pose, recoil kick on shot
-- Viewmodel always renders on top (depthTest/depthWrite disabled) for FPS feel
-Files:
-- src/fp/ViewModelSystem.js (new)
-- game.html (import + init + tick + recoil hook)

@@ -1,9 +1,0 @@
-Patch 2-FP-VM-PROTO (Procedural Viewmodels Upgrade)
-- Base: Patch2-FP-hf2
-- Goal: Make weapons/throwables look more distinct WITHOUT changing inventory/slots/rules.
-
-Changes:
-- src/fp/ViewModelSystem.js
-  - Procedural weapon meshes upgraded per class (AR/SMG/LMG/SG/SR/PISTOL)
-  - Throwables now have 4 silhouettes based on weaponId string: frag/flash/smoke/impact
-  - No changes to slots, inventory structure, or weapon logic.

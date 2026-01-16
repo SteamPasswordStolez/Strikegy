@@ -645,6 +645,41 @@ export class CampaignRuntime {
     return /[가-힣]/.test(String(s||''));
   }
 
+  // Guard: some checkpoints may carry placeholder/garbled `en` strings.
+  // If `en` looks non-linguistic or clearly templated, prefer KO->EN table instead.
+  _looksBadEN(enRaw){
+    const s = String(enRaw || '').trim();
+    if(!s) return true;
+
+    // Common placeholders we used in earlier automated passes (too generic / mismatched)
+    const blacklist = new Set([
+      'Paperwork is the key.',
+      'Approval pending.',
+      'Smoke out. Break their sightline.',
+      'Eyes up. Careful.',
+      'Moving. .',
+      'Moving.',
+    ]);
+    if(blacklist.has(s)) return true;
+
+    // If it contains obvious empty tag remnants
+    if(s.includes('[]')) return true;
+
+    // If it's mostly punctuation/symbols (e.g., "[] … ." / """ . **, , .**.")
+    const letters = (s.match(/[A-Za-z]/g) || []).length;
+    const digits = (s.match(/[0-9]/g) || []).length;
+    const spaces = (s.match(/\s/g) || []).length;
+    const total = Math.max(1, s.length);
+    const alphaRatio = letters / total;
+
+    // Too few letters, too many symbols
+    if(letters < 6 && digits < 3) return true;
+    if(alphaRatio < 0.22) return true;
+    if((total - letters - digits - spaces) / total > 0.55) return true;
+
+    return false;
+  }
+
   _pickSubtitleRaw(obj){
     // Prefer original Korean script for on-screen subtitles
     return String(obj?.text ?? obj?.ko ?? obj?.en ?? '');
@@ -653,7 +688,7 @@ export class CampaignRuntime {
   _pickTTSTextRaw(obj){
     // Prefer explicit English line if provided; else translate KO -> EN
     const enRaw = (typeof obj?.en === 'string' && obj.en.trim().length) ? obj.en.trim() : '';
-    if(enRaw) return enRaw;
+    if(enRaw && !this._looksBadEN(enRaw)) return enRaw;
 
     const base = this._pickSubtitleRaw(obj);
     const mid = String(this.mission?.id || this.session?.missionId || '');

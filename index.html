@@ -35,7 +35,7 @@
             <div class="meta">PLAY</div>
           </button>
 
-          <div class="sg-groupLabel">SINGLEPLAYER</div>
+          <div class="sg-groupLabel">MULTIPLAYER</div>
 
           <button class="sg-item" data-action="mode" data-mode="zone" data-hero="lobby" type="button">
             <div>
@@ -61,18 +61,7 @@
             <div class="meta">FRONT</div>
           </button>
 
-          
-          <div class="sg-groupLabel">MULTIPLAYER</div>
-
-          <button class="sg-item" data-action="multiplayer" data-hero="multiplayer" type="button">
-            <div>
-              <div class="label">Online Multiplayer</div>
-              <div class="sub">Firebase 로비/룸 · WS 전투 (베타)</div>
-            </div>
-            <div class="meta">BETA</div>
-          </button>
-
-<div class="sg-groupLabel">SYSTEM</div>
+          <div class="sg-groupLabel">SYSTEM</div>
 
           <button class="sg-item" data-action="settings" data-hero="lobby" type="button">
             <div>
@@ -453,13 +442,7 @@
         title: "CAMPAIGN",
         desc: "임무 브리핑과 체크포인트를 기반으로 진행되는 싱글 플레이.",
         heroVar: "--sg-campaign-image",
-      },      multiplayer: {
-        title: "MULTIPLAYER",
-        desc: "온라인 로비/룸은 Firebase로 관리하고, 전투는 WebSocket으로 중계한다.",
-        heroVar: "--sg-bg-image",
       },
-
-      
       zone: {
         title: "ZONE CONTROL",
         desc: "거점 점령으로 전선을 만들고 유지한다.",
@@ -527,13 +510,6 @@
         window.location.href = "./campaign.html";
         return;
       }
-      if(action === "multiplayer"){
-        const mode = getSelectedMode();
-        window.location.href = `multiplayer.html?m=${encodeURIComponent(mode)}`;
-        return;
-      }
-
-      
       if(action === "mode"){
         const mode = item.dataset.mode;
         setSelectedMode(mode);
