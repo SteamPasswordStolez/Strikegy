@@ -49,7 +49,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
   medium: {
     pixelRatioCap: 1,
     shadows: true,
-    shadowMapSize: 3072,
+    shadowMapSize: 2048,
     shadowExtent: 35,
     shadowInterval: 2,
     textureSize: 512,
@@ -66,7 +66,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
   high: {
     pixelRatioCap: 1.25,
     shadows: true,
-    shadowMapSize: 4096,
+    shadowMapSize: 3072,
     shadowExtent: 40,
     shadowInterval: 2,
     textureSize: 512,
@@ -101,6 +101,8 @@ export class Renderer {
    * or, in follow mode, every `shadowInterval` frames.
    */
   staticShadows = false;
+  /** Optional GPU timing hook (F3 panel). */
+  private section: (label: string, fn: () => void) => void = (_l, fn) => fn();
   private shadowDirty = true;
   private readonly drs = new DynamicResolution();
 
@@ -195,6 +197,12 @@ export class Renderer {
     this.fpCamera.updateProjectionMatrix();
   }
 
+  /** Installs a timing hook around each render section / post pass. */
+  instrument(section: (label: string, fn: () => void) => void): void {
+    this.section = section;
+    this.postfx?.instrument(section);
+  }
+
   /** Something that casts shadows moved: re-render the (static) shadow map soon. */
   requestShadowUpdate(): void {
     this.shadowDirty = true;
@@ -223,10 +231,23 @@ export class Renderer {
     if (this.postfx) {
       this.postfx.render();
     } else {
-      this.gl.clear();
-      this.gl.render(this.scene, this.camera);
-      this.gl.clearDepth();
-      this.gl.render(this.fpScene, this.fpCamera);
+      // World first, then scenery: walls fill depth so the forest behind them is rejected early.
+      const cam = this.camera;
+      const mask = cam.layers.mask;
+      this.section('world', () => {
+        this.gl.clear();
+        cam.layers.disable(LAYER_BACKDROP);
+        this.gl.render(this.scene, cam);
+      });
+      this.section('scenery', () => {
+        cam.layers.set(LAYER_BACKDROP);
+        this.gl.render(this.scene, cam);
+      });
+      cam.layers.mask = mask;
+      this.section('viewmodel', () => {
+        this.gl.clearDepth();
+        this.gl.render(this.fpScene, this.fpCamera);
+      });
     }
     return shadow;
   }

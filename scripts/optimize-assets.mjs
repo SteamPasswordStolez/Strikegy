@@ -49,7 +49,7 @@ for (const [id, spec] of Object.entries(manifest.models)) {
     transforms.push(simplify({ simplifier: MeshoptSimplifier, ratio: spec.simplify, error: spec.error ?? 0.002 }));
   }
   transforms.push(
-    textureCompress({ encoder: sharp, targetFormat: 'webp', quality: 82, resize: [1024, 1024] }),
+    textureCompress({ encoder: sharp, targetFormat: 'webp', quality: 82, resize: [spec.texSize ?? 1024, spec.texSize ?? 1024] }),
     meshopt({ encoder: MeshoptEncoder, level: 'medium' }),
   );
   await doc.transform(...transforms);

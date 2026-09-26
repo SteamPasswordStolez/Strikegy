@@ -109,6 +109,7 @@ export class Game {
     this.renderer = new Renderer(container, quality, this.settings.fov);
     this.hud = new HUD(container);
     this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
+    this.renderer.instrument(this.perf.section);
     this.overlay = new Overlay(container);
     this.audio = new AudioSystem(this.settings.masterVolume);
     this.viewModel = new ViewModel(this.renderer.fpScene, this.models);
@@ -180,6 +181,11 @@ export class Game {
     this.weapons = new WeaponController(this.options.loadout, this.physics, this.registry, this.impacts, this.bus);
     this.wireEvents();
 
+    // Lights are filtered by camera layers like meshes; they must light every layer
+    // (world, scenery, effects) since those are drawn in separate passes.
+    r.scene.traverse((o) => {
+      if (o instanceof THREE.Light) o.layers.enableAll();
+    });
     this.warmup();
 
     // Settle the physics broadphase so the first raycasts see static geometry.
@@ -393,9 +399,7 @@ export class Game {
     const perf = this.perf;
     perf.setVisible(this.settings.showFps);
     const tDraw = performance.now();
-    perf.beginGpu();
     if (this.renderer.render()) perf.onShadowUpdate();
-    perf.endGpu();
     const tEnd = performance.now();
     perf.record(
       { frameMs, simMs, updateMs: tDraw - tStart - simMs, renderMs: tEnd - tDraw },

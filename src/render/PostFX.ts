@@ -5,6 +5,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import type { Pass } from 'three/addons/postprocessing/Pass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { LAYER_BACKDROP, LAYER_FX, LAYER_WORLD } from './layers';
 
@@ -46,6 +47,7 @@ export interface PostFXOptions {
 export class PostFX {
   readonly composer: EffectComposer;
   private readonly fxaa: ShaderPass;
+  private readonly labels = new Map<Pass, string>();
 
   constructor(
     gl: THREE.WebGLRenderer,
@@ -64,29 +66,39 @@ export class PostFX {
     // Both ping-pong targets share one depth texture, so passes drawn after a
     // fullscreen pass (AO) still depth-test against the world.
     this.composer.renderTarget2.depthTexture = this.composer.renderTarget1.depthTexture;
-    this.composer.addPass(new LayerRenderPass(scene, camera, [LAYER_WORLD, LAYER_BACKDROP]));
+    this.add('world', new LayerRenderPass(scene, camera, [LAYER_WORLD]));
+    // Scenery after the world: walls and buildings already fill the depth buffer,
+    // so most of the forest behind them is rejected before shading.
+    const backdrop = new LayerRenderPass(scene, camera, [LAYER_BACKDROP]);
+    backdrop.clear = false;
+    this.add('scenery', backdrop);
 
     if (opts.ao) {
       const ao = new HalfResGTAOPass(scene, camera, size.x / 2, size.y / 2);
-      ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 12 });
-      ao.updatePdMaterial({ samples: 8, rings: 2, radius: 6 });
+      ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 8 });
+      ao.updatePdMaterial({ samples: 5, rings: 2, radius: 6 });
       ao.blendIntensity = 0.85;
-      this.composer.addPass(ao);
+      this.add('ao', ao);
     }
 
     const fx = new LayerRenderPass(scene, camera, [LAYER_FX]);
     fx.clear = false;
-    this.composer.addPass(fx);
+    this.add('fx', fx);
 
     const fp = new RenderPass(fpScene, fpCamera);
     fp.clear = false;
     fp.clearDepth = true;
-    this.composer.addPass(fp);
+    this.add('viewmodel', fp);
 
-    if (opts.bloom) this.composer.addPass(new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.1, 0.4, 1.6));
-    this.composer.addPass(new OutputPass());
+    if (opts.bloom) this.add('bloom', new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.1, 0.4, 1.6));
+    this.add('tonemap', new OutputPass());
     this.fxaa = new ShaderPass(FXAAShader);
-    this.composer.addPass(this.fxaa);
+    this.add('fxaa', this.fxaa);
+  }
+
+  private add(label: string, pass: Pass): void {
+    this.labels.set(pass, label);
+    this.composer.addPass(pass);
   }
 
   setSize(w: number, h: number, pixelRatio: number): void {
@@ -97,6 +109,15 @@ export class PostFX {
 
   render(): void {
     this.composer.render();
+  }
+
+  /** Wraps every pass so the F3 panel can time it on the GPU. */
+  instrument(section: (label: string, fn: () => void) => void): void {
+    for (const p of this.composer.passes) {
+      const label = this.labels.get(p) ?? 'pass';
+      const orig = p.render.bind(p);
+      p.render = (...args: Parameters<typeof orig>) => section(label, () => orig(...args));
+    }
   }
 
   dispose(): void {

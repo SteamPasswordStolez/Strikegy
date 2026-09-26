@@ -6,8 +6,8 @@ export const DRS = {
   windowSec: 1,
   /** A frame interval above this missed the 60 fps budget (vsync then shows it twice). */
   missMs: 20,
-  /** Step down when more than this share of a window's frames missed. */
-  missFrac: 0.2,
+  /** Step down when more than this share of a window's frames missed (3 in 60 already stutters). */
+  missFrac: 0.05,
   /** Minimum time between two resizes (each one reallocates buffers). */
   cooldownSec: 1.5,
   /** Time without misses before trying a higher scale; doubles after a failed try. */

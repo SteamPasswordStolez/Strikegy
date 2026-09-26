@@ -27,15 +27,17 @@ export class PerfPanel {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly frames = new Float32Array(HISTORY);
   private head = 0;
-  private sums = { sim: 0, update: 0, render: 0, gpu: 0, gpuN: 0, n: 0 };
+  private sums = { sim: 0, update: 0, render: 0, n: 0 };
+  /** GPU ms per section, summed over the text interval. */
+  private gpuSums = new Map<string, { ms: number; n: number }>();
   private textTimer = 0;
   private shadowUpdates = 0;
   private visible = false;
 
   private readonly gl2: WebGL2RenderingContext;
   private readonly timer: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null;
-  private readonly pending: WebGLQuery[] = [];
-  private active: WebGLQuery | null = null;
+  private readonly pending: { label: string; query: WebGLQuery }[] = [];
+  private active = false;
 
   constructor(
     parent: HTMLElement,
@@ -64,19 +66,30 @@ export class PerfPanel {
     this.renderer.info.autoReset = !v;
   }
 
-  /** Wraps the frame's draw submission in a GPU timer query. */
-  beginGpu(): void {
-    if (!this.visible || !this.timer || this.active || this.pending.length > 4) return;
-    this.active = this.gl2.createQuery();
-    if (this.active) this.gl2.beginQuery(this.timer.TIME_ELAPSED_EXT, this.active);
-  }
-
-  endGpu(): void {
-    if (!this.active || !this.timer) return;
-    this.gl2.endQuery(this.timer.TIME_ELAPSED_EXT);
-    this.pending.push(this.active);
-    this.active = null;
-  }
+  /**
+   * Runs `fn` inside a GPU timer query labeled `label` (queries cannot nest, so
+   * an inner section while one is open just runs untimed).
+   */
+  readonly section = (label: string, fn: () => void): void => {
+    if (!this.visible || !this.timer || this.active || this.pending.length > 64) {
+      fn();
+      return;
+    }
+    const query = this.gl2.createQuery();
+    if (!query) {
+      fn();
+      return;
+    }
+    this.active = true;
+    this.gl2.beginQuery(this.timer.TIME_ELAPSED_EXT, query);
+    try {
+      fn();
+    } finally {
+      this.gl2.endQuery(this.timer.TIME_ELAPSED_EXT);
+      this.active = false;
+      this.pending.push({ label, query });
+    }
+  };
 
   onShadowUpdate(): void {
     this.shadowUpdates++;
@@ -106,15 +119,16 @@ export class PerfPanel {
     const gl = this.gl2;
     const disjoint = gl.getParameter(this.timer.GPU_DISJOINT_EXT) as boolean;
     while (this.pending.length) {
-      const q = this.pending[0]!;
-      if (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) break;
-      const ns = gl.getQueryParameter(q, gl.QUERY_RESULT) as number;
-      gl.deleteQuery(q);
+      const { label, query } = this.pending[0]!;
+      if (!gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) break;
+      const ns = gl.getQueryParameter(query, gl.QUERY_RESULT) as number;
+      gl.deleteQuery(query);
       this.pending.shift();
-      if (!disjoint) {
-        this.sums.gpu += ns / 1e6;
-        this.sums.gpuN++;
-      }
+      if (disjoint) continue;
+      let s = this.gpuSums.get(label);
+      if (!s) this.gpuSums.set(label, (s = { ms: 0, n: 0 }));
+      s.ms += ns / 1e6;
+      s.n++;
     }
   }
 
@@ -144,17 +158,23 @@ export class PerfPanel {
     const s = this.sums;
     const k = Math.max(1, s.n);
     const info = this.renderer.info;
-    const gpuMs = s.gpuN ? (s.gpu / s.gpuN).toFixed(1) : this.timer ? '…' : 'n/a';
+    // Per-section averages; sections run once per frame, so they add up to the frame.
+    const parts = [...this.gpuSums].map(([label, v]) => [label, v.ms / v.n] as const);
+    const total = parts.reduce((a, [, ms]) => a + ms, 0);
+    const gpuMs = parts.length ? total.toFixed(1) : this.timer ? '…' : 'n/a';
+    const detail = parts.map(([label, ms]) => `${label} ${ms.toFixed(1)}`).join(' · ');
     this.text.textContent = [
       `${label}`,
       `${(1000 / avg).toFixed(0)} fps · 1% low ${(1000 / p99).toFixed(0)} · worst ${worst.toFixed(0)} ms`,
       `missed frames (>${MISS_MS} ms): ${missed} / ${HISTORY}`,
       `CPU sim ${(s.sim / k).toFixed(2)} · update ${(s.update / k).toFixed(2)} · draw ${(s.render / k).toFixed(2)} ms`,
       `GPU ${gpuMs} ms · calls ${info.render.calls} · tris ${(info.render.triangles / 1000).toFixed(0)}k`,
+      detail ? `  ${detail}` : '',
       `shadow redraws ${this.shadowUpdates} /0.5s`,
       this.gpu,
     ].join('\n');
-    this.sums = { sim: 0, update: 0, render: 0, gpu: 0, gpuN: 0, n: 0 };
+    this.sums = { sim: 0, update: 0, render: 0, n: 0 };
+    this.gpuSums.clear();
     this.shadowUpdates = 0;
   }
 }

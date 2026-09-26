@@ -98,7 +98,7 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
   geo.computeVertexNormals();
   const terrain = new THREE.Mesh(
     geo,
-    new THREE.MeshStandardMaterial({ vertexColors: true, map: detailTexture(EXTENT / 7), roughness: 1, metalness: 0 }),
+    new THREE.MeshLambertMaterial({ vertexColors: true, map: detailTexture(EXTENT / 7) }),
   );
   terrain.receiveShadow = false;
   group.add(terrain);

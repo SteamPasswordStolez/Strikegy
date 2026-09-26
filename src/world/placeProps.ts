@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ModelLibrary } from '@/render/models';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MODEL, type SurfaceRegistry } from '@/physics/surfaces';
@@ -60,17 +61,50 @@ export function placeProps(
   return root;
 }
 
-/** One InstancedMesh per mesh node of `template`, with an instance per placement matrix. */
+interface ModelPart {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  /** Transform still to apply per instance (identity once node transforms are baked in). */
+  matrix: THREE.Matrix4;
+}
+
+const partsCache = new WeakMap<THREE.Object3D, ModelPart[]>();
+
+/**
+ * A model's meshes merged into one geometry per material, with node transforms
+ * baked in. A rock set of 7 nodes becomes 1 draw call instead of 7. Parts whose
+ * attributes do not match stay separate.
+ */
+function modelParts(template: THREE.Object3D): ModelPart[] {
+  const cached = partsCache.get(template);
+  if (cached) return cached;
+  template.updateMatrixWorld(true);
+  const byMat = new Map<THREE.Material, THREE.Mesh[]>();
+  template.traverse((node) => {
+    if (!(node instanceof THREE.Mesh) || Array.isArray(node.material)) return;
+    let list = byMat.get(node.material);
+    if (!list) byMat.set(node.material, (list = []));
+    list.push(node);
+  });
+  const parts: ModelPart[] = [];
+  for (const [material, meshes] of byMat) {
+    const merged = meshes.length > 1 ? mergeGeometries(meshes.map((m) => m.geometry.clone().applyMatrix4(m.matrixWorld))) : null;
+    if (merged) parts.push({ geometry: merged, material, matrix: new THREE.Matrix4() });
+    else for (const m of meshes) parts.push({ geometry: m.geometry, material, matrix: m.matrixWorld.clone() });
+  }
+  partsCache.set(template, parts);
+  return parts;
+}
+
+/** One InstancedMesh per material of `template`, with an instance per placement matrix. */
 export function instanceModel(template: THREE.Object3D, matrices: THREE.Matrix4[], parent: THREE.Object3D, shadows: boolean): void {
   const tmp = new THREE.Matrix4();
-  template.updateMatrixWorld(true);
-  template.traverse((node) => {
-    if (!(node instanceof THREE.Mesh)) return;
-    const inst = new THREE.InstancedMesh(node.geometry, node.material, matrices.length);
-    matrices.forEach((m, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(m, node.matrixWorld)));
+  for (const part of modelParts(template)) {
+    const inst = new THREE.InstancedMesh(part.geometry, part.material, matrices.length);
+    matrices.forEach((m, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(m, part.matrix)));
     inst.castShadow = shadows;
     inst.receiveShadow = true;
     inst.computeBoundingSphere();
     parent.add(inst);
-  });
+  }
 }
