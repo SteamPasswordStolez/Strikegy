@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { EventBus } from './EventBus';
 import type { DamageCause, GameEvents } from './events';
 import { FixedStepLoop } from './FixedStepLoop';
-import { isTouchDevice, loadSettings, resolveQuality, type Settings } from './Settings';
+import { QUALITY_ORDER, isTouchDevice, loadSettings, resolveQuality, saveSettings, type Settings } from './Settings';
 import { setLocale, t, type MessageKey } from '@/i18n';
 import { Renderer } from '@/render/Renderer';
 import { Atmosphere } from '@/render/visualProfiles';
@@ -157,10 +157,10 @@ export class Game {
     const t0 = performance.now();
     buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts);
     placeProps(map, r.scene, this.physics, this.models, this.impacts);
-    if (map.world.visualProfile !== 'indoor') buildBackdrop(r.scene, map.world.size, !q.postfx);
+    if (map.world.visualProfile !== 'indoor') buildBackdrop(r.scene, map.world.size, q.backdropDetail === 'low');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
-    this.effects = new Effects(r.scene, this.physics, q.postfx);
+    this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
     this.throwables = new Throwables(r.scene, this.physics, this.bus);
     this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
@@ -194,6 +194,14 @@ export class Game {
       if (e.code === 'F3') {
         e.preventDefault();
         this.settings.showFps = !this.settings.showFps;
+      }
+      // F4: cycle quality preset (applied by reloading, since it rebuilds the renderer).
+      if (e.code === 'F4') {
+        e.preventDefault();
+        const i = QUALITY_ORDER.indexOf(this.renderer.preset);
+        this.settings.quality = QUALITY_ORDER[(i + 1) % QUALITY_ORDER.length]!;
+        saveSettings(this.settings);
+        location.reload();
       }
     });
 
@@ -308,6 +316,7 @@ export class Game {
         p.applyLook(lookYaw, lookPitch);
       }
       const alpha = this.loop.advance(dt, (h) => this.simStep(h));
+      this.renderer.adaptResolution(dt * 1000, dt);
       this.updateCamera(alpha, dt, adsFov);
     }
     input.lookYaw = 0;
@@ -521,7 +530,7 @@ export class Game {
         respawnIn: this.player.alive ? null : Math.max(0, this.respawnTimer),
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
-          ? `${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)} · ${this.player.horizontalSpeed().toFixed(1)} m/s`
+          ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)}`
           : null,
       },
       dt,

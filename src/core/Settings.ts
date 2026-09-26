@@ -42,7 +42,27 @@ export function isTouchDevice(): boolean {
   return matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 }
 
+/** Unmasked GPU name via a throwaway WebGL context ('' if unavailable). */
+export function gpuName(): string {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return '';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return name;
+  } catch {
+    return '';
+  }
+}
+
+/** Integrated / low-power GPUs that should start at medium quality. */
+const INTEGRATED_GPU = /intel|uhd|iris|radeon\(tm\) graphics|vega \d+ graphics|mali|adreno|powervr|swiftshader|llvmpipe/i;
+
 export function resolveQuality(q: Settings['quality']): QualityPreset {
   if (q !== 'auto') return q;
-  return isTouchDevice() ? 'low' : 'high';
+  if (isTouchDevice()) return 'low';
+  return INTEGRATED_GPU.test(gpuName()) ? 'medium' : 'high';
 }
+
+export const QUALITY_ORDER: QualityPreset[] = ['low', 'medium', 'high'];

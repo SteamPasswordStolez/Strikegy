@@ -1,20 +1,56 @@
 {
   "source": "Poly Haven (https://polyhaven.com) — all assets CC0",
   "textures": {
-    "rocky_trail": { "res": "1k", "surface": "ground" },
-    "concrete_floor_worn_001": { "res": "1k", "surface": "concrete_floor" },
-    "green_metal_rust": { "res": "1k", "surface": "metal" },
-    "planks_brown_10": { "res": "1k", "surface": "wood" },
-    "red_brick_03": { "res": "1k", "surface": "brick" }
+    "rocky_trail": {
+      "res": "1k",
+      "surface": "ground"
+    },
+    "concrete_floor_worn_001": {
+      "res": "1k",
+      "surface": "concrete_floor"
+    },
+    "green_metal_rust": {
+      "res": "1k",
+      "surface": "metal"
+    },
+    "planks_brown_10": {
+      "res": "1k",
+      "surface": "wood"
+    },
+    "red_brick_03": {
+      "res": "1k",
+      "surface": "brick"
+    }
   },
   "models": {
-    "wooden_military_crate": { "res": "1k" },
-    "old_military_crate": { "res": "1k" },
-    "ammo_box": { "res": "1k" },
-    "barrel_03": { "res": "1k" },
-    "metal_jerrycan_green": { "res": "1k" },
-    "old_tyre": { "res": "1k" },
-    "concrete_road_barrier": { "res": "1k", "simplify": 0.1 },
-    "bolt_action_rifle_7_62": { "res": "1k" }
+    "wooden_military_crate": {
+      "res": "1k",
+      "simplify": 0.3
+    },
+    "old_military_crate": {
+      "res": "1k",
+      "simplify": 0.4
+    },
+    "ammo_box": {
+      "res": "1k",
+      "simplify": 0.5
+    },
+    "barrel_03": {
+      "res": "1k"
+    },
+    "metal_jerrycan_green": {
+      "res": "1k",
+      "simplify": 0.4
+    },
+    "old_tyre": {
+      "res": "1k"
+    },
+    "concrete_road_barrier": {
+      "res": "1k",
+      "simplify": 0.1
+    },
+    "bolt_action_rifle_7_62": {
+      "res": "1k"
+    }
   }
 }

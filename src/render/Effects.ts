@@ -101,7 +101,7 @@ export class Effects {
   constructor(
     scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
-    dynamicLights: boolean,
+    dynamicLights: number,
   ) {
     const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe3a0, transparent: true, opacity: 0.8, depthWrite: false });
     for (let i = 0; i < MAX_TRACERS; i++) {
@@ -157,8 +157,8 @@ export class Effects {
 
     // Lights stay in the scene permanently (intensity 0 when idle) so toggling
     // them never changes the light count and forces shader recompiles.
-    if (dynamicLights) {
-      for (let i = 0; i < 3; i++) {
+    {
+      for (let i = 0; i < dynamicLights; i++) {
         const light = new THREE.PointLight(0xffc27a, 0, 12, 2);
         scene.add(light);
         this.lights.push({ light, peak: 0, life: 1, age: 1 });

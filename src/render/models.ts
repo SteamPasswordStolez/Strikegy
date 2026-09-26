@@ -38,6 +38,11 @@ export class ModelLibrary {
     return this.cache.has(id);
   }
 
+  /** Cached original (do not modify or add to a scene; use for instancing). */
+  template(id: string): THREE.Object3D | null {
+    return this.cache.get(id) ?? null;
+  }
+
   /** New instance sharing geometry and materials with the cached original. */
   instantiate(id: string): THREE.Object3D | null {
     return this.cache.get(id)?.clone(true) ?? null;

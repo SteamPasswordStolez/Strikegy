@@ -4,23 +4,67 @@ import { PostFX } from './PostFX';
 import { LAYER_FX } from './layers';
 
 export interface QualityConfig {
+  /** Upper bound on device pixel ratio before dynamic resolution. */
   pixelRatioCap: number;
   shadows: boolean;
   shadowMapSize: number;
   shadowExtent: number;
+  /** Re-render the shadow map every N frames (static-heavy scenes don't need 60 Hz). */
+  shadowInterval: number;
   textureSize: number;
   postfx: boolean;
   ao: boolean;
   bloom: boolean;
-  /** Hardware MSAA; only used when post-processing is off (SMAA handles it otherwise). */
-  msaa: boolean;
+  /** Point lights for muzzle flashes / explosions (each costs every lit pixel). */
+  dynamicLights: number;
+  /** Detail of scenery outside the playable area. */
+  backdropDetail: 'low' | 'high';
 }
 
 export const QUALITY: Record<QualityPreset, QualityConfig> = {
-  low: { pixelRatioCap: 1, shadows: false, shadowMapSize: 1024, shadowExtent: 30, textureSize: 256, postfx: false, ao: false, bloom: false, msaa: false },
-  medium: { pixelRatioCap: 1.25, shadows: true, shadowMapSize: 2048, shadowExtent: 40, textureSize: 512, postfx: true, ao: false, bloom: true, msaa: false },
-  high: { pixelRatioCap: 1.5, shadows: true, shadowMapSize: 4096, shadowExtent: 50, textureSize: 512, postfx: true, ao: true, bloom: true, msaa: false },
+  low: {
+    pixelRatioCap: 1,
+    shadows: false,
+    shadowMapSize: 1024,
+    shadowExtent: 30,
+    shadowInterval: 2,
+    textureSize: 256,
+    postfx: false,
+    ao: false,
+    bloom: false,
+    dynamicLights: 0,
+    backdropDetail: 'low',
+  },
+  medium: {
+    pixelRatioCap: 1,
+    shadows: true,
+    shadowMapSize: 2048,
+    shadowExtent: 35,
+    shadowInterval: 2,
+    textureSize: 512,
+    postfx: true,
+    ao: false,
+    bloom: false,
+    dynamicLights: 0,
+    backdropDetail: 'low',
+  },
+  high: {
+    pixelRatioCap: 1.25,
+    shadows: true,
+    shadowMapSize: 2048,
+    shadowExtent: 40,
+    shadowInterval: 2,
+    textureSize: 512,
+    postfx: true,
+    ao: true,
+    bloom: true,
+    dynamicLights: 1,
+    backdropDetail: 'high',
+  },
 };
+
+/** Dynamic resolution: render scale bounds and the frame-time band it aims for. */
+const DRS = { min: 0.6, max: 1, step: 0.1, slowMs: 19, fastMs: 13, settleSec: 1.5 };
 
 /**
  * Owns the WebGL renderer. The world scene is drawn first, then a separate
@@ -36,18 +80,25 @@ export class Renderer {
   readonly fpCamera: THREE.PerspectiveCamera;
   readonly quality: QualityConfig;
   private postfx: PostFX | null = null;
+  private frameIndex = 0;
+  /** Current dynamic-resolution scale (1 = native up to the cap). */
+  renderScale = 1;
+  private frameMsAvg = 16;
+  private drsCooldown = DRS.settleSec;
 
-  constructor(container: HTMLElement, preset: QualityPreset, fov: number) {
+  constructor(
+    container: HTMLElement,
+    readonly preset: QualityPreset,
+    fov: number,
+  ) {
     this.quality = QUALITY[preset];
-    this.gl = new THREE.WebGLRenderer({
-      antialias: this.quality.msaa,
-      powerPreference: 'high-performance',
-    });
+    this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.gl.setPixelRatio(this.pixelRatio);
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.shadowMap.enabled = this.quality.shadows;
     this.gl.shadowMap.type = THREE.PCFShadowMap;
+    this.gl.shadowMap.autoUpdate = false;
     this.gl.autoClear = false;
     container.appendChild(this.gl.domElement);
 
@@ -65,7 +116,6 @@ export class Renderer {
       this.postfx = new PostFX(this.gl, this.scene, this.camera, this.fpScene, this.fpCamera, {
         ao: this.quality.ao,
         bloom: this.quality.bloom,
-        smaa: true,
       });
     } else {
       // Direct rendering draws effects with the world; the post chain splits them (see layers.ts).
@@ -77,7 +127,7 @@ export class Renderer {
   }
 
   private get pixelRatio(): number {
-    return Math.min(window.devicePixelRatio, this.quality.pixelRatioCap);
+    return Math.min(window.devicePixelRatio, this.quality.pixelRatioCap) * this.renderScale;
   }
 
   get maxAnisotropy(): number {
@@ -91,6 +141,7 @@ export class Renderer {
   private resize = (): void => {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    this.gl.setPixelRatio(this.pixelRatio);
     this.gl.setSize(w, h);
     this.postfx?.setSize(w, h, this.pixelRatio);
     this.camera.aspect = this.fpCamera.aspect = w / h;
@@ -98,7 +149,29 @@ export class Renderer {
     this.fpCamera.updateProjectionMatrix();
   };
 
+  /**
+   * Feeds a frame time into dynamic resolution. Scale changes reallocate render
+   * targets, so they happen in coarse steps with a settle time in between.
+   */
+  adaptResolution(frameMs: number, dt: number): void {
+    this.frameMsAvg += (Math.min(frameMs, 100) - this.frameMsAvg) * 0.05;
+    this.drsCooldown -= dt;
+    if (this.drsCooldown > 0) return;
+    let next = this.renderScale;
+    if (this.frameMsAvg > DRS.slowMs) next = Math.max(DRS.min, this.renderScale - DRS.step);
+    else if (this.frameMsAvg < DRS.fastMs) next = Math.min(DRS.max, this.renderScale + DRS.step);
+    if (next !== this.renderScale) {
+      this.renderScale = +next.toFixed(2);
+      this.resize();
+      this.drsCooldown = DRS.settleSec;
+    }
+  }
+
   render(): void {
+    this.frameIndex++;
+    if (this.quality.shadows && this.frameIndex % this.quality.shadowInterval === 0) {
+      this.gl.shadowMap.needsUpdate = true;
+    }
     if (this.postfx) {
       this.postfx.render();
       return;

@@ -5,7 +5,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { LAYER_FX, LAYER_WORLD } from './layers';
 
 /** RenderPass that draws only the given camera layer. */
@@ -24,6 +24,13 @@ class LayerRenderPass extends RenderPass {
     cam.layers.set(this.layer);
     super.render(...args);
     cam.layers.mask = prev;
+  }
+}
+
+/** GTAO computed at half resolution; the blend back onto the frame stays full-res. */
+class HalfResGTAOPass extends GTAOPass {
+  override setSize(width: number, height: number): void {
+    super.setSize(Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2)));
   }
 }
 
@@ -66,16 +73,16 @@ const GradeShader = {
 export interface PostFXOptions {
   ao: boolean;
   bloom: boolean;
-  smaa: boolean;
 }
 
 /**
- * Post-processing chain: world -> AO -> transparent FX -> first-person overlay -> bloom ->
- * tone mapping/sRGB -> grade -> SMAA. The viewmodel is drawn inside the chain
- * (after clearing depth) so it gets the same bloom, grade and anti-aliasing.
+ * Post-processing chain: world -> AO -> transparent FX -> first-person overlay ->
+ * bloom -> tone mapping/sRGB -> grade -> FXAA. The viewmodel is drawn inside the
+ * chain (after clearing depth) so it gets the same grade and anti-aliasing.
  */
 export class PostFX {
   readonly composer: EffectComposer;
+  private readonly fxaa: ShaderPass;
 
   constructor(
     gl: THREE.WebGLRenderer,
@@ -97,8 +104,9 @@ export class PostFX {
     this.composer.addPass(new LayerRenderPass(scene, camera, LAYER_WORLD));
 
     if (opts.ao) {
-      const ao = new GTAOPass(scene, camera, size.x, size.y);
-      ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1 });
+      const ao = new HalfResGTAOPass(scene, camera, size.x / 2, size.y / 2);
+      ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 12 });
+      ao.updatePdMaterial({ samples: 8, rings: 2, radius: 6 });
       ao.blendIntensity = 0.85;
       this.composer.addPass(ao);
     }
@@ -112,17 +120,17 @@ export class PostFX {
     fp.clearDepth = true;
     this.composer.addPass(fp);
 
-    if (opts.bloom) {
-      this.composer.addPass(new UnrealBloomPass(size, 0.1, 0.4, 1.6));
-    }
+    if (opts.bloom) this.composer.addPass(new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.1, 0.4, 1.6));
     this.composer.addPass(new OutputPass());
     this.composer.addPass(new ShaderPass(GradeShader));
-    if (opts.smaa) this.composer.addPass(new SMAAPass());
+    this.fxaa = new ShaderPass(FXAAShader);
+    this.composer.addPass(this.fxaa);
   }
 
   setSize(w: number, h: number, pixelRatio: number): void {
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(w, h);
+    this.fxaa.material.uniforms.resolution!.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
   }
 
   render(): void {
