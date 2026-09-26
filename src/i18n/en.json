@@ -1,0 +1,17 @@
+{
+  "title": "STRIKEGY",
+  "start.click": "Click to start",
+  "start.tap": "Tap to start",
+  "start.hint": "WASD move · Shift sprint · Ctrl crouch · Space jump · LMB fire · RMB aim · R reload · F3 FPS",
+  "paused": "Paused",
+  "loading": "Loading...",
+  "hud.reloading": "Reloading",
+  "hud.noAmmo": "No ammo",
+  "hud.hp": "HP",
+  "touch.fire": "FIRE",
+  "touch.ads": "AIM",
+  "touch.jump": "JUMP",
+  "touch.reload": "RLD",
+  "touch.crouch": "DUCK",
+  "error.map": "Failed to load map"
+}

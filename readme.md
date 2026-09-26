@@ -1,32 +1,62 @@
-# Strikegy — Patch 4.0 Pre2 체크포인트
+# Strikegy
 
-이 체크포인트는 **Patch 4.0 Pre2(로비/캠페인 셸 리마스터 단계)** 기준으로 정리된 프로젝트 상태입니다.
-
-## UI 배경 이미지(선택)
-아래 경로에 배경 이미지를 넣으면 로비/캠페인 메뉴에 적용됩니다.
-
-- 로비: `assets/ui/bg/lobby.webp`
-- 캠페인: `assets/ui/bg/campaign.webp`
-
-## BGM 파일 넣는 위치
-아래 경로에 mp3 파일을 넣으면 됩니다.
-
-- `assets/audio/bgm/Lobby.mp3`
-- `assets/audio/bgm/Briefing.mp3`
-- `assets/audio/bgm/Sneaking.mp3`
-- `assets/audio/bgm/Engaging.mp3`
-
-> 브라우저 자동재생 정책으로 인해 BGM이 차단될 수 있습니다.
-> 이 경우 첫 클릭/키입력에서 자동으로 재시도합니다.
-
-## 문서 정리 규칙
-MD 문서는 루트에 아래 2개만 유지합니다.
-
-- `readme.md` (이 파일)
-- `patchhistory.md` (기존에 흩어진 노트 통합본)
-
-기존 `PATCH_*_NOTES.md`, `HF*_Notes.md` 등은 모두 제거하고 `patchhistory.md`로 통합했습니다.
+브라우저 FPS. Vite + TypeScript + Three.js + Rapier. 전신 프로젝트(Strikegy p1)를 새 구조로 다시 작성하는 중입니다.
 
 ## 실행
-- 로컬 서버(Live Server 등)로 `index.html`을 실행하는 방식으로 사용합니다.
 
+```bash
+npm install
+npm run dev        # http://localhost:5173  (?map=sandbox)
+npm test           # Vitest 단위 테스트
+npm run lint
+npm run build      # tsc 검사 + dist/ 빌드
+```
+
+`main`에 push하면 GitHub Actions가 lint → test → build를 돌리고 GitHub Pages로 배포합니다(`.github/workflows/deploy.yml`).
+
+## 조작 (샌드박스)
+
+| 입력 | 동작 |
+|---|---|
+| WASD / Shift / Ctrl(C) / Space | 이동 / 달리기 / 앉기 / 점프 |
+| 좌클릭 / 우클릭 / R | 사격 / 조준 / 재장전 |
+| 1–9, Q, 마우스 휠 | 무기 전환 |
+| F3 | FPS·좌표 표시 |
+
+모바일: 왼쪽 드래그로 이동하고, 오른쪽 드래그로 시점을 돌립니다. 사격/조준/점프/장전/앉기는 버튼으로 합니다.
+
+## 구조
+
+```
+src/
+  core/      Game(오케스트레이션), FixedStepLoop(60Hz), EventBus, Settings
+  input/     InputState(장치 무관 액션), KeyboardMouse, Touch
+  physics/   PhysicsWorld(Rapier, 충돌 레이어, 레이캐스트)
+  player/    Player(캐릭터 컨트롤러), movement(순수 이동 수학)
+  weapons/   weaponData(밸런스), WeaponState(순수 발사/장전 로직), WeaponController, ViewModel
+  combat/    Hitboxes(부위 판정), TargetDummy
+  render/    Renderer(월드 + 뷰모델 2패스), visualProfiles, Effects, textures
+  world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout
+  audio/     AudioSystem(임시 합성 SFX)
+  ui/        HUD, Overlay
+  i18n/      ko.json / en.json
+public/maps/ 맵 JSON
+tests/       단위 테스트
+```
+
+원칙:
+- 시뮬레이션은 고정 스텝으로 돌리고, 렌더에서만 보간합니다.
+- 시스템 간 통신은 EventBus로 합니다.
+- 게임 로직은 DOM이나 Three.js에 의존하지 않게 작성해서 테스트할 수 있게 합니다.
+- 전역 `window`에 핫패치를 붙이지 않습니다. dev 빌드에서만 `window.__strikegy` 디버그 핸들을 둡니다.
+
+## 로드맵
+
+- [x] M0 셋업
+- [x] M1 FPS 코어 샌드박스
+- [ ] M2 전투: 반동/탄퍼짐 튜닝, 투척물, 실제 사운드, 데미지 피드백
+- [ ] M3 봇 AI: navmesh(recast), 인지, utility AI, 분대 전술
+- [ ] M4 모드: Zone/Conquest/Frontline, 병과, 경제/상점, 로비
+- [ ] M5 모바일/성능: 터치 HUD 다듬기, 자동 품질, Rapier WASM 분리 로딩(번들 축소)
+- [ ] M6 캠페인 프레임워크 (새 스토리)
+- [ ] M7 콘텐츠 / 폴리싱
