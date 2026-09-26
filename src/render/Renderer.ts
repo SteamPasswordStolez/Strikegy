@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
+import { LAYER_FX } from './layers';
 
 export interface QualityConfig {
   pixelRatioCap: number;
@@ -66,6 +67,9 @@ export class Renderer {
         bloom: this.quality.bloom,
         smaa: true,
       });
+    } else {
+      // Direct rendering draws effects with the world; the post chain splits them (see layers.ts).
+      this.camera.layers.enable(LAYER_FX);
     }
 
     this.resize();

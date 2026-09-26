@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { ModelLibrary } from '@/render/models';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
+import { SURFACE_FROM_MODEL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef } from './mapTypes';
 
 const DEG = Math.PI / 180;
@@ -11,6 +12,7 @@ export function placeProps(
   scene: THREE.Scene,
   physics: PhysicsWorld,
   models: ModelLibrary,
+  impacts: SurfaceRegistry,
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = 'props';
@@ -32,7 +34,8 @@ export function placeProps(
     box.getCenter(center).multiplyScalar(scale).applyQuaternion(obj.quaternion).add(obj.position);
     box.getSize(half).multiplyScalar(scale / 2);
     const q = obj.quaternion;
-    physics.addStaticBox(center, half, { x: q.x, y: q.y, z: q.z, w: q.w });
+    const collider = physics.addStaticBox(center, half, { x: q.x, y: q.y, z: q.z, w: q.w });
+    impacts.set(collider.handle, SURFACE_FROM_MODEL[p.model] ?? 'wood');
   }
 
   scene.add(root);

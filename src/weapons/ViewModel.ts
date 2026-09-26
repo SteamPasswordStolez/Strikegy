@@ -50,6 +50,9 @@ export interface ViewModelFrame {
   reloading: boolean;
   drawProgress: number;
   hideForScope: boolean;
+  /** 0..1 progress of a magazine reload (ignored for per-shell). */
+  reloadProgress: number;
+  magReload: boolean;
 }
 
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
@@ -67,6 +70,14 @@ export class ViewModel {
   private sprintBlend = 0;
   private reloadBlend = 0;
   private currentId = '';
+  /** Magazine and pump meshes (procedural guns) animated during reload / cycling. */
+  private mag: THREE.Object3D | null = null;
+  private magBase = new THREE.Vector3();
+  private pump: THREE.Object3D | null = null;
+  private pumpBase = new THREE.Vector3();
+  private cycleT = 1;
+  private throwT = 1;
+  private landDip = 0;
 
   constructor(
     private readonly fpScene: THREE.Scene,
@@ -92,6 +103,8 @@ export class ViewModel {
       if (o instanceof THREE.Mesh && o !== this.flash) o.geometry.dispose();
     });
     this.gun.clear();
+    this.mag = null;
+    this.pump = null;
     if (def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) {
       this.buildScannedRifle();
       return;
@@ -132,14 +145,18 @@ export class ViewModel {
       topY += 0.012;
       box(0.036, 0.1, 0.045, 0, -0.1, 0.04, m.polymer, -0.3); // grip
       box(0.006, 0.02, 0.05, 0, -0.07, -0.01, m.dark); // trigger guard
-      if (s.mag > 0) box(0.03, s.mag, 0.07, 0, -0.06 - s.mag / 2, -0.09, m.polymer, 0.15);
+      if (s.mag > 0) {
+        this.mag = box(0.03, s.mag, 0.07, 0, -0.06 - s.mag / 2, -0.09, m.polymer, 0.15);
+        this.magBase.copy(this.mag.position);
+      }
       if (s.stock) {
         box(0.04, 0.06, 0.2, 0, -0.015, 0.2, furniture);
         box(0.045, 0.08, 0.02, 0, -0.02, 0.305, m.polymer); // butt pad
       }
       if (def.class === 'sg') {
         tube(0.013, L * 0.7, 0, -0.035, -L * 0.62, m.metal); // magazine tube
-        box(0.05, 0.045, 0.14, 0, -0.04, -L * 0.72, furniture); // pump
+        this.pump = box(0.05, 0.045, 0.14, 0, -0.04, -L * 0.72, furniture);
+        this.pumpBase.copy(this.pump.position);
       }
     }
 
@@ -232,6 +249,20 @@ export class ViewModel {
     }
   }
 
+  /** Bolt or pump worked after a shot. */
+  onCycle(): void {
+    this.cycleT = 0;
+  }
+
+  /** Weapon dips out of the way while the off hand throws. */
+  onThrow(): void {
+    this.throwT = 0;
+  }
+
+  onLand(impactSpeed: number): void {
+    this.landDip = Math.min(0.06, impactSpeed * 0.006);
+  }
+
   onFire(ads: boolean): void {
     this.kick = Math.min(this.kick + (ads ? 0.025 : 0.04), 0.08);
     this.kickRot = Math.min(this.kickRot + (ads ? 0.03 : 0.07), 0.2);
@@ -259,19 +290,35 @@ export class ViewModel {
 
     this.kick *= Math.exp(-18 * dt);
     this.kickRot *= Math.exp(-14 * dt);
+    this.landDip *= Math.exp(-8 * dt);
+
+    // Magazine drops out, pauses, and is seated again.
+    if (this.mag) {
+      const p = f.reloading && f.magReload ? f.reloadProgress : 1;
+      const out = p < 0.2 ? 0 : p < 0.4 ? (p - 0.2) / 0.2 : p < 0.5 ? 1 : p < 0.62 ? 1 - (p - 0.5) / 0.12 : 0;
+      this.mag.position.set(this.magBase.x, this.magBase.y - out * 0.22, this.magBase.z + out * 0.04);
+      this.mag.visible = !(p > 0.4 && p < 0.5);
+    }
+    // Pump/bolt stroke: back then forward over ~0.35 s.
+    this.cycleT = Math.min(1, this.cycleT + dt / 0.35);
+    const stroke = Math.sin(this.cycleT * Math.PI);
+    if (this.pump) this.pump.position.set(this.pumpBase.x, this.pumpBase.y, this.pumpBase.z + stroke * 0.08);
+    this.throwT = Math.min(1, this.throwT + dt / 0.65);
+    const throwDip = Math.sin(this.throwT * Math.PI);
 
     const ads = new THREE.Vector3(0, -this.sightHeight, ADS_Z);
     const pos = HIP.clone().lerp(ads, f.adsBlend);
     pos.addScaledVector(SPRINT_OFFSET, this.sprintBlend);
     pos.x += bobX + this.sway.x * swayScale * 0.4;
     pos.y += bobY + this.sway.y * swayScale * 0.4 - this.reloadBlend * 0.06;
-    pos.y -= (1 - f.drawProgress) * 0.25;
+    pos.y -= (1 - f.drawProgress) * 0.25 + throwDip * 0.28 + this.landDip;
+    pos.z += stroke * (this.pump ? 0.01 : 0.025);
     pos.z += this.kick;
     this.root.position.copy(pos);
     this.root.rotation.set(
-      this.kickRot + this.sway.y * swayScale - this.reloadBlend * 0.5 - this.sprintBlend * 0.2,
-      this.sway.x * swayScale + this.sprintBlend * 0.6,
-      this.reloadBlend * 0.4 + this.sprintBlend * 0.25,
+      this.kickRot + this.sway.y * swayScale - this.reloadBlend * 0.5 - this.sprintBlend * 0.2 - throwDip * 0.5,
+      this.sway.x * swayScale + this.sprintBlend * 0.6 - throwDip * 0.3,
+      this.reloadBlend * 0.4 + this.sprintBlend * 0.25 + stroke * (this.pump ? 0.05 : 0.22),
     );
 
     this.flashTimer -= dt;

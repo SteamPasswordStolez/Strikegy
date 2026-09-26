@@ -2,7 +2,7 @@
   "title": "STRIKEGY",
   "start.click": "Click to start",
   "start.tap": "Tap to start",
-  "start.hint": "WASD move · Shift sprint · Ctrl crouch · Space jump · LMB fire · RMB aim · R reload · F3 FPS",
+  "start.hint": "WASD move · Shift sprint · Ctrl crouch · Space jump · LMB fire · RMB aim · R reload · G grenade · T switch grenade · F3 FPS",
   "paused": "Paused",
   "loading": "Loading...",
   "hud.reloading": "Reloading",
@@ -13,5 +13,14 @@
   "touch.jump": "JUMP",
   "touch.reload": "RLD",
   "touch.crouch": "DUCK",
-  "error.map": "Failed to load map"
+  "error.map": "Failed to load map",
+  "hud.dead": "KILLED",
+  "hud.respawnIn": "Respawning in",
+  "feed.you": "You",
+  "grenade.frag": "FRAG",
+  "grenade.flash": "FLASH",
+  "grenade.smoke": "SMOKE",
+  "touch.grenade": "NADE",
+  "error.gpu": "The graphics device was reset",
+  "error.gpuReload": "Click to reload"
 }

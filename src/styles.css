@@ -309,3 +309,118 @@ body {
 .is-touch .hud-ammo {
   font-size: 26px;
 }
+
+/* ---------- Combat feedback ---------- */
+.hud-hurt {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(140, 0, 0, 0.55) 80%, rgba(90, 0, 0, 0.85));
+}
+.hud-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: #fff;
+}
+.damage-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+.damage-arc {
+  position: absolute;
+  left: -70px;
+  top: -130px;
+  width: 140px;
+  height: 260px;
+  transform-origin: 50% 50%;
+}
+.damage-arc::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 0;
+  height: 26px;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  border-top: 6px solid rgba(255, 60, 40, 0.9);
+  filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.6));
+}
+.killfeed {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(18px, env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 13px;
+}
+.killfeed-row {
+  display: flex;
+  gap: 8px;
+  padding: 3px 8px;
+  background: rgba(10, 12, 16, 0.45);
+  border-radius: 3px;
+}
+.kf-you {
+  color: var(--hud-accent);
+  font-weight: 700;
+}
+.kf-weapon {
+  color: var(--hud-dim);
+}
+.kf-name {
+  color: #ff8a7a;
+}
+.hud-grenade {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--hud-dim);
+  letter-spacing: 0.05em;
+}
+.hud-grenade.empty {
+  opacity: 0.4;
+}
+.hud-healthbar {
+  width: 180px;
+  height: 5px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.hud-healthbar-fill {
+  height: 100%;
+  background: var(--hud-fg);
+  transition: width 0.15s linear;
+}
+.hud-healthbar-fill.low {
+  background: var(--hud-danger);
+}
+.hud-death {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  white-space: pre-line;
+  text-align: center;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--hud-danger);
+  display: none;
+}
+.hud-death.on {
+  display: block;
+}
+.is-touch .killfeed {
+  top: 90px;
+}
+.touch-grenade {
+  right: 40px;
+  bottom: 280px;
+  width: 50px;
+  height: 50px;
+}

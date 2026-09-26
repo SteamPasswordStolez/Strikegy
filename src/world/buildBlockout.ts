@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { worldScaleBoxUVs, type SurfaceLibrary } from '@/render/textures';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
+import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
@@ -19,6 +20,7 @@ export function buildBlockout(
   scene: THREE.Scene,
   physics: PhysicsWorld,
   surfaces: SurfaceLibrary,
+  impacts: SurfaceRegistry,
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = `map:${map.meta.id}`;
@@ -35,15 +37,22 @@ export function buildBlockout(
     root,
     physics,
     surfaces,
+    impacts,
   );
 
-  for (const obj of map.objects) addBox(obj, root, physics, surfaces);
+  for (const obj of map.objects) addBox(obj, root, physics, surfaces, impacts);
 
   scene.add(root);
   return root;
 }
 
-function addBox(obj: MapObject, root: THREE.Group, physics: PhysicsWorld, surfaces: SurfaceLibrary): void {
+function addBox(
+  obj: MapObject,
+  root: THREE.Group,
+  physics: PhysicsWorld,
+  surfaces: SurfaceLibrary,
+  impacts: SurfaceRegistry,
+): void {
   const [w, h, d] = obj.size;
   const geo = new THREE.BoxGeometry(w, h, d);
   worldScaleBoxUVs(geo, w, h, d);
@@ -61,9 +70,10 @@ function addBox(obj: MapObject, root: THREE.Group, physics: PhysicsWorld, surfac
   root.add(mesh);
 
   const q = mesh.quaternion;
-  physics.addStaticBox(
+  const collider = physics.addStaticBox(
     { x: obj.pos[0], y: obj.pos[1], z: obj.pos[2] },
     { x: w / 2, y: h / 2, z: d / 2 },
     { x: q.x, y: q.y, z: q.z, w: q.w },
   );
+  impacts.set(collider.handle, SURFACE_FROM_MATERIAL[kind]);
 }

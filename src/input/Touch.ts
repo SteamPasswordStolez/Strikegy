@@ -4,7 +4,7 @@ import type { InputSource, InputState } from './InputState';
 const LOOK_RAD_PER_PX = 0.006;
 const STICK_RADIUS = 56;
 
-type ButtonAction = 'fire' | 'ads' | 'jump' | 'reload' | 'crouch';
+type ButtonAction = 'fire' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade';
 
 /**
  * Basic touch controls: left side = floating move stick, right side = look drag,
@@ -44,6 +44,7 @@ export class TouchControls implements InputSource {
       ['jump', 'touch.jump'],
       ['reload', 'touch.reload'],
       ['crouch', 'touch.crouch'],
+      ['grenade', 'touch.grenade'],
     ];
     for (const [action, label] of buttons) {
       const b = document.createElement('div');
@@ -154,6 +155,7 @@ export class TouchControls implements InputSource {
     s.crouch ||= this.crouchToggled;
     s.jump ||= this.pulses.has('jump');
     s.reload ||= this.pulses.has('reload');
+    s.throwGrenade ||= this.pulses.has('grenade');
     this.pulses.clear();
   }
 

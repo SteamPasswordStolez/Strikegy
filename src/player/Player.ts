@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { GameBus } from '@/core/events';
 import type { InputState } from '@/input/InputState';
+import type { SurfaceRegistry } from '@/physics/surfaces';
+import { Health } from './health';
 import {
   MOVE,
   approachVelocity,
@@ -11,6 +13,8 @@ import {
 } from './movement';
 
 const MAX_PITCH = (89 * Math.PI) / 180;
+/** Meters travelled per footstep sound. */
+const STRIDE = { walk: 1.9, sprint: 2.5, crouch: 1.5 };
 
 /**
  * First-person player: kinematic capsule driven by Rapier's character
@@ -26,7 +30,8 @@ export class Player {
   grounded = false;
   crouching = false;
   sprinting = false;
-  health = 100;
+  readonly health = new Health();
+  private strideLeft: number = STRIDE.walk / 2;
   /** Smoothed eye height above feet (render side). */
   eyeHeight: number = MOVE.standHeight - MOVE.eyeInset;
 
@@ -38,6 +43,7 @@ export class Player {
   constructor(
     private readonly physics: PhysicsWorld,
     private readonly bus: GameBus,
+    private readonly surfaces: SurfaceRegistry,
     spawn: THREE.Vector3,
     yaw: number,
   ) {
@@ -56,6 +62,10 @@ export class Player {
     this.controller.setMinSlopeSlideAngle((55 * Math.PI) / 180);
     this.controller.setApplyImpulsesToDynamicBodies(true);
     this.teleport(spawn, yaw);
+  }
+
+  get alive(): boolean {
+    return this.health.alive;
   }
 
   teleport(feet: THREE.Vector3, yaw: number): void {
@@ -121,6 +131,25 @@ export class Player {
     this.feet.y += moved.y;
     this.feet.z += moved.z;
     this.body.setNextKinematicTranslation(this.centerFromFeet());
+    this.health.step(dt);
+    this.stepFootsteps(Math.hypot(moved.x, moved.z));
+  }
+
+  private stepFootsteps(dist: number): void {
+    if (!this.grounded || dist < 1e-4) return;
+    this.strideLeft -= dist;
+    if (this.strideLeft > 0) return;
+    this.strideLeft += this.crouching ? STRIDE.crouch : this.sprinting ? STRIDE.sprint : STRIDE.walk;
+    // Crouch-walking is silent.
+    if (this.crouching) return;
+    const from = { x: this.feet.x, y: this.feet.y + 0.2, z: this.feet.z };
+    const hit = this.physics.raycast(from, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
+    if (!hit) return;
+    this.bus.emit('player:footstep', {
+      surface: this.surfaces.get(hit.collider.handle),
+      sprinting: this.sprinting,
+      point: this.feet.clone(),
+    });
   }
 
   private updateCrouch(wantCrouch: boolean): void {

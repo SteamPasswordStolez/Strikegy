@@ -12,6 +12,7 @@ let nextId = 1;
 /** Humanoid-sized practice target with head/body/leg hitboxes. Respawns after death. */
 export class TargetDummy implements Damageable {
   readonly id = nextId++;
+  readonly name = `Target ${this.id}`;
   readonly group = new THREE.Group();
   private hp = MAX_HP;
   private deadTimer = 0;
@@ -74,6 +75,11 @@ export class TargetDummy implements Damageable {
     add(RAPIER.ColliderDesc.cuboid(0.2, 0.45, 0.12), 0.45, 'limb');
     add(RAPIER.ColliderDesc.cuboid(0.25, 0.3, 0.14), 1.2, 'body');
     add(RAPIER.ColliderDesc.ball(0.13), 1.64, 'head');
+  }
+
+  /** Chest height point used for explosion checks. */
+  get center(): THREE.Vector3 {
+    return this.group.position.clone().setY(this.group.position.y + 1.15);
   }
 
   get alive(): boolean {

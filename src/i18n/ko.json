@@ -2,7 +2,7 @@
   "title": "STRIKEGY",
   "start.click": "클릭하여 시작",
   "start.tap": "탭하여 시작",
-  "start.hint": "WASD 이동 · Shift 달리기 · Ctrl 앉기 · Space 점프 · 좌클릭 사격 · 우클릭 조준 · R 재장전 · F3 FPS",
+  "start.hint": "WASD 이동 · Shift 달리기 · Ctrl 앉기 · Space 점프 · 좌클릭 사격 · 우클릭 조준 · R 재장전 · G 수류탄 · T 수류탄 변경 · F3 FPS",
   "paused": "일시정지",
   "loading": "로딩 중...",
   "hud.reloading": "재장전 중",
@@ -13,5 +13,14 @@
   "touch.jump": "점프",
   "touch.reload": "장전",
   "touch.crouch": "앉기",
-  "error.map": "맵을 불러오지 못했습니다"
+  "error.map": "맵을 불러오지 못했습니다",
+  "hud.dead": "사망",
+  "hud.respawnIn": "리스폰까지",
+  "feed.you": "나",
+  "grenade.frag": "파편",
+  "grenade.flash": "섬광",
+  "grenade.smoke": "연막",
+  "touch.grenade": "투척",
+  "error.gpu": "그래픽 장치가 재설정되었습니다",
+  "error.gpuReload": "클릭하여 다시 불러오기"
 }

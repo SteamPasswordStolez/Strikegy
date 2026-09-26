@@ -2,6 +2,8 @@ import type { HitPart } from '@/core/events';
 
 export interface Damageable {
   readonly id: number;
+  /** Display name for the kill feed. */
+  readonly name: string;
   readonly alive: boolean;
   /** Returns true if this damage killed the target. */
   applyDamage(amount: number, part: HitPart): boolean;

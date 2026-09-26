@@ -7,6 +7,8 @@ export const Layer = {
   WORLD: 0x0001,
   PLAYER: 0x0002,
   HITBOX: 0x0004,
+  /** Thrown objects: collide with the world only. */
+  DEBRIS: 0x0008,
 } as const;
 
 /** Packs Rapier interaction groups: upper 16 bits membership, lower 16 bits filter. */

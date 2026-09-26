@@ -6,6 +6,26 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { LAYER_FX, LAYER_WORLD } from './layers';
+
+/** RenderPass that draws only the given camera layer. */
+class LayerRenderPass extends RenderPass {
+  constructor(
+    scene: THREE.Scene,
+    camera: THREE.Camera,
+    private readonly layer: number,
+  ) {
+    super(scene, camera);
+  }
+
+  override render(...args: Parameters<RenderPass['render']>): void {
+    const cam = this.camera as THREE.Camera;
+    const prev = cam.layers.mask;
+    cam.layers.set(this.layer);
+    super.render(...args);
+    cam.layers.mask = prev;
+  }
+}
 
 /** Final display-space grade: saturation, contrast, warm tint and vignette. */
 const GradeShader = {
@@ -50,7 +70,7 @@ export interface PostFXOptions {
 }
 
 /**
- * Post-processing chain: world -> AO -> first-person overlay -> bloom ->
+ * Post-processing chain: world -> AO -> transparent FX -> first-person overlay -> bloom ->
  * tone mapping/sRGB -> grade -> SMAA. The viewmodel is drawn inside the chain
  * (after clearing depth) so it gets the same bloom, grade and anti-aliasing.
  */
@@ -66,9 +86,15 @@ export class PostFX {
     opts: PostFXOptions,
   ) {
     const size = gl.getSize(new THREE.Vector2());
-    const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType });
+    const target = new THREE.WebGLRenderTarget(size.x, size.y, {
+      type: THREE.HalfFloatType,
+      depthTexture: new THREE.DepthTexture(size.x, size.y),
+    });
     this.composer = new EffectComposer(gl, target);
-    this.composer.addPass(new RenderPass(scene, camera));
+    // Both ping-pong targets share one depth texture, so passes drawn after a
+    // fullscreen pass (AO) still depth-test against the world.
+    this.composer.renderTarget2.depthTexture = this.composer.renderTarget1.depthTexture;
+    this.composer.addPass(new LayerRenderPass(scene, camera, LAYER_WORLD));
 
     if (opts.ao) {
       const ao = new GTAOPass(scene, camera, size.x, size.y);
@@ -76,6 +102,10 @@ export class PostFX {
       ao.blendIntensity = 0.85;
       this.composer.addPass(ao);
     }
+
+    const fx = new LayerRenderPass(scene, camera, LAYER_FX);
+    fx.clear = false;
+    this.composer.addPass(fx);
 
     const fp = new RenderPass(fpScene, fpCamera);
     fp.clear = false;

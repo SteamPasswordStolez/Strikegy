@@ -20,6 +20,10 @@ export interface InputState {
   weaponCycle: number;
   /** Pulse: select loadout slot (0-based), or -1. */
   weaponSlot: number;
+  /** Pulse: throw the selected grenade. */
+  throwGrenade: boolean;
+  /** Pulse: select the next grenade type. */
+  cycleGrenade: boolean;
 }
 
 export function createInputState(): InputState {
@@ -36,6 +40,8 @@ export function createInputState(): InputState {
     reload: false,
     weaponCycle: 0,
     weaponSlot: -1,
+    throwGrenade: false,
+    cycleGrenade: false,
   };
 }
 
@@ -45,6 +51,8 @@ export function consumePulses(s: InputState): void {
   s.reload = false;
   s.weaponCycle = 0;
   s.weaponSlot = -1;
+  s.throwGrenade = false;
+  s.cycleGrenade = false;
 }
 
 export function resetFrameInput(s: InputState): void {
