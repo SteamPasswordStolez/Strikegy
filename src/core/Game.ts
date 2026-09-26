@@ -387,6 +387,8 @@ export class Game {
     this.throwBlock = Math.max(0, this.throwBlock - dt);
     this.throwCooldown = Math.max(0, this.throwCooldown - dt);
 
+    // A click released before this step still counts as one trigger pull.
+    if (input.firePressed) input.fire = true;
     if (p.alive) {
       if (input.cycleGrenade) this.grenades.cycle();
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();

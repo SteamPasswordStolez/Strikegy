@@ -34,42 +34,6 @@ class HalfResGTAOPass extends GTAOPass {
   }
 }
 
-/** Final display-space grade: saturation, contrast, warm tint and vignette. */
-const GradeShader = {
-  name: 'GradeShader',
-  uniforms: {
-    tDiffuse: { value: null },
-    uSaturation: { value: 1.08 },
-    uContrast: { value: 1.06 },
-    uTint: { value: new THREE.Vector3(1.02, 1.0, 0.97) },
-    uVignette: { value: 0.32 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }`,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform float uSaturation;
-    uniform float uContrast;
-    uniform vec3 uTint;
-    uniform float uVignette;
-    varying vec2 vUv;
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
-      vec3 col = c.rgb;
-      float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-      col = mix(vec3(l), col, uSaturation);
-      col = (col - 0.5) * uContrast + 0.5;
-      col *= uTint;
-      float d = length((vUv - 0.5) * vec2(1.0, 0.85));
-      col *= 1.0 - uVignette * smoothstep(0.35, 0.85, d);
-      gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
-    }`,
-};
-
 export interface PostFXOptions {
   ao: boolean;
   bloom: boolean;
@@ -77,8 +41,8 @@ export interface PostFXOptions {
 
 /**
  * Post-processing chain: world -> AO -> transparent FX -> first-person overlay ->
- * bloom -> tone mapping/sRGB -> grade -> FXAA. The viewmodel is drawn inside the
- * chain (after clearing depth) so it gets the same grade and anti-aliasing.
+ * bloom -> tone mapping + grade (grade.ts) -> FXAA. The viewmodel is drawn inside the
+ * chain (after clearing depth) so it gets the same anti-aliasing.
  */
 export class PostFX {
   readonly composer: EffectComposer;
@@ -122,7 +86,6 @@ export class PostFX {
 
     if (opts.bloom) this.composer.addPass(new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.1, 0.4, 1.6));
     this.composer.addPass(new OutputPass());
-    this.composer.addPass(new ShaderPass(GradeShader));
     this.fxaa = new ShaderPass(FXAAShader);
     this.composer.addPass(this.fxaa);
   }

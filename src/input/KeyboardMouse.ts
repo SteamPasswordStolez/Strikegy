@@ -9,6 +9,7 @@ export class KeyboardMouse implements InputSource {
   private dx = 0;
   private dy = 0;
   private jumpQueued = false;
+  private fireQueued = false;
   private reloadQueued = false;
   private cycleQueued = 0;
   private slotQueued = -1;
@@ -36,7 +37,9 @@ export class KeyboardMouse implements InputSource {
     this.listen<KeyboardEvent>(window, 'keyup', (e) => this.keys.delete(e.code));
     this.listen(window, 'blur', () => this.releaseAll());
     this.listen<MouseEvent>(target, 'mousedown', (e) => {
-      if (this.locked) this.buttons.add(e.button);
+      if (!this.locked) return;
+      this.buttons.add(e.button);
+      if (e.button === 0) this.fireQueued = true;
     });
     this.listen<MouseEvent>(window, 'mouseup', (e) => this.buttons.delete(e.button));
     this.listen(target, 'contextmenu', (e) => e.preventDefault());
@@ -91,6 +94,8 @@ export class KeyboardMouse implements InputSource {
     this.dy = 0;
 
     s.fire ||= this.buttons.has(0);
+    s.firePressed ||= this.fireQueued;
+    this.fireQueued = false;
     s.ads ||= this.buttons.has(2);
     s.sprint ||= k.has('ShiftLeft');
     s.crouch ||= k.has('ControlLeft') || k.has('KeyC');

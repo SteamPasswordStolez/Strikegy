@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
 import { LAYER_FX } from './layers';
+import { installGradeToneMapping } from './grade';
+import { DynamicResolution } from './dynamicResolution';
+
+installGradeToneMapping();
 
 export interface QualityConfig {
   /** Upper bound on device pixel ratio before dynamic resolution. */
@@ -13,10 +17,14 @@ export interface QualityConfig {
   shadowInterval: number;
   textureSize: number;
   postfx: boolean;
+  /** Hardware MSAA on the canvas (direct rendering only; the post chain uses FXAA). */
+  msaa: boolean;
   ao: boolean;
   bloom: boolean;
   /** Point lights for muzzle flashes / explosions (each costs every lit pixel). */
   dynamicLights: number;
+  /** Max rendered pixels (millions) before upscaling; Infinity = native. */
+  pixelBudget: number;
   /** Detail of scenery outside the playable area. */
   backdropDetail: 'low' | 'high';
 }
@@ -30,6 +38,8 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     shadowInterval: 2,
     textureSize: 256,
     postfx: false,
+    msaa: false,
+    pixelBudget: 0.9,
     ao: false,
     bloom: false,
     dynamicLights: 0,
@@ -42,7 +52,11 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     shadowExtent: 35,
     shadowInterval: 2,
     textureSize: 512,
-    postfx: true,
+    // Without AO/bloom the post chain only added full-screen passes (~10 ms at
+    // 1080p on integrated GPUs); direct rendering with MSAA looks the same.
+    postfx: false,
+    msaa: true,
+    pixelBudget: 1.5,
     ao: false,
     bloom: false,
     dynamicLights: 0,
@@ -56,17 +70,14 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     shadowInterval: 2,
     textureSize: 512,
     postfx: true,
+    msaa: false,
+    pixelBudget: Infinity,
     ao: true,
     bloom: true,
     dynamicLights: 1,
     backdropDetail: 'high',
   },
 };
-
-/** Dynamic resolution: render scale bounds and the frame-time band it aims for. */
-// Resizing reallocates render targets (a visible hitch), so it reacts only to
-// sustained slowness (< ~45 fps) and waits several seconds between steps.
-const DRS = { min: 0.6, max: 1, step: 0.1, slowMs: 22, fastMs: 12, settleSec: 5 };
 
 /**
  * Owns the WebGL renderer. The world scene is drawn first, then a separate
@@ -82,11 +93,9 @@ export class Renderer {
   readonly fpCamera: THREE.PerspectiveCamera;
   readonly quality: QualityConfig;
   private postfx: PostFX | null = null;
+  private readonly vignette: HTMLDivElement;
   private frameIndex = 0;
-  /** Current dynamic-resolution scale (1 = native up to the cap). */
-  renderScale = 1;
-  private frameMsAvg = 16;
-  private drsCooldown = DRS.settleSec;
+  private readonly drs = new DynamicResolution();
 
   constructor(
     container: HTMLElement,
@@ -94,15 +103,23 @@ export class Renderer {
     fov: number,
   ) {
     this.quality = QUALITY[preset];
-    this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+    this.gl = new THREE.WebGLRenderer({
+      antialias: this.quality.msaa,
+      powerPreference: 'high-performance',
+      stencil: false,
+    });
     this.gl.setPixelRatio(this.pixelRatio);
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
-    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
+    this.gl.toneMapping = THREE.CustomToneMapping; // ACES + grade, see grade.ts
     this.gl.shadowMap.enabled = this.quality.shadows;
     this.gl.shadowMap.type = THREE.PCFShadowMap;
     this.gl.shadowMap.autoUpdate = false;
     this.gl.autoClear = false;
     container.appendChild(this.gl.domElement);
+    // Vignette as a composited overlay instead of a shader pass.
+    this.vignette = document.createElement('div');
+    this.vignette.className = 'vignette';
+    container.appendChild(this.vignette);
 
     this.camera = new THREE.PerspectiveCamera(fov, 1, 0.05, 1600);
     this.fpCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 10);
@@ -128,6 +145,11 @@ export class Renderer {
     window.addEventListener('resize', this.resize);
   }
 
+  /** Current dynamic-resolution scale (1 = native up to the cap). */
+  get renderScale(): number {
+    return this.drs.scale;
+  }
+
   private get pixelRatio(): number {
     return Math.min(window.devicePixelRatio, this.quality.pixelRatioCap) * this.renderScale;
   }
@@ -141,6 +163,15 @@ export class Renderer {
   }
 
   private resize = (): void => {
+    const base = Math.min(window.devicePixelRatio, this.quality.pixelRatioCap);
+    const pixels = window.innerWidth * window.innerHeight * base * base;
+    // Large screens start below native and upscale; dynamic resolution never exceeds it.
+    this.drs.setMax(Math.floor(Math.sqrt((this.quality.pixelBudget * 1e6) / pixels) * 20) / 20);
+    this.drs.resetToMax();
+    this.applySize();
+  };
+
+  private applySize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.gl.setPixelRatio(this.pixelRatio);
@@ -149,26 +180,11 @@ export class Renderer {
     this.camera.aspect = this.fpCamera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.fpCamera.updateProjectionMatrix();
-  };
+  }
 
-  /**
-   * Feeds a frame time into dynamic resolution. Scale changes reallocate render
-   * targets, so they happen in coarse steps with a settle time in between.
-   */
+  /** Feeds a frame into dynamic resolution; resizes when the scale changes. */
   adaptResolution(frameMs: number, dt: number): void {
-    // Ignore hitches and throttled frames (background tab, alt-tab): they are not GPU load.
-    if (frameMs > 50) return;
-    this.frameMsAvg += (frameMs - this.frameMsAvg) * 0.02;
-    this.drsCooldown -= dt;
-    if (this.drsCooldown > 0) return;
-    let next = this.renderScale;
-    if (this.frameMsAvg > DRS.slowMs) next = Math.max(DRS.min, this.renderScale - DRS.step);
-    else if (this.frameMsAvg < DRS.fastMs) next = Math.min(DRS.max, this.renderScale + DRS.step);
-    if (next !== this.renderScale) {
-      this.renderScale = +next.toFixed(2);
-      this.resize();
-      this.drsCooldown = DRS.settleSec;
-    }
+    if (this.drs.update(dt, frameMs) !== null) this.applySize();
   }
 
   render(): void {
@@ -178,12 +194,12 @@ export class Renderer {
     }
     if (this.postfx) {
       this.postfx.render();
-      return;
+    } else {
+      this.gl.clear();
+      this.gl.render(this.scene, this.camera);
+      this.gl.clearDepth();
+      this.gl.render(this.fpScene, this.fpCamera);
     }
-    this.gl.clear();
-    this.gl.render(this.scene, this.camera);
-    this.gl.clearDepth();
-    this.gl.render(this.fpScene, this.fpCamera);
   }
 
   dispose(): void {
@@ -191,5 +207,6 @@ export class Renderer {
     this.postfx?.dispose();
     this.gl.dispose();
     this.gl.domElement.remove();
+    this.vignette.remove();
   }
 }

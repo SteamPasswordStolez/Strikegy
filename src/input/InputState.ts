@@ -11,6 +11,8 @@ export interface InputState {
   lookYaw: number;
   lookPitch: number;
   fire: boolean;
+  /** Pulse: trigger went down since the last sim step (catches taps shorter than a frame). */
+  firePressed: boolean;
   ads: boolean;
   sprint: boolean;
   crouch: boolean;
@@ -33,6 +35,7 @@ export function createInputState(): InputState {
     lookYaw: 0,
     lookPitch: 0,
     fire: false,
+    firePressed: false,
     ads: false,
     sprint: false,
     crouch: false,
@@ -48,6 +51,7 @@ export function createInputState(): InputState {
 /** Clears one-shot pulses after a simulation step has consumed them. */
 export function consumePulses(s: InputState): void {
   s.jump = false;
+  s.firePressed = false;
   s.reload = false;
   s.weaponCycle = 0;
   s.weaponSlot = -1;

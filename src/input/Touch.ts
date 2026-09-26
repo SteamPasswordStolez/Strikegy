@@ -71,6 +71,7 @@ export class TouchControls implements InputSource {
     e.stopPropagation();
     if (action === 'fire') {
       this.firing = down;
+      if (down) this.pulses.add('fire');
       for (const tch of Array.from(e.changedTouches)) {
         if (down) this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY });
         else this.lookTouches.delete(tch.identifier);
@@ -151,6 +152,7 @@ export class TouchControls implements InputSource {
     this.lookDx = 0;
     this.lookDy = 0;
     s.fire ||= this.firing;
+    s.firePressed ||= this.pulses.has('fire');
     s.ads ||= this.adsToggled;
     s.crouch ||= this.crouchToggled;
     s.jump ||= this.pulses.has('jump');
