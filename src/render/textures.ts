@@ -73,32 +73,108 @@ function addMacroVariation(mat: THREE.MeshStandardMaterial, strength: number): v
 
 const MACRO_STRENGTH: Record<SurfaceMaterial, number> = {
   ground: 0.2,
-  concrete: 0.16,
+  concrete: 0.3,
+  concrete_floor: 0.14,
   metal: 0.1,
   wood: 0.12,
   brick: 0.14,
 };
 
-/** Generates and caches PBR materials for blockout surfaces. */
+interface ScannedSet {
+  map: THREE.Texture;
+  normalMap: THREE.Texture;
+  /** AO / roughness / metalness packed in R / G / B. */
+  arm: THREE.Texture;
+}
+
+/** Real-world meters covered by one tile of each scanned texture set. */
+const SCANNED_TILE_METERS: Record<SurfaceMaterial, number> = {
+  ground: 2.5,
+  concrete: 4,
+  concrete_floor: 3,
+  metal: 1.5,
+  wood: 2,
+  brick: 2,
+};
+
+/** Surfaces that reuse another surface's scanned set (with their own tiling/tint). */
+const SCANNED_SOURCE: Partial<Record<SurfaceMaterial, SurfaceMaterial>> = {
+  concrete: 'concrete_floor',
+};
+
+/** Albedo multiplier so scanned sets sit in the same brightness range as the rest of the scene. */
+const SCANNED_TINT: Record<SurfaceMaterial, number> = {
+  ground: 1,
+  concrete: 0.85,
+  concrete_floor: 0.9,
+  metal: 0.55,
+  wood: 1,
+  brick: 0.95,
+};
+
+export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick'];
+
+/** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */
 export class SurfaceLibrary {
   private cache = new Map<SurfaceMaterial, THREE.MeshStandardMaterial>();
+  private scanned = new Map<SurfaceMaterial, ScannedSet>();
 
   constructor(
     private readonly resolution: number,
     private readonly maxAnisotropy: number,
   ) {}
 
+  /**
+   * Loads photo-scanned texture sets from `${baseUrl}textures/<kind>/`. Kinds that
+   * fail to load keep using the procedural recipe, so the game never blocks on art.
+   */
+  async preload(kinds: SurfaceMaterial[], baseUrl: string): Promise<void> {
+    const loader = new THREE.TextureLoader();
+    const aniso = Math.min(8, this.maxAnisotropy);
+    await Promise.all(
+      kinds.map(async (kind) => {
+        const dir = `${baseUrl}textures/${SCANNED_SOURCE[kind] ?? kind}/`;
+        try {
+          const [map, normalMap, arm] = await Promise.all(
+            ['albedo', 'normal', 'arm'].map((n) => loader.loadAsync(`${dir}${n}.webp`)),
+          );
+          map!.colorSpace = THREE.SRGBColorSpace;
+          for (const t of [map!, normalMap!, arm!]) {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = aniso;
+          }
+          this.scanned.set(kind, { map: map!, normalMap: normalMap!, arm: arm! });
+        } catch (err) {
+          console.warn(`[surfaces] ${kind}: using procedural fallback`, err);
+        }
+      }),
+    );
+  }
+
   get(kind: SurfaceMaterial): THREE.MeshStandardMaterial {
     const hit = this.cache.get(kind);
     if (hit) return hit;
-    const recipe = createRecipe(kind);
-    const img = rasterize(recipe, this.resolution);
-    const aniso = Math.min(8, this.maxAnisotropy);
-    const map = dataTexture(img.albedo, img.size, true, aniso);
-    const normalMap = dataTexture(img.normal, img.size, false, aniso);
-    const orm = dataTexture(img.orm, img.size, false, aniso);
+    let map: THREE.Texture;
+    let normalMap: THREE.Texture;
+    let orm: THREE.Texture;
+    let tileMeters: number;
+    let tint = 1;
+    const scanned = this.scanned.get(kind);
+    if (scanned) {
+      ({ map, normalMap, arm: orm } = scanned);
+      tileMeters = SCANNED_TILE_METERS[kind];
+      tint = SCANNED_TINT[kind];
+    } else {
+      const recipe = createRecipe(kind);
+      const img = rasterize(recipe, this.resolution);
+      const aniso = Math.min(8, this.maxAnisotropy);
+      map = dataTexture(img.albedo, img.size, true, aniso);
+      normalMap = dataTexture(img.normal, img.size, false, aniso);
+      orm = dataTexture(img.orm, img.size, false, aniso);
+      tileMeters = recipe.tileMeters;
+    }
     // UVs are authored in meters; scale so one tile covers `tileMeters`.
-    const repeat = 1 / recipe.tileMeters;
+    const repeat = 1 / tileMeters;
     for (const t of [map, normalMap, orm]) t.repeat.set(repeat, repeat);
 
     const mat = new THREE.MeshStandardMaterial({
@@ -111,6 +187,7 @@ export class SurfaceLibrary {
       metalness: 1,
       aoMapIntensity: 1,
     });
+    mat.color.setScalar(tint);
     addMacroVariation(mat, MACRO_STRENGTH[kind]);
     this.cache.set(kind, mat);
     return mat;

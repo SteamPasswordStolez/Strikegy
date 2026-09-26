@@ -6,7 +6,7 @@ import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
   cover: 'metal',
-  floor: 'concrete',
+  floor: 'concrete_floor',
   ramp: 'concrete',
   prop: 'wood',
 };

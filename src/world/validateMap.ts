@@ -2,7 +2,7 @@ import type { MapDef } from './mapTypes';
 
 const OBJECT_TYPES = new Set(['wall', 'cover', 'floor', 'ramp', 'prop']);
 const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor']);
-const MATERIALS = new Set(['ground', 'concrete', 'metal', 'wood', 'brick']);
+const MATERIALS = new Set(['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick']);
 
 function isNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -78,6 +78,19 @@ export function validateMap(raw: unknown): string[] {
         if (!isObj(z) || typeof z.id !== 'string' || !isVec3(z.pos) || !isNum(z.radius)) {
           errs.push(`zones[${i}]: expected { id, pos, radius }`);
         }
+      });
+  }
+
+  if (raw.props !== undefined) {
+    if (!Array.isArray(raw.props)) errs.push('props: expected array');
+    else
+      raw.props.forEach((p, i) => {
+        if (!isObj(p) || typeof p.model !== 'string' || !/^[a-z0-9_]+$/.test(p.model) || !isVec3(p.pos)) {
+          errs.push(`props[${i}]: expected { model: snake_case id, pos: [x,y,z] }`);
+          return;
+        }
+        if (p.rot !== undefined && !isVec3(p.rot)) errs.push(`props[${i}].rot: expected [x,y,z] degrees`);
+        if (p.scale !== undefined && !(isNum(p.scale) && p.scale > 0)) errs.push(`props[${i}].scale: expected positive number`);
       });
   }
 

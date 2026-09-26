@@ -79,6 +79,12 @@ describe('validateMap', () => {
     expect(validateMap(raw)).toEqual([]);
   });
 
+  it('validates props', () => {
+    const base = JSON.parse(readFileSync('public/maps/sandbox.json', 'utf8'));
+    expect(validateMap({ ...base, props: [{ model: '../evil', pos: [0, 0, 0] }] }).join()).toMatch(/props\[0\]/);
+    expect(validateMap({ ...base, props: [{ model: 'barrel_03', pos: [0, 0, 0], scale: -1 }] }).join()).toMatch(/scale/);
+  });
+
   it('reports useful errors', () => {
     const errs = validateMap({
       meta: { id: 'x', name: 'x', version: 1 },

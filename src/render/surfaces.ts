@@ -210,6 +210,7 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
     case 'ground':
       return groundRecipe(n);
     case 'concrete':
+    case 'concrete_floor':
       return concreteRecipe(n);
     case 'metal':
       return metalRecipe(n, 0x4b5240);

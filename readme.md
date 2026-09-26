@@ -25,6 +25,17 @@ npm run build      # tsc 검사 + dist/ 빌드 (scripts/clean.mjs로 dist 정리
 
 모바일: 왼쪽 드래그로 이동하고, 오른쪽 드래그로 시점을 돌립니다. 사격/조준/점프/장전/앉기는 버튼으로 합니다.
 
+## 에셋
+
+`public/assets/`에는 [Poly Haven](https://polyhaven.com)의 **CC0** 에셋을 최적화해서 넣었습니다(WebP 텍스처, meshopt로 압축한 GLB).
+목록은 `assets.manifest.json`에 있습니다. 원본을 다시 받아서 재생성하려면:
+
+```bash
+npm run assets     # assets-src/에 다운로드(git 제외) → public/assets/로 최적화
+```
+
+텍스처를 불러오지 못하면 절차적으로 생성한 텍스처로, 모델을 불러오지 못하면 그 모델만 빼고 게임이 계속 동작합니다.
+
 ## 구조
 
 ```
@@ -55,7 +66,8 @@ tests/       단위 테스트
 - [x] M0 셋업
 - [x] M1 FPS 코어 샌드박스
 - [x] G1 그래픽 1차: 물리 기반 하늘/구름 + IBL, 절차적 PBR 텍스처, GTAO/Bloom/SMAA/색보정, 추적 그림자, 원경 지형, 1인칭 팔
-- [ ] G2 그래픽 2차: 실제 텍스처·모델 에셋(CC0), 데칼 확장, 동적 해상도
+- [x] G2 그래픽 2차 (1단계): 스캔 텍스처 5종 + 소품 모델 7종 + 저격총 1인칭 모델 (Poly Haven CC0)
+- [ ] G3 그래픽 3차: 캐릭터/총기 모델 확장, 데칼 확장, 동적 해상도
 - [ ] M2 전투: 반동/탄퍼짐 튜닝, 투척물, 실제 사운드, 데미지 피드백
 - [ ] M3 봇 AI: navmesh(recast), 인지, utility AI, 분대 전술
 - [ ] M4 모드: Zone/Conquest/Frontline, 병과, 경제/상점, 로비

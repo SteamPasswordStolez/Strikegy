@@ -1,5 +1,9 @@
 import * as THREE from 'three';
+import type { ModelLibrary } from '@/render/models';
 import type { WeaponClass, WeaponDef } from './weaponData';
+
+/** Scanned rifle used for bolt-action weapons when available. */
+const SCANNED_RIFLE = 'bolt_action_rifle_7_62';
 
 interface Shape {
   length: number;
@@ -22,7 +26,7 @@ const SHAPES: Record<WeaponClass, Shape> = {
 
 /** Shared across weapons; lit by the environment map for proper metal/polymer contrast. */
 const MATERIALS = {
-  metal: new THREE.MeshStandardMaterial({ color: 0x1d1f22, metalness: 0.45, roughness: 0.5 }),
+  metal: new THREE.MeshStandardMaterial({ color: 0x222428, metalness: 0.6, roughness: 0.42 }),
   dark: new THREE.MeshStandardMaterial({ color: 0x17181a, metalness: 0.4, roughness: 0.55 }),
   polymer: new THREE.MeshStandardMaterial({ color: 0x232427, metalness: 0, roughness: 0.62 }),
   lens: new THREE.MeshStandardMaterial({ color: 0x0b1a2a, metalness: 1, roughness: 0.05, emissive: 0x06121e }),
@@ -64,7 +68,10 @@ export class ViewModel {
   private reloadBlend = 0;
   private currentId = '';
 
-  constructor(private readonly fpScene: THREE.Scene) {
+  constructor(
+    private readonly fpScene: THREE.Scene,
+    private readonly models: ModelLibrary | null = null,
+  ) {
     fpScene.add(this.root);
     this.root.add(this.gun);
     const flashMat = new THREE.MeshBasicMaterial({
@@ -85,6 +92,10 @@ export class ViewModel {
       if (o instanceof THREE.Mesh && o !== this.flash) o.geometry.dispose();
     });
     this.gun.clear();
+    if (def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) {
+      this.buildScannedRifle();
+      return;
+    }
     const s = SHAPES[def.class];
     const m = MATERIALS;
     const furniture = new THREE.MeshStandardMaterial({ color: s.color, roughness: 0.6, metalness: 0.05 });
@@ -158,6 +169,28 @@ export class ViewModel {
     this.buildArms(pistol, L);
 
     this.muzzle.position.set(0, 0.005, barrelZ - barrelLen / 2 - 0.03);
+    this.gun.add(this.muzzle);
+    this.flash.position.copy(this.muzzle.position);
+    this.gun.add(this.flash);
+  }
+
+  /**
+   * Places the scanned bolt-action rifle in viewmodel space. The source model points
+   * its muzzle along +X with the trigger near x = -0.29; it is turned to face -Z and
+   * shifted so the trigger sits where the procedural guns keep their grip.
+   */
+  private buildScannedRifle(): void {
+    const rifle = this.models!.instantiate(SCANNED_RIFLE)!;
+    rifle.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = false;
+    });
+    rifle.rotation.y = Math.PI / 2;
+    rifle.position.set(0.007, -0.06, -0.29);
+    this.gun.add(rifle);
+    // Scope axis is at model y ~0.071 -> 0.011 after the offset above.
+    this.sightHeight = 0.011;
+    this.buildArms(false, 0.6);
+    this.muzzle.position.set(0, -0.025, -0.9);
     this.gun.add(this.muzzle);
     this.flash.position.copy(this.muzzle.position);
     this.gun.add(this.flash);

@@ -29,9 +29,9 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     sky: { turbidity: 2.5, rayleigh: 1.1, mieCoefficient: 0.004, mieDirectionalG: 0.8, cloudCoverage: 0.3, cloudDensity: 0.35 },
     sun: { elevation: 38, azimuth: -35, color: 0xfff1de, intensity: 2.4 },
     fog: { color: 0xa9bccd, density: 0.0016 },
-    hemi: { sky: 0xcfe0ff, ground: 0x6b5a45, intensity: 0.15 },
-    envIntensity: 0.5,
-    exposure: 0.5,
+    hemi: { sky: 0xcfe0ff, ground: 0x6b5a45, intensity: 0.25 },
+    envIntensity: 0.85,
+    exposure: 0.46,
   },
   overcast: {
     sky: { turbidity: 10, rayleigh: 2.5, mieCoefficient: 0.01, mieDirectionalG: 0.7, cloudCoverage: 0.85, cloudDensity: 0.7 },
@@ -119,7 +119,7 @@ export class Atmosphere {
     scene.environmentIntensity = p.envIntensity;
     fpScene.environment = env;
     // Viewmodel sits close to the lens; keep sky reflections subdued so metal reads as dark steel.
-    fpScene.environmentIntensity = Math.min(0.15, p.envIntensity);
+    fpScene.environmentIntensity = Math.min(0.2, p.envIntensity);
 
     this.texel = (opts.shadowExtent * 2) / opts.shadowMapSize;
     if (p.sun) {

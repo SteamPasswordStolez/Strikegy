@@ -56,7 +56,7 @@ export class Renderer {
 
     // Viewmodel key light roughly matches the sun; ambient comes from the environment map.
     this.fpScene.add(new THREE.HemisphereLight(0xdfe8f5, 0x3a3228, 0.5));
-    const key = new THREE.DirectionalLight(0xfff1de, 1.2);
+    const key = new THREE.DirectionalLight(0xfff1de, 1.8);
     key.position.set(1.5, 2, 0.5);
     this.fpScene.add(key);
 

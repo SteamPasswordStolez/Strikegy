@@ -6,12 +6,14 @@ import { isTouchDevice, loadSettings, resolveQuality, type Settings } from './Se
 import { setLocale, t } from '@/i18n';
 import { Renderer } from '@/render/Renderer';
 import { Atmosphere } from '@/render/visualProfiles';
-import { SurfaceLibrary } from '@/render/textures';
+import { SURFACE_KINDS, SurfaceLibrary } from '@/render/textures';
+import { ModelLibrary } from '@/render/models';
 import { Effects } from '@/render/Effects';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { fetchMap } from '@/world/validateMap';
 import { buildBlockout } from '@/world/buildBlockout';
 import { buildBackdrop } from '@/world/backdrop';
+import { placeProps } from '@/world/placeProps';
 import type { MapDef } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
 import { KeyboardMouse } from '@/input/KeyboardMouse';
@@ -30,10 +32,13 @@ const DEG = Math.PI / 180;
 /** FOV that the weapon adsFov values were authored against. */
 const AUTHORED_FOV = 78;
 const SIM_HZ = 60;
+const ASSET_BASE = `${import.meta.env.BASE_URL}assets/`;
 
 export interface GameOptions {
   mapUrl: string;
   loadout: WeaponId[];
+  /** glTF models the viewmodel may use (loaded up front). */
+  viewModels?: string[];
 }
 
 export class Game {
@@ -51,6 +56,8 @@ export class Game {
   private readonly audio: AudioSystem;
   private readonly effects: Effects;
   private readonly viewModel: ViewModel;
+  private readonly models = new ModelLibrary(ASSET_BASE);
+  private surfaces!: SurfaceLibrary;
   private readonly targets: TargetDummy[] = [];
   private readonly tmpEye = new THREE.Vector3();
   private readonly tmpMuzzle = new THREE.Vector3();
@@ -79,7 +86,7 @@ export class Game {
     this.overlay = new Overlay(container);
     this.audio = new AudioSystem(this.settings.masterVolume);
     this.effects = new Effects(this.renderer.scene);
-    this.viewModel = new ViewModel(this.renderer.fpScene);
+    this.viewModel = new ViewModel(this.renderer.fpScene, this.models);
 
     this.kbm = new KeyboardMouse(
       this.renderer.canvas,
@@ -104,22 +111,30 @@ export class Game {
 
   private async init(): Promise<void> {
     let map: MapDef;
+    const r = this.renderer;
+    const q = r.quality;
+    this.surfaces = new SurfaceLibrary(q.textureSize, r.maxAnisotropy);
+    // Art loads in parallel with physics/map; any asset that fails falls back gracefully.
+    const art = Promise.all([
+      this.surfaces.preload(SURFACE_KINDS, ASSET_BASE),
+      this.models.load(this.options.viewModels ?? []),
+    ]);
     try {
       [this.physics, map] = await Promise.all([PhysicsWorld.create(), fetchMap(this.options.mapUrl)]);
     } catch (err) {
       this.overlay.show(t('error.map'), String(err instanceof Error ? err.message : err));
       throw err;
     }
+    await Promise.all([art, this.models.load((map.props ?? []).map((p) => p.model))]);
     this.physics.timestep = 1 / SIM_HZ;
-    const r = this.renderer;
-    const q = r.quality;
     this.atmosphere = new Atmosphere(r.scene, r.fpScene, r.gl, map.world.visualProfile, {
       shadows: q.shadows,
       shadowMapSize: q.shadowMapSize,
       shadowExtent: q.shadowExtent,
     });
     const t0 = performance.now();
-    buildBlockout(map, r.scene, this.physics, new SurfaceLibrary(q.textureSize, r.maxAnisotropy));
+    buildBlockout(map, r.scene, this.physics, this.surfaces);
+    placeProps(map, r.scene, this.physics, this.models);
     if (map.world.visualProfile !== 'indoor') buildBackdrop(r.scene, map.world.size, !q.postfx);
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
