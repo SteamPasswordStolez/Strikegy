@@ -71,6 +71,7 @@ export class PhysicsWorld {
     maxDist: number,
     mask: number,
     exclude?: RAPIER.Collider,
+    excludeBody?: RAPIER.RigidBody,
   ): RayHit | null {
     const ray = new RAPIER.Ray(origin, dir);
     const hit = this.world.castRayAndGetNormal(
@@ -80,6 +81,7 @@ export class PhysicsWorld {
       undefined,
       groups(0xffff, mask),
       exclude,
+      excludeBody,
     );
     if (!hit) return null;
     const p = ray.pointAt(hit.timeOfImpact);

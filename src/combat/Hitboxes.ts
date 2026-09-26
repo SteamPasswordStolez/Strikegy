@@ -1,12 +1,26 @@
+import type * as THREE from 'three';
 import type { HitPart } from '@/core/events';
+import type { Team } from '@/world/mapTypes';
+
+/** Who dealt damage (for hit direction, kill feed and bot awareness). */
+export interface DamageSource {
+  pos: THREE.Vector3;
+  name: string;
+  team: Team | null;
+  weapon: string;
+  /** Combatant id of the attacker (player = 0). */
+  id: number;
+}
 
 export interface Damageable {
   readonly id: number;
   /** Display name for the kill feed. */
   readonly name: string;
   readonly alive: boolean;
+  /** Team for friendly-fire checks; null = neutral (practice targets). */
+  readonly team?: Team | null;
   /** Returns true if this damage killed the target. */
-  applyDamage(amount: number, part: HitPart): boolean;
+  applyDamage(amount: number, part: HitPart, source?: DamageSource): boolean;
 }
 
 export const PART_MULT: Record<HitPart, number> = { head: 1, body: 1, limb: 0.85 };

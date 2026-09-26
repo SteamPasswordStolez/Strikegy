@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import type { EventBus } from './EventBus';
 import type { GrenadeType } from '@/combat/explosions';
 import type { ImpactSurface } from '@/physics/surfaces';
+import type { Team } from '@/world/mapTypes';
 
 export type HitPart = 'head' | 'body' | 'limb';
 export type ReloadCue = 'magOut' | 'magIn' | 'chamber' | 'shell';
@@ -24,8 +25,18 @@ export interface GameEvents {
     damage: number;
     killed: boolean;
     point: THREE.Vector3;
+    /** Hit dealt by the local player (hitmarker, hit sound). */
+    byPlayer: boolean;
   };
-  'combat:kill': { attacker: string; victim: string; weapon: string; headshot: boolean };
+  'combat:kill': {
+    attacker: string;
+    victim: string;
+    weapon: string;
+    headshot: boolean;
+    byPlayer: boolean;
+    attackerTeam?: Team | null;
+    victimTeam?: Team | null;
+  };
   'grenade:thrown': { type: GrenadeType; remaining: number };
   'grenade:bounce': { type: GrenadeType; point: THREE.Vector3; speed: number };
   'grenade:detonate': { type: GrenadeType; point: THREE.Vector3 };

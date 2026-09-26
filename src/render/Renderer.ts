@@ -221,7 +221,8 @@ export class Renderer {
     this.frameIndex++;
     let shadow = false;
     if (this.quality.shadows) {
-      const due = this.frameIndex % this.quality.shadowInterval === 0;
+      // The first frame must render shadows: materials sample the shadow map from the start.
+      const due = this.frameIndex === 1 || this.frameIndex % this.quality.shadowInterval === 0;
       if (this.staticShadows ? this.shadowDirty && due : due) {
         this.gl.shadowMap.needsUpdate = true;
         this.shadowDirty = false;

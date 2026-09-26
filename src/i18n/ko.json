@@ -22,5 +22,8 @@
   "grenade.smoke": "연막",
   "touch.grenade": "투척",
   "error.gpu": "그래픽 장치가 재설정되었습니다",
-  "error.gpuReload": "클릭하여 다시 불러오기"
+  "error.gpuReload": "클릭하여 다시 불러오기",
+  "hud.killedBy": "처치:",
+  "hud.allies": "아군",
+  "hud.enemies": "적군"
 }

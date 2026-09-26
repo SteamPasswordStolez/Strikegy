@@ -122,7 +122,7 @@ export class Player {
     }
 
     const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.collider, desired, undefined, groups(0xffff, Layer.WORLD));
+    this.controller.computeColliderMovement(this.collider, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER));
     const moved = this.controller.computedMovement();
     const wasGrounded = this.grounded;
     this.grounded = this.controller.computedGrounded();
@@ -191,6 +191,11 @@ export class Player {
     out.lerpVectors(this.prevFeet, this.feet, alpha);
     out.y += this.eyeHeight;
     return out;
+  }
+
+  /** Current capsule height (standing or crouched). */
+  get bodyHeight(): number {
+    return this.height;
   }
 
   horizontalSpeed(): number {

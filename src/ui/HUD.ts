@@ -18,6 +18,10 @@ export interface HudFrame {
   flash: number;
   /** Seconds until respawn, or null while alive. */
   respawnIn: number | null;
+  /** Who killed the player (bot matches), shown on the death screen. */
+  killedBy: string | null;
+  /** Team kill counts (bot matches), or null on the range. */
+  score: { allies: number; enemies: number } | null;
   fps: number | null;
   debug: string | null;
 }
@@ -27,6 +31,8 @@ export interface KillEntry {
   victim: string;
   weapon: string;
   headshot: boolean;
+  attackerTeam?: 'blue' | 'red' | null;
+  victimTeam?: 'blue' | 'red' | null;
 }
 
 interface DamageArc {
@@ -66,6 +72,7 @@ export class HUD {
   private damageRing: HTMLDivElement;
   private feed: HTMLDivElement;
   private death: HTMLDivElement;
+  private score: HTMLDivElement;
   private arcs: DamageArc[] = [];
   private feedItems: { el: HTMLDivElement; life: number }[] = [];
   private hitTimer = 0;
@@ -96,6 +103,7 @@ export class HUD {
     this.healthFill = el('div', 'hud-healthbar-fill', bar);
     this.fps = el('div', 'hud-fps', this.root);
     this.death = el('div', 'hud-death', this.root);
+    this.score = el('div', 'hud-score', this.root);
     this.flashEl = el('div', 'hud-flash', this.root);
   }
 
@@ -120,10 +128,12 @@ export class HUD {
 
   addKill(k: KillEntry): void {
     const row = el('div', 'killfeed-row', this.feed);
-    const a = el('span', k.attacker === 'You' ? 'kf-you' : 'kf-name', row);
+    // Team colors: allies blue, enemies red; the player is highlighted.
+    const cls = (name: string, team?: 'blue' | 'red' | null) => (name === 'You' ? 'kf-you' : team ? `kf-name kf-${team}` : 'kf-name');
+    const a = el('span', cls(k.attacker, k.attackerTeam), row);
     a.textContent = k.attacker === 'You' ? t('feed.you') : k.attacker;
     if (k.weapon || k.headshot) el('span', 'kf-weapon', row).textContent = `${k.weapon ? `[${k.weapon}]` : ''}${k.headshot ? ' ◎' : ''}`;
-    el('span', 'kf-name', row).textContent = k.victim === 'You' ? t('feed.you') : k.victim;
+    el('span', cls(k.victim, k.victimTeam), row).textContent = k.victim === 'You' ? t('feed.you') : k.victim;
     this.feedItems.push({ el: row, life: FEED_LIFE });
     while (this.feedItems.length > FEED_MAX) this.feedItems.shift()!.el.remove();
   }
@@ -199,10 +209,17 @@ export class HUD {
       } else if (item.life < 1) item.el.style.opacity = item.life.toFixed(2);
     }
 
-    const deathText = dead ? `${t('hud.dead')}\n${t('hud.respawnIn')} ${Math.ceil(f.respawnIn!)}` : '';
+    const killer = f.killedBy ? `\n${t('hud.killedBy')} ${f.killedBy}` : '';
+    const deathText = dead ? `${t('hud.dead')}${killer}\n${t('hud.respawnIn')} ${Math.ceil(f.respawnIn!)}` : '';
     this.set('death', deathText, () => {
       this.death.textContent = deathText;
       this.death.classList.toggle('on', dead);
+    });
+
+    const scoreText = f.score ? `${t('hud.allies')} ${f.score.allies} : ${f.score.enemies} ${t('hud.enemies')}` : '';
+    this.set('score', scoreText, () => {
+      this.score.textContent = scoreText;
+      this.score.style.display = scoreText ? 'block' : 'none';
     });
 
     const fpsText = f.fps === null ? '' : `${f.fps} FPS${f.debug ? ` · ${f.debug}` : ''}`;

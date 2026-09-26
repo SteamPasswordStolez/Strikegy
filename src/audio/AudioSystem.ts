@@ -401,6 +401,13 @@ export class AudioSystem {
     }
   }
 
+  /** Someone else's footstep at a world position (bots): quieter, spatialized. */
+  remoteFootstep(surface: ImpactSurface, pos: THREE.Vector3, sprinting: boolean): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    this.sample(STEP_SAMPLE[surface], this.out(pos, 0.05), t, sprinting ? 0.5 : 0.32, rand(0.9, 1.1));
+  }
+
   land(): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;

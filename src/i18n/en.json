@@ -22,5 +22,8 @@
   "grenade.smoke": "SMOKE",
   "touch.grenade": "NADE",
   "error.gpu": "The graphics device was reset",
-  "error.gpuReload": "Click to reload"
+  "error.gpuReload": "Click to reload",
+  "hud.killedBy": "Killed by",
+  "hud.allies": "ALLIES",
+  "hud.enemies": "ENEMIES"
 }

@@ -21,7 +21,11 @@ import { KeyboardMouse } from '@/input/KeyboardMouse';
 import { TouchControls } from '@/input/Touch';
 import { Player } from '@/player/Player';
 import { fallDamage } from '@/player/health';
-import { HitboxRegistry } from '@/combat/Hitboxes';
+import { HitboxRegistry, type DamageSource, type Damageable } from '@/combat/Hitboxes';
+import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
+import { NavWorld } from '@/ai/NavWorld';
+import { BotManager, type BotOptions } from '@/ai/BotManager';
+import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
 import { GRENADES, flashDuration, flashIntensity, fragDamage, type GrenadeType } from '@/combat/explosions';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
@@ -48,6 +52,8 @@ export interface GameOptions {
   loadout: WeaponId[];
   /** glTF models the viewmodel may use (loaded up front). */
   viewModels?: string[];
+  /** Bot match settings; null = practice range (targets only). */
+  bots?: BotOptions | null;
 }
 
 export class Game {
@@ -81,6 +87,15 @@ export class Game {
   private player!: Player;
   private weapons!: WeaponController;
   private spawn!: SpawnPoint;
+  private playerSpawns: SpawnPoint[] = [];
+  private playerBoxes!: CharacterHitboxes;
+  private bots: BotManager | null = null;
+  private nav: NavWorld | null = null;
+  /** The player as seen by bots. */
+  private playerCombatant!: Combatant;
+  private playerFiringUntil = -1;
+  private killedBy: string | null = null;
+  private lastAlpha = 0;
   private elapsed = 0;
   private running = false;
   private started = false;
@@ -171,14 +186,31 @@ export class Game {
     this.throwables = new Throwables(r.scene, this.physics, this.bus);
     this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
+    this.playerSpawns = map.spawns.filter((s) => s.team === 'player' || s.team === PLAYER_TEAM);
+    this.createPlayerCombatant();
 
-    for (const tg of map.targets ?? []) {
-      this.targets.push(
-        new TargetDummy(r.scene, this.physics, this.registry, new THREE.Vector3(...tg.pos), (tg.yaw ?? 0) * DEG),
-      );
+    const botOpts = this.options.bots ?? null;
+    if (!botOpts) {
+      for (const tg of map.targets ?? []) {
+        this.targets.push(
+          new TargetDummy(r.scene, this.physics, this.registry, new THREE.Vector3(...tg.pos), (tg.yaw ?? 0) * DEG),
+        );
+      }
     }
 
     this.weapons = new WeaponController(this.options.loadout, this.physics, this.registry, this.impacts, this.bus);
+    this.weapons.ignoreBody = this.playerBoxes.body;
+
+    if (botOpts && botOpts.allies + botOpts.enemies > 0) {
+      // Colliders must be in the broadphase before the navmesh reads them.
+      this.physics.step();
+      const tNav = performance.now();
+      this.nav = await NavWorld.build(this.physics);
+      if (import.meta.env.DEV) console.info(`[strikegy] navmesh built in ${Math.round(performance.now() - tNav)} ms`);
+      if (this.nav) {
+        this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
+      }
+    }
     this.wireEvents();
 
     // Lights are filtered by camera layers like meshes; they must light every layer
@@ -273,6 +305,10 @@ export class Game {
     const bus = this.bus;
     const cls = (id: string) => WEAPONS[id as WeaponId].class;
     bus.on('weapon:fired', (e) => {
+      if (this.bots) {
+        this.playerFiringUntil = this.bots.time + 0.6;
+        this.bots.alert(this.player.feet, 70, this.playerCombatant);
+      }
       this.audio.gunshot(cls(e.weaponId), e.ads);
       this.viewModel.onFire(e.ads);
       this.muzzleEffects(e.weaponId, true);
@@ -290,9 +326,11 @@ export class Game {
       this.audio.impact(e.point, e.surface);
     });
     bus.on('combat:hit', (e) => {
-      this.hud.showHit(e.part === 'head', e.killed);
-      this.audio.hit(e.part === 'head', e.killed);
-      this.effects.targetHit(e.point);
+      if (e.byPlayer) {
+        this.hud.showHit(e.part === 'head', e.killed);
+        this.audio.hit(e.part === 'head', e.killed);
+      }
+      if (e.targetId !== PLAYER_ID) this.effects.targetHit(e.point);
     });
     bus.on('combat:kill', (e) => this.hud.addKill(e));
     bus.on('grenade:thrown', () => {
@@ -301,7 +339,10 @@ export class Game {
     });
     bus.on('grenade:bounce', (e) => this.audio.grenadeBounce(e.point, e.speed));
     bus.on('grenade:detonate', (e) => this.detonate(e.type, e.point));
-    bus.on('player:footstep', (e) => this.audio.footstep(e.surface, e.sprinting));
+    bus.on('player:footstep', (e) => {
+      this.audio.footstep(e.surface, e.sprinting);
+      this.bots?.alert(e.point, e.sprinting ? 18 : 13, this.playerCombatant);
+    });
     bus.on('player:landed', (e) => {
       this.audio.land();
       this.viewModel.onLand(e.impactSpeed);
@@ -379,6 +420,7 @@ export class Game {
       }
       const tSim = performance.now();
       const alpha = this.loop.advance(dt, (h) => this.simStep(h));
+      this.lastAlpha = alpha;
       simMs = performance.now() - tSim;
       this.renderer.adaptResolution(dt * 1000, dt);
       this.updateCamera(alpha, dt, adsFov);
@@ -387,6 +429,7 @@ export class Game {
     input.lookPitch = 0;
 
     for (const tg of this.targets) tg.update(simDt);
+    this.bots?.render(this.lastAlpha, dt, this.renderer.camera.position);
     if (this.throwables.castersChanged || this.targets.some((tg) => tg.moved)) this.renderer.requestShadowUpdate();
     this.throwables.sync();
     this.updateViewModel(dt, lookYaw, lookPitch);
@@ -406,6 +449,48 @@ export class Game {
       `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}`,
     );
   };
+
+  /** The player as a bot target (Combatant) and as a damageable with hitboxes. */
+  private createPlayerCombatant(): void {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const game = this;
+    this.playerCombatant = {
+      id: PLAYER_ID,
+      team: PLAYER_TEAM,
+      get name() {
+        return t('feed.you');
+      },
+      get alive() {
+        return game.player.alive;
+      },
+      get feet() {
+        return game.player.feet;
+      },
+      get velocity() {
+        return game.player.velocity;
+      },
+      get eyeHeight() {
+        return game.player.eyeHeight;
+      },
+      get firingUntil() {
+        return game.playerFiringUntil;
+      },
+    };
+    const target: Damageable = {
+      id: PLAYER_ID,
+      name: 'You',
+      team: PLAYER_TEAM,
+      get alive() {
+        return game.player.alive;
+      },
+      applyDamage: (amount, _part, source) => {
+        this.damagePlayer(amount, source?.pos ?? null, 'bullet', source);
+        return !this.player.alive;
+      },
+    };
+    this.playerBoxes = new CharacterHitboxes(this.physics, this.registry, target);
+    this.playerBoxes.place(this.player.feet, this.player.yaw);
+  }
 
   /**
    * Small maps get one shadow map fitted over the whole playable area, rendered
@@ -450,6 +535,8 @@ export class Game {
       this.respawnTimer -= dt;
       if (this.respawnTimer <= 0) this.respawn();
     }
+    this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
+    this.bots?.step(dt);
     this.throwables.step(dt);
     this.physics.step();
     consumePulses(input);
@@ -490,8 +577,22 @@ export class Game {
         const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
         if (dmg <= 0) continue;
         const killed = tg.applyDamage(dmg, 'body');
-        this.bus.emit('combat:hit', { targetId: tg.id, part: 'body', damage: dmg, killed, point: c });
-        if (killed) this.bus.emit('combat:kill', { attacker: 'You', victim: tg.name, weapon: t('grenade.frag'), headshot: false });
+        this.bus.emit('combat:hit', { targetId: tg.id, part: 'body', damage: dmg, killed, point: c, byPlayer: true });
+        if (killed) this.bus.emit('combat:kill', { attacker: 'You', victim: tg.name, weapon: t('grenade.frag'), headshot: false, byPlayer: true });
+      }
+      for (const b of this.bots?.bots ?? []) {
+        if (!b.alive) continue;
+        const c = b.feet.clone().setY(b.feet.y + b.eyeHeight * 0.65);
+        const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
+        if (dmg <= 0) continue;
+        const source: DamageSource = { pos: point.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: t('grenade.frag'), id: PLAYER_ID };
+        // No friendly fire from grenades either.
+        if (b.team === PLAYER_TEAM) continue;
+        const killed = b.applyDamage(dmg, 'body', source);
+        this.bus.emit('combat:hit', { targetId: b.id, part: 'body', damage: dmg, killed, point: c, byPlayer: true });
+        if (killed) {
+          this.bus.emit('combat:kill', { attacker: 'You', victim: b.name, weapon: t('grenade.frag'), headshot: false, byPlayer: true, attackerTeam: PLAYER_TEAM, victimTeam: b.team });
+        }
       }
       const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
       const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
@@ -503,6 +604,13 @@ export class Game {
       const dist = toFlash.length();
       const facing = this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion).dot(toFlash.normalize());
       const intensity = flashIntensity(spec, dist, facing, this.occluded(probe, cam.position));
+      for (const b of this.bots?.bots ?? []) {
+        if (!b.alive) continue;
+        const eye = b.eyePos(new THREE.Vector3());
+        const to = point.clone().sub(eye);
+        const bi = flashIntensity(spec, to.length(), b.aimDir(new THREE.Vector3()).dot(to.normalize()), this.occluded(probe, eye));
+        if (bi > 0) b.blind(flashDuration(bi) * 0.8, this.bots!.time);
+      }
       if (intensity > 0 && this.player.alive) {
         const duration = flashDuration(intensity);
         this.flashLeft = this.flashTotal = duration;
@@ -516,7 +624,7 @@ export class Game {
     }
   }
 
-  private damagePlayer(amount: number, from: THREE.Vector3 | null, cause: DamageCause): void {
+  private damagePlayer(amount: number, from: THREE.Vector3 | null, cause: DamageCause, source?: DamageSource): void {
     const p = this.player;
     if (!p.alive) return;
     const killed = p.health.damage(amount);
@@ -529,21 +637,29 @@ export class Game {
     this.hud.showDamage(yaw, amount);
     this.audio.hurt(amount);
     this.shake = Math.min(0.05, this.shake + amount * 0.0004);
-    if (killed) this.die(cause);
+    if (killed) this.die(cause, source);
   }
 
-  private die(cause: DamageCause): void {
+  private die(cause: DamageCause, source?: DamageSource): void {
     this.respawnTimer = RESPAWN_SEC;
     this.weapons.adsBlend = 0;
+    this.playerBoxes.setEnabled(false);
     this.bus.emit('player:died', { cause });
-    const weapon = cause === 'explosion' ? t('grenade.frag') : cause === 'fall' ? '↓' : '';
-    this.hud.addKill({ attacker: 'You', victim: 'You', weapon, headshot: false });
+    this.killedBy = source && source.id !== PLAYER_ID ? source.name : null;
+    // Kills by others are reported by whoever made them; self-inflicted ones here.
+    if (!this.killedBy) {
+      const weapon = cause === 'explosion' ? t('grenade.frag') : cause === 'fall' ? '↓' : '';
+      this.hud.addKill({ attacker: 'You', victim: 'You', weapon, headshot: false });
+    }
   }
 
   private respawn(): void {
     const p = this.player;
     p.health.reset();
-    p.teleport(new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
+    const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
+    p.teleport(new THREE.Vector3(...sp.pos), sp.yaw * DEG);
+    this.playerBoxes.setEnabled(true);
+    this.killedBy = null;
     this.weapons.resetAmmo();
     this.grenades.reset();
     this.hud.clearDamage();
@@ -628,6 +744,8 @@ export class Game {
         grenadeCount: this.grenades.counts[sel],
         flash,
         respawnIn: this.player.alive ? null : Math.max(0, this.respawnTimer),
+        killedBy: this.killedBy,
+        score: this.bots ? { allies: this.bots.score(PLAYER_TEAM), enemies: this.bots.score(otherTeam(PLAYER_TEAM)) } : null,
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
           ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)}`

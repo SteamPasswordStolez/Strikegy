@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
+import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
+import { PLAYER_ID, PLAYER_TEAM } from '@/ai/types';
+import { t } from '@/i18n';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import type { GameBus } from '@/core/events';
 import type { InputState } from '@/input/InputState';
@@ -62,6 +64,8 @@ export class WeaponController {
   private readonly right = new THREE.Vector3();
   private readonly up = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  /** The shooter's own hitboxes, excluded from its rays. */
+  ignoreBody: RAPIER.RigidBody | undefined;
 
   constructor(
     loadout: WeaponId[],
@@ -222,23 +226,28 @@ export class WeaponController {
   private resolveRay(dir: THREE.Vector3, isPellet: boolean): void {
     const d = this.def;
     const maxDist = d.range * 1.5;
-    const hit = this.physics.raycast(this.eye, dir, maxDist, Layer.WORLD | Layer.HITBOX);
+    const hit = this.physics.raycast(this.eye, dir, maxDist, Layer.WORLD | Layer.HITBOX, undefined, this.ignoreBody);
     const to = hit
       ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z)
       : this.eye.clone().addScaledVector(dir, maxDist);
     const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
 
     if (hit && target) {
-      if (target.owner.alive) {
+      // Friendly fire is off: teammates simply stop the round.
+      if (target.owner.alive && target.owner.team !== PLAYER_TEAM) {
         const dmg = computeDamage(damageAtDistance(d, hit.distance), target.part, d.headshotMult);
-        const killed = target.owner.applyDamage(dmg, target.part);
-        this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to });
+        const source = { pos: this.eye.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: d.name, id: PLAYER_ID };
+        const killed = target.owner.applyDamage(dmg, target.part, source);
+        this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: true });
         if (killed) {
           this.bus.emit('combat:kill', {
             attacker: 'You',
             victim: target.owner.name,
             weapon: d.name,
             headshot: target.part === 'head',
+            byPlayer: true,
+            attackerTeam: PLAYER_TEAM,
+            victimTeam: target.owner.team ?? null,
           });
         }
       }

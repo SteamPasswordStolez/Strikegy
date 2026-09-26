@@ -6,7 +6,7 @@
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173  (?map=sandbox)
+npm run dev        # http://localhost:5173  (?map=sandbox&bots=4v5&difficulty=normal, ?bots=0 = 사격장)
 npm test           # Vitest 단위 테스트
 npm run lint
 npm run build      # tsc 검사 + dist/ 빌드 (scripts/clean.mjs로 dist 정리)
@@ -22,7 +22,7 @@ npm run build      # tsc 검사 + dist/ 빌드 (scripts/clean.mjs로 dist 정리
 | 좌클릭 / 우클릭 / R | 사격 / 조준 / 재장전 |
 | 1–9, Q, 마우스 휠 | 무기 전환 |
 | G / T | 수류탄 투척 / 종류 변경(파편·섬광·연막) |
-| F3 | FPS·좌표 표시 |
+| F3 / F4 | 성능 패널 / 그래픽 품질 전환 |
 
 모바일: 왼쪽 드래그로 이동하고, 오른쪽 드래그로 시점을 돌립니다. 사격/조준/점프/장전/앉기는 버튼으로 합니다.
 
@@ -56,7 +56,8 @@ src/
   physics/   PhysicsWorld(Rapier, 충돌 레이어, 레이캐스트)
   player/    Player(캐릭터 컨트롤러), movement(순수 이동 수학)
   weapons/   weaponData(밸런스), WeaponState(순수 발사/장전 로직), WeaponController, ViewModel
-  combat/    Hitboxes(부위 판정), TargetDummy
+  combat/    Hitboxes(부위 판정), CharacterHitboxes(플레이어·봇 공용), TargetDummy
+  ai/        NavWorld(recast navmesh), Bot(인지·판단·이동·사격), brain(utility AI), aim·difficulty, BotManager(분대·엄폐·사격 판정), SoldierModel(절차적 스킨 메시)
   render/    Renderer, PostFX(후처리), visualProfiles(하늘/IBL/태양), surfaces·textures(절차적 PBR), Effects
   world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout, backdrop(원경 지형·나무)
   audio/     AudioSystem(임시 합성 SFX)
@@ -79,10 +80,10 @@ tests/       단위 테스트
 - [x] G1 그래픽 1차: 물리 기반 하늘/구름 + IBL, 절차적 PBR 텍스처, GTAO/Bloom/SMAA/색보정, 추적 그림자, 원경 지형, 1인칭 팔
 - [x] G2 그래픽 2차 (1단계): 스캔 텍스처 5종 + 소품 모델 7종 + 저격총 1인칭 모델 (Poly Haven CC0)
 - [x] G3 그래픽 3차: 총기 정밀 모델링(프로파일 압출·선반 가공 부품, 레드닷/홀로/스코프/아이언), 실사 권총(Poly Haven), 절차적 침엽수 숲 + 원거리 임포스터, 숲 바닥 소품
-- [ ] G4: 봇 캐릭터 모델 (M3와 함께)
+- [x] G4: 봇 캐릭터 모델 (절차적 스킨 메시, 1인칭 총기 재사용)
 - [x] M2 전투: 반동 패턴·탄퍼짐, 표면별 탄착·탄피, 수류탄 3종, 피격/사망/리스폰, 킬피드, 3D 합성 사운드, 1인칭 애니메이션
 - [x] M2+ 실제 녹음 사운드(CC0) 교체 + 성능 최적화(동적 해상도, 인스턴싱, 반해상도 AO)
-- [ ] M3 봇 AI: navmesh(recast), 인지, utility AI, 분대 전술
+- [x] M3 봇 AI: navmesh(recast), 시야·소리 인지, utility AI(교전/엄폐/재장전/추격/조사/진격), 분대 목표·측면 우회, 난이도 3단계
 - [ ] M4 모드: Zone/Conquest/Frontline, 병과, 경제/상점, 로비
 - [ ] M5 모바일/성능: 터치 HUD 다듬기, 자동 품질, Rapier WASM 분리 로딩(번들 축소)
 - [ ] M6 캠페인 프레임워크 (새 스토리)
