@@ -35,6 +35,16 @@ npm run build      # tsc 검사 + dist/ 빌드 (scripts/clean.mjs로 dist 정리
 npm run assets     # assets-src/에 다운로드(git 제외) → public/assets/로 최적화
 ```
 
+사운드는 `sounds.manifest.json`에 적힌 CC0 소스를 쓰며 `npm run sounds`(7-Zip, ffmpeg 필요)로 다시 만듭니다.
+
+| 사운드 | 출처 (CC0) |
+|---|---|
+| 총성 | [The Free Firearm Sound Library](https://opengameart.org/content/the-free-firearm-sound-library) — Ben Jaszczak, Brian Nelson, Kevin Heras, Matthew Nanney |
+| 발소리·탄착음 | [Kenney Impact Sounds](https://kenney.nl/assets/impact-sounds) |
+| 폭발음 | [Basic Sound Effects](https://opengameart.org/content/basic-sound-effects) (OpenGameArt) |
+
+그래픽 품질: 자동(내장 GPU는 Medium) · 게임 중 **F4**로 Low/Medium/High 전환 · 프레임이 떨어지면 해상도를 자동으로 낮춥니다.
+
 텍스처를 불러오지 못하면 절차적으로 생성한 텍스처로, 모델을 불러오지 못하면 그 모델만 빼고 게임이 계속 동작합니다.
 
 ## 구조
@@ -70,7 +80,7 @@ tests/       단위 테스트
 - [x] G2 그래픽 2차 (1단계): 스캔 텍스처 5종 + 소품 모델 7종 + 저격총 1인칭 모델 (Poly Haven CC0)
 - [ ] G3 그래픽 3차: 캐릭터/총기 모델 확장, 데칼 확장, 동적 해상도
 - [x] M2 전투: 반동 패턴·탄퍼짐, 표면별 탄착·탄피, 수류탄 3종, 피격/사망/리스폰, 킬피드, 3D 합성 사운드, 1인칭 애니메이션
-- [ ] M2+ 실제 녹음 사운드(CC0) 교체
+- [x] M2+ 실제 녹음 사운드(CC0) 교체 + 성능 최적화(동적 해상도, 인스턴싱, 반해상도 AO)
 - [ ] M3 봇 AI: navmesh(recast), 인지, utility AI, 분대 전술
 - [ ] M4 모드: Zone/Conquest/Frontline, 병과, 경제/상점, 로비
 - [ ] M5 모바일/성능: 터치 HUD 다듬기, 자동 품질, Rapier WASM 분리 로딩(번들 축소)

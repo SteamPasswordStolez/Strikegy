@@ -139,6 +139,7 @@ export class Game {
     // Art loads in parallel with physics/map; any asset that fails falls back gracefully.
     const art = Promise.all([
       this.surfaces.preload(SURFACE_KINDS, ASSET_BASE),
+      this.audio.preload(`${ASSET_BASE}sounds/`),
       this.models.load(this.options.viewModels ?? []),
     ]);
     try {

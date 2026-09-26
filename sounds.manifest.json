@@ -1,0 +1,54 @@
+{
+  "sources": {
+    "firearms": {
+      "url": "https://opengameart.org/sites/default/files/Prepared%20SFX%20Library.7z",
+      "file": "firearms.7z",
+      "extract": "firearms",
+      "license": "CC0 — The Free Firearm Sound Library (Jaszczak, Nelson, Heras, Nanney)"
+    },
+    "kenney": {
+      "url": "https://kenney.nl/media/pages/assets/impact-sounds/87b4ddecda-1677589768/kenney_impact-sounds.zip",
+      "file": "kenney_impact.zip",
+      "extract": "kenney",
+      "license": "CC0 — Kenney Impact Sounds"
+    },
+    "explosion": {
+      "url": "https://opengameart.org/sites/default/files/explosion_0.mp3",
+      "file": "explosion.mp3",
+      "license": "CC0 — OpenGameArt 'Basic Sound Effects'"
+    },
+    "explosion_distant": {
+      "url": "https://opengameart.org/sites/default/files/explosion_distant_0.mp3",
+      "file": "explosion_distant.mp3",
+      "license": "CC0 — OpenGameArt 'Basic Sound Effects'"
+    }
+  },
+  "sounds": {
+    "gun_ar": { "src": "firearms/Prepared SFX Library/AR-15/D_32P.wav", "dur": 1.1 },
+    "gun_smg": { "src": "firearms/Prepared SFX Library/Carl Gustav M45/G_31P.wav", "dur": 0.9 },
+    "gun_lmg": { "src": "firearms/Prepared SFX Library/AK-47/C_28P.wav", "dur": 1.2 },
+    "gun_sg": { "src": "firearms/Prepared SFX Library/Nova/O_21P.wav", "dur": 1.5 },
+    "gun_dmr": { "src": "firearms/Prepared SFX Library/SKS/U_14P.wav", "dur": 1.3 },
+    "gun_sr": { "src": "firearms/Prepared SFX Library/Mosin Nagant/M_21P.wav", "dur": 1.8 },
+    "gun_pistol": { "src": "firearms/Prepared SFX Library/Walther PPQ/X_39P.wav", "dur": 0.9 },
+    "gunfar_ar": { "src": "firearms/Prepared SFX Library/AR-15/D_24P.wav", "dur": 1.4 },
+    "gunfar_smg": { "src": "firearms/Prepared SFX Library/Carl Gustav M45/G_20P.wav", "dur": 1.2 },
+    "gunfar_lmg": { "src": "firearms/Prepared SFX Library/AK-47/C_31P.wav", "dur": 1.4 },
+    "gunfar_sg": { "src": "firearms/Prepared SFX Library/Nova/O_17P.wav", "dur": 1.6 },
+    "gunfar_dmr": { "src": "firearms/Prepared SFX Library/SKS/U_19P.wav", "dur": 1.5 },
+    "gunfar_sr": { "src": "firearms/Prepared SFX Library/Mosin Nagant/M_26P.wav", "dur": 2 },
+    "gunfar_pistol": { "src": "firearms/Prepared SFX Library/Walther PPQ/X_31P.wav", "dur": 1.2 },
+    "explosion": { "src": "explosion.mp3", "dur": 3.5 },
+    "explosion_far": { "src": "explosion_distant.mp3", "dur": 3.5 },
+    "step_dirt": { "src": "kenney/Audio/footstep_snow_00{0,1,2,3}.ogg" },
+    "step_concrete": { "src": "kenney/Audio/footstep_concrete_00{0,1,2,3}.ogg" },
+    "step_wood": { "src": "kenney/Audio/footstep_wood_00{0,1,2,3}.ogg" },
+    "hit_dirt": { "src": "kenney/Audio/impactSoft_medium_00{0,1,2}.ogg" },
+    "hit_concrete": { "src": "kenney/Audio/impactMining_00{0,1,2}.ogg" },
+    "hit_metal": { "src": "kenney/Audio/impactMetal_light_00{0,1,2}.ogg" },
+    "hit_wood": { "src": "kenney/Audio/impactWood_light_00{0,1,2}.ogg" },
+    "hit_rubber": { "src": "kenney/Audio/impactSoft_heavy_00{0,1,2}.ogg" },
+    "grenade_bounce": { "src": "kenney/Audio/impactTin_medium_00{0,1,2}.ogg" },
+    "mag_in": { "src": "kenney/Audio/impactMetal_medium_00{0,1}.ogg" }
+  }
+}

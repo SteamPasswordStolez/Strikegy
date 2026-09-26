@@ -36,10 +36,31 @@ const SURFACE_SOUND: Record<ImpactSurface, { type: BiquadFilterType; freq: numbe
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** Surface -> recorded sample set (see sounds.manifest.json). */
+const STEP_SAMPLE: Record<ImpactSurface, string> = {
+  dirt: 'step_dirt',
+  concrete: 'step_concrete',
+  brick: 'step_concrete',
+  metal: 'step_concrete',
+  wood: 'step_wood',
+  rubber: 'step_dirt',
+};
+const HIT_SAMPLE: Record<ImpactSurface, string> = {
+  dirt: 'hit_dirt',
+  concrete: 'hit_concrete',
+  brick: 'hit_concrete',
+  metal: 'hit_metal',
+  wood: 'hit_wood',
+  rubber: 'hit_rubber',
+};
+/** Beyond this distance remote gunfire uses the "far" recordings. */
+const FAR_GUNFIRE_M = 45;
+
 /**
- * Procedural audio (no sample files yet). Player-owned sounds are 2D; world
- * sounds go through HRTF panners that follow the camera. Everything feeds a
- * reverb send and a compressor so layered sounds do not clip.
+ * Game audio. Recorded CC0 samples (public/assets/sounds) are used when loaded;
+ * every sound also has a procedural fallback so nothing goes silent if a file is
+ * missing. Player-owned sounds are 2D; world sounds go through HRTF panners that
+ * follow the camera. Everything feeds a reverb send and a compressor.
  */
 export class AudioSystem {
   private ctx: AudioContext | null = null;
@@ -52,6 +73,9 @@ export class AudioSystem {
   private tinnitus: { osc: OscillatorNode; gain: GainNode } | null = null;
   private heartbeatAt = 0;
   private impactBudget = 0;
+  /** Encoded sample files fetched before the AudioContext exists. */
+  private raw = new Map<string, ArrayBuffer[]>();
+  private samples = new Map<string, AudioBuffer[]>();
 
   constructor(private volume: number) {}
 
@@ -59,6 +83,49 @@ export class AudioSystem {
   unlock(): void {
     if (!this.ctx) this.build();
     if (this.ctx!.state === 'suspended') void this.ctx!.resume();
+    this.decodePending();
+  }
+
+  /** Fetches the sample index and files; decoding waits for the AudioContext. */
+  async preload(baseUrl: string): Promise<void> {
+    try {
+      const index = (await (await fetch(`${baseUrl}index.json`)).json()) as Record<string, number>;
+      await Promise.all(
+        Object.entries(index).map(async ([id, n]) => {
+          const urls = n > 1 ? Array.from({ length: n }, (_, i) => `${baseUrl}${id}_${i}.wav`) : [`${baseUrl}${id}.wav`];
+          const files = await Promise.all(urls.map(async (u) => (await fetch(u)).arrayBuffer()));
+          this.raw.set(id, files);
+        }),
+      );
+    } catch (err) {
+      console.warn('[audio] samples unavailable, using procedural sounds', err);
+    }
+    this.decodePending();
+  }
+
+  private decodePending(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    for (const [id, files] of this.raw) {
+      Promise.all(files.map((f) => ctx.decodeAudioData(f)))
+        .then((bufs) => this.samples.set(id, bufs))
+        .catch((err) => console.warn(`[audio] decode failed: ${id}`, err));
+    }
+    this.raw.clear();
+  }
+
+  /** Plays a random variant of a sample; returns false if it isn't loaded. */
+  private sample(id: string, dest: AudioNode, t: number, gain: number, rate = 1): boolean {
+    const bufs = this.samples.get(id);
+    if (!bufs || bufs.length === 0) return false;
+    const src = this.ctx!.createBufferSource();
+    src.buffer = bufs[Math.floor(Math.random() * bufs.length)]!;
+    src.playbackRate.value = rate;
+    const g = this.ctx!.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(dest);
+    src.start(t);
+    return true;
   }
 
   private build(): void {
@@ -221,16 +288,33 @@ export class AudioSystem {
     const pitch = rand(0.94, 1.06);
     const out = this.out(null, v.tail);
     const g = v.gain * (ads ? 0.92 : 1);
-    // Transient crack, body, low thump and a hint of mechanism.
-    this.noiseBurst(out, t, 0.012, g * 0.9, { type: 'highpass', freq: 2500 });
-    this.noiseBurst(out, t, v.decay, g, { type: 'lowpass', freq: v.cutoff * pitch, endFreq: 350 }, pitch);
-    this.tone(out, t, v.thump * 2 * pitch, 0.12, g * 0.9, 'sine', v.thump * 0.5);
-    this.tone(out, t + 0.004, 3100 * pitch, 0.015, g * 0.08, 'square');
+    if (this.sample(`gun_${cls}`, out, t, 0.95, rand(0.97, 1.03))) {
+      // Recordings are taken beside the shooter; a little sub thump restores first-person weight.
+      this.tone(out, t, v.thump * 2 * pitch, 0.1, g * 0.35, 'sine', v.thump * 0.5);
+    } else {
+      // Transient crack, body, low thump and a hint of mechanism.
+      this.noiseBurst(out, t, 0.012, g * 0.9, { type: 'highpass', freq: 2500 });
+      this.noiseBurst(out, t, v.decay, g, { type: 'lowpass', freq: v.cutoff * pitch, endFreq: 350 }, pitch);
+      this.tone(out, t, v.thump * 2 * pitch, 0.12, g * 0.9, 'sine', v.thump * 0.5);
+      this.tone(out, t + 0.004, 3100 * pitch, 0.015, g * 0.08, 'square');
+    }
     // Brass hitting the ground a moment later.
     if (cls !== 'sg' && Math.random() < 0.7) {
       const d = t + rand(0.35, 0.6);
       this.tone(out, d, rand(4800, 6200), 0.035, 0.03, 'triangle');
       this.tone(out, d + rand(0.06, 0.12), rand(5200, 6800), 0.025, 0.02, 'triangle');
+    }
+  }
+
+  /** Someone else's gunfire at a world position (bots, M3). */
+  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(pos, 0.6);
+    const id = distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`;
+    if (!this.sample(id, out, t, 0.9, rand(0.96, 1.04))) {
+      const v = VOICES[cls];
+      this.noiseBurst(out, t, v.decay * 1.5, v.gain, { type: 'lowpass', freq: Math.max(800, v.cutoff - distance * 20), endFreq: 200 });
     }
   }
 
@@ -244,6 +328,7 @@ export class AudioSystem {
         this.noiseBurst(out, t + 0.02, 0.09, 0.12, { type: 'bandpass', freq: 1500, q: 1.5, endFreq: 900 });
         break;
       case 'magIn':
+        this.sample('mag_in', out, t, 0.25, 1.5);
         this.noiseBurst(out, t, 0.035, 0.3, { type: 'bandpass', freq: 2600, q: 1.4 });
         this.tone(out, t, 180, 0.06, 0.2, 'sine', 90);
         break;
@@ -292,6 +377,7 @@ export class AudioSystem {
     this.impactBudget = t + 0.015;
     const s = SURFACE_SOUND[surface];
     const out = this.out(pos, 0.2);
+    if (this.sample(HIT_SAMPLE[surface], out, t, 0.7, rand(0.9, 1.15))) return;
     this.noiseBurst(out, t, s.len, 0.5, { type: s.type, freq: s.freq * rand(0.85, 1.15), q: s.q });
     if (s.ring) for (const f of s.ring) this.tone(out, t, f * rand(0.97, 1.03), 0.22, 0.06, 'sine');
   }
@@ -301,6 +387,7 @@ export class AudioSystem {
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0.03);
     const g = sprinting ? 0.22 : 0.14;
+    if (this.sample(STEP_SAMPLE[surface], out, t, sprinting ? 0.55 : 0.38, rand(0.92, 1.08))) return;
     const s = SURFACE_SOUND[surface];
     if (surface === 'dirt') {
       // Gravel crunch: a few tiny grains.
@@ -338,6 +425,7 @@ export class AudioSystem {
     const t = this.ctx!.currentTime;
     const out = this.out(pos, 0.1);
     const g = Math.min(0.5, speed / 20);
+    if (this.sample('grenade_bounce', out, t, g * 1.4, rand(1.1, 1.3))) return;
     this.tone(out, t, rand(1700, 2000), 0.09, g * 0.3, 'triangle');
     this.tone(out, t, rand(2600, 2900), 0.06, g * 0.2, 'sine');
     this.noiseBurst(out, t, 0.04, g * 0.5, { type: 'bandpass', freq: 1200, q: 1 });
@@ -349,6 +437,10 @@ export class AudioSystem {
     const out = this.out(pos, 0.9);
     // Distance muffles high frequencies.
     const top = Math.max(500, 6000 - distance * 60);
+    if (this.sample(distance > 60 ? 'explosion_far' : 'explosion', out, t, 1, rand(0.94, 1.04))) {
+      this.tone(out, t, 80, 0.8, 0.7, 'sine', 28);
+      return;
+    }
     this.noiseBurst(out, t, 0.04, 1.4, { type: 'lowpass', freq: top });
     this.noiseBurst(out, t, 1.6, 1.2, { type: 'lowpass', freq: Math.min(top, 1400), endFreq: 90 });
     this.tone(out, t, 90, 0.9, 1.2, 'sine', 28);
