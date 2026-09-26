@@ -8,6 +8,8 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    // Cleaning is done by scripts/clean.mjs (see comment there).
+    emptyOutDir: false,
     chunkSizeWarningLimit: 2500,
   },
   test: {

@@ -9,7 +9,7 @@ npm install
 npm run dev        # http://localhost:5173  (?map=sandbox)
 npm test           # Vitest 단위 테스트
 npm run lint
-npm run build      # tsc 검사 + dist/ 빌드
+npm run build      # tsc 검사 + dist/ 빌드 (scripts/clean.mjs로 dist 정리)
 ```
 
 `main`에 push하면 GitHub Actions가 lint → test → build를 돌리고 GitHub Pages로 배포합니다(`.github/workflows/deploy.yml`).
@@ -35,8 +35,8 @@ src/
   player/    Player(캐릭터 컨트롤러), movement(순수 이동 수학)
   weapons/   weaponData(밸런스), WeaponState(순수 발사/장전 로직), WeaponController, ViewModel
   combat/    Hitboxes(부위 판정), TargetDummy
-  render/    Renderer(월드 + 뷰모델 2패스), visualProfiles, Effects, textures
-  world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout
+  render/    Renderer, PostFX(후처리), visualProfiles(하늘/IBL/태양), surfaces·textures(절차적 PBR), Effects
+  world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout, backdrop(원경 지형·나무)
   audio/     AudioSystem(임시 합성 SFX)
   ui/        HUD, Overlay
   i18n/      ko.json / en.json
@@ -54,6 +54,8 @@ tests/       단위 테스트
 
 - [x] M0 셋업
 - [x] M1 FPS 코어 샌드박스
+- [x] G1 그래픽 1차: 물리 기반 하늘/구름 + IBL, 절차적 PBR 텍스처, GTAO/Bloom/SMAA/색보정, 추적 그림자, 원경 지형, 1인칭 팔
+- [ ] G2 그래픽 2차: 실제 텍스처·모델 에셋(CC0), 데칼 확장, 동적 해상도
 - [ ] M2 전투: 반동/탄퍼짐 튜닝, 투척물, 실제 사운드, 데미지 피드백
 - [ ] M3 봇 AI: navmesh(recast), 인지, utility AI, 분대 전술
 - [ ] M4 모드: Zone/Conquest/Frontline, 병과, 경제/상점, 로비

@@ -5,11 +5,13 @@ import { FixedStepLoop } from './FixedStepLoop';
 import { isTouchDevice, loadSettings, resolveQuality, type Settings } from './Settings';
 import { setLocale, t } from '@/i18n';
 import { Renderer } from '@/render/Renderer';
-import { applyVisualProfile } from '@/render/visualProfiles';
+import { Atmosphere } from '@/render/visualProfiles';
+import { SurfaceLibrary } from '@/render/textures';
 import { Effects } from '@/render/Effects';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { fetchMap } from '@/world/validateMap';
 import { buildBlockout } from '@/world/buildBlockout';
+import { buildBackdrop } from '@/world/backdrop';
 import type { MapDef } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
 import { KeyboardMouse } from '@/input/KeyboardMouse';
@@ -53,6 +55,8 @@ export class Game {
   private readonly tmpEye = new THREE.Vector3();
   private readonly tmpMuzzle = new THREE.Vector3();
   private physics!: PhysicsWorld;
+  private atmosphere!: Atmosphere;
+  private elapsed = 0;
   private player!: Player;
   private weapons!: WeaponController;
   private running = false;
@@ -108,8 +112,16 @@ export class Game {
     }
     this.physics.timestep = 1 / SIM_HZ;
     const r = this.renderer;
-    applyVisualProfile(r.scene, r.gl, map.world.visualProfile, map.world.size, r.quality.shadowMapSize);
-    buildBlockout(map, r.scene, this.physics, r.maxAnisotropy);
+    const q = r.quality;
+    this.atmosphere = new Atmosphere(r.scene, r.fpScene, r.gl, map.world.visualProfile, {
+      shadows: q.shadows,
+      shadowMapSize: q.shadowMapSize,
+      shadowExtent: q.shadowExtent,
+    });
+    const t0 = performance.now();
+    buildBlockout(map, r.scene, this.physics, new SurfaceLibrary(q.textureSize, r.maxAnisotropy));
+    if (map.world.visualProfile !== 'indoor') buildBackdrop(r.scene, map.world.size, !q.postfx);
+    if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
     const spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, new THREE.Vector3(...spawn.pos), spawn.yaw * DEG);
@@ -181,6 +193,7 @@ export class Game {
     this.rafId = requestAnimationFrame(this.frame);
     const dt = Math.min((now - this.lastTime) / 1000, 0.1);
     this.lastTime = now;
+    this.elapsed += dt;
     this.countFps(dt);
 
     const input = this.input;
@@ -236,6 +249,7 @@ export class Game {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
+    this.atmosphere.update(cam.position, this.elapsed);
   }
 
   private updateViewModel(dt: number, lookYaw: number, lookPitch: number): void {

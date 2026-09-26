@@ -31,28 +31,37 @@ export class TargetDummy implements Damageable {
     this.group.rotation.y = yaw;
     this.group.add(this.pivot);
 
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc9772f, roughness: 0.7 });
-    const headMat = new THREE.MeshStandardMaterial({ color: 0xd9a066, roughness: 0.6 });
-    const legMat = new THREE.MeshStandardMaterial({ color: 0x4d5560, roughness: 0.8 });
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd07a2c, roughness: 0.45, metalness: 0 });
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xe0a96b, roughness: 0.4, metalness: 0 });
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x3f4650, roughness: 0.7, metalness: 0 });
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.5, metalness: 0.6 });
     this.materials.push(bodyMat, headMat, legMat);
 
-    // Geometry and hitboxes share dimensions: legs 0-0.9, torso 0.9-1.5, head ~1.62.
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.9, 0.24), legMat);
-    legs.position.y = 0.45;
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.28), bodyMat);
-    torso.position.y = 1.2;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), headMat);
-    head.position.y = 1.64;
-    const post = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.03, 0.03, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0x333333 }),
-    );
-    post.position.y = 0.15;
-    for (const m of [legs, torso, head]) {
-      m.castShadow = true;
-      this.pivot.add(m);
+    // Visual mannequin; hitboxes below use matching extents (legs 0-0.9, torso 0.9-1.5, head ~1.64).
+    const part = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z = 0, rz = 0) => {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z);
+      mesh.rotation.z = rz;
+      mesh.castShadow = true;
+      this.pivot.add(mesh);
+      return mesh;
+    };
+    for (const sx of [-0.1, 0.1]) {
+      part(new THREE.CapsuleGeometry(0.075, 0.62, 4, 10), legMat, sx, 0.46);
+      part(new THREE.SphereGeometry(0.05, 10, 8), jointMat, sx, 0.47, 0.05);
     }
-    this.group.add(post);
+    part(new THREE.CapsuleGeometry(0.1, 0.12, 4, 10), legMat, 0, 0.9).scale.set(1.6, 1, 1);
+    const torso = part(new THREE.CapsuleGeometry(0.2, 0.26, 6, 14), bodyMat, 0, 1.22);
+    torso.scale.set(1.05, 1, 0.62);
+    for (const sx of [-1, 1]) {
+      part(new THREE.CapsuleGeometry(0.055, 0.48, 4, 8), bodyMat, sx * 0.29, 1.15, 0, sx * 0.12);
+    }
+    part(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 10), jointMat, 0, 1.5);
+    part(new THREE.SphereGeometry(0.13, 20, 16), headMat, 0, 1.64);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.04, 20), jointMat);
+    base.position.y = 0.02;
+    base.receiveShadow = true;
+    this.group.add(base);
     scene.add(this.group);
 
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { surfaceMaterial, worldScaleBoxUVs } from '@/render/textures';
+import { worldScaleBoxUVs, type SurfaceLibrary } from '@/render/textures';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 
@@ -18,7 +18,7 @@ export function buildBlockout(
   map: MapDef,
   scene: THREE.Scene,
   physics: PhysicsWorld,
-  maxAnisotropy: number,
+  surfaces: SurfaceLibrary,
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = `map:${map.meta.id}`;
@@ -34,30 +34,27 @@ export function buildBlockout(
     },
     root,
     physics,
-    maxAnisotropy,
+    surfaces,
   );
 
-  for (const obj of map.objects) addBox(obj, root, physics, maxAnisotropy);
+  for (const obj of map.objects) addBox(obj, root, physics, surfaces);
 
   scene.add(root);
   return root;
 }
 
-function addBox(obj: MapObject, root: THREE.Group, physics: PhysicsWorld, maxAniso: number): void {
+function addBox(obj: MapObject, root: THREE.Group, physics: PhysicsWorld, surfaces: SurfaceLibrary): void {
   const [w, h, d] = obj.size;
   const geo = new THREE.BoxGeometry(w, h, d);
   worldScaleBoxUVs(geo, w, h, d);
 
-  let mat = surfaceMaterial(obj.material ?? DEFAULT_MATERIAL[obj.type], maxAniso);
-  if (obj.color) {
-    mat = mat.clone();
-    mat.color = new THREE.Color(obj.color);
-  }
+  const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
+  const mat = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(...obj.pos);
   if (obj.rot) mesh.rotation.set(obj.rot[0] * DEG, obj.rot[1] * DEG, obj.rot[2] * DEG);
-  mesh.castShadow = obj.type !== 'floor';
+  mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.matrixAutoUpdate = false;
   mesh.updateMatrix();

@@ -1,80 +1,140 @@
 import * as THREE from 'three';
 import type { SurfaceMaterial } from '@/world/mapTypes';
+import { TileNoise } from './noise';
+import { createRecipe, rasterize } from './surfaces';
 
-interface SurfaceStyle {
-  base: string;
-  line: string;
-  /** Grid cells per texture tile. */
-  cells: number;
-  noise: number;
-  roughness: number;
-  metalness: number;
+function dataTexture(data: Uint8Array, size: number, srgb: boolean, maxAniso: number): THREE.DataTexture {
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.anisotropy = maxAniso;
+  tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
 }
 
-const STYLES: Record<SurfaceMaterial, SurfaceStyle> = {
-  ground: { base: '#6f6a5c', line: '#5d584b', cells: 4, noise: 0.18, roughness: 0.95, metalness: 0 },
-  concrete: { base: '#9a9a96', line: '#83837f', cells: 2, noise: 0.1, roughness: 0.9, metalness: 0 },
-  metal: { base: '#5c6670', line: '#4a525a', cells: 4, noise: 0.06, roughness: 0.55, metalness: 0.6 },
-  wood: { base: '#8a6a47', line: '#6e5236', cells: 8, noise: 0.12, roughness: 0.8, metalness: 0 },
-  brick: { base: '#8c4b3c', line: '#c9bca8', cells: 8, noise: 0.1, roughness: 0.9, metalness: 0 },
+/** Low-frequency tileable noise used to break up texture repetition in world space. */
+function macroNoiseTexture(): THREE.DataTexture {
+  const size = 128;
+  const n = new TileNoise(4242);
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size;
+      const v = (y + 0.5) / size;
+      const p = (y * size + x) * 4;
+      data[p] = n.fbm(u, v, 4, 4) * 255;
+      data[p + 1] = n.fbm(u + 0.5, v + 0.5, 8, 3) * 255;
+      data[p + 2] = 0;
+      data[p + 3] = 255;
+    }
+  }
+  const tex = dataTexture(data, size, false, 1);
+  return tex;
+}
+
+let macroTex: THREE.DataTexture | null = null;
+
+/**
+ * Injects world-space macro variation: multiplies albedo by two octaves of
+ * large-scale noise so the same tile never looks identical twice.
+ */
+function addMacroVariation(mat: THREE.MeshStandardMaterial, strength: number): void {
+  macroTex ??= macroNoiseTexture();
+  const tex = macroTex;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uMacro = { value: tex };
+    shader.uniforms.uMacroStrength = { value: strength };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vMacroWorld;')
+      .replace(
+        '#include <project_vertex>',
+        '#include <project_vertex>\nvMacroWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vMacroWorld;\nuniform sampler2D uMacro;\nuniform float uMacroStrength;',
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+        vec2 macroUv = vec2(vMacroWorld.x + vMacroWorld.y * 0.61, vMacroWorld.z - vMacroWorld.y * 0.37);
+        float m1 = texture2D(uMacro, macroUv * 0.011).r;
+        float m2 = texture2D(uMacro, macroUv * 0.047).g;
+        float macro = mix(m1, m2, 0.4);
+        diffuseColor.rgb *= 1.0 + (macro - 0.5) * 2.0 * uMacroStrength;`,
+      );
+  };
+  mat.customProgramCacheKey = () => `macro${strength}`;
+}
+
+const MACRO_STRENGTH: Record<SurfaceMaterial, number> = {
+  ground: 0.2,
+  concrete: 0.16,
+  metal: 0.1,
+  wood: 0.12,
+  brick: 0.14,
 };
 
-/** Meters covered by one texture tile. */
-export const TILE_METERS = 4;
+/** Generates and caches PBR materials for blockout surfaces. */
+export class SurfaceLibrary {
+  private cache = new Map<SurfaceMaterial, THREE.MeshStandardMaterial>();
 
-function drawSurface(style: SurfaceStyle, size = 256): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const g = c.getContext('2d')!;
-  g.fillStyle = style.base;
-  g.fillRect(0, 0, size, size);
+  constructor(
+    private readonly resolution: number,
+    private readonly maxAnisotropy: number,
+  ) {}
 
-  // Speckle noise to avoid a flat, plastic look.
-  const img = g.getImageData(0, 0, size, size);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const n = (Math.random() - 0.5) * 255 * style.noise;
-    img.data[i] = img.data[i]! + n;
-    img.data[i + 1] = img.data[i + 1]! + n;
-    img.data[i + 2] = img.data[i + 2]! + n;
+  get(kind: SurfaceMaterial): THREE.MeshStandardMaterial {
+    const hit = this.cache.get(kind);
+    if (hit) return hit;
+    const recipe = createRecipe(kind);
+    const img = rasterize(recipe, this.resolution);
+    const aniso = Math.min(8, this.maxAnisotropy);
+    const map = dataTexture(img.albedo, img.size, true, aniso);
+    const normalMap = dataTexture(img.normal, img.size, false, aniso);
+    const orm = dataTexture(img.orm, img.size, false, aniso);
+    // UVs are authored in meters; scale so one tile covers `tileMeters`.
+    const repeat = 1 / recipe.tileMeters;
+    for (const t of [map, normalMap, orm]) t.repeat.set(repeat, repeat);
+
+    const mat = new THREE.MeshStandardMaterial({
+      map,
+      normalMap,
+      roughnessMap: orm,
+      metalnessMap: orm,
+      aoMap: orm,
+      roughness: 1,
+      metalness: 1,
+      aoMapIntensity: 1,
+    });
+    addMacroVariation(mat, MACRO_STRENGTH[kind]);
+    this.cache.set(kind, mat);
+    return mat;
   }
-  g.putImageData(img, 0, 0);
 
-  g.strokeStyle = style.line;
-  g.lineWidth = 2;
-  const step = size / style.cells;
-  for (let i = 0; i <= style.cells; i++) {
-    g.beginPath();
-    g.moveTo(i * step, 0);
-    g.lineTo(i * step, size);
-    g.moveTo(0, i * step);
-    g.lineTo(size, i * step);
-    g.stroke();
+  /** Same surface with an albedo tint (e.g. painted walls). Textures are shared. */
+  tinted(kind: SurfaceMaterial, color: string): THREE.MeshStandardMaterial {
+    const key = `${kind}:${color}`;
+    let mat = this.tints.get(key);
+    if (!mat) {
+      mat = this.get(kind).clone();
+      mat.color = new THREE.Color(color);
+      addMacroVariation(mat, MACRO_STRENGTH[kind]);
+      this.tints.set(key, mat);
+    }
+    return mat;
   }
-  return c;
-}
 
-const cache = new Map<SurfaceMaterial, THREE.MeshStandardMaterial>();
-
-export function surfaceMaterial(kind: SurfaceMaterial, maxAnisotropy: number): THREE.MeshStandardMaterial {
-  const hit = cache.get(kind);
-  if (hit) return hit;
-  const style = STYLES[kind];
-  const tex = new THREE.CanvasTexture(drawSurface(style));
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = Math.min(8, maxAnisotropy);
-  const mat = new THREE.MeshStandardMaterial({
-    map: tex,
-    roughness: style.roughness,
-    metalness: style.metalness,
-  });
-  cache.set(kind, mat);
-  return mat;
+  private tints = new Map<string, THREE.MeshStandardMaterial>();
 }
 
 /**
- * Rescales a BoxGeometry's UVs so textures tile in world meters instead of
- * stretching per face. Face order in three.js: +x, -x, +y, -y, +z, -z.
+ * Sets a BoxGeometry's UVs to world meters so textures keep a constant scale
+ * on every face. Face order in three.js: +x, -x, +y, -y, +z, -z.
  */
 export function worldScaleBoxUVs(geo: THREE.BoxGeometry, w: number, h: number, d: number): void {
   const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
@@ -91,7 +151,7 @@ export function worldScaleBoxUVs(geo: THREE.BoxGeometry, w: number, h: number, d
     const [su, sv] = dims[f]!;
     for (let v = 0; v < vertsPerFace; v++) {
       const i = f * vertsPerFace + v;
-      uv.setXY(i, (uv.getX(i) * su) / TILE_METERS, (uv.getY(i) * sv) / TILE_METERS);
+      uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
     }
   }
   uv.needsUpdate = true;
