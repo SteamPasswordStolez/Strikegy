@@ -21,6 +21,10 @@ const DAMAGE_SCALE: Record<Difficulty, number> = { easy: 0.55, normal: 0.75, har
 /** How far gunfire and footsteps carry for bots (meters). */
 const HEAR_SHOT = 70;
 const HEAR_STEP = 13;
+/** Bots closer than this push apart (meters), at up to SEPARATION_SPEED m/s. */
+const SEPARATION_RADIUS = 1.1;
+const SEPARATION_SPEED = 2.2;
+const BLOB_SIZE = 1.1;
 
 /** Loadout pool: weighted so most bots carry rifles. */
 const POOL: [WeaponId, number][] = [
@@ -91,6 +95,9 @@ export class BotManager implements BotServices {
   private readonly tmp2 = new THREE.Vector3();
   private readonly muzzle = new THREE.Vector3();
   private markerMaterial: THREE.SpriteMaterial | null = null;
+  /** Soft contact shadows under every bot, one draw call. */
+  private readonly blobs: THREE.InstancedMesh;
+  private readonly blobMatrix = new THREE.Matrix4();
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -115,6 +122,8 @@ export class BotManager implements BotServices {
       return { objective: base.clone(), planAt: 0, sighting: null, base, spawns: own, kills: 0 };
     };
     this.teams = { blue: teamState('blue'), red: teamState('red') };
+    // Build every soldier + weapon mesh now rather than hitching on first respawn.
+    SoldierModel.prewarm(['blue', 'red'], POOL.map(([id]) => WEAPONS[id]));
 
     const add = (team: Team, n: number) => {
       for (let i = 0; i < n; i++) {
@@ -129,6 +138,8 @@ export class BotManager implements BotServices {
     };
     add(PLAYER_TEAM, opts.allies);
     add(otherTeam(PLAYER_TEAM), opts.enemies);
+    this.blobs = this.makeBlobs(this.entries.length);
+    scene.add(this.blobs);
 
     bus.on('combat:kill', (e) => {
       if (e.attackerTeam && e.attackerTeam !== e.victimTeam) this.teams[e.attackerTeam].kills++;
@@ -160,7 +171,14 @@ export class BotManager implements BotServices {
     const t = this.teams[bot.team];
     const sp = t.spawns.length ? t.spawns[Math.floor(Math.random() * t.spawns.length)]! : null;
     const base = sp ? new THREE.Vector3(...sp.pos) : t.base;
-    const pos = this.nav.randomAround(base, 4) ?? this.nav.closest(base) ?? base.clone();
+    // Don't spawn on top of another bot.
+    let pos = base.clone();
+    for (let i = 0; i < 8; i++) {
+      const p = this.nav.randomAround(base, 4 + i) ?? this.nav.closest(base);
+      if (!p) continue;
+      pos = p;
+      if (!this.entries.some((e) => e.bot !== bot && e.bot.alive && e.bot.feet.distanceTo(p) < 1.2)) break;
+    }
     const [ex, , ez] = [t.base.x - this.teams[otherTeam(bot.team)].base.x, 0, t.base.z - this.teams[otherTeam(bot.team)].base.z];
     // Face the enemy base.
     bot.spawn(pos, Math.atan2(ex, ez), pickWeapon());
@@ -333,6 +351,27 @@ export class BotManager implements BotServices {
     this.alert(bot.feet, sprinting ? HEAR_STEP * 1.4 : HEAR_STEP, bot);
   }
 
+  separation(bot: Bot, out: THREE.Vector3): THREE.Vector3 {
+    out.set(0, 0, 0);
+    for (const e of this.entries) {
+      const o = e.bot;
+      if (o === bot || !o.alive || Math.abs(o.feet.y - bot.feet.y) > 1.5) continue;
+      const dx = bot.feet.x - o.feet.x;
+      const dz = bot.feet.z - o.feet.z;
+      const d = Math.hypot(dx, dz);
+      if (d >= SEPARATION_RADIUS) continue;
+      const k = (1 - d / SEPARATION_RADIUS) * SEPARATION_SPEED;
+      if (d < 1e-3) {
+        // Exactly on top of each other: split by id.
+        out.x += (bot.id > o.id ? 1 : -1) * k;
+      } else {
+        out.x += (dx / d) * k;
+        out.z += (dz / d) * k;
+      }
+    }
+    return out;
+  }
+
   /** Something audible happened at `pos`; enemies of `source` within `radius` hear it. */
   alert(pos: THREE.Vector3, radius: number, source: Combatant | null): void {
     for (const e of this.entries) {
@@ -349,6 +388,7 @@ export class BotManager implements BotServices {
   render(alpha: number, dt: number, listener: THREE.Vector3): void {
     this.listener.copy(listener);
     const pos = this.tmp;
+    let blobs = 0;
     for (const e of this.entries) {
       const b = e.bot;
       if (b.alive && !e.wasAlive) this.refreshModel(e);
@@ -364,11 +404,44 @@ export class BotManager implements BotServices {
         dt,
       });
       e.model.root.visible = b.alive || b.deadTime < RESPAWN_SEC - 0.2;
+      if (e.model.root.visible) {
+        // Wider under a body lying on the ground.
+        const s = BLOB_SIZE * (b.alive ? 1 : 1.5);
+        this.blobMatrix.makeScale(s, 1, s).setPosition(pos.x, pos.y + 0.02, pos.z);
+        this.blobs.setMatrixAt(blobs++, this.blobMatrix);
+      }
       if (e.marker) {
         e.marker.visible = b.alive;
         e.marker.position.set(pos.x, pos.y + b.eyeHeight + 0.55, pos.z);
       }
     }
+    this.blobs.count = blobs;
+    this.blobs.instanceMatrix.needsUpdate = true;
+  }
+
+  private makeBlobs(n: number): THREE.InstancedMesh {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d')!;
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+    grad.addColorStop(0.5, 'rgba(0,0,0,0.3)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(c),
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, n));
+    mesh.count = 0;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+    return mesh;
   }
 
   /** Blue chevron over allies (seen through walls, constant screen size). */
@@ -406,5 +479,8 @@ export class BotManager implements BotServices {
       e.marker?.removeFromParent();
     }
     this.entries.length = 0;
+    this.blobs.removeFromParent();
+    this.blobs.geometry.dispose();
+    (this.blobs.material as THREE.MeshBasicMaterial).map?.dispose();
   }
 }

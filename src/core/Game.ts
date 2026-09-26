@@ -330,7 +330,10 @@ export class Game {
         this.hud.showHit(e.part === 'head', e.killed);
         this.audio.hit(e.part === 'head', e.killed);
       }
-      if (e.targetId !== PLAYER_ID) this.effects.targetHit(e.point);
+      if (e.targetId !== PLAYER_ID) {
+        if (this.bots) this.effects.bodyHit(e.point);
+        else this.effects.targetHit(e.point);
+      }
     });
     bus.on('combat:kill', (e) => this.hud.addKill(e));
     bus.on('grenade:thrown', () => {
@@ -434,6 +437,7 @@ export class Game {
     this.throwables.sync();
     this.updateViewModel(dt, lookYaw, lookPitch);
     this.viewModel.muzzleWorld(this.renderer.camera, this.tmpMuzzle);
+    this.effects.viewer.copy(this.renderer.camera.position);
     this.effects.spawnShots(w.traces, this.tmpMuzzle);
     this.effects.update(simDt);
     this.flashLeft = Math.max(0, this.flashLeft - simDt);

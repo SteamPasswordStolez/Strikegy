@@ -12,6 +12,10 @@ const MAX_DECALS = 160;
 const DECAL_SIZE = 0.09;
 const MAX_CASINGS = 48;
 const CASING_LIFE = 4;
+/** Beyond these distances from the camera, cosmetic detail is skipped (big bot fights). */
+const IMPACT_PARTICLES_M = 60;
+const MUZZLE_LIGHT_M = 30;
+const MUZZLE_SMOKE_M = 50;
 
 interface Tracer {
   line: THREE.Line;
@@ -78,6 +82,8 @@ function randomDir(out: THREE.Vector3): THREE.Vector3 {
 /** Tracers, decals, particles, casings, flash lights and smoke volumes. */
 export class Effects {
   readonly smokes: SmokeVolume[] = [];
+  /** Camera position, set every frame; used to skip detail nobody can see. */
+  readonly viewer = new THREE.Vector3();
   private tracers: Tracer[] = [];
   private tracerCursor = 0;
   private decals: THREE.InstancedMesh;
@@ -210,8 +216,14 @@ export class Effects {
     traces.length = 0;
   }
 
+  private within(p: THREE.Vector3, meters: number): boolean {
+    return p.distanceToSquared(this.viewer) < meters * meters;
+  }
+
   muzzleFlash(muzzle: THREE.Vector3, forward: THREE.Vector3): void {
-    this.flashLight(muzzle, 5, 0.05, 0xffc27a, 9);
+    // Distant bots must not steal the (single) flash light from nearby shots.
+    if (this.within(muzzle, MUZZLE_LIGHT_M)) this.flashLight(muzzle, 5, 0.05, 0xffc27a, 9);
+    if (!this.within(muzzle, MUZZLE_SMOKE_M)) return;
     // A faint wisp of gun smoke drifting off the muzzle.
     this.soft.spawn({
       pos: muzzle.clone().addScaledVector(forward, 0.15),
@@ -246,6 +258,7 @@ export class Effects {
   impact(point: THREE.Vector3, normal: THREE.Vector3, surface: ImpactSurface): void {
     const fx = SURFACE_FX[surface];
     this.addDecal(point, normal, fx.decal, 0.7 + Math.random() * 0.6);
+    if (!this.within(point, IMPACT_PARTICLES_M)) return;
     const floorY = point.y - 3;
     for (let i = 0; i < 3; i++) {
       this.soft.spawn({
@@ -285,6 +298,22 @@ export class Effects {
         });
       }
     }
+  }
+
+  /** Bullet striking a soldier: a small puff of dust and fabric. */
+  bodyHit(point: THREE.Vector3): void {
+    if (!this.within(point, IMPACT_PARTICLES_M)) return;
+    for (let i = 0; i < 4; i++) {
+      this.soft.spawn({
+        pos: point.clone(),
+        vel: randomDir(this.tmpVec).multiplyScalar(rand(0.6, 1.8)),
+        life: rand(0.3, 0.5),
+        size: rand(0.02, 0.035),
+        color: 0x4a1410,
+        gravity: 9.8,
+      });
+    }
+    this.soft.spawn({ pos: point.clone(), life: 0.35, size: 0.12, endSize: 0.4, color: 0x6b5a4a, alpha: 0.4, drag: 3 });
   }
 
   /** Bullet striking a practice target (plastic chips). */

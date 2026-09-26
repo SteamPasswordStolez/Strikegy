@@ -9,6 +9,12 @@ export const Layer = {
   HITBOX: 0x0004,
   /** Thrown objects: collide with the world only. */
   DEBRIS: 0x0008,
+  /**
+   * Bot movement capsules. Bots don't collide with each other (overlapping
+   * character controllers cost milliseconds per step); they keep apart by
+   * steering instead. They do collide with the world and the player.
+   */
+  BOT: 0x0010,
 } as const;
 
 /** Packs Rapier interaction groups: upper 16 bits membership, lower 16 bits filter. */

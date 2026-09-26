@@ -233,10 +233,17 @@ export class SoldierModel {
     this.mesh = new THREE.SkinnedMesh(cached.geo, sharedMaterial);
     this.mesh.add(this.bones[B.Root]!);
     this.mesh.bind(new THREE.Skeleton(this.bones));
-    this.mesh.castShadow = true;
+    // Shadows are static (rendered once for the map), so moving soldiers would
+    // leave frozen shadows behind; BotManager draws blob shadows instead.
+    this.mesh.castShadow = false;
     // Bones move the vertices outside the bind-pose bounds (crouch, death).
     this.mesh.frustumCulled = false;
     this.root.add(this.mesh);
+  }
+
+  /** Builds the geometry for these loadouts ahead of time (it takes ~20 ms each). */
+  static prewarm(teams: readonly Team[], defs: readonly WeaponDef[]): void {
+    for (const team of teams) for (const def of defs) new SoldierModel(team, def).dispose();
   }
 
   onHit(): void {

@@ -40,6 +40,8 @@ export interface BotServices {
   /** Resolves one trigger pull (all pellets) along `dir` from the bot's eye. */
   fire(bot: Bot, dir: THREE.Vector3): void;
   footstep(bot: Bot, sprinting: boolean): void;
+  /** Push away from nearby bots (m/s, horizontal) so they don't stack up. */
+  separation(bot: Bot, out: THREE.Vector3): THREE.Vector3;
 }
 
 let nextBotId = 1;
@@ -118,7 +120,7 @@ export class Bot implements Damageable, Combatant {
     const world = physics.world;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
     this.capsule = world.createCollider(
-      RAPIER.ColliderDesc.capsule(capsuleHalfHeight(this.height), MOVE.radius).setCollisionGroups(groups(Layer.PLAYER, Layer.WORLD)),
+      RAPIER.ColliderDesc.capsule(capsuleHalfHeight(this.height), MOVE.radius).setCollisionGroups(groups(Layer.BOT, Layer.WORLD)),
       this.body,
     );
     this.controller = world.createCharacterController(0.02);
@@ -448,8 +450,11 @@ export class Bot implements Damageable, Combatant {
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 
-    const accel = speed > 0 ? MOVE.groundAccel : MOVE.groundDecel;
-    [this.velocity.x, this.velocity.z] = approachVelocity(this.velocity.x, this.velocity.z, wx * speed, wz * speed, accel, dt);
+    const push = s.separation(this, this.tmp);
+    const tx = wx * speed + push.x;
+    const tz = wz * speed + push.z;
+    const accel = speed > 0 || push.lengthSq() > 0 ? MOVE.groundAccel : MOVE.groundDecel;
+    [this.velocity.x, this.velocity.z] = approachVelocity(this.velocity.x, this.velocity.z, tx, tz, accel, dt);
     this.velocity.y = this.grounded ? -1 : Math.max(this.velocity.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
 
     const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
