@@ -64,7 +64,9 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
 };
 
 /** Dynamic resolution: render scale bounds and the frame-time band it aims for. */
-const DRS = { min: 0.6, max: 1, step: 0.1, slowMs: 19, fastMs: 13, settleSec: 1.5 };
+// Resizing reallocates render targets (a visible hitch), so it reacts only to
+// sustained slowness (< ~45 fps) and waits several seconds between steps.
+const DRS = { min: 0.6, max: 1, step: 0.1, slowMs: 22, fastMs: 12, settleSec: 5 };
 
 /**
  * Owns the WebGL renderer. The world scene is drawn first, then a separate
@@ -154,7 +156,9 @@ export class Renderer {
    * targets, so they happen in coarse steps with a settle time in between.
    */
   adaptResolution(frameMs: number, dt: number): void {
-    this.frameMsAvg += (Math.min(frameMs, 100) - this.frameMsAvg) * 0.05;
+    // Ignore hitches and throttled frames (background tab, alt-tab): they are not GPU load.
+    if (frameMs > 50) return;
+    this.frameMsAvg += (frameMs - this.frameMsAvg) * 0.02;
     this.drsCooldown -= dt;
     if (this.drsCooldown > 0) return;
     let next = this.renderScale;

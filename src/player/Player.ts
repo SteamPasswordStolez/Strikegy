@@ -32,6 +32,8 @@ export class Player {
   sprinting = false;
   readonly health = new Health();
   private strideLeft: number = STRIDE.walk / 2;
+  private jumpBuffered = 0;
+  private sinceGrounded = 0;
   /** Smoothed eye height above feet (render side). */
   eyeHeight: number = MOVE.standHeight - MOVE.eyeInset;
 
@@ -97,14 +99,22 @@ export class Player {
       ads,
     });
     const [wx, wz] = moving ? wishDirection(input.moveX, input.moveY, this.yaw) : [0, 0];
-    const accel = this.grounded ? MOVE.groundAccel : MOVE.airAccel;
+    // Brake harder than we accelerate: releasing or reversing input stops crisply.
+    const braking = !moving || wx * this.velocity.x + wz * this.velocity.z < 0;
+    const accel = this.grounded ? (braking ? MOVE.groundDecel : MOVE.groundAccel) : MOVE.airAccel;
     const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * speed, wz * speed, accel, dt);
     this.velocity.x = vx;
     this.velocity.z = vz;
 
-    if (this.grounded && input.jump && !this.crouching) {
+    if (input.jump) this.jumpBuffered = MOVE.jumpBuffer;
+    this.jumpBuffered = Math.max(0, this.jumpBuffered - dt);
+    this.sinceGrounded = this.grounded ? 0 : this.sinceGrounded + dt;
+    const canJump = this.sinceGrounded <= MOVE.coyoteTime && this.velocity.y <= 0.1;
+    if (this.jumpBuffered > 0 && canJump && !this.crouching) {
       this.velocity.y = MOVE.jumpVelocity;
       this.grounded = false;
+      this.jumpBuffered = 0;
+      this.sinceGrounded = MOVE.coyoteTime + 1;
     } else {
       this.velocity.y = Math.max(this.velocity.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
     }

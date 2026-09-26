@@ -175,6 +175,8 @@ export class Game {
     this.weapons = new WeaponController(this.options.loadout, this.physics, this.registry, this.impacts, this.bus);
     this.wireEvents();
 
+    this.warmup();
+
     // Settle the physics broadphase so the first raycasts see static geometry.
     this.physics.step();
 
@@ -210,6 +212,51 @@ export class Game {
     this.rafId = requestAnimationFrame(this.frame);
   }
 
+  /**
+   * Renders every weapon, grenade and effect once behind the loading overlay so
+   * all shader programs (including shadow depth variants) are compiled up front.
+   * Otherwise the first shot, throw or weapon switch stalls the frame.
+   */
+  private warmup(): void {
+    const r = this.renderer;
+    const cam = r.camera;
+    this.player.eyePosition(1, 0, this.tmpEye);
+    cam.position.copy(this.tmpEye);
+    cam.rotation.set(0, this.player.yaw, 0, 'YXZ');
+    cam.updateMatrixWorld();
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    this.atmosphere.update(cam.position, 0);
+
+    const temp = this.throwables.warmupMeshes();
+    temp.forEach((m, i) => {
+      m.position.copy(cam.position).addScaledVector(fwd, 2).setX(m.position.x + i * 0.2);
+      r.scene.add(m);
+    });
+    this.effects.warmup(cam.position, fwd);
+    for (const id of this.options.loadout) {
+      this.viewModel.setWeapon(WEAPONS[id]);
+      this.viewModel.onFire(false);
+      this.viewModel.update({
+        dt: 0.016,
+        adsBlend: 0,
+        speed: 0,
+        grounded: true,
+        sprinting: false,
+        lookDYaw: 0,
+        lookDPitch: 0,
+        reloading: false,
+        reloadProgress: 0,
+        magReload: true,
+        drawProgress: 1,
+        hideForScope: false,
+      });
+      r.render();
+    }
+    r.render();
+    for (const m of temp) r.scene.remove(m);
+    this.effects.update(0.1);
+  }
+
   private wireEvents(): void {
     const bus = this.bus;
     const cls = (id: string) => WEAPONS[id as WeaponId].class;
@@ -217,7 +264,6 @@ export class Game {
       this.audio.gunshot(cls(e.weaponId), e.ads);
       this.viewModel.onFire(e.ads);
       this.muzzleEffects(e.weaponId, true);
-      this.shake = Math.min(0.02, this.shake + 0.0015);
     });
     bus.on('weapon:cycle', (e) => {
       this.audio.cycle(cls(e.weaponId));
@@ -345,6 +391,11 @@ export class Game {
       if (input.cycleGrenade) this.grenades.cycle();
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
       const firing = input.fire;
+      // Pulling the trigger or aiming ends a sprint immediately.
+      if (input.fire || input.ads) {
+        input.sprint = false;
+        p.sprinting = false;
+      }
       this.weapons.step(dt, input, p, this.throwBlock > 0);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
     } else {

@@ -130,6 +130,15 @@ export class Throwables {
     }
   }
 
+  /** One mesh per grenade material, for shader warm-up. */
+  warmupMeshes(): THREE.Mesh[] {
+    return [...this.materials.values()].map((m) => {
+      const mesh = new THREE.Mesh(this.geometry, m);
+      mesh.castShadow = true;
+      return mesh;
+    });
+  }
+
   clear(): void {
     while (this.live.length) this.remove(this.live.length - 1);
   }

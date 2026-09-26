@@ -4,8 +4,14 @@ export const MOVE = {
   sprintSpeed: 6.8,
   crouchSpeed: 2.4,
   adsSpeed: 3.0,
-  groundAccel: 60,
-  airAccel: 10,
+  groundAccel: 85,
+  /** Braking when input is released or reversed: stops in ~50 ms from a walk. */
+  groundDecel: 110,
+  airAccel: 14,
+  /** Jump pressed this long before landing still counts. */
+  jumpBuffer: 0.12,
+  /** Jump still allowed this long after walking off a ledge. */
+  coyoteTime: 0.1,
   jumpVelocity: 5.4,
   gravity: 18,
   maxFallSpeed: 40,

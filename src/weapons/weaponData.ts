@@ -41,13 +41,13 @@ type Base = Pick<WeaponDef, 'spreadHip' | 'spreadAds' | 'recoil' | 'bloomPerShot
 
 // Per-class defaults; individual weapons override what they need.
 const CLASS_BASE: Record<WeaponClass, Base> = {
-  ar: { spreadHip: 1.7, spreadAds: 0.25, recoil: { up: 0.5, side: 0.22, first: 1.35 }, bloomPerShot: 0.28, adsTime: 0.22, reloadStyle: 'mag' },
-  smg: { spreadHip: 1.4, spreadAds: 0.45, recoil: { up: 0.36, side: 0.28, first: 1.1 }, bloomPerShot: 0.2, adsTime: 0.17, reloadStyle: 'mag' },
-  lmg: { spreadHip: 2.4, spreadAds: 0.5, recoil: { up: 0.48, side: 0.3, first: 1.5 }, bloomPerShot: 0.3, adsTime: 0.32, reloadStyle: 'mag' },
-  sg: { spreadHip: 6.5, spreadAds: 4.5, recoil: { up: 3.2, side: 0.7, first: 1 }, bloomPerShot: 0, adsTime: 0.22, reloadStyle: 'perShell' },
-  dmr: { spreadHip: 2.5, spreadAds: 0.08, recoil: { up: 1.4, side: 0.35, first: 1 }, bloomPerShot: 0.6, adsTime: 0.27, reloadStyle: 'mag' },
-  sr: { spreadHip: 5.0, spreadAds: 0.0, recoil: { up: 3.5, side: 0.4, first: 1 }, bloomPerShot: 0, adsTime: 0.35, reloadStyle: 'perShell' },
-  pistol: { spreadHip: 1.2, spreadAds: 0.3, recoil: { up: 1.0, side: 0.3, first: 1 }, bloomPerShot: 0.35, adsTime: 0.15, reloadStyle: 'mag' },
+  ar: { spreadHip: 1.7, spreadAds: 0.25, recoil: { up: 0.5, side: 0.22, first: 1.35 }, bloomPerShot: 0.28, adsTime: 0.187, reloadStyle: 'mag' },
+  smg: { spreadHip: 1.4, spreadAds: 0.45, recoil: { up: 0.36, side: 0.28, first: 1.1 }, bloomPerShot: 0.2, adsTime: 0.145, reloadStyle: 'mag' },
+  lmg: { spreadHip: 2.4, spreadAds: 0.5, recoil: { up: 0.48, side: 0.3, first: 1.5 }, bloomPerShot: 0.3, adsTime: 0.272, reloadStyle: 'mag' },
+  sg: { spreadHip: 6.5, spreadAds: 4.5, recoil: { up: 3.2, side: 0.7, first: 1 }, bloomPerShot: 0, adsTime: 0.187, reloadStyle: 'perShell' },
+  dmr: { spreadHip: 2.5, spreadAds: 0.08, recoil: { up: 1.4, side: 0.35, first: 1 }, bloomPerShot: 0.6, adsTime: 0.23, reloadStyle: 'mag' },
+  sr: { spreadHip: 5.0, spreadAds: 0.0, recoil: { up: 3.5, side: 0.4, first: 1 }, bloomPerShot: 0, adsTime: 0.297, reloadStyle: 'perShell' },
+  pistol: { spreadHip: 1.2, spreadAds: 0.3, recoil: { up: 1.0, side: 0.3, first: 1 }, bloomPerShot: 0.35, adsTime: 0.128, reloadStyle: 'mag' },
 };
 
 function def(w: Omit<WeaponDef, keyof Base> & Partial<Base>): WeaponDef {

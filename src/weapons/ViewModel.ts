@@ -34,6 +34,16 @@ const MATERIALS = {
   sleeve: new THREE.MeshStandardMaterial({ color: 0x3a4030, metalness: 0, roughness: 0.95 }),
 };
 
+const furnitureCache = new Map<WeaponClass, THREE.MeshStandardMaterial>();
+function furnitureMaterial(cls: WeaponClass, color: number): THREE.MeshStandardMaterial {
+  let m = furnitureCache.get(cls);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.05 });
+    furnitureCache.set(cls, m);
+  }
+  return m;
+}
+
 const HIP = new THREE.Vector3(0.13, -0.14, -0.4);
 const SPRINT_OFFSET = new THREE.Vector3(-0.04, -0.05, 0.03);
 /** ADS x/y are derived per weapon so the sight line sits on screen center. */
@@ -111,7 +121,7 @@ export class ViewModel {
     }
     const s = SHAPES[def.class];
     const m = MATERIALS;
-    const furniture = new THREE.MeshStandardMaterial({ color: s.color, roughness: 0.6, metalness: 0.05 });
+    const furniture = furnitureMaterial(def.class, s.color);
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0) => {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, y, z);
@@ -285,8 +295,8 @@ export class ViewModel {
 
     // Sway lags behind look movement.
     const swayScale = 1 - 0.8 * f.adsBlend;
-    this.sway.x += (THREE.MathUtils.clamp(f.lookDYaw * 0.6, -0.05, 0.05) - this.sway.x) * ease(12);
-    this.sway.y += (THREE.MathUtils.clamp(f.lookDPitch * 0.6, -0.05, 0.05) - this.sway.y) * ease(12);
+    this.sway.x += (THREE.MathUtils.clamp(f.lookDYaw * 0.35, -0.03, 0.03) - this.sway.x) * ease(22);
+    this.sway.y += (THREE.MathUtils.clamp(f.lookDPitch * 0.35, -0.03, 0.03) - this.sway.y) * ease(22);
 
     this.kick *= Math.exp(-18 * dt);
     this.kickRot *= Math.exp(-14 * dt);

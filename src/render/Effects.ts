@@ -183,6 +183,25 @@ export class Effects {
     l.age = 0;
   }
 
+  /**
+   * Puts one of every effect type in front of `eye` so a warm-up render compiles
+   * their shaders during loading instead of hitching on first use.
+   */
+  warmup(eye: THREE.Vector3, fwd: THREE.Vector3): void {
+    const p = eye.clone().addScaledVector(fwd, 3);
+    this.soft.spawn({ pos: p, life: 0.05, size: 0.1, color: 0x808080, alpha: 0.01 });
+    this.glow.spawn({ pos: p, life: 0.05, size: 0.1, color: 0x808080, alpha: 0.01 });
+    this.addTracer(p, p.clone().addScaledVector(fwd, 1));
+    const c = this.casings[0]!;
+    c.alive = true;
+    c.age = CASING_LIFE - 0.05;
+    c.pos.copy(p);
+    c.floorY = -1000;
+    this.soft.update(0);
+    this.glow.update(0);
+    this.updateCasings(0);
+  }
+
   /** Consumes shot traces; `muzzle` is where tracers visually start. */
   spawnShots(traces: ShotTrace[], muzzle: THREE.Vector3): void {
     for (const t of traces) {
