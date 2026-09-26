@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { EventBus } from './EventBus';
 import type { DamageCause, GameEvents } from './events';
 import { FixedStepLoop } from './FixedStepLoop';
-import { QUALITY_ORDER, isTouchDevice, loadSettings, resolveQuality, saveSettings, type Settings } from './Settings';
+import { QUALITY_ORDER, gpuName, isTouchDevice, loadSettings, resolveQuality, saveSettings, type Settings } from './Settings';
 import { setLocale, t, type MessageKey } from '@/i18n';
 import { Renderer } from '@/render/Renderer';
 import { Atmosphere } from '@/render/visualProfiles';
@@ -30,6 +30,7 @@ import { ViewModel } from '@/weapons/ViewModel';
 import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { HUD } from '@/ui/HUD';
+import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
 
 const DEG = Math.PI / 180;
@@ -61,6 +62,7 @@ export class Game {
   private readonly registry = new HitboxRegistry();
   private readonly impacts = new SurfaceRegistry();
   private readonly hud: HUD;
+  private readonly perf: PerfPanel;
   private readonly overlay: Overlay;
   private readonly audio: AudioSystem;
   private readonly viewModel: ViewModel;
@@ -106,6 +108,7 @@ export class Game {
     const quality = resolveQuality(this.settings.quality);
     this.renderer = new Renderer(container, quality, this.settings.fov);
     this.hud = new HUD(container);
+    this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
     this.overlay = new Overlay(container);
     this.audio = new AudioSystem(this.settings.masterVolume);
     this.viewModel = new ViewModel(this.renderer.fpScene, this.models);
@@ -157,8 +160,9 @@ export class Game {
       shadowExtent: q.shadowExtent,
     });
     const t0 = performance.now();
-    buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts);
-    placeProps(map, r.scene, this.physics, this.models, this.impacts);
+    const blockout = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts);
+    const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
+    this.fitShadows(map, blockout, props);
     if (outdoor) buildBackdrop(r.scene, map.world.size, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa });
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
@@ -255,6 +259,7 @@ export class Game {
     }
     r.render();
     for (const m of temp) r.scene.remove(m);
+    r.requestShadowUpdate();
     this.effects.update(0.1);
   }
 
@@ -339,6 +344,9 @@ export class Game {
 
   private frame = (now: number): void => {
     this.rafId = requestAnimationFrame(this.frame);
+    const frameMs = now - this.lastTime;
+    const tStart = performance.now();
+    let simMs = 0;
     const dt = Math.min((now - this.lastTime) / 1000, 0.1);
     this.lastTime = now;
     this.elapsed += dt;
@@ -363,7 +371,9 @@ export class Game {
         lookPitch = input.lookPitch * sens;
         p.applyLook(lookYaw, lookPitch);
       }
+      const tSim = performance.now();
       const alpha = this.loop.advance(dt, (h) => this.simStep(h));
+      simMs = performance.now() - tSim;
       this.renderer.adaptResolution(dt * 1000, dt);
       this.updateCamera(alpha, dt, adsFov);
     }
@@ -371,6 +381,7 @@ export class Game {
     input.lookPitch = 0;
 
     for (const tg of this.targets) tg.update(simDt);
+    if (this.throwables.castersChanged || this.targets.some((tg) => tg.moved)) this.renderer.requestShadowUpdate();
     this.throwables.sync();
     this.updateViewModel(dt, lookYaw, lookPitch);
     this.viewModel.muzzleWorld(this.renderer.camera, this.tmpMuzzle);
@@ -379,8 +390,38 @@ export class Game {
     this.flashLeft = Math.max(0, this.flashLeft - simDt);
     this.audio.updateVitals(p.health.value, p.alive);
     this.updateHud(dt);
-    this.renderer.render();
+    const perf = this.perf;
+    perf.setVisible(this.settings.showFps);
+    const tDraw = performance.now();
+    perf.beginGpu();
+    if (this.renderer.render()) perf.onShadowUpdate();
+    perf.endGpu();
+    const tEnd = performance.now();
+    perf.record(
+      { frameMs, simMs, updateMs: tDraw - tStart - simMs, renderMs: tEnd - tDraw },
+      `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}`,
+    );
   };
+
+  /**
+   * Small maps get one shadow map fitted over the whole playable area, rendered
+   * only when a shadow caster moves. Larger maps keep a frustum that follows the
+   * camera and re-renders periodically.
+   */
+  private fitShadows(map: MapDef, ...roots: THREE.Object3D[]): void {
+    const q = this.renderer.quality;
+    if (!q.shadows) return;
+    const [sx, sz] = map.world.size;
+    if (Math.max(sx, sz) > 200) return;
+    const box = new THREE.Box3();
+    for (const root of roots) box.expandByObject(root);
+    // Only what can shadow the playable area matters: clamp to the map plus a margin.
+    const limit = new THREE.Box3(new THREE.Vector3(-sx / 2 - 4, -1, -sz / 2 - 4), new THREE.Vector3(sx / 2 + 4, 40, sz / 2 + 4));
+    box.intersect(limit);
+    if (box.isEmpty()) box.copy(limit);
+    this.atmosphere.fitShadowsTo(box, q.shadowMapSize);
+    this.renderer.staticShadows = true;
+  }
 
   private simStep(dt: number): void {
     const input = this.input;

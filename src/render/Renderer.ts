@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
-import { LAYER_FX } from './layers';
+import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
 import { DynamicResolution } from './dynamicResolution';
 import { loadJSON, saveJSON } from '@/core/storage';
@@ -49,7 +49,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
   medium: {
     pixelRatioCap: 1,
     shadows: true,
-    shadowMapSize: 2048,
+    shadowMapSize: 3072,
     shadowExtent: 35,
     shadowInterval: 2,
     textureSize: 512,
@@ -66,7 +66,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
   high: {
     pixelRatioCap: 1.25,
     shadows: true,
-    shadowMapSize: 2048,
+    shadowMapSize: 4096,
     shadowExtent: 40,
     shadowInterval: 2,
     textureSize: 512,
@@ -96,6 +96,12 @@ export class Renderer {
   private postfx: PostFX | null = null;
   private readonly vignette: HTMLDivElement;
   private frameIndex = 0;
+  /**
+   * Shadow maps are only re-rendered when requested (static world, fitted once)
+   * or, in follow mode, every `shadowInterval` frames.
+   */
+  staticShadows = false;
+  private shadowDirty = true;
   private readonly drs = new DynamicResolution();
 
   constructor(
@@ -140,6 +146,7 @@ export class Renderer {
     } else {
       // Direct rendering draws effects with the world; the post chain splits them (see layers.ts).
       this.camera.layers.enable(LAYER_FX);
+      this.camera.layers.enable(LAYER_BACKDROP);
     }
 
     this.resize();
@@ -188,6 +195,11 @@ export class Renderer {
     this.fpCamera.updateProjectionMatrix();
   }
 
+  /** Something that casts shadows moved: re-render the (static) shadow map soon. */
+  requestShadowUpdate(): void {
+    this.shadowDirty = true;
+  }
+
   /** Feeds a frame into dynamic resolution; resizes when the scale changes. */
   adaptResolution(frameMs: number, dt: number): void {
     const next = this.drs.update(dt, frameMs);
@@ -196,10 +208,17 @@ export class Renderer {
     this.applySize();
   }
 
-  render(): void {
+  /** Draws a frame; returns true if the shadow map was re-rendered in it. */
+  render(): boolean {
     this.frameIndex++;
-    if (this.quality.shadows && this.frameIndex % this.quality.shadowInterval === 0) {
-      this.gl.shadowMap.needsUpdate = true;
+    let shadow = false;
+    if (this.quality.shadows) {
+      const due = this.frameIndex % this.quality.shadowInterval === 0;
+      if (this.staticShadows ? this.shadowDirty && due : due) {
+        this.gl.shadowMap.needsUpdate = true;
+        this.shadowDirty = false;
+        shadow = true;
+      }
     }
     if (this.postfx) {
       this.postfx.render();
@@ -209,6 +228,7 @@ export class Renderer {
       this.gl.clearDepth();
       this.gl.render(this.fpScene, this.fpCamera);
     }
+    return shadow;
   }
 
   dispose(): void {

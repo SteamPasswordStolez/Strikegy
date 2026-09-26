@@ -120,8 +120,16 @@ export class Throwables {
     }
   }
 
+  /** True if any grenade is in the world (or one was just removed): shadows must update. */
+  get castersChanged(): boolean {
+    return this.live.length > 0 || this.removedSinceSync;
+  }
+
+  private removedSinceSync = false;
+
   /** Render step: copy physics transforms to meshes. */
   sync(): void {
+    this.removedSinceSync = false;
     for (const g of this.live) {
       const t = g.body.translation();
       const r = g.body.rotation();
@@ -144,6 +152,7 @@ export class Throwables {
   }
 
   private remove(i: number): void {
+    this.removedSinceSync = true;
     const g = this.live[i]!;
     this.physics.world.removeRigidBody(g.body);
     this.scene.remove(g.mesh);

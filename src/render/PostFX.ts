@@ -6,22 +6,21 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
-import { LAYER_FX, LAYER_WORLD } from './layers';
+import { LAYER_BACKDROP, LAYER_FX, LAYER_WORLD } from './layers';
 
-/** RenderPass that draws only the given camera layer. */
+/** RenderPass that draws only the given camera layers. */
 class LayerRenderPass extends RenderPass {
-  constructor(
-    scene: THREE.Scene,
-    camera: THREE.Camera,
-    private readonly layer: number,
-  ) {
+  private readonly mask: number;
+
+  constructor(scene: THREE.Scene, camera: THREE.Camera, layers: number[]) {
     super(scene, camera);
+    this.mask = layers.reduce((m, l) => m | (1 << l), 0);
   }
 
   override render(...args: Parameters<RenderPass['render']>): void {
     const cam = this.camera as THREE.Camera;
     const prev = cam.layers.mask;
-    cam.layers.set(this.layer);
+    cam.layers.mask = this.mask;
     super.render(...args);
     cam.layers.mask = prev;
   }
@@ -65,7 +64,7 @@ export class PostFX {
     // Both ping-pong targets share one depth texture, so passes drawn after a
     // fullscreen pass (AO) still depth-test against the world.
     this.composer.renderTarget2.depthTexture = this.composer.renderTarget1.depthTexture;
-    this.composer.addPass(new LayerRenderPass(scene, camera, LAYER_WORLD));
+    this.composer.addPass(new LayerRenderPass(scene, camera, [LAYER_WORLD, LAYER_BACKDROP]));
 
     if (opts.ao) {
       const ao = new HalfResGTAOPass(scene, camera, size.x / 2, size.y / 2);
@@ -75,7 +74,7 @@ export class PostFX {
       this.composer.addPass(ao);
     }
 
-    const fx = new LayerRenderPass(scene, camera, LAYER_FX);
+    const fx = new LayerRenderPass(scene, camera, [LAYER_FX]);
     fx.clear = false;
     this.composer.addPass(fx);
 

@@ -206,6 +206,30 @@ body {
   color: #9fef9f;
 }
 
+.perf-panel {
+  position: fixed;
+  left: 8px;
+  top: 26px;
+  padding: 6px 8px;
+  background: rgb(0 0 0 / 0.55);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.perf-panel canvas {
+  display: block;
+  width: 240px;
+  height: 60px;
+}
+
+.perf-panel pre {
+  margin: 4px 0 0;
+  font: 11px/1.35 ui-monospace, Consolas, monospace;
+  color: #d8f5d8;
+  white-space: pre;
+}
+
 /* ---------- Overlay ---------- */
 .overlay {
   position: fixed;

@@ -68,19 +68,23 @@
     },
     "rock_moss_set_01": {
       "res": "1k",
-      "simplify": 0.1
+      "simplify": 0.03,
+      "error": 0.02
     },
     "rock_moss_set_02": {
       "res": "1k",
-      "simplify": 0.1
+      "simplify": 0.03,
+      "error": 0.02
     },
     "tree_stump_01": {
       "res": "1k",
-      "simplify": 0.15
+      "simplify": 0.06,
+      "error": 0.01
     },
     "dead_tree_trunk": {
       "res": "1k",
-      "simplify": 0.05
+      "simplify": 0.03,
+      "error": 0.01
     }
   }
 }

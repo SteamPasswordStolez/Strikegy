@@ -65,7 +65,9 @@ export class Atmosphere {
   readonly sun: THREE.DirectionalLight | null = null;
   private readonly sky: Sky | null = null;
   private readonly sunDir = new THREE.Vector3();
-  private readonly texel: number;
+  private texel: number;
+  /** Shadow frustum fitted once to the whole map (see fitShadowsTo); no per-frame follow. */
+  private staticShadows = false;
 
   constructor(
     scene: THREE.Scene,
@@ -139,10 +141,53 @@ export class Atmosphere {
     }
   }
 
+  /**
+   * Fixes the shadow frustum over a world-space box (the playable map), fitted
+   * tightly in the sun's view space. The shadow map then only needs re-rendering
+   * when something that casts shadows moves. `maxSize` caps the longer side.
+   */
+  fitShadowsTo(box: THREE.Box3, maxSize: number): void {
+    const sun = this.sun;
+    if (!sun) return;
+    const center = box.getCenter(new THREE.Vector3());
+    sun.target.position.copy(center);
+    sun.position.copy(center).addScaledVector(this.sunDir, 200);
+    sun.updateMatrixWorld();
+    sun.target.updateMatrixWorld();
+    const view = new THREE.Matrix4().lookAt(sun.position, center, THREE.Object3D.DEFAULT_UP);
+    view.setPosition(sun.position).invert();
+    const lo = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    const p = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      p.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).applyMatrix4(view);
+      lo.min(p);
+      hi.max(p);
+    }
+    const w = hi.x - lo.x;
+    const h = hi.y - lo.y;
+    const scale = maxSize / Math.max(w, h);
+    const cam = sun.shadow.camera;
+    cam.left = lo.x;
+    cam.right = hi.x;
+    cam.bottom = lo.y;
+    cam.top = hi.y;
+    cam.near = Math.max(0.5, -hi.z - 5);
+    cam.far = -lo.z + 5;
+    cam.updateProjectionMatrix();
+    sun.shadow.mapSize.set(Math.ceil(w * scale), Math.ceil(h * scale));
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+    this.texel = 1 / scale;
+    // Bias scales with texel size so larger texels do not start to acne.
+    sun.shadow.normalBias = Math.max(0.035, this.texel * 0.9);
+    this.staticShadows = true;
+  }
+
   /** Keeps the shadow frustum centered on the viewer, snapped to texels to avoid shimmering. */
   update(focus: THREE.Vector3, time: number): void {
     if (this.sky) this.sky.material.uniforms.time!.value = time;
-    if (!this.sun) return;
+    if (!this.sun || this.staticShadows) return;
     const t = this.texel;
     const fx = Math.round(focus.x / t) * t;
     const fz = Math.round(focus.z / t) * t;

@@ -46,7 +46,7 @@ for (const [id, spec] of Object.entries(manifest.models)) {
   const doc = await io.read(path.join(dir, gltf));
   const transforms = [dedup(), prune(), weld()];
   if (spec.simplify) {
-    transforms.push(simplify({ simplifier: MeshoptSimplifier, ratio: spec.simplify, error: 0.002 }));
+    transforms.push(simplify({ simplifier: MeshoptSimplifier, ratio: spec.simplify, error: spec.error ?? 0.002 }));
   }
   transforms.push(
     textureCompress({ encoder: sharp, targetFormat: 'webp', quality: 82, resize: [1024, 1024] }),

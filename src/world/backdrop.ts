@@ -3,6 +3,23 @@ import { TileNoise, makeRng, smoothstep } from '@/render/noise';
 import type { ModelLibrary } from '@/render/models';
 import { buildImpostors, buildNearTrees, createConiferKit } from './conifers';
 import { instanceModel } from './placeProps';
+import { LAYER_BACKDROP } from '@/render/layers';
+
+/** Scenery is split into angular sectors around the map so what is behind the camera is culled. */
+const SECTORS = 8;
+
+function sectorOf(x: number, z: number): number {
+  return Math.floor(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * SECTORS) % SECTORS;
+}
+
+function bySector<T>(items: T[], pos: (t: T) => THREE.Vector3): T[][] {
+  const out: T[][] = Array.from({ length: SECTORS }, () => []);
+  for (const it of items) {
+    const p = pos(it);
+    out[sectorOf(p.x, p.z)]!.push(it);
+  }
+  return out.filter((s) => s.length > 0);
+}
 
 const EXTENT = 1400;
 
@@ -112,8 +129,8 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
   // A dense tree line right behind the walls, then woods and clearings.
   const near = scatter(opts.lowDetail ? 160 : 300, 4, 48, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
   const far = scatter(opts.lowDetail ? 3500 : 7000, 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
-  group.add(buildNearTrees(kit, near));
-  group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, far));
+  for (const chunk of bySector(near, (p) => p.pos)) group.add(buildNearTrees(kit, chunk));
+  for (const chunk of bySector(far, (p) => p.pos)) group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, chunk));
 
   // --- Forest floor --------------------------------------------------------
   const DEG = Math.PI / 180;
@@ -132,18 +149,19 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
       e.set((rng() - 0.5) * 6 * DEG, rng() * Math.PI * 2, (rng() - 0.5) * 6 * DEG);
       matrices.push(new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) - sink * s, z), q.setFromEuler(e), new THREE.Vector3(s, s, s)));
     }
-    if (matrices.length) instanceModel(tpl, matrices, group, false);
+    const p = new THREE.Vector3();
+    for (const chunk of bySector(matrices, (m) => p.setFromMatrixPosition(m).clone())) instanceModel(tpl, chunk, group, false);
   };
   const k = opts.lowDetail ? 0.5 : 1;
-  place('rock_moss_set_01', Math.round(14 * k), 2, 60, [0.8, 1.6], 0.1);
-  place('rock_moss_set_02', Math.round(14 * k), 2, 60, [0.8, 1.6], 0.1);
-  place('tree_stump_01', Math.round(24 * k), 2, 45, [0.9, 1.4]);
-  place('dead_tree_trunk', Math.round(20 * k), 2, 45, [1.5, 2.5], 0.02);
-  place('shrub_02', Math.round(40 * k), 1, 40, [0.8, 1.3]);
-  place('fern_02', Math.round(140 * k), 1, 35, [1, 1.6]);
+  place('rock_moss_set_01', Math.round(6 * k), 4, 60, [1, 1.8], 0.1);
+  place('rock_moss_set_02', Math.round(6 * k), 4, 60, [1, 1.8], 0.1);
+  place('tree_stump_01', Math.round(10 * k), 4, 45, [0.9, 1.4]);
+  place('dead_tree_trunk', Math.round(8 * k), 4, 45, [1.5, 2.5], 0.02);
+  place('shrub_02', Math.round(14 * k), 3, 40, [0.8, 1.3]);
   // Undergrowth along the inside of the walls softens the map edge.
   placeAlongWalls(opts.models, group, halfX, halfZ, rng, k);
 
+  group.traverse((o) => o.layers.set(LAYER_BACKDROP));
   scene.add(group);
   return group;
 }
@@ -166,9 +184,11 @@ function placeAlongWalls(models: ModelLibrary, parent: THREE.Object3D, halfX: nu
     return out;
   };
   const fern = models.template('fern_02');
-  if (fern) instanceModel(fern, spots(Math.round(90 * k), [0.9, 1.8], [0.8, 1.3]), parent, false);
+  const p = new THREE.Vector3();
+  const sectors = (list: THREE.Matrix4[]) => bySector(list, (m) => p.setFromMatrixPosition(m).clone());
+  if (fern) for (const chunk of sectors(spots(Math.round(45 * k), [0.9, 1.8], [0.8, 1.3]))) instanceModel(fern, chunk, parent, false);
   const shrub = models.template('shrub_04');
-  if (shrub) instanceModel(shrub, spots(Math.round(70 * k), [0.7, 1.4], [3, 5]), parent, false);
+  if (shrub) for (const chunk of sectors(spots(Math.round(35 * k), [0.7, 1.4], [3, 5]))) instanceModel(shrub, chunk, parent, false);
 }
 
 /** Tiling grayscale detail (0.72..1) that breaks up the terrain's vertex colors up close. */

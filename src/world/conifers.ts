@@ -216,6 +216,8 @@ export interface ConiferKit {
   variants: ConiferVariant[];
   foliageMaterial: THREE.MeshStandardMaterial;
   trunkMaterial: THREE.MeshStandardMaterial;
+  /** Impostor material (atlas baked on first use, shared by all chunks). */
+  impostorMaterial?: THREE.MeshBasicMaterial;
 }
 
 export function createConiferKit(alphaToCoverage: boolean): ConiferKit {
@@ -310,7 +312,7 @@ export function buildImpostors(
   envIntensity: number,
   placements: { pos: THREE.Vector3; scale: number; variant: number; tint: number }[],
 ): THREE.InstancedMesh {
-  const atlas = bakeImpostors(gl, kit, environment, envIntensity);
+  kit.impostorMaterial ??= impostorMaterial(bakeImpostors(gl, kit, environment, envIntensity));
   const geo = new THREE.PlaneGeometry(1, 1);
   geo.translate(0, 0.5, 0);
   const variantAttr = new Float32Array(placements.length);
@@ -322,6 +324,27 @@ export function buildImpostors(
   geo.setAttribute('aVariant', new THREE.InstancedBufferAttribute(variantAttr, 1));
   geo.setAttribute('aAspect', new THREE.InstancedBufferAttribute(aspectAttr, 1));
 
+  const mesh = new THREE.InstancedMesh(geo, kit.impostorMaterial, placements.length);
+  const m = new THREE.Matrix4();
+  const c = new THREE.Color();
+  const bounds = new THREE.Box3();
+  const top = new THREE.Vector3();
+  placements.forEach((p, i) => {
+    const h = TREE_HEIGHT * 1.15 * p.scale;
+    m.makeScale(h, h, h).setPosition(p.pos);
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, c.setScalar(p.tint));
+    bounds.expandByPoint(p.pos).expandByPoint(top.copy(p.pos).setY(p.pos.y + h));
+  });
+  // The shader turns quads toward the camera, so bound the chunk by its trees
+  // (padded by a crown radius) rather than by the untransformed quads.
+  mesh.boundingSphere = bounds.getBoundingSphere(new THREE.Sphere());
+  mesh.boundingSphere.radius += TREE_HEIGHT * 0.4;
+  mesh.name = 'tree-impostors';
+  return mesh;
+}
+
+function impostorMaterial(atlas: THREE.Texture): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial({ map: atlas, alphaTest: 0.5, side: THREE.DoubleSide });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -347,19 +370,7 @@ export function buildImpostors(
         gl_Position = projectionMatrix * mvPosition;`,
       );
   };
-  const mesh = new THREE.InstancedMesh(geo, mat, placements.length);
-  const m = new THREE.Matrix4();
-  const c = new THREE.Color();
-  placements.forEach((p, i) => {
-    const h = TREE_HEIGHT * 1.15 * p.scale;
-    m.makeScale(h, h, h).setPosition(p.pos);
-    mesh.setMatrixAt(i, m);
-    mesh.setColorAt(i, c.setScalar(p.tint));
-  });
-  mesh.computeBoundingSphere();
-  mesh.frustumCulled = false;
-  mesh.name = 'tree-impostors';
-  return mesh;
+  return mat;
 }
 
 /** Full 3D trees: one InstancedMesh per variant and material. */

@@ -99,18 +99,24 @@ export class TargetDummy implements Damageable {
     return false;
   }
 
+  /** True while the pose changed this update (falling over / standing back up). */
+  moved = false;
+
   update(dt: number): void {
+    const before = this.pivot.rotation.x;
     this.flash = Math.max(0, this.flash - dt);
     const emissive = this.flash > 0 ? 0x661111 : 0x000000;
     for (const m of this.materials) m.emissive.setHex(emissive);
 
     if (this.alive) {
       this.pivot.rotation.x = 0;
+      this.moved = before !== 0;
       return;
     }
     this.deadTimer -= dt;
     const fallT = Math.min(1, (RESPAWN_SEC - this.deadTimer) / FALL_SEC);
     this.pivot.rotation.x = (-Math.PI / 2) * (1 - (1 - fallT) ** 2);
+    this.moved = this.pivot.rotation.x !== before;
     if (this.deadTimer <= 0) {
       this.hp = MAX_HP;
       for (const c of this.colliders) c.setEnabled(true);
