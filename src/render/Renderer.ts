@@ -4,6 +4,7 @@ import { PostFX } from './PostFX';
 import { LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
 import { DynamicResolution } from './dynamicResolution';
+import { loadJSON, saveJSON } from '@/core/storage';
 
 installGradeToneMapping();
 
@@ -150,6 +151,10 @@ export class Renderer {
     return this.drs.scale;
   }
 
+  private get scaleKey(): string {
+    return `strikegy.renderScale.${this.preset}`;
+  }
+
   private get pixelRatio(): number {
     return Math.min(window.devicePixelRatio, this.quality.pixelRatioCap) * this.renderScale;
   }
@@ -167,7 +172,8 @@ export class Renderer {
     const pixels = window.innerWidth * window.innerHeight * base * base;
     // Large screens start below native and upscale; dynamic resolution never exceeds it.
     this.drs.setMax(Math.floor(Math.sqrt((this.quality.pixelBudget * 1e6) / pixels) * 20) / 20);
-    this.drs.resetToMax();
+    // Start where this preset settled last time instead of re-learning it.
+    this.drs.restart(loadJSON<number>(this.scaleKey) ?? 1);
     this.applySize();
   };
 
@@ -184,7 +190,10 @@ export class Renderer {
 
   /** Feeds a frame into dynamic resolution; resizes when the scale changes. */
   adaptResolution(frameMs: number, dt: number): void {
-    if (this.drs.update(dt, frameMs) !== null) this.applySize();
+    const next = this.drs.update(dt, frameMs);
+    if (next === null) return;
+    saveJSON(this.scaleKey, next);
+    this.applySize();
   }
 
   render(): void {

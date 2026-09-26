@@ -41,9 +41,9 @@ export class DynamicResolution {
     this._scale = Math.min(this._scale, this.max);
   }
 
-  /** Starts at the top of the range, e.g. after a window resize. */
-  resetToMax(): void {
-    this._scale = this.max;
+  /** Restarts at `scale` (clamped), e.g. after a window resize. */
+  restart(scale: number): void {
+    this._scale = Math.max(DRS.min, Math.min(this.max, scale));
   }
 
   /** @returns the new scale when it changed, otherwise null. */
