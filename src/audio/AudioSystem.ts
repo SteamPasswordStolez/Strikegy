@@ -55,6 +55,25 @@ const HIT_SAMPLE: Record<ImpactSurface, string> = {
 };
 /** Beyond this distance remote gunfire uses the "far" recordings. */
 const FAR_GUNFIRE_M = 45;
+/**
+ * Voice limits for world sounds. Every spatial sound costs a panner on the
+ * audio thread; big bot fights (10v15) fire well over 100 sounds a second and
+ * the thread falls behind, which the player hears as audio cutting out. Only
+ * the loudest voices play, and only the nearest few use (expensive) HRTF.
+ */
+const MAX_SPATIAL = 40;
+const MAX_HRTF = 10;
+const HRTF_RANGE_M = 30;
+/** Other people's footsteps are inaudible past this anyway. */
+const REMOTE_STEP_RANGE_M = 30;
+
+interface Voice {
+  until: number;
+  /** Rough loudness at the listener, used to pick which voices to drop. */
+  loud: number;
+  hrtf: boolean;
+  gain: GainNode;
+}
 
 /**
  * Game audio. Recorded CC0 samples (public/assets/sounds) are used when loaded;
@@ -76,6 +95,8 @@ export class AudioSystem {
   /** Encoded sample files fetched before the AudioContext exists. */
   private raw = new Map<string, ArrayBuffer[]>();
   private samples = new Map<string, AudioBuffer[]>();
+  private voices: Voice[] = [];
+  private listenerPos = { x: 0, y: 0, z: 0 };
 
   constructor(private volume: number) {}
 
@@ -186,6 +207,9 @@ export class AudioSystem {
     const l = this.ctx?.listener;
     if (!l || !l.positionX) return;
     const t = this.ctx!.currentTime;
+    this.listenerPos.x = pos.x;
+    this.listenerPos.y = pos.y;
+    this.listenerPos.z = pos.z;
     l.positionX.setValueAtTime(pos.x, t);
     l.positionY.setValueAtTime(pos.y, t);
     l.positionZ.setValueAtTime(pos.z, t);
@@ -199,14 +223,51 @@ export class AudioSystem {
 
   // ---------- building blocks ----------
 
-  /** Destination for a sound: 2D (player) or a panner at `pos`. Also returns a reverb send. */
-  private out(pos: THREE.Vector3 | null, reverbSend: number): AudioNode {
+  private distanceTo(pos: THREE.Vector3): number {
+    const l = this.listenerPos;
+    return Math.hypot(pos.x - l.x, pos.y - l.y, pos.z - l.z);
+  }
+
+  /**
+   * Reserves a world voice for `seconds`. Returns null when the sound should be
+   * skipped because enough louder sounds are already playing; a louder new sound
+   * fades out the quietest one instead.
+   */
+  private claimVoice(pos: THREE.Vector3, weight: number, seconds: number, gain: GainNode): Voice | null {
+    const now = this.ctx!.currentTime;
+    this.voices = this.voices.filter((v) => v.until > now);
+    const dist = this.distanceTo(pos);
+    const loud = weight / Math.max(2.5, dist);
+    if (this.voices.length >= MAX_SPATIAL) {
+      let quietest = this.voices[0]!;
+      for (const v of this.voices) if (v.loud < quietest.loud) quietest = v;
+      if (quietest.loud >= loud) return null;
+      quietest.gain.gain.setTargetAtTime(0, now, 0.015);
+      this.voices.splice(this.voices.indexOf(quietest), 1);
+    }
+    let hrtfCount = 0;
+    for (const v of this.voices) if (v.hrtf) hrtfCount++;
+    const voice: Voice = { until: now + seconds, loud, hrtf: dist < HRTF_RANGE_M && hrtfCount < MAX_HRTF, gain };
+    this.voices.push(voice);
+    return voice;
+  }
+
+  /**
+   * Destination for a sound: 2D (player) or a panner at `pos`, plus a reverb
+   * send. World sounds pass their loudness `weight` and length for voice
+   * limiting and get null when culled.
+   */
+  private out(pos: null, reverbSend: number): AudioNode;
+  private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number): AudioNode | null;
+  private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1): AudioNode | null {
     const ctx = this.ctx!;
     const input = ctx.createGain();
     let dry: AudioNode = input;
     if (pos) {
+      const voice = this.claimVoice(pos, weight, seconds, input);
+      if (!voice) return null;
       const p = ctx.createPanner();
-      p.panningModel = 'HRTF';
+      p.panningModel = voice.hrtf ? 'HRTF' : 'equalpower';
       p.distanceModel = 'inverse';
       p.refDistance = 2.5;
       p.rolloffFactor = 1.1;
@@ -310,7 +371,8 @@ export class AudioSystem {
   remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
-    const out = this.out(pos, 0.6);
+    const out = this.out(pos, 0.6, 1, 1.5);
+    if (!out) return;
     const id = distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`;
     if (!this.sample(id, out, t, 0.9, rand(0.96, 1.04))) {
       const v = VOICES[cls];
@@ -376,7 +438,8 @@ export class AudioSystem {
     if (t < this.impactBudget) return;
     this.impactBudget = t + 0.015;
     const s = SURFACE_SOUND[surface];
-    const out = this.out(pos, 0.2);
+    const out = this.out(pos, 0.2, 0.4, 0.4);
+    if (!out) return;
     if (this.sample(HIT_SAMPLE[surface], out, t, 0.7, rand(0.9, 1.15))) return;
     this.noiseBurst(out, t, s.len, 0.5, { type: s.type, freq: s.freq * rand(0.85, 1.15), q: s.q });
     if (s.ring) for (const f of s.ring) this.tone(out, t, f * rand(0.97, 1.03), 0.22, 0.06, 'sine');
@@ -404,8 +467,10 @@ export class AudioSystem {
   /** Someone else's footstep at a world position (bots): quieter, spatialized. */
   remoteFootstep(surface: ImpactSurface, pos: THREE.Vector3, sprinting: boolean): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
-    this.sample(STEP_SAMPLE[surface], this.out(pos, 0.05), t, sprinting ? 0.5 : 0.32, rand(0.9, 1.1));
+    if (this.distanceTo(pos) > REMOTE_STEP_RANGE_M) return;
+    const out = this.out(pos, 0.05, sprinting ? 0.5 : 0.32, 0.45);
+    if (!out) return;
+    this.sample(STEP_SAMPLE[surface], out, this.ctx!.currentTime, sprinting ? 0.5 : 0.32, rand(0.9, 1.1));
   }
 
   land(): void {
@@ -430,8 +495,9 @@ export class AudioSystem {
   grenadeBounce(pos: THREE.Vector3, speed: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
-    const out = this.out(pos, 0.1);
     const g = Math.min(0.5, speed / 20);
+    const out = this.out(pos, 0.1, g, 0.3);
+    if (!out) return;
     if (this.sample('grenade_bounce', out, t, g * 1.4, rand(1.1, 1.3))) return;
     this.tone(out, t, rand(1700, 2000), 0.09, g * 0.3, 'triangle');
     this.tone(out, t, rand(2600, 2900), 0.06, g * 0.2, 'sine');
@@ -441,7 +507,8 @@ export class AudioSystem {
   explosion(pos: THREE.Vector3, distance: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
-    const out = this.out(pos, 0.9);
+    const out = this.out(pos, 0.9, 4, 3.5);
+    if (!out) return;
     // Distance muffles high frequencies.
     const top = Math.max(500, 6000 - distance * 60);
     if (this.sample(distance > 60 ? 'explosion_far' : 'explosion', out, t, 1, rand(0.94, 1.04))) {
@@ -459,7 +526,8 @@ export class AudioSystem {
   flashbang(pos: THREE.Vector3): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
-    const out = this.out(pos, 0.8);
+    const out = this.out(pos, 0.8, 3, 1);
+    if (!out) return;
     this.noiseBurst(out, t, 0.03, 1.6, { type: 'highpass', freq: 1500 });
     this.noiseBurst(out, t, 0.6, 0.6, { type: 'lowpass', freq: 3000, endFreq: 200 });
   }
@@ -467,7 +535,8 @@ export class AudioSystem {
   smokePop(pos: THREE.Vector3, duration: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
-    const out = this.out(pos, 0.2);
+    const out = this.out(pos, 0.2, 0.6, Math.min(8, duration * 0.4) + 0.2);
+    if (!out) return;
     this.tone(out, t, 160, 0.1, 0.4, 'sine', 70);
     this.noiseBurst(out, t + 0.05, Math.min(8, duration * 0.4), 0.18, { type: 'bandpass', freq: 4200, q: 0.6, endFreq: 2500 });
   }
