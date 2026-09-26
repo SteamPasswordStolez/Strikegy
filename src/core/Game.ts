@@ -13,7 +13,7 @@ import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
 import { buildBlockout } from '@/world/buildBlockout';
-import { buildBackdrop } from '@/world/backdrop';
+import { BACKDROP_MODELS, buildBackdrop } from '@/world/backdrop';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
@@ -148,7 +148,8 @@ export class Game {
       this.overlay.show(t('error.map'), String(err instanceof Error ? err.message : err));
       throw err;
     }
-    await Promise.all([art, this.models.load((map.props ?? []).map((p) => p.model))]);
+    const outdoor = map.world.visualProfile !== 'indoor';
+    await Promise.all([art, this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])])]);
     this.physics.timestep = 1 / SIM_HZ;
     this.atmosphere = new Atmosphere(r.scene, r.fpScene, r.gl, map.world.visualProfile, {
       shadows: q.shadows,
@@ -158,7 +159,7 @@ export class Game {
     const t0 = performance.now();
     buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts);
     placeProps(map, r.scene, this.physics, this.models, this.impacts);
-    if (map.world.visualProfile !== 'indoor') buildBackdrop(r.scene, map.world.size, q.backdropDetail === 'low');
+    if (outdoor) buildBackdrop(r.scene, map.world.size, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa });
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);

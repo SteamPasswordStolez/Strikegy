@@ -1,20 +1,34 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TileNoise, makeRng, smoothstep } from '@/render/noise';
+import type { ModelLibrary } from '@/render/models';
+import { buildImpostors, buildNearTrees, createConiferKit } from './conifers';
+import { instanceModel } from './placeProps';
 
 const EXTENT = 1400;
 
+/** Forest-floor models scattered around the map (render only, no collision). */
+export const BACKDROP_MODELS = ['shrub_02', 'shrub_04', 'fern_02', 'rock_moss_set_01', 'rock_moss_set_02', 'tree_stump_01', 'dead_tree_trunk'];
+
+export interface BackdropOptions {
+  lowDetail: boolean;
+  gl: THREE.WebGLRenderer;
+  models: ModelLibrary;
+  /** Canvas MSAA is on: foliage can use alpha-to-coverage for soft edges. */
+  msaa: boolean;
+}
+
 /**
- * Render-only scenery around the playable area: rolling hills that rise
- * beyond the map bounds plus instanced low-poly trees. No collision.
+ * Render-only scenery around the playable area: rolling hills that rise beyond
+ * the map bounds, a conifer forest (3D trees near the map, baked impostors
+ * further out) and scattered rocks, stumps, logs and undergrowth. No collision.
  */
-export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], lowDetail: boolean): THREE.Group {
-  // Everything here is distant scenery: no shadow casting, modest tessellation, one draw for all trees.
+export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opts: BackdropOptions): THREE.Group {
   const group = new THREE.Group();
   group.name = 'backdrop';
   const n = new TileNoise(99);
   const halfX = mapSize[0] / 2;
   const halfZ = mapSize[1] / 2;
+  const rng = makeRng(7);
 
   // Distance outside the playable rectangle, 0 inside.
   const outside = (x: number, z: number) => {
@@ -22,33 +36,42 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], low
     const dz = Math.max(0, Math.abs(z) - halfZ);
     return Math.hypot(dx, dz);
   };
+  const uvOf = (x: number, z: number): [number, number] => [x / EXTENT + 0.5, z / EXTENT + 0.5];
   const heightAt = (x: number, z: number) => {
     const d = outside(x, z);
     if (d <= 0) return -0.3;
-    const u = x / EXTENT + 0.5;
-    const v = z / EXTENT + 0.5;
+    const [u, v] = uvOf(x, z);
     const hills = n.fbm(u, v, 3, 5);
     const rise = smoothstep(8, 160, d);
     return -0.3 + rise * (8 + hills * 70) + smoothstep(300, 700, d) * 60 * n.fbm(u + 0.3, v, 2, 3);
   };
+  /** 0..1 forest cover: clustered woods with clearings, thinning on high rocky ground. */
+  const forest = (x: number, z: number) => {
+    const [u, v] = uvOf(x, z);
+    const f = smoothstep(0.34, 0.5, n.fbm(u, v, 6, 3));
+    return f * (1 - smoothstep(70, 110, heightAt(x, z)));
+  };
 
-  const seg = lowDetail ? 72 : 120;
+  // --- Terrain -------------------------------------------------------------
+  const seg = opts.lowDetail ? 72 : 120;
   const geo = new THREE.PlaneGeometry(EXTENT, EXTENT, seg, seg);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
-  const grass = new THREE.Color(0x56643a);
-  const dryGrass = new THREE.Color(0x8a7f55);
-  const rock = new THREE.Color(0x77736a);
+  const grass = new THREE.Color(0x5f6e40);
+  const dryGrass = new THREE.Color(0x958a5d);
+  const floor = new THREE.Color(0x3a3a26);
+  const rock = new THREE.Color(0x807b70);
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
     const h = heightAt(x, z);
     pos.setY(i, h);
-    const u = x / EXTENT + 0.5;
-    const v = z / EXTENT + 0.5;
+    const [u, v] = uvOf(x, z);
     c.copy(grass).lerp(dryGrass, n.fbm(u + 0.7, v + 0.1, 8, 3));
+    // Needle litter and shade under the trees.
+    c.lerp(floor, forest(x, z) * 0.75);
     c.lerp(rock, smoothstep(45, 90, h) * 0.8);
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
@@ -58,56 +81,116 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], low
   geo.computeVertexNormals();
   const terrain = new THREE.Mesh(
     geo,
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 }),
+    new THREE.MeshStandardMaterial({ vertexColors: true, map: detailTexture(EXTENT / 7), roughness: 1, metalness: 0 }),
   );
   terrain.receiveShadow = false;
   group.add(terrain);
 
-  // Trees: trunk + cone canopy merged into one geometry (vertex colors), drawn as a single instanced mesh.
-  const count = lowDetail ? 200 : 380;
-  const colorize = (geo: THREE.BufferGeometry, hex: number) => {
-    const col = new THREE.Color(hex);
-    const n = geo.getAttribute('position').count;
-    const arr = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) col.toArray(arr, i * 3);
-    geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-    return geo;
+  // --- Trees ---------------------------------------------------------------
+  const kit = createConiferKit(opts.msaa);
+  type TreeSpot = { pos: THREE.Vector3; scale: number; yaw: number; variant: number; tint: number };
+  const scatter = (count: number, minD: number, maxD: number, accept: (x: number, z: number, d: number) => boolean): TreeSpot[] => {
+    const out: TreeSpot[] = [];
+    const reach = Math.min(EXTENT * 0.48, Math.max(halfX, halfZ) + maxD);
+    for (let tries = 0; out.length < count && tries < count * 40; tries++) {
+      const x = (rng() - 0.5) * 2 * reach;
+      const z = (rng() - 0.5) * 2 * reach;
+      const d = outside(x, z);
+      if (d < minD || d > maxD || !accept(x, z, d)) continue;
+      out.push({
+        pos: new THREE.Vector3(x, heightAt(x, z) - 0.3, z),
+        scale: 0.75 + rng() * 0.55,
+        yaw: rng() * Math.PI * 2,
+        variant: Math.floor(rng() * kit.variants.length),
+        tint: 0.8 + rng() * 0.3,
+      });
+    }
+    // Nearest first: with alpha-tested foliage, early depth rejection only helps
+    // when occluders are drawn before what they hide (the player is always inside).
+    return out.sort((a, b) => a.pos.x * a.pos.x + a.pos.z * a.pos.z - (b.pos.x * b.pos.x + b.pos.z * b.pos.z));
   };
-  const trunkGeo = colorize(new THREE.CylinderGeometry(0.25, 0.35, 3, 5).translate(0, 1.5, 0), 0x4a3828);
-  const canopyGeo = colorize(new THREE.ConeGeometry(2.2, 7, 6).translate(0, 6, 0), 0xffffff);
-  const treeGeo = mergeGeometries([trunkGeo.toNonIndexed(), canopyGeo.toNonIndexed()])!;
-  const trees = new THREE.InstancedMesh(
-    treeGeo,
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }),
-    count,
-  );
-  const rng = makeRng(7);
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const s = new THREE.Vector3();
-  const p = new THREE.Vector3();
-  const tint = new THREE.Color();
-  let placed = 0;
-  for (let tries = 0; placed < count && tries < count * 20; tries++) {
-    const x = (rng() - 0.5) * EXTENT * 0.8;
-    const z = (rng() - 0.5) * EXTENT * 0.8;
-    const d = outside(x, z);
-    if (d < 14 || d > 500) continue;
-    // Clustered forests: accept more where a noise field is high.
-    if (n.fbm(x / EXTENT + 0.5, z / EXTENT + 0.5, 6, 3) < 0.45 + rng() * 0.2) continue;
-    const scale = 0.8 + rng() * 0.9;
-    p.set(x, heightAt(x, z) - 0.2, z);
-    q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rng() * Math.PI * 2);
-    s.set(scale, scale * (0.85 + rng() * 0.4), scale);
-    m.compose(p, q, s);
-    trees.setMatrixAt(placed, m);
-    // Instance color tints the (white) canopy; the trunk color is dark enough to survive it.
-    trees.setColorAt(placed, tint.setHSL(0.3 + rng() * 0.05, 0.32, 0.13 + rng() * 0.06, THREE.SRGBColorSpace));
-    placed++;
-  }
-  trees.count = placed;
-  group.add(trees);
+  // A dense tree line right behind the walls, then woods and clearings.
+  const near = scatter(opts.lowDetail ? 160 : 300, 4, 48, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
+  const far = scatter(opts.lowDetail ? 3500 : 7000, 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
+  group.add(buildNearTrees(kit, near));
+  group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, far));
+
+  // --- Forest floor --------------------------------------------------------
+  const DEG = Math.PI / 180;
+  const place = (id: string, count: number, minD: number, maxD: number, scale: [number, number], sink = 0) => {
+    const tpl = opts.models.template(id);
+    if (!tpl) return;
+    const matrices: THREE.Matrix4[] = [];
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    for (let tries = 0; matrices.length < count && tries < count * 30; tries++) {
+      const x = (rng() - 0.5) * 2 * (Math.max(halfX, halfZ) + maxD);
+      const z = (rng() - 0.5) * 2 * (Math.max(halfX, halfZ) + maxD);
+      const d = outside(x, z);
+      if (d < minD || d > maxD || rng() > 0.35 + forest(x, z)) continue;
+      const s = scale[0] + rng() * (scale[1] - scale[0]);
+      e.set((rng() - 0.5) * 6 * DEG, rng() * Math.PI * 2, (rng() - 0.5) * 6 * DEG);
+      matrices.push(new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) - sink * s, z), q.setFromEuler(e), new THREE.Vector3(s, s, s)));
+    }
+    if (matrices.length) instanceModel(tpl, matrices, group, false);
+  };
+  const k = opts.lowDetail ? 0.5 : 1;
+  place('rock_moss_set_01', Math.round(14 * k), 2, 60, [0.8, 1.6], 0.1);
+  place('rock_moss_set_02', Math.round(14 * k), 2, 60, [0.8, 1.6], 0.1);
+  place('tree_stump_01', Math.round(24 * k), 2, 45, [0.9, 1.4]);
+  place('dead_tree_trunk', Math.round(20 * k), 2, 45, [1.5, 2.5], 0.02);
+  place('shrub_02', Math.round(40 * k), 1, 40, [0.8, 1.3]);
+  place('fern_02', Math.round(140 * k), 1, 35, [1, 1.6]);
+  // Undergrowth along the inside of the walls softens the map edge.
+  placeAlongWalls(opts.models, group, halfX, halfZ, rng, k);
 
   scene.add(group);
   return group;
+}
+
+/** Ferns and small shrubs hugging the inside of the boundary walls (visual only). */
+function placeAlongWalls(models: ModelLibrary, parent: THREE.Object3D, halfX: number, halfZ: number, rng: () => number, k: number): void {
+  const spots = (count: number, inset: [number, number], scale: [number, number]) => {
+    const out: THREE.Matrix4[] = [];
+    const q = new THREE.Quaternion();
+    for (let i = 0; i < count; i++) {
+      const edge = Math.floor(rng() * 4);
+      const along = (rng() - 0.5) * 2;
+      const inward = inset[0] + rng() * (inset[1] - inset[0]);
+      const x = edge < 2 ? along * (halfX - 2) : (edge === 2 ? -1 : 1) * (halfX - inward);
+      const z = edge < 2 ? (edge === 0 ? -1 : 1) * (halfZ - inward) : along * (halfZ - 2);
+      const s = scale[0] + rng() * (scale[1] - scale[0]);
+      q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rng() * Math.PI * 2);
+      out.push(new THREE.Matrix4().compose(new THREE.Vector3(x, -0.02, z), q.clone(), new THREE.Vector3(s, s, s)));
+    }
+    return out;
+  };
+  const fern = models.template('fern_02');
+  if (fern) instanceModel(fern, spots(Math.round(90 * k), [0.9, 1.8], [0.8, 1.3]), parent, false);
+  const shrub = models.template('shrub_04');
+  if (shrub) instanceModel(shrub, spots(Math.round(70 * k), [0.7, 1.4], [3, 5]), parent, false);
+}
+
+/** Tiling grayscale detail (0.72..1) that breaks up the terrain's vertex colors up close. */
+function detailTexture(repeat: number): THREE.DataTexture {
+  const S = 128;
+  const n = new TileNoise(3);
+  const data = new Uint8Array(S * S * 4);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const v = 0.72 + 0.28 * (n.sample(x / S, y / S, 8) * 0.5 + n.sample(x / S, y / S, 32) * 0.3 + n.sample(x / S, y / S, 64) * 0.2);
+      const g = Math.round(v * 255);
+      const i = (y * S + x) * 4;
+      data[i] = data[i + 1] = data[i + 2] = g;
+      data[i + 3] = 255;
+    }
+  }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
 }

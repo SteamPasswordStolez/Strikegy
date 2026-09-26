@@ -1,5 +1,5 @@
 {
-  "source": "Poly Haven (https://polyhaven.com) — all assets CC0",
+  "source": "Poly Haven (https://polyhaven.com) \u2014 all assets CC0",
   "textures": {
     "rocky_trail": {
       "res": "1k",
@@ -51,6 +51,36 @@
     },
     "bolt_action_rifle_7_62": {
       "res": "1k"
+    },
+    "service_pistol": {
+      "res": "1k"
+    },
+    "shrub_02": {
+      "res": "1k",
+      "simplify": 0.15
+    },
+    "shrub_04": {
+      "res": "1k",
+      "simplify": 0.15
+    },
+    "fern_02": {
+      "res": "1k"
+    },
+    "rock_moss_set_01": {
+      "res": "1k",
+      "simplify": 0.1
+    },
+    "rock_moss_set_02": {
+      "res": "1k",
+      "simplify": 0.1
+    },
+    "tree_stump_01": {
+      "res": "1k",
+      "simplify": 0.15
+    },
+    "dead_tree_trunk": {
+      "res": "1k",
+      "simplify": 0.05
     }
   }
 }

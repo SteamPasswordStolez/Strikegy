@@ -71,8 +71,10 @@ export class Player {
   }
 
   teleport(feet: THREE.Vector3, yaw: number): void {
-    this.feet.copy(feet);
-    this.prevFeet.copy(feet);
+    // Start a hair above the target: a capsule placed exactly on (or in) the floor
+    // can slip through it; snap-to-ground settles it within a frame.
+    this.feet.copy(feet).setY(feet.y + 0.05);
+    this.prevFeet.copy(this.feet);
     this.velocity.set(0, 0, 0);
     this.yaw = yaw;
     this.pitch = 0;

@@ -34,7 +34,6 @@ export function placeProps(
   const scl = new THREE.Vector3();
   const center = new THREE.Vector3();
   const half = new THREE.Vector3();
-  const tmp = new THREE.Matrix4();
 
   for (const [model, list] of byModel) {
     const template = models.template(model)!;
@@ -45,16 +44,7 @@ export function placeProps(
       return new THREE.Matrix4().compose(pos.set(...p.pos), quat.clone(), scl.setScalar(p.scale ?? 1));
     });
 
-    template.updateMatrixWorld(true);
-    template.traverse((node) => {
-      if (!(node instanceof THREE.Mesh)) return;
-      const inst = new THREE.InstancedMesh(node.geometry, node.material, list.length);
-      matrices.forEach((m, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(m, node.matrixWorld)));
-      inst.castShadow = true;
-      inst.receiveShadow = true;
-      inst.computeBoundingSphere();
-      root.add(inst);
-    });
+    instanceModel(template, matrices, root, true);
 
     list.forEach((p, i) => {
       if (p.collide === false) return;
@@ -68,4 +58,19 @@ export function placeProps(
 
   scene.add(root);
   return root;
+}
+
+/** One InstancedMesh per mesh node of `template`, with an instance per placement matrix. */
+export function instanceModel(template: THREE.Object3D, matrices: THREE.Matrix4[], parent: THREE.Object3D, shadows: boolean): void {
+  const tmp = new THREE.Matrix4();
+  template.updateMatrixWorld(true);
+  template.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    const inst = new THREE.InstancedMesh(node.geometry, node.material, matrices.length);
+    matrices.forEach((m, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(m, node.matrixWorld)));
+    inst.castShadow = shadows;
+    inst.receiveShadow = true;
+    inst.computeBoundingSphere();
+    parent.add(inst);
+  });
 }
