@@ -17,6 +17,32 @@
       "file": "explosion.mp3",
       "license": "CC0 — OpenGameArt 'Basic Sound Effects'"
     },
+    "equipment_clicks": {
+      "url": "https://opengameart.org/sites/default/files/equipment_clicks3.wav",
+      "file": "equipment_clicks3.wav",
+      "license": "CC0 — OpenGameArt 'equipment clicks III' (bolt-action rifle cocking)"
+    },
+    "gun_reload": {
+      "url": "https://opengameart.org/sites/default/files/gunreload1.wav",
+      "file": "gunreload1.wav",
+      "license": "CC0 — OpenGameArt 'Gun reload sounds' (airsoft)"
+    },
+    "rifle_reload": {
+      "url": "https://opengameart.org/sites/default/files/assaultriflereload1_0.wav",
+      "file": "assaultriflereload1_0.wav",
+      "license": "CC0 — OpenGameArt 'Gun reload sounds' (airsoft)"
+    },
+    "shotgun_cock": {
+      "url": "https://opengameart.org/sites/default/files/shotguncock_0.wav",
+      "file": "shotguncock_0.wav",
+      "license": "CC0 — OpenGameArt 'Gun reload sounds' (airsoft)"
+    },
+    "forest_birds": {
+      "url": "https://opengameart.org/sites/default/files/forest_birds.7z",
+      "file": "forest_birds.7z",
+      "extract": "birds",
+      "license": "CC0 — OpenGameArt 'Forest bird sounds' (noisy recordings, denoised on build)"
+    },
     "explosion_distant": {
       "url": "https://opengameart.org/sites/default/files/explosion_distant_0.mp3",
       "file": "explosion_distant.mp3",
@@ -49,6 +75,22 @@
     "hit_wood": { "src": "kenney/Audio/impactWood_light_00{0,1,2}.ogg" },
     "hit_rubber": { "src": "kenney/Audio/impactSoft_heavy_00{0,1,2}.ogg" },
     "grenade_bounce": { "src": "kenney/Audio/impactTin_medium_00{0,1,2}.ogg" },
-    "mag_in": { "src": "kenney/Audio/impactMetal_medium_00{0,1}.ogg" }
+    "mag_in": { "src": "kenney/Audio/impactMetal_medium_00{0,1}.ogg" },
+    "step_grass": { "src": "kenney/Audio/footstep_grass_00{0,1,2,3}.ogg", "dur": 0.4 },
+    "step_snow": { "src": "kenney/Audio/footstep_snow_00{0,1,2,3}.ogg", "dur": 0.4 },
+    "step_metal": { "src": "kenney/Audio/impactPlate_light_00{0,1,2,3}.ogg", "dur": 0.35 },
+    "mag_out": { "src": "gunreload1.wav", "cuts": [[0.05, 0.28]] },
+    "mag_out_rifle": { "src": "assaultriflereload1_0.wav", "cuts": [[0.13, 0.3]] },
+    "mag_in_rifle": { "src": "assaultriflereload1_0.wav", "cuts": [[1.04, 0.16]] },
+    "charge": { "src": "assaultriflereload1_0.wav", "cuts": [[1.2, 0.35]] },
+    "slide": { "src": "gunreload1.wav", "cuts": [[1.24, 0.34]] },
+    "pump": { "src": "shotguncock_0.wav", "dur": 0.47 },
+    "bolt_open": { "src": "equipment_clicks3.wav", "cuts": [[2.12, 0.3], [3.25, 0.3]] },
+    "bolt_close": { "src": "equipment_clicks3.wav", "cuts": [[2.8, 0.25], [1.45, 0.28]] },
+    "bird": {
+      "src": "birds/Forest Birds/Forest Birds {3,5}.wav",
+      "dur": 1.8,
+      "filter": "highpass=f=1600,lowpass=f=7500,afftdn=nr=30:nf=-20,agate=threshold=0.04:ratio=6:release=120"
+    }
   }
 }

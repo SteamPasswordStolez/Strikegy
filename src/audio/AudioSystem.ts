@@ -34,6 +34,8 @@ const SURFACE_SOUND: Record<ImpactSurface, { type: BiquadFilterType; freq: numbe
   metal: { type: 'bandpass', freq: 3200, q: 2, len: 0.05, ring: [2240, 3170, 4410] },
   wood: { type: 'bandpass', freq: 650, q: 1.5, len: 0.09 },
   rubber: { type: 'lowpass', freq: 400, q: 0.8, len: 0.08 },
+  grass: { type: 'lowpass', freq: 700, q: 0.7, len: 0.09 },
+  snow: { type: 'lowpass', freq: 600, q: 0.7, len: 0.1 },
 };
 
 /** How each class's parts sound when handled: pitch scale and weight (loudness/body). */
@@ -54,9 +56,11 @@ const STEP_SAMPLE: Record<ImpactSurface, string> = {
   dirt: 'step_dirt',
   concrete: 'step_concrete',
   brick: 'step_concrete',
-  metal: 'step_concrete',
+  metal: 'step_metal',
   wood: 'step_wood',
   rubber: 'step_dirt',
+  grass: 'step_grass',
+  snow: 'step_snow',
 };
 const HIT_SAMPLE: Record<ImpactSurface, string> = {
   dirt: 'hit_dirt',
@@ -65,6 +69,8 @@ const HIT_SAMPLE: Record<ImpactSurface, string> = {
   metal: 'hit_metal',
   wood: 'hit_wood',
   rubber: 'hit_rubber',
+  grass: 'hit_dirt',
+  snow: 'hit_rubber',
 };
 /** Beyond this distance remote gunfire uses the "far" recordings. */
 const FAR_GUNFIRE_M = 45;
@@ -451,24 +457,32 @@ export class AudioSystem {
     switch (cue) {
       case 'magOut':
         // Release button, then the magazine sliding out of the well.
-        this.mechClick(out, t, 3200 * p, 0.28 * w);
-        this.slide(out, t + 0.02, 0.12, 1800 * p, 900 * p, 0.2 * w);
+        if (!this.sample(cls === 'pistol' || cls === 'smg' ? 'mag_out' : 'mag_out_rifle', out, t, 0.5 * w, rand(0.96, 1.04) / Math.sqrt(p))) {
+          this.mechClick(out, t, 3200 * p, 0.28 * w);
+          this.slide(out, t + 0.02, 0.12, 1800 * p, 900 * p, 0.2 * w);
+        }
         if (cls === 'lmg') this.mechClick(out, t + 0.16, 1500, 0.18); // feed cover
         break;
       case 'magIn':
         this.slide(out, t, 0.05, 900 * p, 2200 * p, 0.08 * w);
         this.sample('mag_in', out, t + 0.005, 0.25 * w, 1.5 * p);
+        if (cls !== 'pistol') this.sample('mag_in_rifle', out, t + 0.01, 0.4 * w, rand(0.96, 1.04) / Math.sqrt(p));
         this.mechClick(out, t + 0.03, 2500 * p, 0.28 * w);
         this.tone(out, t + 0.03, 180 * p, 0.06, 0.2 * w, 'sine', 90 * p);
         break;
       case 'chamber':
         if (cls === 'pistol') {
           // Slide release: one sharp slam.
+          if (this.sample('slide', out, t, 0.6, rand(0.97, 1.05))) break;
           this.mechClick(out, t, 2900, 1.4);
           this.noiseBurst(out, t, 0.04, 0.4, { type: 'lowpass', freq: 700 });
           break;
         }
         // Charging handle back to its stop, then released to slam forward.
+        if (this.sample('charge', out, t, 0.55 * w, rand(0.96, 1.04) / Math.sqrt(p))) {
+          if (cls === 'lmg') this.mechClick(out, t + 0.3, 1400, 0.22); // cover shut
+          break;
+        }
         this.slide(out, t, 0.08, 1500 * p, 3000 * p, 0.12 * w);
         this.mechClick(out, t + 0.08, 3100 * p, 0.18 * w);
         this.mechClick(out, t + 0.16, 2400 * p, 0.3 * w);
@@ -497,6 +511,7 @@ export class AudioSystem {
     const out = this.out(null, 0.08);
     if (cls === 'sg') {
       // Pump: back "chk", forward "chk" (the forward stroke is the louder).
+      if (this.sample('pump', out, t, 0.6, rand(0.97, 1.03))) return;
       this.slide(out, t, 0.07, 900, 1600, 0.24);
       this.mechClick(out, t + 0.07, 1300, 0.44);
       this.slide(out, t + 0.16, 0.06, 1600, 900, 0.2);
@@ -505,6 +520,10 @@ export class AudioSystem {
       return;
     }
     // Bolt: lift, pull back to the stop, push forward, turn down to lock.
+    if (this.sample('bolt_open', out, t, 0.5, rand(0.95, 1.03))) {
+      this.sample('bolt_close', out, t + 0.24, 0.6, rand(0.95, 1.03));
+      return;
+    }
     this.mechClick(out, t, 2800, 0.27);
     this.slide(out, t + 0.04, 0.1, 1400, 3200, 0.2);
     this.mechClick(out, t + 0.14, 3300, 0.34);

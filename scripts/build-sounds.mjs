@@ -3,7 +3,9 @@
 // firearm library), then uses ffmpeg to trim each sound from its first onset,
 // fade the tail, peak-normalize and write mono 24 kHz 16-bit WAV to
 // public/assets/sounds/. WAV avoids the encoder padding MP3/AAC add, which would
-// delay gunshots. Entries with {a,b,c} in `src` produce numbered variants.
+// delay gunshots. Entries with {a,b,c} in `src` produce numbered variants, and
+// `cuts: [[start, dur], ...]` cuts numbered variants out of one longer recording.
+// `filter` is an extra ffmpeg filter chain run first (e.g. denoising).
 //
 //   npm run sounds                       rebuild everything
 //   npm run sounds -- --only gun_ar,bird only these ids (and only their sources are fetched)
@@ -60,6 +62,12 @@ function expand(src) {
   return m ? m[1].split(',').map((v) => src.replace(m[0], v)) : [src];
 }
 
+/** The variants of a sound: file, optional start offset, length. */
+function variants(spec) {
+  if (spec.cuts) return spec.cuts.map(([start, dur]) => ({ rel: spec.src, start, dur }));
+  return expand(spec.src).map((rel) => ({ rel, start: 0, dur: spec.dur }));
+}
+
 function ffmpeg(args) {
   const r = spawnSync('ffmpeg', ['-hide_banner', ...args], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
@@ -75,17 +83,19 @@ function channels(file) {
 let total = 0;
 let count = 0;
 for (const [id, spec] of selected) {
-  const inputs = expand(spec.src);
-  inputs.forEach((rel, i) => {
+  const inputs = variants(spec);
+  inputs.forEach(({ rel, start, dur }, i) => {
     const input = path.join(SRC, rel);
     const dest = path.join(OUT, inputs.length > 1 ? `${id}_${i}.wav` : `${id}.wav`);
     const chain = [
+      ...(start ? [`atrim=start=${start}`, 'asetpts=PTS-STARTPTS'] : []),
+      ...(spec.filter ? [spec.filter] : []),
       // Start exactly at the first transient so shots line up with the muzzle flash.
       'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.004',
       // Average stereo to mono (mono sources pass through; `pan` fails on them).
       ...(channels(input) > 1 ? ['pan=mono|c0=0.5*c0+0.5*c1'] : []),
     ];
-    if (spec.dur) chain.push(`atrim=0:${spec.dur}`, `afade=t=out:st=${(spec.dur * 0.55).toFixed(3)}:d=${(spec.dur * 0.45).toFixed(3)}`);
+    if (dur) chain.push(`atrim=0:${dur}`, `afade=t=out:st=${(dur * 0.55).toFixed(3)}:d=${(dur * 0.45).toFixed(3)}`);
     const base = chain.join(',');
     const probe = ffmpeg(['-i', input, '-af', `${base},volumedetect`, '-f', 'null', '-']);
     const peak = Number(/max_volume: (-?[\d.]+) dB/.exec(probe)?.[1] ?? '0');
@@ -98,6 +108,6 @@ for (const [id, spec] of selected) {
 
 // Index consumed by the game's sample bank: id -> variant count.
 const index = {};
-for (const [id, spec] of Object.entries(manifest.sounds)) index[id] = expand(spec.src).length;
+for (const [id, spec] of Object.entries(manifest.sounds)) index[id] = variants(spec).length;
 fs.writeFileSync(path.join(OUT, 'index.json'), JSON.stringify(index, null, 2) + '\n');
 console.log(`wrote ${count} sounds, ${(total / 1024).toFixed(0)} KB`);

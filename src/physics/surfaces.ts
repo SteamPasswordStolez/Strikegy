@@ -1,7 +1,7 @@
 import type { SurfaceMaterial } from '@/world/mapTypes';
 
 /** Acoustic / visual response of a surface to bullets, footsteps and debris. */
-export type ImpactSurface = 'dirt' | 'concrete' | 'metal' | 'wood' | 'brick' | 'rubber';
+export type ImpactSurface = 'dirt' | 'concrete' | 'metal' | 'wood' | 'brick' | 'rubber' | 'grass' | 'snow';
 
 export const SURFACE_FROM_MATERIAL: Record<SurfaceMaterial, ImpactSurface> = {
   ground: 'dirt',

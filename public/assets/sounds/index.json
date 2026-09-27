@@ -24,5 +24,17 @@
   "hit_wood": 3,
   "hit_rubber": 3,
   "grenade_bounce": 3,
-  "mag_in": 2
+  "mag_in": 2,
+  "step_grass": 4,
+  "step_snow": 4,
+  "step_metal": 4,
+  "mag_out": 1,
+  "mag_out_rifle": 1,
+  "mag_in_rifle": 1,
+  "charge": 1,
+  "slide": 1,
+  "pump": 1,
+  "bolt_open": 2,
+  "bolt_close": 2,
+  "bird": 2
 }

@@ -61,6 +61,8 @@ const SURFACE_FX: Record<ImpactSurface, { dust: number; chips: number; decal: nu
   metal: { dust: 0x8a8a8a, chips: 0x4a4a4a, decal: 0x1c1c1c, sparks: true },
   wood: { dust: 0xb08d63, chips: 0x7a5a38, decal: 0x2a1c10, sparks: false },
   rubber: { dust: 0x3a3a3a, chips: 0x151515, decal: 0x0e0e0e, sparks: false },
+  grass: { dust: 0x7a7a52, chips: 0x3d4a26, decal: 0x221d12, sparks: false },
+  snow: { dust: 0xe8eef2, chips: 0xd6dde2, decal: 0x8a9096, sparks: false },
 };
 
 const CASING_SCALE: Record<WeaponClass, number> = {
