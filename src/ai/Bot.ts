@@ -21,6 +21,8 @@ const DOWN = { x: 0, y: -1, z: 0 };
 const PERCEIVE_EVERY = 0.1;
 const THINK_EVERY = 0.25;
 const CROUCH_HEIGHT = MOVE.crouchHeight;
+/** Teammates' enemy sightings farther than this (m) don't send a bot hunting. */
+const TEAM_INTEL_RANGE = 45;
 /** How far off the path centre a bot keeps (m, at lane = +-1). */
 const LANE_WIDTH = 1.8;
 
@@ -107,6 +109,12 @@ export class Bot implements Damageable, Combatant {
   private coverUntil = 0;
   private strafe = 0;
   private strafeUntil = 0;
+  /** Fighting from cover: standing up to shoot (peek) or crouched behind it, until the given time. */
+  private peeking = false;
+  private peekSwitchAt = 0;
+  /** Firing at where an enemy was last seen, to keep their head down. */
+  private readonly suppressPos = new THREE.Vector3();
+  private suppressUntil = -Infinity;
   private readonly progressPos = new THREE.Vector3();
   private progressAt = 0;
   private stride = 0;
@@ -189,6 +197,8 @@ export class Bot implements Damageable, Combatant {
     this.path.length = 0;
     this.hasGoal = false;
     this.cover = null;
+    this.peeking = false;
+    this.suppressUntil = -Infinity;
     this.deadTime = 0;
     this.respawnPenalty = 0;
   }
@@ -258,6 +268,7 @@ export class Bot implements Damageable, Combatant {
       this.thinkTimer += THINK_EVERY;
       this.think(s);
     }
+    this.updatePeek(s);
     this.updateAim(dt, s);
     this.updateMovement(dt, s);
     this.updateWeapon(dt, s);
@@ -321,16 +332,23 @@ export class Bot implements Damageable, Combatant {
     const w = this.weapon;
     const threat = this.target ? this.target.feet : this.lastSeen.time > s.time - 4 ? this.lastSeen.pos : null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
-      const found = s.findCover(this, threat);
-      if (found !== undefined) {
-        this.cover = found;
+      // Keep a cover spot while it still hides us; only look for a new one when it doesn't.
+      if (this.cover && this.coverHolds(this.cover, threat, s)) {
         this.coverUntil = s.time + 3;
+      } else {
+        const found = s.findCover(this, threat);
+        if (found !== undefined) {
+          this.cover = found;
+          this.coverUntil = s.time + 3;
+        }
       }
     } else if (!threat) {
       this.cover = null;
     }
     const inCover = !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
-    const team = s.teamSighting(this.team);
+    // Teammates' sightings only matter nearby; otherwise the whole team converges on one fight.
+    const sighting = s.teamSighting(this.team);
+    const team = sighting && sighting.pos.distanceTo(this.feet) < TEAM_INTEL_RANGE ? sighting : null;
     const ownAge = s.time - this.lastSeen.time;
     const teamAge = team ? s.time - team.time : Infinity;
     this.action = chooseAction(
@@ -353,10 +371,16 @@ export class Bot implements Damageable, Combatant {
 
     switch (this.action) {
       case 'engage':
-        this.planEngage(s);
+        if (inCover) this.hasGoal = false; // fight from here, peeking
+        else this.planEngage(s);
         break;
       case 'cover':
         if (this.cover) this.setGoal(this.cover, s);
+        else if (threat) this.backOff(threat, s);
+        break;
+      case 'hold':
+        if (this.cover) this.setGoal(this.cover, s);
+        this.planSuppress(s);
         break;
       case 'reload':
         if (w.canReload()) w.startReload();
@@ -365,6 +389,8 @@ export class Bot implements Damageable, Combatant {
         break;
       case 'hunt':
         this.setGoal(ownAge <= teamAge + 2 ? this.lastSeen.pos : team!.pos, s);
+        // Steadier types keep firing at the spot while they close in.
+        if (this.personality.caution > 0.4) this.planSuppress(s);
         break;
       case 'investigate':
         this.setGoal(this.heard.pos, s);
@@ -410,6 +436,63 @@ export class Bot implements Damageable, Combatant {
     this.hasGoal = this.strafe !== 0 || dist < pref * 0.5;
   }
 
+  /** Whether a crouched bot at `spot` is still hidden from `threat` (and not on top of it). */
+  private coverHolds(spot: THREE.Vector3, threat: THREE.Vector3, s: BotServices): boolean {
+    if (spot.distanceTo(threat) < 6) return false;
+    const eye = this.tmp.copy(threat).setY(threat.y + 1.6);
+    return !s.lineOfSight(eye, this.tmp2.copy(spot).setY(spot.y + 0.85));
+  }
+
+  /** Hurt with nowhere to hide: back away from the threat. */
+  private backOff(threat: THREE.Vector3, s: BotServices): void {
+    const away = this.tmp.subVectors(this.feet, threat).setY(0);
+    if (away.lengthSq() < 1e-4) away.set(1, 0, 0);
+    away.normalize().multiplyScalar(9).add(this.feet);
+    const p = s.nav.closest(away, this.tmp2);
+    if (p) this.setGoal(p, s);
+  }
+
+  /**
+   * Keep an enemy who just ducked out of sight pinned: a few bursts at where
+   * they were (automatic weapons, steadier characters, clear line to the spot).
+   */
+  private planSuppress(s: BotServices): void {
+    const age = s.time - this.lastSeen.time;
+    const auto = this.def.fireMode === 'auto' || this.def.fireMode === 'burst';
+    if (!auto || age > 2.5 || this.weapon.ammo < this.def.magSize * 0.3 || this.personality.archetype === 'rusher') return;
+    if (s.time < this.suppressUntil) return;
+    const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1.1);
+    if (!s.lineOfSight(this.eyePos(this.eye), spot)) return;
+    this.suppressPos.copy(spot);
+    this.suppressUntil = s.time + 1.2 + Math.random() * 1.3;
+  }
+
+  private get suppressing(): boolean {
+    return !this.target && this.nowRef < this.suppressUntil && (!this.inCover || this.peeking);
+  }
+
+  private get inCover(): boolean {
+    return !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
+  }
+
+  /** Behind cover in a fight: alternate standing up to shoot and ducking back down. */
+  private updatePeek(s: BotServices): void {
+    const fighting = this.inCover && (this.action === 'engage' || this.action === 'hold');
+    if (!fighting) {
+      this.peeking = false;
+      return;
+    }
+    const p = this.personality;
+    const hit = s.time - this.lastHurt < 0.25;
+    if (this.peeking && (s.time > this.peekSwitchAt || hit || this.weapon.reloading)) {
+      this.peeking = false;
+      this.peekSwitchAt = s.time + (0.6 + p.caution * 1.1) * (0.7 + Math.random() * 0.6);
+    } else if (!this.peeking && s.time > this.peekSwitchAt && !this.weapon.reloading) {
+      this.peeking = true;
+      this.peekSwitchAt = s.time + (1 + p.aggression * 1.6) * (0.7 + Math.random() * 0.6);
+    }
+  }
+
   private setGoal(p: THREE.Vector3, s: BotServices): void {
     if (this.hasGoal && this.goal.distanceTo(p) < 1.5 && s.time < this.repathAt && this.path.length > 0) return;
     this.goal.copy(p);
@@ -449,6 +532,16 @@ export class Bot implements Damageable, Combatant {
       [yaw, pitch] = yawPitchOf(aimAt.x - eye.x, aimAt.y - eye.y, aimAt.z - eye.z);
       yaw += this.jitter.x;
       pitch += this.jitter.y;
+    } else if (this.suppressing || (this.action === 'hold' && s.time - this.lastSeen.time < 10)) {
+      // Watch (or shoot at) where the enemy was.
+      const eye = this.eyePos(this.eye);
+      const p = this.suppressing ? this.suppressPos : this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1.4);
+      [yaw, pitch] = yawPitchOf(p.x - eye.x, p.y - eye.y, p.z - eye.z);
+      if (this.suppressing) {
+        // Suppression is loose: sweep around the spot.
+        yaw += Math.sin(s.time * 2.3 + this.id) * 2.5 * DEG;
+        pitch += Math.sin(s.time * 3.1 + this.id * 2) * 1.2 * DEG;
+      }
     } else if (this.hasGoal && this.path.length > 0) {
       // Look where we are going, or toward the last threat when hunting.
       const look = this.action === 'hunt' || this.action === 'investigate' ? this.goal : this.path[Math.min(this.pathIndex, this.path.length - 1)]!;
@@ -499,9 +592,14 @@ export class Bot implements Damageable, Combatant {
       }
     }
 
-    // Crouch when holding still in a fight at range, or while reloading in cover.
-    const inCover = !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
-    const wantCrouch = speed === 0 && ((!!this.target && this.feet.distanceTo(this.target.feet) > 15) || (inCover && this.weapon.reloading));
+    // In cover: crouched unless peeking. In the open: crouch to shoot at range (careful types sooner).
+    const inCover = this.inCover;
+    const crouchRange = 22 - this.personality.caution * 12;
+    const wantCrouch =
+      speed === 0 &&
+      (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)
+        ? !this.peeking
+        : !!this.target && this.feet.distanceTo(this.target.feet) > crouchRange);
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 
@@ -568,9 +666,10 @@ export class Bot implements Damageable, Combatant {
     const w = this.weapon;
     let trigger = false;
     const t = this.target;
-    if (t && !w.reloading && w.ammo > 0) {
+    const suppress = !t && this.suppressing;
+    if ((t || suppress) && !w.reloading && w.ammo > 0) {
       const eye = this.eyePos(this.eye);
-      const aimAt = this.tmp.copy(t.feet).setY(t.feet.y + t.eyeHeight * 0.78);
+      const aimAt = t ? this.tmp.copy(t.feet).setY(t.feet.y + t.eyeHeight * 0.78) : this.tmp.copy(this.suppressPos);
       const [ty, tp] = yawPitchOf(aimAt.x - eye.x, aimAt.y - eye.y, aimAt.z - eye.z);
       const off = Math.hypot(wrapAngle(ty - this.aimYaw), tp - this.aimPitch) / DEG;
       const dist = eye.distanceTo(aimAt);

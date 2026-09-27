@@ -3,7 +3,7 @@
  * situation; the highest wins, with a small bonus for the current action so
  * bots do not flip between two close choices every tick.
  */
-export type BotAction = 'engage' | 'cover' | 'reload' | 'hunt' | 'investigate' | 'advance';
+export type BotAction = 'engage' | 'cover' | 'hold' | 'reload' | 'hunt' | 'investigate' | 'advance';
 
 export interface BrainInput {
   /** 0..1 */
@@ -40,13 +40,19 @@ export function scoreActions(i: BrainInput): Record<BotAction, number> {
   return {
     // Fight whatever is visible; less keen with an empty magazine.
     engage: i.hasTarget ? (empty ? 0.3 : 0.75) : 0,
-    // Break contact when hurt or out of ammo in a fight; only if cover is known.
+    // Break contact when hurt or out of ammo in a fight (with no cover known: back off).
     // Careful types also move into cover as soon as a fight starts and shoot from there.
     cover:
-      i.coverKnown && pressured && !i.inCover
-        ? (hurt * 1.1 + (empty || i.reloading ? 0.45 : 0) + (i.sinceHurt < 1 ? 0.15 : 0)) * (0.6 + caution * 0.8) +
-          (i.hasTarget ? Math.max(0, caution - 0.4) * 1.8 : 0)
+      pressured && !i.inCover
+        ? i.coverKnown
+          ? (hurt * 1.1 + (empty || i.reloading ? 0.45 : 0) + (i.sinceHurt < 1 ? 0.15 : 0)) * (0.6 + caution * 0.8) +
+            (i.hasTarget ? Math.max(0, caution - 0.4) * 1.8 : 0)
+          : hurt > 0.6 && i.sinceHurt < 2
+            ? hurt * (0.5 + caution * 0.6)
+            : 0
         : 0,
+    // In cover with the enemy just out of sight: stay, peek and wait for them rather than chase.
+    hold: i.inCover && !i.hasTarget && i.lastSeenAge < 8 ? 0.4 + caution * 0.5 - i.lastSeenAge * 0.03 : 0,
     // Top up between fights; forced when empty and nowhere to hide.
     reload: !i.reloading && i.ammo < 1 ? (empty ? (i.hasTarget ? 0.6 : 0.95) : i.hasTarget ? 0 : (1 - i.ammo) * 0.8) : 0,
     // Chase the last known position of a recently seen enemy.

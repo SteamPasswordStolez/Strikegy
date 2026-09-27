@@ -38,4 +38,23 @@ describe('bot personalities', () => {
     const lost: BrainInput = { ...fight, hasTarget: false, lastSeenAge: 8, heardAge: 1 };
     expect(chooseAction({ ...lost, aggression: 1 }, null)).toBe('hunt');
   });
+
+  it('holds cover when the enemy ducks away, unless eager; backs off when hurt with no cover', () => {
+    const ducked: BrainInput = {
+      health: 1,
+      hasTarget: false,
+      lastSeenAge: 1,
+      heardAge: Infinity,
+      ammo: 1,
+      reloading: false,
+      sinceHurt: Infinity,
+      coverKnown: true,
+      inCover: true,
+    };
+    expect(chooseAction({ ...ducked, caution: 0.8, aggression: 0.2 }, null)).toBe('hold');
+    expect(chooseAction({ ...ducked, caution: 0.1, aggression: 1 }, null)).toBe('hunt');
+    const bleeding: BrainInput = { ...ducked, hasTarget: true, lastSeenAge: 0, inCover: false, coverKnown: false, health: 0.2, sinceHurt: 0.5 };
+    expect(chooseAction({ ...bleeding, caution: 0.9 }, null)).toBe('cover');
+    expect(chooseAction({ ...bleeding, health: 0.9 }, null)).toBe('engage');
+  });
 });
