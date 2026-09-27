@@ -179,12 +179,40 @@ export class ViewModel {
     this.placeMuzzle(new THREE.Vector3(0, muzzleY, pistol.position.z + slideBox.min.z - 0.01));
   }
 
-  /** Gloved hands on the grip and support position, with sleeves running off-screen. */
+  /**
+   * Gloved hands with jointed fingers: the trigger hand wraps the grip with the
+   * index finger on the trigger, the support hand cups the handguard (or the
+   * trigger hand, on pistols); sleeves run off-screen.
+   */
   private buildArms(pistol: boolean, support: P): void {
     const m = gunMaterials();
     const own = (mesh: THREE.Mesh) => {
       mesh.userData.owned = true;
       this.gun.add(mesh);
+    };
+    /** A rounded segment (finger bone) between two points. */
+    const bone = (a: THREE.Vector3, b: THREE.Vector3, r: number) => {
+      const dir = b.clone().sub(a);
+      const len = dir.length();
+      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.001, len), 3, 8), m.glove);
+      mesh.position.copy(a).addScaledVector(dir, 0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      own(mesh);
+    };
+    /** A finger through the given joints (knuckle first). */
+    const finger = (pts: THREE.Vector3[], r: number) => {
+      for (let i = 0; i < pts.length - 1; i++) bone(pts[i]!, pts[i + 1]!, r * (1 - i * 0.08));
+    };
+    /** Palm / back of the hand: a flattened capsule from wrist to knuckles. */
+    const palm = (wrist: THREE.Vector3, knuckles: THREE.Vector3, width: number, thick: number, roll: number) => {
+      const dir = knuckles.clone().sub(wrist);
+      const len = dir.length();
+      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(width / 2, Math.max(0.001, len - width), 4, 10), m.glove);
+      mesh.scale.set(1, 1, thick / width);
+      mesh.position.copy(wrist).addScaledVector(dir, 0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      mesh.rotateY(roll);
+      own(mesh);
     };
     const limb = (from: THREE.Vector3, to: THREE.Vector3, r0: number, r1: number, mat: THREE.Material) => {
       const dir = to.clone().sub(from);
@@ -194,29 +222,54 @@ export class ViewModel {
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
       own(mesh);
     };
-    const hand = (x: number, y: number, z: number, rx: number) => {
-      const h = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.045, 4, 10), m.glove);
-      h.position.set(x, y, z);
-      h.rotation.set(rx, 0, Math.PI / 2);
-      h.scale.set(1, 1, 0.85);
-      own(h);
-    };
     const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-    // Trigger hand
-    hand(0.004, -0.095, 0.045, -0.3);
-    limb(V(0.02, -0.12, 0.08), V(0.03, -0.14, 0.12), 0.03, 0.032, m.glove);
-    limb(V(0.03, -0.14, 0.12), V(0.13, -0.33, 0.42), 0.042, 0.05, m.sleeve);
+    // Trigger hand (right) around the pistol grip. The grip rakes back: lower
+    // points sit further toward the shooter.
+    const top = -0.07;
+    const rake = (y: number) => (top - y) * 0.35;
+    /** Point on a ring of radius r around the grip at height y; a = 0 on the right, pi/2 in front, pi on the left. */
+    const around = (y: number, a: number, r: number) => V(Math.cos(a) * r, y, 0.045 + rake(y) - Math.sin(a) * r);
+    palm(V(0.03, -0.12, 0.085), V(0.03, -0.085, 0.05), 0.05, 0.024, 0.35);
+    // Middle, ring and little fingers curl round the front of the grip.
+    [-0.085, -0.105, -0.124].forEach((y, i) => {
+      const r = 0.027 - i * 0.001;
+      finger([around(y, 0.25, r), around(y, 1.05, r), around(y, 1.9, r), around(y, 2.55, r - 0.004)], 0.0085 - i * 0.0006);
+    });
+    // Index finger along the frame and into the trigger guard.
+    finger([V(0.024, -0.068, 0.04), V(0.018, -0.064, 0.012), V(0.008, -0.07, -0.006), V(0.001, -0.08, -0.012)], 0.0082);
+    // Thumb over the top of the grip on the far side.
+    finger([V(0.018, -0.07, 0.07), V(-0.006, -0.062, 0.058), V(-0.024, -0.066, 0.036), V(-0.028, -0.072, 0.018)], 0.0095);
+    // Wrist cuff and sleeve.
+    limb(V(0.03, -0.125, 0.09), V(0.035, -0.145, 0.125), 0.031, 0.034, m.glove);
+    limb(V(0.035, -0.145, 0.125), V(0.13, -0.33, 0.42), 0.042, 0.05, m.sleeve);
 
     if (pistol) {
-      hand(-0.012, -0.1, 0.05, -0.1);
-      limb(V(-0.03, -0.12, 0.08), V(-0.18, -0.32, 0.4), 0.04, 0.05, m.sleeve);
+      // Support hand cups the trigger hand from the left, fingers over its fingers.
+      palm(V(-0.04, -0.125, 0.08), V(-0.038, -0.09, 0.05), 0.05, 0.024, -0.35);
+      [-0.088, -0.107, -0.126, -0.143].forEach((y, i) => {
+        const r = 0.043;
+        finger([around(y, Math.PI - 0.25, r), around(y, Math.PI - 0.95, r), around(y, 1.5, r - 0.002), around(y, 1.0, r - 0.006)], 0.0088 - i * 0.0005);
+      });
+      // Thumb forward along the left side of the frame.
+      finger([V(-0.03, -0.075, 0.06), V(-0.03, -0.062, 0.03), V(-0.026, -0.058, 0.004)], 0.0095);
+      limb(V(-0.042, -0.13, 0.09), V(-0.18, -0.32, 0.4), 0.034, 0.05, m.sleeve);
     } else {
+      // Support hand (left) under the handguard: palm on the lower left, fingers
+      // wrapping underneath and up the right side, thumb along the left.
       const hz = -support[0];
-      const hy = support[1];
-      hand(-0.004, hy, hz, 0.1);
-      limb(V(-0.02, hy - 0.015, hz + 0.04), V(-0.03, hy - 0.03, hz + 0.08), 0.029, 0.031, m.glove);
-      limb(V(-0.03, hy - 0.03, hz + 0.08), V(-0.2, -0.3, hz + 0.42), 0.04, 0.05, m.sleeve);
+      const cy = support[1] + 0.04;
+      const r = 0.032;
+      /** Ring around the handguard axis at depth z; a = 0 on the left, pi/2 below, pi on the right. */
+      const ring = (z: number, a: number, rr: number) => V(-Math.cos(a) * rr, cy - Math.sin(a) * rr, z);
+      palm(V(-0.03, cy - 0.05, hz + 0.045), ring(hz, 0.75, r + 0.012), 0.052, 0.024, 0.9);
+      [-0.028, -0.009, 0.01, 0.028].forEach((dz, i) => {
+        const z = hz + dz;
+        finger([ring(z, 0.95, r), ring(z, 1.6, r), ring(z, 2.25, r - 0.001), ring(z, 2.75, r - 0.005)], 0.0088 - i * 0.0005);
+      });
+      finger([V(-0.036, cy - 0.022, hz + 0.03), V(-0.034, cy - 0.006, hz), V(-0.03, cy + 0.004, hz - 0.028)], 0.0095);
+      limb(V(-0.03, cy - 0.06, hz + 0.05), V(-0.04, cy - 0.075, hz + 0.09), 0.029, 0.031, m.glove);
+      limb(V(-0.04, cy - 0.075, hz + 0.09), V(-0.2, -0.3, hz + 0.42), 0.04, 0.05, m.sleeve);
     }
   }
 
