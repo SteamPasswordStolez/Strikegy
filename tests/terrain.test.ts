@@ -50,6 +50,27 @@ describe('Terrain', () => {
     physics.dispose();
   });
 
+  it('sight tests see the ground through its height grid', async () => {
+    const physics = await PhysicsWorld.create();
+    const t = new Terrain({ hills: [{ pos: [0, 0], radius: 12, height: 5 }], cell: 2 }, square, [80, 60]);
+    buildTerrain(t, new THREE.MeshBasicMaterial(), physics);
+    physics.step();
+    // Over the hill top vs through it, both ways; and across the flat side.
+    expect(physics.blocked({ x: -20, y: 1.6, z: 0 }, { x: 20, y: 1.6, z: 0 }, Layer.WORLD)).toBe(true);
+    expect(physics.blocked({ x: 20, y: 1.6, z: 0 }, { x: -20, y: 1.6, z: 0 }, Layer.WORLD)).toBe(true);
+    expect(physics.blocked({ x: -20, y: 7, z: 0 }, { x: 20, y: 7, z: 0 }, Layer.WORLD)).toBe(false);
+    expect(physics.blocked({ x: -30, y: 1.6, z: 20 }, { x: 30, y: 1.6, z: 20 }, Layer.WORLD)).toBe(false);
+    // Agrees with a full ray against the collider.
+    for (const [ax, az, bx, bz, y] of [[-20, -5, 20, 5, 3], [-15, 10, 15, -10, 4.5], [0, -25, 3, 25, 2]] as const) {
+      const from = { x: ax, y, z: az };
+      const d = new THREE.Vector3(bx - ax, 0, bz - az);
+      const len = d.length();
+      const ray = physics.raycast(from, d.normalize(), len - 0.05, Layer.WORLD);
+      expect(physics.blocked(from, { x: bx, y, z: bz }, Layer.WORLD)).toBe(ray !== null);
+    }
+    physics.dispose();
+  });
+
   it('feeds the navmesh and keeps bots inside boundary walls', async () => {
     const physics = await PhysicsWorld.create();
     const t = new Terrain({ hills: [{ pos: [0, 0], radius: 15, height: 3 }] }, square, [100, 80]);

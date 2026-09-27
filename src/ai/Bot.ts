@@ -16,6 +16,7 @@ import type { Combatant } from './types';
 import { COMBAT_WINDOW } from '@/modes/squads';
 
 const DEG = Math.PI / 180;
+const DOWN = { x: 0, y: -1, z: 0 };
 const PERCEIVE_EVERY = 0.1;
 const THINK_EVERY = 0.25;
 const CROUCH_HEIGHT = MOVE.crouchHeight;
@@ -32,6 +33,8 @@ export interface BotServices {
   enemiesOf(team: Team): readonly Combatant[];
   /** Clear line of sight between two points (world geometry and smoke). */
   lineOfSight(from: THREE.Vector3, to: THREE.Vector3): boolean;
+  /** Line of sight from `eye` to the head or chest of `other` (shared with `other` for a moment). */
+  canSee(self: Combatant, other: Combatant, eye: THREE.Vector3, head: THREE.Vector3, chest: THREE.Vector3): boolean;
   /** Cover spot against `threat`; undefined when the search budget for this step is spent (ask again later). */
   findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null | undefined;
   /** Where this bot should head when nothing is going on (squad objective / flank). */
@@ -77,11 +80,11 @@ export class Bot implements Damageable, Combatant {
 
   private readonly body: RAPIER.RigidBody;
   private readonly capsule: RAPIER.Collider;
-  private readonly controller: RAPIER.KinematicCharacterController;
   private height: number = MOVE.standHeight;
 
   // Perception / memory
   private perceiveTimer: number;
+  private perceiveCount = 0;
   private thinkTimer: number;
   private readonly notice = new Map<number, number>();
   private readonly lastSeen = { pos: new THREE.Vector3(), time: -Infinity };
@@ -104,6 +107,12 @@ export class Bot implements Damageable, Combatant {
   private readonly progressPos = new THREE.Vector3();
   private progressAt = 0;
   private stride = 0;
+  /** Navmesh polygon the bot stands on (0 = look it up). */
+  private navRef = 0;
+  /** Far from the viewer and out of combat: movement runs every other step (set by the manager). */
+  far = false;
+  private moveDt = 0;
+  private lodTick = Math.random() < 0.5 ? 0 : 1;
 
   // Aim / trigger
   private readonly jitter = new THREE.Vector2();
@@ -115,6 +124,7 @@ export class Bot implements Damageable, Combatant {
 
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
+  private readonly tmp3 = new THREE.Vector3();
   private readonly eye = new THREE.Vector3();
 
   constructor(
@@ -127,14 +137,11 @@ export class Bot implements Damageable, Combatant {
     this.weapon = new WeaponState(def);
     const world = physics.world;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
+    // Only the player's controller runs into bots; they move on the navmesh themselves.
     this.capsule = world.createCollider(
-      RAPIER.ColliderDesc.capsule(capsuleHalfHeight(this.height), MOVE.radius).setCollisionGroups(groups(Layer.BOT, Layer.WORLD)),
+      RAPIER.ColliderDesc.capsule(capsuleHalfHeight(this.height), MOVE.radius).setCollisionGroups(groups(Layer.BOT, Layer.PLAYER)),
       this.body,
     );
-    this.controller = world.createCharacterController(0.02);
-    this.controller.enableAutostep(0.45, 0.2, false);
-    this.controller.enableSnapToGround(0.35);
-    this.controller.setMaxSlopeClimbAngle(50 * DEG);
     this.hitboxes = new CharacterHitboxes(physics, registry, this);
     this.perceiveTimer = Math.random() * PERCEIVE_EVERY;
     this.thinkTimer = Math.random() * THINK_EVERY;
@@ -162,6 +169,7 @@ export class Bot implements Damageable, Combatant {
     this.health.reset();
     this.feet.copy(pos).setY(pos.y + 0.05);
     this.prevFeet.copy(this.feet);
+    this.navRef = 0;
     this.velocity.set(0, 0, 0);
     this.yaw = this.aimYaw = yaw;
     this.aimPitch = 0;
@@ -236,8 +244,10 @@ export class Bot implements Damageable, Combatant {
 
     this.perceiveTimer -= dt;
     if (this.perceiveTimer <= 0) {
-      this.perceiveTimer += PERCEIVE_EVERY;
-      this.perceive(s, PERCEIVE_EVERY);
+      // Far from the viewer and out of combat: look around half as often.
+      const every = this.far ? PERCEIVE_EVERY * 2 : PERCEIVE_EVERY;
+      this.perceiveTimer += every;
+      this.perceive(s, every);
     }
     this.thinkTimer -= dt;
     if (this.thinkTimer <= 0) {
@@ -258,6 +268,7 @@ export class Bot implements Damageable, Combatant {
       return;
     }
     const eye = this.eyePos(this.eye);
+    this.perceiveCount++;
     let best: Combatant | null = null;
     let bestDist = Infinity;
     for (const e of s.enemiesOf(this.team)) {
@@ -272,11 +283,13 @@ export class Bot implements Damageable, Combatant {
       const off = offAxisDeg(this.aimYaw, dx, dz);
       const inView = dist < skill.sight && (off < skill.fov / 2 || dist < 4);
       const firing = e.firingUntil > s.time;
+      // Distant, quiet enemies not yet noticed at all are looked for every other time (halves the rays).
+      if (progress === 0 && !firing && dist > 25 && (this.perceiveCount + e.id) % 2 === 1) continue;
       let visible = false;
       if (inView) {
         const head = this.tmp.copy(e.feet).setY(e.feet.y + e.eyeHeight);
         const chest = this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7);
-        visible = s.lineOfSight(eye, head) || s.lineOfSight(eye, chest);
+        visible = s.canSee(this, e, eye, head, chest);
       }
       if (visible) {
         progress = Math.min(1.5, progress + dt / noticeTime(skill.reaction, dist, off, skill.fov / 2, firing));
@@ -440,7 +453,12 @@ export class Bot implements Damageable, Combatant {
     this.yaw = this.aimYaw;
   }
 
-  private updateMovement(dt: number, s: BotServices): void {
+  private updateMovement(stepDt: number, s: BotServices): void {
+    // Level of detail: far bots move at half rate (two steps at once).
+    this.moveDt += stepDt;
+    if (this.far && ++this.lodTick % 2 === 1) return;
+    const dt = this.moveDt;
+    this.moveDt = 0;
     let wx = 0;
     let wz = 0;
     let speed = 0;
@@ -474,18 +492,26 @@ export class Bot implements Damageable, Combatant {
     const tz = wz * speed + push.z;
     const accel = speed > 0 || push.lengthSq() > 0 ? MOVE.groundAccel : MOVE.groundDecel;
     [this.velocity.x, this.velocity.z] = approachVelocity(this.velocity.x, this.velocity.z, tx, tz, accel, dt);
-    this.velocity.y = this.grounded ? -1 : Math.max(this.velocity.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
 
-    const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.capsule, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOUNDS));
-    const moved = this.controller.computedMovement();
-    this.grounded = this.controller.computedGrounded();
-    this.velocity.x = moved.x / dt;
-    this.velocity.z = moved.z / dt;
-    if (this.grounded) this.velocity.y = 0;
-    this.feet.x += moved.x;
-    this.feet.y += moved.y;
-    this.feet.z += moved.z;
+    // Standing still: nothing to move.
+    if (tx === 0 && tz === 0 && Math.abs(this.velocity.x) + Math.abs(this.velocity.z) < 0.02) {
+      this.velocity.set(0, 0, 0);
+      this.progressPos.copy(this.feet);
+      this.progressAt = s.time;
+      return;
+    }
+
+    // Bots walk on the navmesh (it already keeps them off walls and ledges);
+    // a character controller per bot cost ~70 us a step on terrain.
+    const next = this.tmp2.set(this.feet.x + this.velocity.x * dt, this.feet.y, this.feet.z + this.velocity.z * dt);
+    this.navRef = s.nav.move(this.navRef, this.feet, next, next);
+    // Navmesh heights are approximate on terrain: take the exact ground below.
+    const ground = s.physics.raycast(this.tmp3.set(next.x, next.y + 0.9, next.z), DOWN, 2, Layer.WORLD);
+    if (ground && Math.abs(ground.point.y - next.y) < 0.8) next.y = ground.point.y;
+    const moved = next.sub(this.feet);
+    this.velocity.set(moved.x / dt, 0, moved.z / dt);
+    this.grounded = true;
+    this.feet.add(moved);
     this.body.setNextKinematicTranslation(this.center());
 
     // Footsteps.
@@ -592,7 +618,6 @@ export class Bot implements Damageable, Combatant {
 
   dispose(physics: PhysicsWorld): void {
     this.hitboxes.dispose();
-    physics.world.removeCharacterController(this.controller);
     physics.world.removeRigidBody(this.body);
   }
 }

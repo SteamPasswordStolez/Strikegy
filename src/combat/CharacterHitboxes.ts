@@ -27,7 +27,8 @@ export class CharacterHitboxes {
   ) {
     const world = physics.world;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
-    const g = ((Layer.HITBOX & 0xffff) << 16) | 0xffff;
+    // Hit only by queries: a filter that matches no other collider keeps them out of broad-phase pairs.
+    const g = ((Layer.HITBOX & 0xffff) << 16) | Layer.HITBOX;
     const make = (desc: RAPIER.ColliderDesc, part: HitPart) => {
       const c = world.createCollider(desc.setCollisionGroups(g).setSensor(false), this.body);
       registry.register(c.handle, owner, part);

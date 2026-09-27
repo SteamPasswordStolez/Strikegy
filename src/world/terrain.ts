@@ -188,7 +188,41 @@ export function buildTerrain(
     .setTranslation(0.00137, 0, 0.00171)
     .setCollisionGroups(groups(Layer.WORLD, 0xffff));
   const collider = physics.world.createCollider(desc);
+  physics.setGround(collider, (a, b) => groundBlocks(grid, terrain.size, a, b));
   return { mesh, collider, grid };
+}
+
+/**
+ * Whether the sampled ground rises above the segment a-b (bilinear heights,
+ * checked once per grid cell, endpoints excluded).
+ */
+export function groundBlocks(
+  grid: { cols: number; rows: number; heights: Float32Array },
+  size: readonly [number, number],
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+): boolean {
+  const { cols, rows, heights } = grid;
+  const cw = size[0] / cols;
+  const ch = size[1] / rows;
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const n = Math.floor(Math.hypot(dx, dz) / Math.min(cw, ch));
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const u = (a.x + dx * t + size[0] / 2) / cw;
+    const v = (a.z + dz * t + size[1] / 2) / ch;
+    if (u < 0 || v < 0 || u >= cols || v >= rows) continue;
+    const c = Math.floor(u);
+    const r = Math.floor(v);
+    const fu = u - c;
+    const fv = v - r;
+    const k = r * (cols + 1) + c;
+    const h0 = heights[k]! + (heights[k + 1]! - heights[k]!) * fu;
+    const h1 = heights[k + cols + 1]! + (heights[k + cols + 2]! - heights[k + cols + 1]!) * fu;
+    if (h0 + (h1 - h0) * fv > a.y + (b.y - a.y) * t) return true;
+  }
+  return false;
 }
 
 /** Terrain triangles for the navmesh (same grid as the collider). */

@@ -94,6 +94,30 @@ export class NavWorld {
   }
 
   /**
+   * Walks from `from` toward `to` along the mesh surface (sliding along its
+   * edges) and writes the reached point, with the mesh height there, to `out`.
+   * `ref` is the polygon `from` is on (0 = unknown, looked up). Returns the
+   * polygon reached, or 0 if `from` is not near the mesh.
+   */
+  move(ref: number, from: V3, to: V3, out: THREE.Vector3): number {
+    let start: V3 = from;
+    if (!ref) {
+      const c = this.query.findClosestPoint(from, { halfExtents: this.halfExtents });
+      if (!c.success || !c.polyRef) return 0;
+      ref = c.polyRef;
+      start = c.point;
+    }
+    const res = this.query.moveAlongSurface(ref, start, to, { maxVisitedSize: 16 });
+    if (!res.success) return 0;
+    const last = res.visited[res.visited.length - 1] ?? ref;
+    const p = res.resultPosition;
+    out.set(p.x, p.y, p.z);
+    const h = this.query.getPolyHeight(last, out);
+    if (h.success) out.y = h.height;
+    return last;
+  }
+
+  /**
    * True if a straight walk from `from` to `to` stays on the mesh (no wall or
    * ledge in between). Used to pick strafe directions and shortcut paths.
    */

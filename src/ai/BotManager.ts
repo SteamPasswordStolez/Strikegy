@@ -26,6 +26,13 @@ const SEPARATION_RADIUS = 1.1;
 const SEPARATION_SPEED = 2.2;
 const BLOB_SIZE = 1.1;
 /** Cover searches allowed per sim step across all bots (each is ~0.1-0.3 ms). */
+/** Neighbour grid cell (m); at least the separation radius. */
+const CELL = 2;
+const cellKey = (x: number, z: number): number => (Math.floor(x / CELL) + 32768) * 65536 + (Math.floor(z / CELL) + 32768);
+/** How long one pair's line-of-sight result is reused by the other side. */
+const SIGHT_SHARE_SEC = 0.09;
+/** Beyond this distance from the viewer (and out of combat) bots move at half rate. */
+const FAR_SQ = 60 * 60;
 const COVER_SEARCHES_PER_STEP = 3;
 const COVER_SAMPLES = 10;
 
@@ -118,6 +125,9 @@ export class BotManager implements BotServices {
   private readonly teams: Record<Team, TeamState>;
   private readonly damageScale: number;
   private readonly listener = new THREE.Vector3();
+  private readonly enemies: Record<Team, Combatant[]> = { blue: [], red: [] };
+  private readonly grid = new Map<number, Bot[]>();
+  private readonly sightCache = new Map<number, { time: number; visible: boolean }>();
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
   private readonly muzzle = new THREE.Vector3();
@@ -204,8 +214,10 @@ export class BotManager implements BotServices {
     this.time += dt;
     this.coverBudget = COVER_SEARCHES_PER_STEP;
     for (const team of ['blue', 'red'] as const) this.plan(team);
+    this.index();
     for (const e of this.entries) {
       const b = e.bot;
+      b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
       b.step(dt, this);
       if (e.simAlive && !b.alive) this.bus.emit('combatant:died', { team: b.team, id: b.id });
       if (!b.alive && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
@@ -306,11 +318,41 @@ export class BotManager implements BotServices {
   // ---------------------------------------------------------------------------
   // BotServices
 
+  /** Per-step lookups: each team's enemies and a grid of bots for neighbour queries. */
+  private index(): void {
+    for (const team of ['blue', 'red'] as const) {
+      const out = this.enemies[team];
+      out.length = 0;
+      for (const e of this.entries) if (e.bot.team !== team) out.push(e.bot);
+      if (this.player.team !== team) out.push(this.player);
+    }
+    for (const cell of this.grid.values()) cell.length = 0;
+    for (const e of this.entries) {
+      if (!e.bot.alive) continue;
+      const key = cellKey(e.bot.feet.x, e.bot.feet.z);
+      let cell = this.grid.get(key);
+      if (!cell) this.grid.set(key, (cell = []));
+      cell.push(e.bot);
+    }
+  }
+
   enemiesOf(team: Team): readonly Combatant[] {
-    const out: Combatant[] = [];
-    for (const e of this.entries) if (e.bot.team !== team) out.push(e.bot);
-    if (this.player.team !== team) out.push(this.player);
-    return out;
+    return this.enemies[team];
+  }
+
+  canSee(self: Combatant, other: Combatant, eye: THREE.Vector3, head: THREE.Vector3, chest: THREE.Vector3): boolean {
+    // Sight is (nearly) symmetric: whoever checks a pair first answers for both.
+    const key = self.id < other.id ? self.id * 4096 + other.id : other.id * 4096 + self.id;
+    const hit = this.sightCache.get(key);
+    if (hit && this.time - hit.time < SIGHT_SHARE_SEC) return hit.visible;
+    const visible = this.lineOfSight(eye, head) || this.lineOfSight(eye, chest);
+    if (hit) {
+      hit.time = this.time;
+      hit.visible = visible;
+    } else {
+      this.sightCache.set(key, { time: this.time, visible });
+    }
+    return visible;
   }
 
   lineOfSight(from: THREE.Vector3, to: THREE.Vector3): boolean {
@@ -318,7 +360,7 @@ export class BotManager implements BotServices {
     const dist = dir.length();
     if (dist < 1e-3) return true;
     dir.divideScalar(dist);
-    if (this.physics.raycast(from, dir, dist - 0.05, Layer.WORLD)) return false;
+    if (this.physics.blocked(from, to, Layer.WORLD)) return false;
     for (const s of this.effects.activeSmokes()) {
       // Segment vs sphere (smoke is at full size a moment after popping).
       const r = s.radius * 0.85;
@@ -481,14 +523,28 @@ export class BotManager implements BotServices {
 
   separation(bot: Bot, out: THREE.Vector3): THREE.Vector3 {
     out.set(0, 0, 0);
-    for (const e of this.entries) {
-      const o = e.bot;
-      if (o === bot || !o.alive || Math.abs(o.feet.y - bot.feet.y) > 1.5) continue;
+    const cx = Math.floor(bot.feet.x / CELL);
+    const cz = Math.floor(bot.feet.z / CELL);
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const cell = this.grid.get((cx + i + 32768) * 65536 + (cz + j + 32768));
+        if (!cell) continue;
+        for (const o of cell) if (o !== bot) this.repel(bot, o, SEPARATION_RADIUS, out);
+      }
+    }
+    // Bots walk on the navmesh without colliding: keep them off the player too.
+    this.repel(bot, this.player, SEPARATION_RADIUS * 1.2, out);
+    return out;
+  }
+
+  private repel(bot: Bot, o: Combatant, radius: number, out: THREE.Vector3): void {
+    {
+      if (!o.alive || Math.abs(o.feet.y - bot.feet.y) > 1.5) return;
       const dx = bot.feet.x - o.feet.x;
       const dz = bot.feet.z - o.feet.z;
       const d = Math.hypot(dx, dz);
-      if (d >= SEPARATION_RADIUS) continue;
-      const k = (1 - d / SEPARATION_RADIUS) * SEPARATION_SPEED;
+      if (d >= radius) return;
+      const k = (1 - d / radius) * SEPARATION_SPEED;
       if (d < 1e-3) {
         // Exactly on top of each other: split by id.
         out.x += (bot.id > o.id ? 1 : -1) * k;
@@ -497,7 +553,6 @@ export class BotManager implements BotServices {
         out.z += (dz / d) * k;
       }
     }
-    return out;
   }
 
   /** Something audible happened at `pos`; enemies of `source` within `radius` hear it. */
