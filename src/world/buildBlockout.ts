@@ -115,6 +115,7 @@ export function buildBlockout(
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
     const built = buildBuilding(b, base);
     for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts);
+    for (const obj of built.decor) addBox(obj, batches, physics, surfaces, impacts, '', false);
     windows.push(...built.windows);
     footprints.push({ x: b.pos[0], z: b.pos[1], yaw: ((b.rot ?? 0) * Math.PI) / 180, hw: b.size[0] / 2, hd: b.size[1] / 2 });
   }
@@ -277,6 +278,7 @@ function addBox(
   surfaces: SurfaceLibrary,
   impacts: SurfaceRegistry,
   batchTag = '',
+  collide = true,
 ): void {
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
@@ -296,6 +298,7 @@ function addBox(
     batches.set(key, batch);
   }
   batch.geometries.push(geo);
+  if (!collide) return;
 
   const collider = physics.addStaticBox(
     { x: obj.pos[0], y: obj.pos[1], z: obj.pos[2] },

@@ -58,6 +58,8 @@ export interface BuiltBuilding {
   height: number;
   /** Windows low enough to shoot out of, one spot each. */
   windows: WindowSpot[];
+  /** Visual-only boxes (facades of closed blocks): no colliders. */
+  decor: MapObject[];
 }
 
 /** Stand this far inside the wall at a window (clear of the wall for the navmesh). */
@@ -114,7 +116,42 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
   if (b.solid) {
     box(0, (H - PLINTH) / 2, 0, W, H + PLINTH, D);
     roof(spec, W, D, H, box, trim, rng);
-    return { objects: out, height: H + 1.5, windows };
+    // A closed block still looks lived in: windows, sills and a door on its walls.
+    const decor: MapObject[] = [];
+    const deco = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => {
+      const n = out.length;
+      box(lx, ly, lz, sx, sy, sz, 'prop', col, mat);
+      if (out.length > n) decor.push(out.pop()!);
+    };
+    const doorSides = new Set((b.doors ?? 's').split(''));
+    const faces = [
+      { id: 'n', len: W, at: (u: number, y: number, out_: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => deco(-W / 2 + u, y, -D / 2 - out_, sx, sy, sz, col, mat) },
+      { id: 's', len: W, at: (u: number, y: number, out_: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => deco(W / 2 - u, y, D / 2 + out_, sx, sy, sz, col, mat) },
+      { id: 'w', len: D, at: (u: number, y: number, out_: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => deco(-W / 2 - out_, y, D / 2 - u, sz, sy, sx, col, mat) },
+      { id: 'e', len: D, at: (u: number, y: number, out_: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => deco(W / 2 + out_, y, -D / 2 + u, sz, sy, sx, col, mat) },
+    ];
+    for (const f of faces) {
+      const bays = Math.max(1, Math.round(f.len / BAY));
+      const bw = f.len / bays;
+      const doorBay = Math.floor(bays / 2);
+      for (let fl = 0; fl < floors; fl++) {
+        const y0 = fl * spec.storey;
+        for (let i = 0; i < bays; i++) {
+          const u = (i + 0.5) * bw;
+          if (fl === 0 && i === doorBay && doorSides.has(f.id)) {
+            const [dw, dh] = spec.door;
+            f.at(u, dh / 2, 0.04, Math.min(dw, bw - 0.4), dh, 0.08, '#4a3a2c', 'wood');
+            f.at(u, dh + 0.08, 0.08, Math.min(dw, bw - 0.4) + 0.3, 0.16, 0.16, trim, 'concrete');
+          } else if (rng() < spec.windows) {
+            const [ww, wh, sill] = spec.window;
+            const w = Math.min(ww, bw - 0.6);
+            f.at(u, y0 + sill + wh / 2, 0.03, w, wh, 0.06, '#1f2529', 'metal');
+            f.at(u, y0 + sill - 0.04, 0.08, w + 0.2, 0.08, 0.16, trim, 'concrete');
+          }
+        }
+      }
+    }
+    return { objects: out, height: H + 1.5, windows, decor };
   }
 
   const doors = new Set((b.doors ?? 's').split(''));
@@ -202,7 +239,7 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
     box(stairX - STAIR_W / 2 - 0.05, f * spec.storey + 0.5, (holeZ0 + holeZ1) / 2, 0.08, 1, holeZ1 - holeZ0, 'cover', trim, 'metal');
   }
   roof(spec, W, D, H, box, trim, rng);
-  return { objects: out, height: H + (spec.roof === 'pitched' ? Math.min(W, D) * 0.3 : 1), windows };
+  return { objects: out, height: H + (spec.roof === 'pitched' ? Math.min(W, D) * 0.3 : 1), windows, decor: [] };
 }
 
 type BoxFn = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, type?: MapObject['type'], col?: string, mat?: SurfaceMaterial, pitch?: number, roll?: number) => void;
