@@ -45,6 +45,7 @@ Performance work: measure first. A reliable CPU benchmark in a hidden/automated 
 - `src/modes/` — Zone rules/mode/visuals, squads.
 - `src/world/` — map JSON loader (`buildBlockout`), terrain + irregular boundary, generated buildings, backdrop scenery.
 - `scripts/maps/*.mjs` — generated maps (`npm run maps` → `public/maps/*.json`).
+- `src/audio/` — `AudioSystem` (samples + procedural fallbacks, world voice limits: 40 voices, HRTF for the nearest 10 within 30 m; keep these), `Ambience` / `ambienceDirector` (wind bed, birds, far-off fighting; levels from the visual profile or `world.ambience` in the map JSON). Samples come from `sounds.manifest.json` via `npm run sounds` (`-- --only id,...` builds just those; needs ffmpeg and 7z/unzip).
 - Physics layers in `src/physics/PhysicsWorld.ts` (WORLD, PLAYER, HITBOX, DEBRIS, BOT, BOUNDS).
 
 ## Roadmap (state as of 2026-09-27)
@@ -62,3 +63,5 @@ Next (owner approved, in this order):
 1. Map 2 "Ardennes forest" in winter: 7 zones (A sawmill, B farm, C stone bridge, D village crossroads, E chapel hill, F bunker ridge, G rail halt), river N–S, ~200,000 m², irregular outline. Snow texture download (Poly Haven `snow_02`, ~3–5 MB source) still awaiting the owner's answer — ask, or use procedural snow. Needs a dense in-map forest with performance care; >420 m maps fall back to camera-follow shadows.
 2. M4-B scoreboard + minimap, M4-C classes/economy (co-design), M4-D lobby/settings.
 3. Later: BF-style resupply stations at zones.
+
+Sound (2026-09-27): ambience and procedural handling sounds (reload per class, bolt/pump, dry fire, landing by surface/speed, grenade pin) are done. The owner approved these CC0 downloads, not yet fetched because cloud network policy blocks opengameart.org and kenney.nl: OpenGameArt "equipment clicks III" (bolt/cocking), "Gun reload sounds" (rifle reload, shotgun pump), "Forest bird sounds" (check they are real recordings), Kenney Impact Sounds footstep_grass / footstep_snow / impactPlate (grass/snow/metal steps; needs new surface types). Keep the sample total small (1.8 MB now, target ≲2.3 MB).

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { GameBus } from '@/core/events';
 import type { InputState } from '@/input/InputState';
-import type { SurfaceRegistry } from '@/physics/surfaces';
+import type { ImpactSurface, SurfaceRegistry } from '@/physics/surfaces';
 import { Health } from './health';
 import {
   MOVE,
@@ -139,7 +139,7 @@ export class Player {
     this.velocity.z = moved.z / dt;
     if (this.grounded && this.velocity.y < 0) {
       if (!wasGrounded && this.velocity.y < -7) {
-        this.bus.emit('player:landed', { impactSpeed: -this.velocity.y });
+        this.bus.emit('player:landed', { impactSpeed: -this.velocity.y, surface: this.groundSurface() });
       }
       this.velocity.y = 0;
     } else if (desired.y > 0 && moved.y < desired.y * 0.5) {
@@ -165,6 +165,13 @@ export class Player {
     return true;
   }
 
+  /** Surface under the feet, or undefined when nothing is close below. */
+  private groundSurface(): ImpactSurface | undefined {
+    const from = { x: this.feet.x, y: this.feet.y + 0.2, z: this.feet.z };
+    const hit = this.physics.raycast(from, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
+    return hit ? this.surfaces.get(hit.collider.handle, hit.point) : undefined;
+  }
+
   private stepFootsteps(dist: number): void {
     if (!this.grounded || dist < 1e-4) return;
     this.strideLeft -= dist;
@@ -172,11 +179,10 @@ export class Player {
     this.strideLeft += this.crouching ? STRIDE.crouch : this.sprinting ? STRIDE.sprint : STRIDE.walk;
     // Crouch-walking is silent.
     if (this.crouching) return;
-    const from = { x: this.feet.x, y: this.feet.y + 0.2, z: this.feet.z };
-    const hit = this.physics.raycast(from, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
-    if (!hit) return;
+    const surface = this.groundSurface();
+    if (!surface) return;
     this.bus.emit('player:footstep', {
-      surface: this.surfaces.get(hit.collider.handle, hit.point),
+      surface,
       sprinting: this.sprinting,
       point: this.feet.clone(),
     });

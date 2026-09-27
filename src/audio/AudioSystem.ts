@@ -2,6 +2,8 @@ import type * as THREE from 'three';
 import type { WeaponClass } from '@/weapons/weaponData';
 import type { ImpactSurface } from '@/physics/surfaces';
 import type { ReloadCue } from '@/core/events';
+import { Ambience } from './Ambience';
+import type { AmbienceLevels } from './ambienceDirector';
 
 interface GunVoice {
   /** Low-pass cutoff of the body noise, Hz. */
@@ -32,6 +34,17 @@ const SURFACE_SOUND: Record<ImpactSurface, { type: BiquadFilterType; freq: numbe
   metal: { type: 'bandpass', freq: 3200, q: 2, len: 0.05, ring: [2240, 3170, 4410] },
   wood: { type: 'bandpass', freq: 650, q: 1.5, len: 0.09 },
   rubber: { type: 'lowpass', freq: 400, q: 0.8, len: 0.08 },
+};
+
+/** How each class's parts sound when handled: pitch scale and weight (loudness/body). */
+const HANDLING: Record<WeaponClass, { pitch: number; weight: number }> = {
+  pistol: { pitch: 1.3, weight: 0.7 },
+  smg: { pitch: 1.12, weight: 0.85 },
+  ar: { pitch: 1, weight: 1 },
+  dmr: { pitch: 0.95, weight: 1.05 },
+  sg: { pitch: 0.9, weight: 1.1 },
+  sr: { pitch: 0.95, weight: 1 },
+  lmg: { pitch: 0.8, weight: 1.3 },
 };
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -97,6 +110,8 @@ export class AudioSystem {
   private samples = new Map<string, AudioBuffer[]>();
   private voices: Voice[] = [];
   private listenerPos = { x: 0, y: 0, z: 0 };
+  private ambience: Ambience | null = null;
+  private ambienceLevels: AmbienceLevels | null = null;
 
   constructor(private volume: number) {}
 
@@ -105,6 +120,40 @@ export class AudioSystem {
     if (!this.ctx) this.build();
     if (this.ctx!.state === 'suspended') void this.ctx!.resume();
     this.decodePending();
+    this.startAmbience();
+  }
+
+  /** Background levels for the current map; starts once audio is unlocked. */
+  setAmbience(levels: AmbienceLevels): void {
+    this.ambienceLevels = levels;
+    this.ambience?.dispose();
+    this.ambience = null;
+    this.startAmbience();
+  }
+
+  /** Call every frame (wind gusts, birds, far-off fighting). */
+  updateAmbience(dt: number): void {
+    if (this.ready) this.ambience?.update(dt);
+  }
+
+  private startAmbience(): void {
+    if (this.ambience || !this.ambienceLevels || !this.ctx) return;
+    this.ambience = new Ambience(
+      {
+        ctx: this.ctx,
+        dest: this.world!,
+        reverb: this.reverb!,
+        sample: (id, dest, t, gain, rate) => this.sample(id, dest, t, gain, rate),
+        noiseBurst: (dest, t, len, gain, filter) => this.noiseBurst(dest, t, len, gain, filter),
+        tone: (dest, t, freq, len, gain, type, endFreq) => this.tone(dest, t, freq, len, gain, type, endFreq),
+      },
+      this.ambienceLevels,
+    );
+  }
+
+  /** Nearby fighting: ducks the background and scares off birds. */
+  private excite(amount: number): void {
+    this.ambience?.director.excite(amount);
   }
 
   /** Fetches the sample index and files; decoding waits for the AudioContext. */
@@ -216,6 +265,7 @@ export class AudioSystem {
     l.forwardX.setValueAtTime(forward.x, t);
     l.forwardY.setValueAtTime(forward.y, t);
     l.forwardZ.setValueAtTime(forward.z, t);
+    this.ambience?.setListenerForward(forward.x, forward.z);
     l.upX.setValueAtTime(up.x, t);
     l.upY.setValueAtTime(up.y, t);
     l.upZ.setValueAtTime(up.z, t);
@@ -336,6 +386,17 @@ export class AudioSystem {
     osc.stop(t + len + 0.02);
   }
 
+  /** Small metal part snapping home: a narrow noise tick plus a faint ring. */
+  private mechClick(out: AudioNode, t: number, freq: number, gain: number): void {
+    this.noiseBurst(out, t, 0.018, gain, { type: 'bandpass', freq, q: 3 });
+    this.tone(out, t, freq * 1.31, 0.04, gain * 0.12, 'triangle');
+  }
+
+  /** Metal sliding on metal: a band of noise sweeping between two frequencies. */
+  private slide(out: AudioNode, t: number, len: number, from: number, to: number, gain: number): void {
+    this.noiseBurst(out, t, len, gain, { type: 'bandpass', freq: from, q: 2.5, endFreq: to });
+  }
+
   private get ready(): boolean {
     return !!this.ctx && this.ctx.state === 'running';
   }
@@ -348,6 +409,7 @@ export class AudioSystem {
     const v = VOICES[cls];
     const pitch = rand(0.94, 1.06);
     const out = this.out(null, v.tail);
+    this.excite(0.08);
     const g = v.gain * (ads ? 0.92 : 1);
     if (this.sample(`gun_${cls}`, out, t, 0.95, rand(0.97, 1.03))) {
       // Recordings are taken beside the shooter; a little sub thump restores first-person weight.
@@ -371,6 +433,7 @@ export class AudioSystem {
   remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
+    this.excite(0.5 / Math.max(5, distance));
     const out = this.out(pos, 0.6, 1, 1.5);
     if (!out) return;
     const id = distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`;
@@ -380,27 +443,49 @@ export class AudioSystem {
     }
   }
 
-  reloadCue(cue: ReloadCue): void {
+  reloadCue(cue: ReloadCue, cls: WeaponClass): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0.05);
+    const { pitch: p, weight: w } = HANDLING[cls];
     switch (cue) {
       case 'magOut':
-        this.tone(out, t, 1800, 0.02, 0.1, 'square');
-        this.noiseBurst(out, t + 0.02, 0.09, 0.12, { type: 'bandpass', freq: 1500, q: 1.5, endFreq: 900 });
+        // Release button, then the magazine sliding out of the well.
+        this.mechClick(out, t, 3200 * p, 0.28 * w);
+        this.slide(out, t + 0.02, 0.12, 1800 * p, 900 * p, 0.2 * w);
+        if (cls === 'lmg') this.mechClick(out, t + 0.16, 1500, 0.18); // feed cover
         break;
       case 'magIn':
-        this.sample('mag_in', out, t, 0.25, 1.5);
-        this.noiseBurst(out, t, 0.035, 0.3, { type: 'bandpass', freq: 2600, q: 1.4 });
-        this.tone(out, t, 180, 0.06, 0.2, 'sine', 90);
+        this.slide(out, t, 0.05, 900 * p, 2200 * p, 0.08 * w);
+        this.sample('mag_in', out, t + 0.005, 0.25 * w, 1.5 * p);
+        this.mechClick(out, t + 0.03, 2500 * p, 0.28 * w);
+        this.tone(out, t + 0.03, 180 * p, 0.06, 0.2 * w, 'sine', 90 * p);
         break;
       case 'chamber':
-        this.noiseBurst(out, t, 0.03, 0.25, { type: 'bandpass', freq: 3200, q: 2 });
-        this.noiseBurst(out, t + 0.09, 0.04, 0.3, { type: 'bandpass', freq: 2500, q: 2 });
+        if (cls === 'pistol') {
+          // Slide release: one sharp slam.
+          this.mechClick(out, t, 2900, 1.4);
+          this.noiseBurst(out, t, 0.04, 0.4, { type: 'lowpass', freq: 700 });
+          break;
+        }
+        // Charging handle back to its stop, then released to slam forward.
+        this.slide(out, t, 0.08, 1500 * p, 3000 * p, 0.12 * w);
+        this.mechClick(out, t + 0.08, 3100 * p, 0.18 * w);
+        this.mechClick(out, t + 0.16, 2400 * p, 0.3 * w);
+        this.noiseBurst(out, t + 0.16, 0.05, 0.14 * w, { type: 'lowpass', freq: 500 });
+        if (cls === 'lmg') this.mechClick(out, t + 0.3, 1400, 0.22); // cover shut
         break;
       case 'shell':
-        this.tone(out, t, 1400, 0.02, 0.08, 'square');
-        this.noiseBurst(out, t + 0.015, 0.04, 0.18, { type: 'bandpass', freq: 900, q: 1.2 });
+        if (cls === 'sg') {
+          // Plastic shell thumbed into the tube.
+          this.noiseBurst(out, t, 0.05, 0.3, { type: 'lowpass', freq: 900 });
+          this.mechClick(out, t + 0.02, 1600, 0.2);
+        } else {
+          // Brass round pressed into a rifle's magazine.
+          this.mechClick(out, t, 3800, 0.35);
+          this.slide(out, t + 0.01, 0.05, 2600, 1800, 0.12);
+          this.tone(out, t + 0.02, 5400, 0.08, 0.03, 'sine');
+        }
         break;
     }
   }
@@ -410,23 +495,39 @@ export class AudioSystem {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0.08);
-    const f = cls === 'sg' ? 1400 : 2600;
-    this.noiseBurst(out, t, 0.05, 0.28, { type: 'bandpass', freq: f, q: 1.6 });
-    this.noiseBurst(out, t + 0.05, 0.08, 0.08, { type: 'bandpass', freq: f * 0.6, q: 1, endFreq: f });
-    this.noiseBurst(out, t + 0.15, 0.05, 0.32, { type: 'bandpass', freq: f * 1.15, q: 1.8 });
+    if (cls === 'sg') {
+      // Pump: back "chk", forward "chk" (the forward stroke is the louder).
+      this.slide(out, t, 0.07, 900, 1600, 0.24);
+      this.mechClick(out, t + 0.07, 1300, 0.44);
+      this.slide(out, t + 0.16, 0.06, 1600, 900, 0.2);
+      this.mechClick(out, t + 0.22, 1500, 0.58);
+      this.noiseBurst(out, t + 0.22, 0.05, 0.2, { type: 'lowpass', freq: 450 });
+      return;
+    }
+    // Bolt: lift, pull back to the stop, push forward, turn down to lock.
+    this.mechClick(out, t, 2800, 0.27);
+    this.slide(out, t + 0.04, 0.1, 1400, 3200, 0.2);
+    this.mechClick(out, t + 0.14, 3300, 0.34);
+    this.slide(out, t + 0.22, 0.09, 3000, 1500, 0.19);
+    this.mechClick(out, t + 0.31, 2000, 0.5);
+    this.noiseBurst(out, t + 0.31, 0.05, 0.17, { type: 'lowpass', freq: 500 });
   }
 
   switchWeapon(): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0);
-    this.noiseBurst(out, t, 0.12, 0.08, { type: 'bandpass', freq: 600, q: 0.8, endFreq: 1400 });
-    this.tone(out, t + 0.1, 1500, 0.02, 0.06, 'square');
+    this.noiseBurst(out, t, 0.12, 0.14, { type: 'bandpass', freq: 600, q: 0.8, endFreq: 1400 });
+    this.mechClick(out, t + 0.1, 1800, 0.3);
   }
 
+  /** Dry fire: the hammer/striker falls on nothing. */
   click(): void {
     if (!this.ready) return;
-    this.tone(this.out(null, 0), this.ctx!.currentTime, 2400, 0.025, 0.15, 'square');
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    this.mechClick(out, t, 3800, 0.35);
+    this.tone(out, t, 240, 0.03, 0.08, 'sine', 120);
   }
 
   // ---------- world ----------
@@ -473,12 +574,20 @@ export class AudioSystem {
     this.sample(STEP_SAMPLE[surface], out, this.ctx!.currentTime, sprinting ? 0.5 : 0.32, rand(0.9, 1.1));
   }
 
-  land(): void {
+  /** Landing from a jump or fall; harder landings are louder with more gear rattle. */
+  land(impactSpeed: number, surface?: ImpactSurface): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0.05);
-    this.tone(out, t, 110, 0.12, 0.3, 'sine', 55);
-    this.noiseBurst(out, t, 0.08, 0.2, { type: 'lowpass', freq: 700 });
+    const k = Math.min(1, Math.max(0, (impactSpeed - 7) / 8));
+    if (surface) {
+      // Both feet, a hair apart.
+      this.sample(STEP_SAMPLE[surface], out, t, 0.25 + 0.15 * k, rand(0.78, 0.86));
+      this.sample(STEP_SAMPLE[surface], out, t + rand(0.03, 0.06), 0.14 + 0.1 * k, rand(0.8, 0.9));
+    }
+    this.tone(out, t, 110, 0.12, 0.18 + 0.17 * k, 'sine', 50);
+    this.noiseBurst(out, t, 0.08, 0.14 + 0.12 * k, { type: 'lowpass', freq: 700 });
+    this.noiseBurst(out, t + 0.02, 0.07, 0.04 + 0.08 * k, { type: 'bandpass', freq: 2400, q: 1.2 });
   }
 
   // ---------- grenades ----------
@@ -487,8 +596,12 @@ export class AudioSystem {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0);
-    this.tone(out, t, 3000, 0.02, 0.1, 'square');
-    this.tone(out, t + 0.05, 2200, 0.03, 0.06, 'triangle');
+    // Pin pulled (a ringing ping), spoon flies off, arm swing.
+    this.mechClick(out, t, 3000, 0.12);
+    this.tone(out, t + 0.01, 5200, 0.25, 0.02, 'sine');
+    this.tone(out, t + 0.01, 7300, 0.18, 0.012, 'sine');
+    this.mechClick(out, t + 0.22, 2400, 0.1);
+    this.tone(out, t + 0.22, 4100, 0.2, 0.015, 'sine');
     this.noiseBurst(out, t + 0.25, 0.25, 0.14, { type: 'bandpass', freq: 400, q: 0.8, endFreq: 1400 });
   }
 
@@ -507,6 +620,7 @@ export class AudioSystem {
   explosion(pos: THREE.Vector3, distance: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
+    this.excite(2 / Math.max(4, distance));
     const out = this.out(pos, 0.9, 4, 3.5);
     if (!out) return;
     // Distance muffles high frequencies.
@@ -590,6 +704,7 @@ export class AudioSystem {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0);
+    this.excite(0.3);
     const g = Math.min(0.6, 0.2 + amount / 100);
     this.tone(out, t, 140, 0.18, g, 'sine', 60);
     this.noiseBurst(out, t, 0.08, g * 0.5, { type: 'lowpass', freq: 600 });

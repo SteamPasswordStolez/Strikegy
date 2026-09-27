@@ -35,6 +35,7 @@ import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { ViewModel } from '@/weapons/ViewModel';
 import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
+import { ambienceFor } from '@/audio/ambienceDirector';
 import { HUD } from '@/ui/HUD';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
@@ -207,6 +208,7 @@ export class Game {
     const outdoor = map.world.visualProfile !== 'indoor';
     await Promise.all([art, this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])])]);
     this.physics.timestep = 1 / SIM_HZ;
+    this.audio.setAmbience(ambienceFor(map.world.visualProfile, (map.zones?.length ?? 0) > 0, map.world.ambience));
     this.atmosphere = new Atmosphere(r.scene, r.fpScene, r.gl, map.world.visualProfile, {
       shadows: q.shadows,
       shadowMapSize: q.shadowMapSize,
@@ -371,7 +373,7 @@ export class Game {
       this.viewModel.onCycle();
       this.muzzleEffects(e.weaponId, false);
     });
-    bus.on('weapon:reloadCue', (e) => this.audio.reloadCue(e.cue));
+    bus.on('weapon:reloadCue', (e) => this.audio.reloadCue(e.cue, cls(e.weaponId)));
     bus.on('weapon:switched', () => this.audio.switchWeapon());
     bus.on('weapon:dryFire', () => this.audio.click());
     bus.on('combat:impact', (e) => {
@@ -400,7 +402,7 @@ export class Game {
       this.bots?.alert(e.point, e.sprinting ? 18 : 13, this.playerCombatant);
     });
     bus.on('player:landed', (e) => {
-      this.audio.land();
+      this.audio.land(e.impactSpeed, e.surface);
       this.viewModel.onLand(e.impactSpeed);
       this.shake = Math.min(0.03, this.shake + e.impactSpeed * 0.0008);
       const dmg = fallDamage(e.impactSpeed);
@@ -514,6 +516,7 @@ export class Game {
     this.effects.update(simDt);
     this.flashLeft = Math.max(0, this.flashLeft - simDt);
     this.audio.updateVitals(p.health.value, p.alive);
+    this.audio.updateAmbience(dt);
     this.updateHud(dt);
     const perf = this.perf;
     perf.setVisible(this.settings.showFps);

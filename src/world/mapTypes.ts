@@ -101,6 +101,8 @@ export interface MapDef {
     terrain?: TerrainDef;
     visualProfile: VisualProfileId;
     groundMaterial?: SurfaceMaterial;
+    /** Background sound levels 0..1 (defaults come from the visual profile). */
+    ambience?: { wind?: number; birds?: number; battle?: number };
   };
   spawns: SpawnPoint[];
   zones?: ZoneDef[];

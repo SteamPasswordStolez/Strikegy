@@ -43,6 +43,13 @@ export function validateMap(raw: unknown): string[] {
     if (world.groundMaterial !== undefined && !MATERIALS.has(String(world.groundMaterial))) {
       errs.push(`world.groundMaterial: unknown "${String(world.groundMaterial)}"`);
     }
+    if (world.ambience !== undefined) {
+      const amb = world.ambience;
+      const keys = ['wind', 'birds', 'battle'];
+      if (!isObj(amb) || Object.entries(amb).some(([k, v]) => !keys.includes(k) || !isNum(v) || v < 0 || v > 1)) {
+        errs.push('world.ambience: expected { wind?, birds?, battle? } with values 0..1');
+      }
+    }
   }
 
   if (!Array.isArray(raw.spawns) || raw.spawns.length === 0) {
