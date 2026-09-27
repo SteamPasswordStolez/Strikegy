@@ -12,6 +12,22 @@ The owner writes in Korean; reply in Korean.
 - Don't port p1 code wholesale; port numbers and concepts.
 - The campaign story and the class redesign (M4-C) are co-designed with the owner — ask before building content for them.
 
+## Working style the owner expects
+
+- Models are built **procedurally in code** (guns in `src/weapons/gunKit.ts` / `gunModels.ts`, map objects in `src/world/modelKits.ts`, buildings in `src/world/buildings.ts`), not downloaded, unless the owner approves a download.
+- Measure before and after performance work and report the numbers.
+- Finish a chunk, verify it (tests + running the game), commit, push to `v2`, then report to the owner in Korean: what changed, how it was checked, anything not verified, and questions still open.
+
+## Local vs cloud sessions
+
+The owner works both on their Windows PC and in cloud sessions (claude.ai/code) on this repo.
+
+- **Sync first.** Start every session with `git pull origin v2`. Never work on `v2` from two sessions at the same time; finish and push in one before continuing in the other.
+- **Not available in the cloud:** `assets-src/` (raw asset downloads, git-ignored), the p1 folder, 7-Zip/ffmpeg for `npm run sounds`. The optimized assets in `public/` are in the repo and are all the game needs.
+- **Visual / feel checks are weaker in the cloud:** a headless browser may have no or slow WebGL. Code, tests, builds, map generation and CPU benchmarks are fine there; say clearly in the report when something visual (looks, frame rate, controls feel) could not be checked, and leave it for the owner to try locally.
+- The cloud session runs `npm ci` on start (`.claude/settings.json` SessionStart hook).
+- Memory from the owner's local sessions does not carry over; this file is the shared source of rules and state. **Keep it up to date:** when the owner gives a new standing rule or decision, or a roadmap item is finished, update this file in the same push.
+
 ## Checks before pushing
 
 ```bash
@@ -39,9 +55,10 @@ M4 is split: **M4-A** Zone mode (done: rules, map 1 "Iron Gate", squads, BF-styl
 
 Zone decisions: death-only tickets; respawn at base / owned zones (zone under attack → spawn a bit away) / next to a squadmate (not while the mate is dead or in combat; squad wipe = +5 s respawn).
 
-In progress / next (owner approved, in this order):
+Done since: bot overhaul (personalities, peeking / suppression, squad flanking and guard posts, grenades and smoke, window posts), procedural models for map stand-ins and closed-block facades, first-person hands with fingers, smooth walking on roads, big-fight CPU optimizations.
 
-1. Bot overhaul: (1) personalities + no single-file lines, (2) combat (peeking, strafing, crouch, suppressive fire, fall back to reload), (3) squad tactics (roles, flanking, holding angles, smarter following), (4) grenades/smoke, (5) building use (window/second-floor spots, clearing).
-2. Replace remaining placeholder (unmodeled) objects with models.
-3. Map 2 "Ardennes forest" in winter: 7 zones (A sawmill, B farm, C stone bridge, D village crossroads, E chapel hill, F bunker ridge, G rail halt), river N–S, ~200,000 m², irregular outline. Snow texture download (Poly Haven `snow_02`) still awaiting the owner's answer — ask, or use procedural snow.
-4. Later: BF-style resupply stations at zones.
+Next (owner approved, in this order):
+
+1. Map 2 "Ardennes forest" in winter: 7 zones (A sawmill, B farm, C stone bridge, D village crossroads, E chapel hill, F bunker ridge, G rail halt), river N–S, ~200,000 m², irregular outline. Snow texture download (Poly Haven `snow_02`, ~3–5 MB source) still awaiting the owner's answer — ask, or use procedural snow. Needs a dense in-map forest with performance care; >420 m maps fall back to camera-follow shadows.
+2. M4-B scoreboard + minimap, M4-C classes/economy (co-design), M4-D lobby/settings.
+3. Later: BF-style resupply stations at zones.
