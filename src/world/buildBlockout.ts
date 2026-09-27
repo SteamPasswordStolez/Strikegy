@@ -4,6 +4,8 @@ import { worldScaleBoxUVs, type SurfaceLibrary } from '@/render/textures';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
+import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
+import { buildBuilding } from './buildings';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
@@ -21,10 +23,37 @@ interface Batch {
   castShadow: boolean;
 }
 
+/** True if the map shapes its ground (terrain / irregular boundary) instead of a flat box. */
+export function hasTerrain(map: MapDef): boolean {
+  return !!(map.world.terrain || map.world.boundary);
+}
+
 /**
- * Builds render meshes and static colliders for a blockout (box-based) map.
- * Boxes sharing a material are merged into one mesh (one draw call per material,
- * per render pass) since blockout geometry never moves.
+ * Moves everything that sits on the ground onto the terrain: spawns, zones,
+ * targets, and objects / props flagged `snap` (their y becomes an offset).
+ */
+export function snapToTerrain(map: MapDef, terrain: Terrain): void {
+  const lift = (p: [number, number, number]) => {
+    p[1] += terrain.heightAt(p[0], p[2]);
+  };
+  for (const s of map.spawns) lift(s.pos);
+  for (const z of map.zones ?? []) lift(z.pos);
+  for (const t of map.targets ?? []) lift(t.pos);
+  for (const o of map.objects) if (o.snap) lift(o.pos);
+  for (const p of map.props ?? []) if (p.snap) lift(p.pos);
+}
+
+export interface BuiltMap {
+  root: THREE.Group;
+  /** Walkable terrain triangles for the navmesh (null on flat box maps). */
+  navExtra: { positions: number[]; indices: number[] } | null;
+}
+
+/**
+ * Builds render meshes and static colliders for a blockout (box-based) map:
+ * the ground (flat box, or terrain with invisible boundary walls), map boxes
+ * and generated buildings. Boxes sharing a material are merged into one mesh
+ * (one draw call per material, per render pass) since the geometry never moves.
  */
 export function buildBlockout(
   map: MapDef,
@@ -32,28 +61,39 @@ export function buildBlockout(
   physics: PhysicsWorld,
   surfaces: SurfaceLibrary,
   impacts: SurfaceRegistry,
-): THREE.Group {
+  terrain: Terrain | null,
+): BuiltMap {
   const root = new THREE.Group();
   root.name = `map:${map.meta.id}`;
   const batches = new Map<string, Batch>();
+  const groundKind = map.world.groundMaterial ?? 'ground';
+  let navExtra: BuiltMap['navExtra'] = null;
 
-  const [sx, sz] = map.world.size;
-  const groundThickness = 1;
-  // The ground never casts shadows (nothing is below it); keep it in its own batch.
-  addBox(
-    {
-      type: 'floor',
-      pos: [0, -groundThickness / 2, 0],
-      size: [sx, groundThickness, sz],
-      material: map.world.groundMaterial ?? 'ground',
-    },
-    batches,
-    physics,
-    surfaces,
-    impacts,
-    'ground',
-  );
+  if (terrain) {
+    const built = buildTerrain(terrain, surfaces.get(groundKind), physics);
+    impacts.set(built.collider.handle, SURFACE_FROM_MATERIAL[groundKind]);
+    built.mesh.matrixAutoUpdate = false;
+    root.add(built.mesh);
+    if (map.world.boundary) buildBoundaryWalls(terrain.boundary, terrain, physics);
+    navExtra = terrainTriangles(terrain, built.grid);
+  } else {
+    const [sx, sz] = map.world.size;
+    const groundThickness = 1;
+    // The ground never casts shadows (nothing is below it); keep it in its own batch.
+    addBox(
+      { type: 'floor', pos: [0, -groundThickness / 2, 0], size: [sx, groundThickness, sz], material: groundKind },
+      batches,
+      physics,
+      surfaces,
+      impacts,
+      'ground',
+    );
+  }
   for (const obj of map.objects) addBox(obj, batches, physics, surfaces, impacts);
+  for (const b of map.buildings ?? []) {
+    const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
+    for (const obj of buildBuilding(b, base).objects) addBox(obj, batches, physics, surfaces, impacts);
+  }
 
   for (const b of batches.values()) {
     const merged = mergeGeometries(b.geometries);
@@ -67,7 +107,7 @@ export function buildBlockout(
   }
 
   scene.add(root);
-  return root;
+  return { root, navExtra };
 }
 
 const tmpMatrix = new THREE.Matrix4();

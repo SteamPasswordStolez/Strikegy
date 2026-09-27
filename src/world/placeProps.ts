@@ -88,12 +88,29 @@ function modelParts(template: THREE.Object3D): ModelPart[] {
   });
   const parts: ModelPart[] = [];
   for (const [material, meshes] of byMat) {
-    const merged = meshes.length > 1 ? mergeGeometries(meshes.map((m) => m.geometry.clone().applyMatrix4(m.matrixWorld))) : null;
+    const merged = meshes.length > 1 ? mergeGeometries(meshes.map((m) => dequantize(m.geometry).applyMatrix4(m.matrixWorld))) : null;
     if (merged) parts.push({ geometry: merged, material, matrix: new THREE.Matrix4() });
     else for (const m of meshes) parts.push({ geometry: m.geometry, material, matrix: m.matrixWorld.clone() });
   }
   partsCache.set(template, parts);
   return parts;
+}
+
+/**
+ * Copy of a geometry with every attribute as plain Float32 (optimized glTFs
+ * store quantized integer UVs/positions, which cannot be transformed or merged
+ * with float attributes).
+ */
+function dequantize(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  const out = geo.clone();
+  for (const [name, attr] of Object.entries(out.attributes)) {
+    // Plain float attributes are kept; quantized or interleaved ones are unpacked.
+    if (attr instanceof THREE.BufferAttribute && attr.array instanceof Float32Array && !attr.normalized) continue;
+    const f = new Float32Array(attr.count * attr.itemSize);
+    for (let i = 0; i < attr.count; i++) for (let c = 0; c < attr.itemSize; c++) f[i * attr.itemSize + c] = attr.getComponent(i, c);
+    out.setAttribute(name, new THREE.BufferAttribute(f, attr.itemSize));
+  }
+  return out;
 }
 
 /** One InstancedMesh per material of `template`, with an instance per placement matrix. */

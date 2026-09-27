@@ -15,6 +15,8 @@ export const Layer = {
    * steering instead. They do collide with the world and the player.
    */
   BOT: 0x0010,
+  /** Invisible walls at the edge of the playable area: block characters only. */
+  BOUNDS: 0x0020,
 } as const;
 
 /** Packs Rapier interaction groups: upper 16 bits membership, lower 16 bits filter. */

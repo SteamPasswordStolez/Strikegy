@@ -14,6 +14,8 @@ export interface MapObject {
   rot?: Vec3;
   material?: SurfaceMaterial;
   color?: string;
+  /** pos[1] is relative to the ground at (x, z) instead of absolute. */
+  snap?: boolean;
 }
 
 export interface SpawnPoint {
@@ -39,6 +41,44 @@ export interface PropDef {
   scale?: number;
   /** Adds a box collider fitted to the model bounds. Default true. */
   collide?: boolean;
+  /** pos[1] is relative to the ground at (x, z). */
+  snap?: boolean;
+}
+
+/** Smooth ground shape (see world/terrain.ts). Heights in meters. */
+export interface TerrainDef {
+  /** Grid cell size in meters (default 2). */
+  cell?: number;
+  /** Amplitude of gentle noise over the whole map (default 0). */
+  noise?: number;
+  /** Cosine bumps (negative height = dip). */
+  hills?: { pos: [number, number]; radius: number; height: number }[];
+  /** Level pads (buildings get one automatically). `height` defaults to the local ground. */
+  flats?: { pos: [number, number]; radius: number; height?: number; blend?: number }[];
+}
+
+export type BuildingStyle = 'house' | 'shop' | 'apartment' | 'townhall' | 'warehouse' | 'barracks' | 'hangar' | 'hq' | 'station' | 'shed';
+
+/**
+ * A generated building (world/buildings.ts): outer walls with door and window
+ * openings, floors with a stair ramp between them, and a roof. Sits on the ground.
+ */
+export interface BuildingDef {
+  /** Footprint center [x, z]. */
+  pos: [number, number];
+  /** Footprint [width (local x), depth (local z)]. */
+  size: [number, number];
+  style?: BuildingStyle;
+  floors?: number;
+  /** Yaw in degrees. */
+  rot?: number;
+  /** Sides with a ground-floor door, local before rotation: any of "nsew" (n = -z). */
+  doors?: string;
+  /** Not enterable: one closed block (background buildings). */
+  solid?: boolean;
+  material?: SurfaceMaterial;
+  color?: string;
+  seed?: number;
 }
 
 export interface TargetDef {
@@ -49,14 +89,18 @@ export interface TargetDef {
 export interface MapDef {
   meta: { id: string; name: string; version: 2 };
   world: {
-    /** Ground plane size [x, z] centered at origin. */
+    /** Ground plane size [x, z] centered at origin (covers the boundary plus a margin). */
     size: [number, number];
+    /** Playable-area outline [x, z][] (default: the size rectangle). */
+    boundary?: [number, number][];
+    terrain?: TerrainDef;
     visualProfile: VisualProfileId;
     groundMaterial?: SurfaceMaterial;
   };
   spawns: SpawnPoint[];
   zones?: ZoneDef[];
   objects: MapObject[];
+  buildings?: BuildingDef[];
   props?: PropDef[];
   /** Practice dummies (sandbox/training maps). */
   targets?: TargetDef[];

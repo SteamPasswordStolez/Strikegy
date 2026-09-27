@@ -26,10 +26,16 @@ export class NavWorld {
   }
 
   /** Builds from the physics world; returns null if generation fails. */
-  static async build(physics: PhysicsWorld): Promise<NavWorld | null> {
+  /** `extra` adds non-box walkable geometry (terrain triangles, counter-clockwise from above). */
+  static async build(physics: PhysicsWorld, extra?: { positions: number[]; indices: number[] }): Promise<NavWorld | null> {
     recastReady ??= init();
     await recastReady;
     const { positions, indices } = collectStaticBoxes(physics);
+    if (extra) {
+      const base = positions.length / 3;
+      for (const v of extra.positions) positions.push(v);
+      for (const i of extra.indices) indices.push(base + i);
+    }
     if (indices.length === 0) return null;
     const result = generateSoloNavMesh(positions, indices, {
       cs: CS,
@@ -104,7 +110,7 @@ export class NavWorld {
   }
 }
 
-/** Triangles of every static WORLD box collider (map blocks and props). */
+/** Triangles of every static box collider (map blocks, props and boundary walls). */
 function collectStaticBoxes(physics: PhysicsWorld): { positions: number[]; indices: number[] } {
   const positions: number[] = [];
   const indices: number[] = [];
@@ -119,7 +125,7 @@ function collectStaticBoxes(physics: PhysicsWorld): { positions: number[]; indic
   physics.world.forEachCollider((c) => {
     const parent = c.parent();
     if (parent && !parent.isFixed()) return;
-    if (!((c.collisionGroups() >>> 16) & Layer.WORLD)) return;
+    if (!((c.collisionGroups() >>> 16) & (Layer.WORLD | Layer.BOUNDS))) return;
     if (c.shape.type !== RAPIER.ShapeType.Cuboid) return;
     const he = (c.shape as RAPIER.Cuboid).halfExtents;
     const tr = c.translation();

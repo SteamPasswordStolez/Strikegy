@@ -462,7 +462,7 @@ export class Bot implements Damageable, Combatant {
     this.velocity.y = this.grounded ? -1 : Math.max(this.velocity.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
 
     const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.capsule, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER));
+    this.controller.computeColliderMovement(this.capsule, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOUNDS));
     const moved = this.controller.computedMovement();
     this.grounded = this.controller.computedGrounded();
     this.velocity.x = moved.x / dt;

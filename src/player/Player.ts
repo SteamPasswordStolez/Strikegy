@@ -122,7 +122,7 @@ export class Player {
     }
 
     const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.collider, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOT));
+    this.controller.computeColliderMovement(this.collider, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOT | Layer.BOUNDS));
     const moved = this.controller.computedMovement();
     const wasGrounded = this.grounded;
     this.grounded = this.controller.computedGrounded();

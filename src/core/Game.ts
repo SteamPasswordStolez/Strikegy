@@ -12,7 +12,9 @@ import { Effects } from '@/render/Effects';
 import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
-import { buildBlockout } from '@/world/buildBlockout';
+import { buildBlockout, hasTerrain, snapToTerrain } from '@/world/buildBlockout';
+import { Boundary, Terrain } from '@/world/terrain';
+import { buildingPadRadius } from '@/world/buildings';
 import { BACKDROP_MODELS, buildBackdrop } from '@/world/backdrop';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
@@ -43,6 +45,8 @@ const AUTHORED_FOV = 78;
 const SIM_HZ = 60;
 const ASSET_BASE = `${import.meta.env.BASE_URL}assets/`;
 const RESPAWN_SEC = 4;
+/** Maps up to this size (m) get one shadow map fitted over the whole area, rendered once. */
+const STATIC_SHADOW_MAX = 420;
 /** Weapon is unusable this long after starting a throw. */
 const THROW_BLOCK = 0.55;
 const THROW_COOLDOWN = 0.8;
@@ -91,6 +95,7 @@ export class Game {
   private playerBoxes!: CharacterHitboxes;
   private bots: BotManager | null = null;
   private nav: NavWorld | null = null;
+  private navExtra: { positions: number[]; indices: number[] } | null = null;
   /** The player as seen by bots. */
   private playerCombatant!: Combatant;
   private playerFiringUntil = -1;
@@ -176,10 +181,17 @@ export class Game {
       shadowExtent: q.shadowExtent,
     });
     const t0 = performance.now();
-    const blockout = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts);
+    // Buildings get a level pad so they sit flat on sloped ground.
+    const pads = (map.buildings ?? []).map((b) => ({ pos: b.pos, radius: buildingPadRadius(b) - 1, blend: 5 }));
+    const terrainDef = { ...map.world.terrain, flats: [...(map.world.terrain?.flats ?? []), ...pads] };
+    const terrain = new Terrain(terrainDef, Boundary.fromMap(map), map.world.size);
+    const shaped = hasTerrain(map);
+    if (shaped) snapToTerrain(map, terrain);
+    const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null);
+    this.navExtra = built.navExtra;
     const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
-    this.fitShadows(map, blockout, props);
-    if (outdoor) buildBackdrop(r.scene, map.world.size, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa });
+    this.fitShadows(map, terrain, built.root, props);
+    if (outdoor) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped });
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
@@ -205,7 +217,7 @@ export class Game {
       // Colliders must be in the broadphase before the navmesh reads them.
       this.physics.step();
       const tNav = performance.now();
-      this.nav = await NavWorld.build(this.physics);
+      this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined);
       if (import.meta.env.DEV) console.info(`[strikegy] navmesh built in ${Math.round(performance.now() - tNav)} ms`);
       if (this.nav) {
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
@@ -501,15 +513,16 @@ export class Game {
    * only when a shadow caster moves. Larger maps keep a frustum that follows the
    * camera and re-renders periodically.
    */
-  private fitShadows(map: MapDef, ...roots: THREE.Object3D[]): void {
+  private fitShadows(map: MapDef, terrain: Terrain, ...roots: THREE.Object3D[]): void {
     const q = this.renderer.quality;
     if (!q.shadows) return;
-    const [sx, sz] = map.world.size;
-    if (Math.max(sx, sz) > 200) return;
+    const [minX, minZ, maxX, maxZ] = terrain.bounds();
+    if (Math.max(maxX - minX, maxZ - minZ) > STATIC_SHADOW_MAX) return;
+    void map;
     const box = new THREE.Box3();
     for (const root of roots) box.expandByObject(root);
     // Only what can shadow the playable area matters: clamp to the map plus a margin.
-    const limit = new THREE.Box3(new THREE.Vector3(-sx / 2 - 4, -1, -sz / 2 - 4), new THREE.Vector3(sx / 2 + 4, 40, sz / 2 + 4));
+    const limit = new THREE.Box3(new THREE.Vector3(minX - 4, -30, minZ - 4), new THREE.Vector3(maxX + 4, 60, maxZ + 4));
     box.intersect(limit);
     if (box.isEmpty()) box.copy(limit);
     this.atmosphere.fitShadowsTo(box, q.shadowMapSize);

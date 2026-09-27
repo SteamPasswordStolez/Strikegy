@@ -4,6 +4,7 @@ import type { ModelLibrary } from '@/render/models';
 import { buildImpostors, buildNearTrees, createConiferKit } from './conifers';
 import { instanceModel } from './placeProps';
 import { LAYER_BACKDROP } from '@/render/layers';
+import { SCENERY_EXTENT, type Terrain } from './terrain';
 
 /** Scenery is split into angular sectors around the map so what is behind the camera is culled. */
 const SECTORS = 8;
@@ -21,7 +22,7 @@ function bySector<T>(items: T[], pos: (t: T) => THREE.Vector3): T[][] {
   return out.filter((s) => s.length > 0);
 }
 
-const EXTENT = 1400;
+const EXTENT = SCENERY_EXTENT;
 
 /** Forest-floor models scattered around the map (render only, no collision). */
 export const BACKDROP_MODELS = ['shrub_02', 'shrub_04', 'fern_02', 'rock_moss_set_01', 'rock_moss_set_02', 'tree_stump_01', 'dead_tree_trunk'];
@@ -39,29 +40,28 @@ export interface BackdropOptions {
  * the map bounds, a conifer forest (3D trees near the map, baked impostors
  * further out) and scattered rocks, stumps, logs and undergrowth. No collision.
  */
-export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opts: BackdropOptions): THREE.Group {
+export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: BackdropOptions & { mapHasTerrain: boolean }): THREE.Group {
   const group = new THREE.Group();
   group.name = 'backdrop';
   const n = new TileNoise(99);
-  const halfX = mapSize[0] / 2;
-  const halfZ = mapSize[1] / 2;
+  const [minX, minZ, maxX, maxZ] = terrain.bounds();
+  const halfX = Math.max(-minX, maxX);
+  const halfZ = Math.max(-minZ, maxZ);
+  const [tx, tz] = [terrain.size[0] / 2, terrain.size[1] / 2];
   const rng = makeRng(7);
 
-  // Distance outside the playable rectangle, 0 inside.
-  const outside = (x: number, z: number) => {
-    const dx = Math.max(0, Math.abs(x) - halfX);
-    const dz = Math.max(0, Math.abs(z) - halfZ);
-    return Math.hypot(dx, dz);
-  };
+  // Distance outside the playable area, 0 inside.
+  const outside = (x: number, z: number) => terrain.boundary.outside(x, z);
   const uvOf = (x: number, z: number): [number, number] => [x / EXTENT + 0.5, z / EXTENT + 0.5];
-  const heightAt = (x: number, z: number) => {
-    const d = outside(x, z);
-    if (d <= 0) return -0.3;
-    const [u, v] = uvOf(x, z);
-    const hills = n.fbm(u, v, 3, 5);
-    const rise = smoothstep(8, 160, d);
-    return -0.3 + rise * (8 + hills * 70) + smoothstep(300, 700, d) * 60 * n.fbm(u + 0.3, v, 2, 3);
+  // Where the map has its own terrain mesh the scenery ground tucks under it,
+  // meeting it at the edge of the terrain rectangle.
+  const underMap = (x: number, z: number) => {
+    const edge = Math.min(tx - Math.abs(x), tz - Math.abs(z));
+    return edge > 0 ? 0.3 + smoothstep(0, 12, edge) * 2.5 : 0;
   };
+  const heightAt = (x: number, z: number) => terrain.surfaceAt(x, z) - (opts.mapHasTerrain ? underMap(x, z) : outside(x, z) > 0 ? 0 : 0.3);
+  /** Height for things standing on the scenery (trees, rocks). */
+  const groundAt = (x: number, z: number) => terrain.surfaceAt(x, z);
   /** 0..1 forest cover: clustered woods with clearings, thinning on high rocky ground. */
   const forest = (x: number, z: number) => {
     const [u, v] = uvOf(x, z);
@@ -96,12 +96,12 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  const terrain = new THREE.Mesh(
+  const ground = new THREE.Mesh(
     geo,
     new THREE.MeshLambertMaterial({ vertexColors: true, map: detailTexture(EXTENT / 7) }),
   );
-  terrain.receiveShadow = false;
-  group.add(terrain);
+  ground.receiveShadow = false;
+  group.add(ground);
 
   // --- Trees ---------------------------------------------------------------
   const kit = createConiferKit(opts.msaa);
@@ -115,7 +115,7 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
       const d = outside(x, z);
       if (d < minD || d > maxD || !accept(x, z, d)) continue;
       out.push({
-        pos: new THREE.Vector3(x, heightAt(x, z) - 0.3, z),
+        pos: new THREE.Vector3(x, groundAt(x, z) - 0.3, z),
         scale: 0.75 + rng() * 0.55,
         yaw: rng() * Math.PI * 2,
         variant: Math.floor(rng() * kit.variants.length),
@@ -147,7 +147,7 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
       if (d < minD || d > maxD || rng() > 0.35 + forest(x, z)) continue;
       const s = scale[0] + rng() * (scale[1] - scale[0]);
       e.set((rng() - 0.5) * 6 * DEG, rng() * Math.PI * 2, (rng() - 0.5) * 6 * DEG);
-      matrices.push(new THREE.Matrix4().compose(new THREE.Vector3(x, heightAt(x, z) - sink * s, z), q.setFromEuler(e), new THREE.Vector3(s, s, s)));
+      matrices.push(new THREE.Matrix4().compose(new THREE.Vector3(x, groundAt(x, z) - sink * s, z), q.setFromEuler(e), new THREE.Vector3(s, s, s)));
     }
     const p = new THREE.Vector3();
     for (const chunk of bySector(matrices, (m) => p.setFromMatrixPosition(m).clone())) instanceModel(tpl, chunk, group, false);
@@ -158,28 +158,49 @@ export function buildBackdrop(scene: THREE.Scene, mapSize: [number, number], opt
   place('tree_stump_01', Math.round(10 * k), 4, 45, [0.9, 1.4]);
   place('dead_tree_trunk', Math.round(8 * k), 4, 45, [1.5, 2.5], 0.02);
   place('shrub_02', Math.round(14 * k), 3, 40, [0.8, 1.3]);
-  // Undergrowth along the inside of the walls softens the map edge.
-  placeAlongWalls(opts.models, group, halfX, halfZ, rng, k);
+  // Undergrowth along the inside of the edge softens it.
+  placeAlongEdge(opts.models, group, terrain, rng, k);
 
   group.traverse((o) => o.layers.set(LAYER_BACKDROP));
   scene.add(group);
   return group;
 }
 
-/** Ferns and small shrubs hugging the inside of the boundary walls (visual only). */
-function placeAlongWalls(models: ModelLibrary, parent: THREE.Object3D, halfX: number, halfZ: number, rng: () => number, k: number): void {
+/** Ferns and small shrubs hugging the inside of the boundary (visual only). */
+function placeAlongEdge(models: ModelLibrary, parent: THREE.Object3D, terrain: Terrain, rng: () => number, k: number): void {
+  const pts = terrain.boundary.points;
+  const lengths = pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length]!;
+    return Math.hypot(q[0] - p[0], q[1] - p[1]);
+  });
+  const total = lengths.reduce((a, b) => a + b, 0);
+  // Denser on bigger maps, same density as the sandbox walls (~480 m of edge).
+  const density = total / 480;
   const spots = (count: number, inset: [number, number], scale: [number, number]) => {
     const out: THREE.Matrix4[] = [];
     const q = new THREE.Quaternion();
-    for (let i = 0; i < count; i++) {
-      const edge = Math.floor(rng() * 4);
-      const along = (rng() - 0.5) * 2;
+    for (let i = 0; i < Math.round(count * density); i++) {
+      let t = rng() * total;
+      let e = 0;
+      while (t > lengths[e]! && e < lengths.length - 1) t -= lengths[e++]!;
+      const a = pts[e]!;
+      const b = pts[(e + 1) % pts.length]!;
+      const f = t / Math.max(1e-3, lengths[e]!);
+      const x0 = a[0] + (b[0] - a[0]) * f;
+      const z0 = a[1] + (b[1] - a[1]) * f;
+      // Inward normal: whichever side of the edge is inside.
+      let nx = -(b[1] - a[1]) / Math.max(1e-3, lengths[e]!);
+      let nz = (b[0] - a[0]) / Math.max(1e-3, lengths[e]!);
+      if (!terrain.boundary.contains(x0 + nx * 0.5, z0 + nz * 0.5)) {
+        nx = -nx;
+        nz = -nz;
+      }
       const inward = inset[0] + rng() * (inset[1] - inset[0]);
-      const x = edge < 2 ? along * (halfX - 2) : (edge === 2 ? -1 : 1) * (halfX - inward);
-      const z = edge < 2 ? (edge === 0 ? -1 : 1) * (halfZ - inward) : along * (halfZ - 2);
+      const x = x0 + nx * inward;
+      const z = z0 + nz * inward;
       const s = scale[0] + rng() * (scale[1] - scale[0]);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rng() * Math.PI * 2);
-      out.push(new THREE.Matrix4().compose(new THREE.Vector3(x, -0.02, z), q.clone(), new THREE.Vector3(s, s, s)));
+      out.push(new THREE.Matrix4().compose(new THREE.Vector3(x, terrain.heightAt(x, z) - 0.02, z), q.clone(), new THREE.Vector3(s, s, s)));
     }
     return out;
   };
