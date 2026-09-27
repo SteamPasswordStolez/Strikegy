@@ -55,6 +55,12 @@ export interface BotServices {
   watchDir(bot: Bot): THREE.Vector3 | null;
   /** Following a leader who is walking: don't sprint. */
   keepPace(bot: Bot): boolean;
+  /** Lobs a grenade onto `at`; false if it can't (out of reach, team just threw one). */
+  throwGrenade(bot: Bot, type: 'frag' | 'smoke', at: THREE.Vector3): boolean;
+  /** Living members of `team` within `radius` of `pos` (the player included). */
+  alliesNear(team: Team, pos: THREE.Vector3, radius: number): number;
+  /** Living enemies of `team` within `radius` of `pos`. */
+  enemiesNear(team: Team, pos: THREE.Vector3, radius: number): number;
   /** Resolves one trigger pull (all pellets) along `dir` from the bot's eye. */
   fire(bot: Bot, dir: THREE.Vector3): void;
   footstep(bot: Bot, sprinting: boolean): void;
@@ -123,6 +129,12 @@ export class Bot implements Damageable, Combatant {
   /** Firing at where an enemy was last seen, to keep their head down. */
   private readonly suppressPos = new THREE.Vector3();
   private suppressUntil = -Infinity;
+  // Grenades
+  private frags = 0;
+  private smokes = 0;
+  private grenadeReadyAt = 0;
+  /** Running from a live grenade until this time. */
+  private dodgeUntil = -Infinity;
   private readonly progressPos = new THREE.Vector3();
   private progressAt = 0;
   private stride = 0;
@@ -207,6 +219,11 @@ export class Bot implements Damageable, Combatant {
     this.cover = null;
     this.peeking = false;
     this.suppressUntil = -Infinity;
+    const p = this.personality;
+    this.frags = p.grenades > 0.25 ? (p.grenades > 0.7 ? 2 : 1) : 0;
+    this.smokes = p.caution > 0.5 || p.archetype === 'rusher' ? 1 : 0;
+    this.grenadeReadyAt = 0;
+    this.dodgeUntil = -Infinity;
     this.deadTime = 0;
     this.respawnPenalty = 0;
   }
@@ -338,6 +355,8 @@ export class Bot implements Damageable, Combatant {
 
   private think(s: BotServices): void {
     const w = this.weapon;
+    // Running from a grenade: nothing else matters for a moment.
+    if (s.time < this.dodgeUntil) return;
     const threat = this.target ? this.target.feet : this.lastSeen.time > s.time - 4 ? this.lastSeen.pos : null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
       // Keep a cover spot while it still hides us; only look for a new one when it doesn't.
@@ -414,6 +433,68 @@ export class Bot implements Damageable, Combatant {
     }
     // Reload opportunistically when nothing is visible.
     if (!this.target && w.ammo < this.def.magSize * 0.4 && w.canReload()) w.startReload();
+    this.considerGrenade(s, inCover);
+  }
+
+  /** A live enemy frag landed nearby: sprint away from it. */
+  dodge(from: THREE.Vector3, s: BotServices): void {
+    if (s.time < this.dodgeUntil) return;
+    const away = this.tmp.subVectors(this.feet, from).setY(0);
+    if (away.lengthSq() < 1e-3) away.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+    away.normalize().multiplyScalar(9).add(this.feet);
+    const p = s.nav.closest(away, this.tmp2);
+    if (!p) return;
+    this.dodgeUntil = s.time + 2.2;
+    this.action = 'cover'; // sprints, no strafing
+    this.cover = null;
+    this.setGoalForce(p, s);
+  }
+
+  /**
+   * Frag an enemy who ducked behind cover (or a group of them); pop smoke
+   * when caught in the open under fire with nowhere to hide.
+   */
+  private considerGrenade(s: BotServices, inCover: boolean): void {
+    if (s.time < this.grenadeReadyAt || this.weapon.reloading) return;
+    const p = this.personality;
+    const eye = this.eyePos(this.eye);
+    if (this.frags > 0 && Math.random() < p.grenades * 0.4) {
+      let at: THREE.Vector3 | null = null;
+      const age = s.time - this.lastSeen.time;
+      if (!this.target && age > 0.8 && age < 5) {
+        const d = this.feet.distanceTo(this.lastSeen.pos);
+        const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1);
+        if (d > 9 && d < 32 && !s.lineOfSight(eye, spot)) at = this.lastSeen.pos;
+      } else if (this.target) {
+        const d = this.feet.distanceTo(this.target.feet);
+        if (d > 12 && d < 30 && s.enemiesNear(this.team, this.target.feet, 5) >= 2) at = this.target.feet;
+      }
+      if (at && s.alliesNear(this.team, at, 8) === 0 && s.throwGrenade(this, 'frag', at)) {
+        this.frags--;
+        this.afterThrow(at, s);
+        return;
+      }
+    }
+    // Smoke when shot at in the open with no cover close by (screens the dash to it).
+    const farFromCover = !this.cover || this.cover.distanceTo(this.feet) > 6;
+    if (this.smokes > 0 && !inCover && farFromCover && s.time - this.lastHurt < 1.5) {
+      const threat = this.target?.feet ?? (s.time - this.lastSeen.time < 3 ? this.lastSeen.pos : null);
+      const d = threat ? this.feet.distanceTo(threat) : 0;
+      if (threat && d > 15 && Math.random() < 0.4 + p.caution * 0.4) {
+        // A screen a few meters out toward them.
+        const at = this.tmp2.lerpVectors(this.feet, threat, 7 / d);
+        if (s.throwGrenade(this, 'smoke', at)) {
+          this.smokes--;
+          this.afterThrow(at, s);
+        }
+      }
+    }
+  }
+
+  private afterThrow(at: THREE.Vector3, s: BotServices): void {
+    this.grenadeReadyAt = s.time + 9 + Math.random() * 6;
+    this.pauseUntil = s.time + 0.8;
+    this.faceToward(at, 1);
   }
 
   /** Engage movement: close in, back off or strafe to hold the preferred range. */

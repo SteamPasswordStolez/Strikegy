@@ -13,6 +13,8 @@ import type { NavWorld } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel } from './SoldierModel';
 import { BOT_WEAPONS, rollPersonality, weaponFor } from './personality';
+import { lobVelocity } from './ballistics';
+import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_TEAM, otherTeam, type Combatant } from './types';
 
 const DEG = Math.PI / 180;
@@ -149,6 +151,10 @@ export class BotManager implements BotServices {
   private coverBudget = 0;
   /** Set by the game mode (Zone): squad objectives and respawn points. */
   hooks: BotModeHooks | null = null;
+  /** Set by the game: where bot grenades go. */
+  grenades: Throwables | null = null;
+  /** A team throws at most one grenade per this many seconds. */
+  private readonly grenadeAt: Record<Team, number> = { blue: 0, red: 0 };
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -236,6 +242,7 @@ export class BotManager implements BotServices {
     this.coverBudget = COVER_SEARCHES_PER_STEP;
     for (const team of ['blue', 'red'] as const) this.plan(team);
     this.index();
+    this.dodgeGrenades();
     for (const e of this.entries) {
       const b = e.bot;
       b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
@@ -572,6 +579,52 @@ export class BotManager implements BotServices {
   keepPace(bot: Bot): boolean {
     const l = this.entryOf(bot).leader;
     return !!l && l.alive && Math.hypot(l.velocity.x, l.velocity.z) < 3.3 && l.feet.distanceTo(bot.feet) < 14;
+  }
+
+  throwGrenade(bot: Bot, type: 'frag' | 'smoke', at: THREE.Vector3): boolean {
+    if (!this.grenades || this.time < this.grenadeAt[bot.team]) return false;
+    const origin = bot.eyePos(new THREE.Vector3());
+    origin.y += 0.1;
+    // Frags roll on for a couple of meters after landing: aim a bit short.
+    const aim = at.clone();
+    if (type === 'frag') {
+      const back = new THREE.Vector3(origin.x - at.x, 0, origin.z - at.z);
+      if (back.lengthSq() > 9) aim.addScaledVector(back.normalize(), 1.6);
+    }
+    // A flat-ish arc first; a steep lob over cover when that falls short.
+    const vel = lobVelocity(origin, aim, 38, 22) ?? lobVelocity(origin, aim, 58, 22);
+    if (!vel) return false;
+    this.grenadeAt[bot.team] = this.time + 1.5;
+    this.grenades.launch(type, origin, vel, { id: bot.id, name: bot.name, team: bot.team });
+    return true;
+  }
+
+  alliesNear(team: Team, pos: THREE.Vector3, radius: number): number {
+    let n = 0;
+    for (const e of this.entries) if (e.bot.team === team && e.bot.alive && e.bot.feet.distanceTo(pos) < radius) n++;
+    if (this.player.team === team && this.player.alive && this.player.feet.distanceTo(pos) < radius) n++;
+    return n;
+  }
+
+  enemiesNear(team: Team, pos: THREE.Vector3, radius: number): number {
+    let n = 0;
+    for (const c of this.enemies[team]) if (c.alive && c.feet.distanceTo(pos) < radius) n++;
+    return n;
+  }
+
+  /** Bots who see (or are right next to) a live enemy frag about to go off run from it. */
+  private dodgeGrenades(): void {
+    if (!this.grenades) return;
+    for (const g of this.grenades.frags()) {
+      if (g.fuse > 2.8) continue;
+      for (const e of this.entries) {
+        const b = e.bot;
+        if (!b.alive || b.team === g.team) continue;
+        const d = b.feet.distanceTo(g.pos);
+        if (d > 7) continue;
+        if (d < 3 || this.lineOfSight(b.eyePos(new THREE.Vector3()), g.pos.clone().setY(g.pos.y + 0.2))) b.dodge(g.pos, this);
+      }
+    }
   }
 
   /** The player spotted / was shot by an enemy at `pos`: tell the player's team and squad. */

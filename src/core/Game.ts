@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { EventBus } from './EventBus';
-import type { DamageCause, GameEvents } from './events';
+import type { DamageCause, GameEvents, GrenadeOwner } from './events';
 import { FixedStepLoop } from './FixedStepLoop';
 import { QUALITY_ORDER, gpuName, isTouchDevice, loadSettings, resolveQuality, saveSettings, type Settings } from './Settings';
 import { setLocale, t, type MessageKey } from '@/i18n';
@@ -255,6 +255,7 @@ export class Game {
       if (import.meta.env.DEV) console.info(`[strikegy] navmesh built in ${Math.round(performance.now() - tNav)} ms`);
       if (this.nav) {
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
+        this.bots.grenades = this.throwables;
       }
     }
     const mode = this.options.mode ?? 'auto';
@@ -392,7 +393,7 @@ export class Game {
       this.viewModel.onThrow();
     });
     bus.on('grenade:bounce', (e) => this.audio.grenadeBounce(e.point, e.speed));
-    bus.on('grenade:detonate', (e) => this.detonate(e.type, e.point));
+    bus.on('grenade:detonate', (e) => this.detonate(e.type, e.point, e.owner));
     bus.on('player:footstep', (e) => {
       this.audio.footstep(e.surface, e.sprinting);
       this.bots?.alert(e.point, e.sprinting ? 18 : 13, this.playerCombatant);
@@ -630,7 +631,7 @@ export class Game {
     if (!type) return;
     const { eye, fwd, right, up } = this.weapons.aimBasis(this.player);
     const origin = eye.clone().addScaledVector(fwd, 0.45).addScaledVector(right, -0.15).addScaledVector(up, -0.05);
-    this.throwables.throw(type, origin, fwd.clone(), this.player.velocity.clone());
+    this.throwables.throw(type, origin, fwd.clone(), this.player.velocity.clone(), { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM });
     this.throwBlock = THROW_BLOCK;
     this.throwCooldown = THROW_COOLDOWN;
     this.bus.emit('grenade:thrown', { type, remaining: this.grenades.counts[type] });
@@ -645,8 +646,10 @@ export class Game {
     return !!hit;
   }
 
-  private detonate(type: GrenadeType, point: THREE.Vector3): void {
+  private detonate(type: GrenadeType, point: THREE.Vector3, owner: GrenadeOwner): void {
     const spec = GRENADES[type];
+    const byPlayer = owner.id === PLAYER_ID;
+    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon: t('grenade.frag'), id: owner.id };
     const cam = this.renderer.camera;
     const listenerDist = cam.position.distanceTo(point);
     const probe = point.clone().setY(point.y + 0.25);
@@ -655,7 +658,7 @@ export class Game {
       this.audio.explosion(point, listenerDist);
       this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003));
       for (const tg of this.targets) {
-        if (!tg.alive) continue;
+        if (!tg.alive || !byPlayer) continue;
         const c = tg.center;
         const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
         if (dmg <= 0) continue;
@@ -668,18 +671,28 @@ export class Game {
         const c = b.feet.clone().setY(b.feet.y + b.eyeHeight * 0.65);
         const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
         if (dmg <= 0) continue;
-        const source: DamageSource = { pos: point.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: t('grenade.frag'), id: PLAYER_ID };
         // No friendly fire from grenades either.
-        if (b.team === PLAYER_TEAM) continue;
+        if (b.team === owner.team) continue;
         const killed = b.applyDamage(dmg, 'body', source);
-        this.bus.emit('combat:hit', { targetId: b.id, part: 'body', damage: dmg, killed, point: c, byPlayer: true });
+        this.bus.emit('combat:hit', { targetId: b.id, part: 'body', damage: dmg, killed, point: c, byPlayer });
         if (killed) {
-          this.bus.emit('combat:kill', { attacker: 'You', victim: b.name, weapon: t('grenade.frag'), headshot: false, byPlayer: true, attackerTeam: PLAYER_TEAM, victimTeam: b.team });
+          this.bus.emit('combat:kill', {
+            attacker: byPlayer ? 'You' : owner.name,
+            victim: b.name,
+            weapon: t('grenade.frag'),
+            headshot: false,
+            byPlayer,
+            attackerTeam: owner.team,
+            victimTeam: b.team,
+          });
         }
       }
-      const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
-      const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
-      if (dmg > 0) this.damagePlayer(dmg, point, 'explosion');
+      // Your own grenade hurts you; teammates' don't.
+      if (byPlayer || owner.team !== PLAYER_TEAM) {
+        const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
+        const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
+        if (dmg > 0) this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
+      }
     } else if (type === 'flash') {
       this.effects.flashbang(point);
       this.audio.flashbang(point);

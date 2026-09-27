@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
-import type { GameBus } from '@/core/events';
+import type { GameBus, GrenadeOwner } from '@/core/events';
 import { GRENADES, type GrenadeType } from '@/combat/explosions';
 
 const RADIUS = 0.045;
@@ -8,6 +8,7 @@ const BODY_COLOR: Record<GrenadeType, number> = { frag: 0x3f4a33, flash: 0x5b5f6
 
 interface LiveGrenade {
   type: GrenadeType;
+  owner: GrenadeOwner;
   body: RAPIER.RigidBody;
   mesh: THREE.Mesh;
   fuse: number;
@@ -68,10 +69,16 @@ export class Throwables {
     }
   }
 
-  throw(type: GrenadeType, origin: THREE.Vector3, dir: THREE.Vector3, carry: THREE.Vector3): void {
+  /** Throw along `dir` at the grenade's throw speed (the player's throw). */
+  throw(type: GrenadeType, origin: THREE.Vector3, dir: THREE.Vector3, carry: THREE.Vector3, owner: GrenadeOwner): void {
+    const vel = dir.clone().multiplyScalar(GRENADES[type].throwSpeed).add(new THREE.Vector3(0, 2.5, 0)).add(carry);
+    this.launch(type, origin, vel, owner);
+  }
+
+  /** Throw with an exact launch velocity (bots aim their lobs). */
+  launch(type: GrenadeType, origin: THREE.Vector3, vel: THREE.Vector3, owner: GrenadeOwner): void {
     const spec = GRENADES[type];
     const world = this.physics.world;
-    const vel = dir.clone().multiplyScalar(spec.throwSpeed).add(new THREE.Vector3(0, 2.5, 0)).add(carry);
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(origin.x, origin.y, origin.z)
@@ -94,7 +101,16 @@ export class Throwables {
     mesh.castShadow = true;
     mesh.position.copy(origin);
     this.scene.add(mesh);
-    this.live.push({ type, body, mesh, fuse: spec.fuse, lastVel: vel.clone(), bounceCooldown: 0 });
+    this.live.push({ type, owner, body, mesh, fuse: spec.fuse, lastVel: vel.clone(), bounceCooldown: 0 });
+  }
+
+  /** Live frag grenades (for bots to get away from). */
+  *frags(): Generator<{ pos: THREE.Vector3; fuse: number; team: GrenadeOwner['team'] }> {
+    for (const g of this.live) {
+      if (g.type !== 'frag') continue;
+      const t = g.body.translation();
+      yield { pos: new THREE.Vector3(t.x, t.y, t.z), fuse: g.fuse, team: g.owner.team };
+    }
   }
 
   /** Sim step: fuses and bounce detection (sudden velocity change). */
@@ -115,7 +131,7 @@ export class Throwables {
       if (g.fuse <= 0) {
         const t = g.body.translation();
         this.remove(i);
-        this.bus.emit('grenade:detonate', { type: g.type, point: new THREE.Vector3(t.x, t.y + RADIUS, t.z) });
+        this.bus.emit('grenade:detonate', { type: g.type, point: new THREE.Vector3(t.x, t.y + RADIUS, t.z), owner: g.owner });
       }
     }
   }

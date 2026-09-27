@@ -4,6 +4,13 @@ import type { GrenadeType } from '@/combat/explosions';
 import type { ImpactSurface } from '@/physics/surfaces';
 import type { Team } from '@/world/mapTypes';
 
+/** Who threw a grenade (damage attribution, friendly fire). */
+export interface GrenadeOwner {
+  id: number;
+  name: string;
+  team: Team;
+}
+
 export type HitPart = 'head' | 'body' | 'limb';
 export type ReloadCue = 'magOut' | 'magIn' | 'chamber' | 'shell';
 export type DamageCause = 'bullet' | 'explosion' | 'fall';
@@ -39,7 +46,7 @@ export interface GameEvents {
   };
   'grenade:thrown': { type: GrenadeType; remaining: number };
   'grenade:bounce': { type: GrenadeType; point: THREE.Vector3; speed: number };
-  'grenade:detonate': { type: GrenadeType; point: THREE.Vector3 };
+  'grenade:detonate': { type: GrenadeType; point: THREE.Vector3; owner: GrenadeOwner };
   'player:landed': { impactSpeed: number };
   'player:footstep': { surface: ImpactSurface; sprinting: boolean; point: THREE.Vector3 };
   'player:damaged': { amount: number; from: THREE.Vector3 | null; cause: DamageCause };
