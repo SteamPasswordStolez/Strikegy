@@ -27,6 +27,8 @@ export interface BrainInput {
   regroup?: boolean;
   /** Sent around the side of the enemy the squad is fighting. */
   flanking?: boolean;
+  /** Has a window to hold: get there and stay rather than chase. */
+  posted?: boolean;
   /** Personality (0..1, default 0.5): keen to push and chase. */
   aggression?: number;
   /** Personality (0..1, default 0.5): prefers fighting from cover. */
@@ -39,6 +41,7 @@ export function scoreActions(i: BrainInput): Record<BotAction, number> {
   const empty = i.ammo <= 0;
   const aggression = i.aggression ?? 0.5;
   const caution = i.caution ?? 0.5;
+  const roam = i.posted ? 0.35 : 1;
   return {
     // Fight whatever is visible; less keen with an empty magazine.
     engage: i.hasTarget ? (empty ? 0.3 : 0.75) : 0,
@@ -58,12 +61,12 @@ export function scoreActions(i: BrainInput): Record<BotAction, number> {
     // Top up between fights; forced when empty and nowhere to hide.
     reload: !i.reloading && i.ammo < 1 ? (empty ? (i.hasTarget ? 0.6 : 0.95) : i.hasTarget ? 0 : (1 - i.ammo) * 0.8) : 0,
     // Chase the last known position of a recently seen enemy.
-    hunt: !i.hasTarget && i.lastSeenAge < 10 ? 0.25 + aggression * 0.2 + 0.3 * (1 - i.lastSeenAge / 10) : 0,
+    hunt: !i.hasTarget && i.lastSeenAge < 10 ? (0.25 + aggression * 0.2 + 0.3 * (1 - i.lastSeenAge / 10)) * roam : 0,
     // Check out noises.
-    investigate: !i.hasTarget && i.heardAge < 6 ? 0.22 + aggression * 0.16 + 0.15 * (1 - i.heardAge / 6) : 0,
+    investigate: !i.hasTarget && i.heardAge < 6 ? (0.22 + aggression * 0.16 + 0.15 * (1 - i.heardAge / 6)) * roam : 0,
     // Default: move with the squad toward the objective; catching up with the leader beats checking noises.
     // A flank run beats chasing what the squad is already shooting at.
-    advance: i.regroup ? 0.6 : i.flanking ? 0.85 : 0.25,
+    advance: i.regroup ? 0.6 : i.flanking ? 0.85 : i.posted ? 0.4 : 0.25,
   };
 }
 

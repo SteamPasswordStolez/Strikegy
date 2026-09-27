@@ -61,6 +61,12 @@ export interface BotServices {
   alliesNear(team: Team, pos: THREE.Vector3, radius: number): number;
   /** Living enemies of `team` within `radius` of `pos`. */
   enemiesNear(team: Team, pos: THREE.Vector3, radius: number): number;
+  /** The window this bot holds, when standing at it. */
+  postHere(bot: Bot): THREE.Vector3 | null;
+  /** Has a window assigned (standing at it or not). */
+  hasPost(bot: Bot): boolean;
+  /** Inside a building's footprint. */
+  insideBuilding(p: THREE.Vector3): boolean;
   /** Resolves one trigger pull (all pellets) along `dir` from the bot's eye. */
   fire(bot: Bot, dir: THREE.Vector3): void;
   footstep(bot: Bot, sprinting: boolean): void;
@@ -357,6 +363,12 @@ export class Bot implements Damageable, Combatant {
     const w = this.weapon;
     // Running from a grenade: nothing else matters for a moment.
     if (s.time < this.dodgeUntil) return;
+    // At our window: it is our cover (duck below the sill, stand up to shoot).
+    const post = s.postHere(this);
+    if (post && (!this.cover || this.cover.distanceTo(post) > 0.5)) {
+      this.cover = post.clone();
+      this.coverUntil = s.time + 4;
+    }
     const threat = this.target ? this.target.feet : this.lastSeen.time > s.time - 4 ? this.lastSeen.pos : null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
       // Keep a cover spot while it still hides us; only look for a new one when it doesn't.
@@ -393,6 +405,7 @@ export class Bot implements Damageable, Combatant {
         inCover,
         regroup: s.mustRegroup(this),
         flanking: s.isFlanking(this),
+        posted: s.hasPost(this),
         aggression: this.personality.aggression,
         caution: this.personality.caution,
       },
@@ -681,8 +694,15 @@ export class Bot implements Damageable, Combatant {
         wz = dz / Math.max(dl, 1e-4);
         const engaged = !!this.target;
         const wary = this.personality.caution > 0.55 && s.time - this.lastSeen.time < 6;
+        // Going into a building after someone: walk and look (clearing it), don't charge in.
+        const clearing = this.action === 'hunt' && s.insideBuilding(this.goal);
         const sprint =
-          !engaged && !wary && !s.keepPace(this) && (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') && d > 4;
+          !engaged &&
+          !wary &&
+          !clearing &&
+          !s.keepPace(this) &&
+          (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') &&
+          d > 4;
         speed = (engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed) * this.personality.pace;
       } else {
         this.hasGoal = false;
@@ -698,7 +718,7 @@ export class Bot implements Damageable, Combatant {
         ? !this.peeking
         : this.target
           ? this.feet.distanceTo(this.target.feet) > crouchRange
-          : this.action === 'advance' && !this.hasGoal && this.personality.caution > 0.5 && !!s.watchDir(this));
+          : this.action === 'advance' && !this.hasGoal && this.personality.caution > 0.5 && !!s.watchDir(this) && !s.postHere(this));
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 

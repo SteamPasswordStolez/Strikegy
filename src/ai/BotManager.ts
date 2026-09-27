@@ -75,6 +75,22 @@ export interface BotSquad {
   leader: Combatant | null;
 }
 
+/** A window to fight from, and who has claimed it. */
+interface Post {
+  pos: THREE.Vector3;
+  facing: THREE.Vector3;
+  owner: Bot | null;
+}
+
+interface Footprint {
+  x: number;
+  z: number;
+  cos: number;
+  sin: number;
+  hw: number;
+  hd: number;
+}
+
 /** A squad's current fight: where, since when, last seen. */
 interface SquadContact {
   pos: THREE.Vector3;
@@ -110,6 +126,8 @@ interface BotEntry {
   flankFor: number;
   /** Direction to watch when idle at a guard post or around the leader. */
   watch: THREE.Vector3 | null;
+  /** Window this bot holds (marksmen and anchors near their objective). */
+  post: Post | null;
   squad: number;
   /** Squad leader to stay close to (the player's squad), else null. */
   leader: Combatant | null;
@@ -140,6 +158,8 @@ export class BotManager implements BotServices {
   private readonly enemies: Record<Team, Combatant[]> = { blue: [], red: [] };
   private readonly grid = new Map<number, Bot[]>();
   private readonly contacts = new Map<string, SquadContact>();
+  private posts: Post[] = [];
+  private footprints: Footprint[] = [];
   private readonly sightCache = new Map<number, { time: number; visible: boolean }>();
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
@@ -208,6 +228,7 @@ export class BotManager implements BotServices {
           flankGoal: null,
           flankFor: -1,
           watch: null,
+          post: null,
         });
         this.byBot.set(bot, this.entries[this.entries.length - 1]!);
       }
@@ -247,10 +268,81 @@ export class BotManager implements BotServices {
       const b = e.bot;
       b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
       b.step(dt, this);
-      if (e.simAlive && !b.alive) this.bus.emit('combatant:died', { team: b.team, id: b.id });
+      if (e.simAlive && !b.alive) {
+        this.bus.emit('combatant:died', { team: b.team, id: b.id });
+        this.release(e);
+      }
       if (!b.alive && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
       e.simAlive = b.alive;
     }
+  }
+
+  /** Buildings: window firing spots (kept if they are on the navmesh) and footprints. */
+  setTactical(windows: { pos: [number, number, number]; facing: [number, number] }[], footprints: { x: number; z: number; yaw: number; hw: number; hd: number }[]): void {
+    this.posts = [];
+    for (const w of windows) {
+      const p = new THREE.Vector3(...w.pos);
+      const on = this.nav.closest(p);
+      if (!on || on.distanceTo(p) > 0.6) continue;
+      this.posts.push({ pos: on, facing: new THREE.Vector3(w.facing[0], 0, w.facing[1]), owner: null });
+    }
+    this.footprints = footprints.map((f) => ({ x: f.x, z: f.z, cos: Math.cos(f.yaw), sin: Math.sin(f.yaw), hw: f.hw, hd: f.hd }));
+  }
+
+  insideBuilding(p: THREE.Vector3): boolean {
+    for (const f of this.footprints) {
+      const dx = p.x - f.x;
+      const dz = p.z - f.z;
+      if (Math.abs(dx * f.cos - dz * f.sin) < f.hw && Math.abs(dx * f.sin + dz * f.cos) < f.hd) return true;
+    }
+    return false;
+  }
+
+  private release(e: BotEntry): void {
+    if (e.post) e.post.owner = null;
+    e.post = null;
+  }
+
+  /**
+   * Marksmen and anchors take a free window near their objective that looks
+   * the right way: toward the zone when attacking it, out toward the enemy
+   * when guarding it.
+   */
+  private assignPost(e: BotEntry): void {
+    const g = e.objective;
+    const p = e.bot.personality;
+    const suited = (p.archetype === 'marksman' || p.archetype === 'anchor') && e.role !== 'flank' && !e.leader;
+    if (!g || !suited || !e.bot.alive) {
+      this.release(e);
+      return;
+    }
+    const reach = g.radius + (p.archetype === 'marksman' ? 55 : 35);
+    const fits = (post: Post) => {
+      const d = post.pos.distanceTo(g.pos);
+      if (d > reach) return false;
+      if (g.defend) return post.facing.dot(g.front ?? post.facing) > 0.3;
+      const to = this.tmp.subVectors(g.pos, post.pos).setY(0);
+      return d > g.radius * 0.5 && post.facing.dot(to.normalize()) > 0.45;
+    };
+    if (e.post && fits(e.post)) return;
+    this.release(e);
+    if (Math.random() > 0.75) return;
+    const free = this.posts.filter((post) => !post.owner && fits(post));
+    if (!free.length) return;
+    free.sort((a, b) => a.pos.distanceTo(e.bot.feet) - b.pos.distanceTo(e.bot.feet));
+    const pick = free[Math.floor(Math.random() * Math.min(3, free.length))]!;
+    pick.owner = e.bot;
+    e.post = pick;
+  }
+
+  hasPost(bot: Bot): boolean {
+    return !!this.entryOf(bot).post;
+  }
+
+  /** The bot's window, if it is standing at it. */
+  postHere(bot: Bot): THREE.Vector3 | null {
+    const post = this.entryOf(bot).post;
+    return post && post.pos.distanceTo(bot.feet) < 1.2 ? post.pos : null;
   }
 
   /** Groups bots into squads; bots in a squad with a leader follow it. Squad-mates of the player get green markers. */
@@ -344,6 +436,7 @@ export class BotManager implements BotServices {
           }
         }
         if (changed) e.via = e.bot.alive ? this.approach(e.bot.feet, g.pos, sides[k]!) : null;
+        this.assignPost(e);
       }
       // Guard posts: spread along the side of the zone facing the enemy, each watching outward.
       for (const [g, list] of guards) {
@@ -470,6 +563,7 @@ export class BotManager implements BotServices {
     const follow = this.followPoint(e);
     if (follow) return follow;
     if (this.isFlanking(bot)) return e.flankGoal!.clone();
+    if (e.post) return e.post.pos.clone();
     if (e.objective) {
       if (e.via) {
         const toGoal = bot.feet.distanceTo(e.objective.pos);
@@ -572,7 +666,9 @@ export class BotManager implements BotServices {
 
   /** Where to look when idle (guard post / around the leader), or null. */
   watchDir(bot: Bot): THREE.Vector3 | null {
-    return this.entryOf(bot).watch;
+    const e = this.entryOf(bot);
+    if (e.post && this.postHere(bot)) return e.post.facing;
+    return e.watch;
   }
 
   /** Walking with a leader who is walking or crouching: don't sprint ahead. */

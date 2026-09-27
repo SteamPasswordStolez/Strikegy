@@ -44,11 +44,26 @@ const STAIR_DEG = 34;
 /** Walls start this far below the ground so slopes never show a gap. */
 const PLINTH = 1;
 
+/** A place to fight from inside a building: standing at a window, looking out along `facing`. */
+export interface WindowSpot {
+  /** Feet position (world). */
+  pos: [number, number, number];
+  /** Unit direction out of the window (world xz). */
+  facing: [number, number];
+}
+
 export interface BuiltBuilding {
   objects: MapObject[];
   /** Height of the roof top above the base. */
   height: number;
+  /** Windows low enough to shoot out of, one spot each. */
+  windows: WindowSpot[];
 }
+
+/** Stand this far inside the wall at a window (clear of the wall for the navmesh). */
+const WINDOW_STANDOFF = 0.75;
+/** A window is a firing spot when its sill is below a standing soldier's eyes. */
+const MAX_SILL = 1.3;
 
 /** Radius of the level pad the terrain should provide under a building. */
 export function buildingPadRadius(b: BuildingDef): number {
@@ -71,7 +86,14 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
   const cos = Math.cos(yaw);
   const sin = Math.sin(yaw);
   const out: MapObject[] = [];
-
+  const windows: WindowSpot[] = [];
+  /** Local (x, z) + direction -> world spot at local floor height y. */
+  const spot = (lx: number, y: number, lz: number, dx: number, dz: number) => {
+    windows.push({
+      pos: [b.pos[0] + lx * cos + lz * sin, baseY + y, b.pos[1] - lx * sin + lz * cos],
+      facing: [dx * cos + dz * sin, -dx * sin + dz * cos],
+    });
+  };
   /** Adds a box given its local center/size (x right, z toward the viewer = south). */
   const box = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, type: MapObject['type'] = 'wall', col = color, mat = material, pitch = 0, roll = 0) => {
     if (sx <= 0.01 || sy <= 0.01 || sz <= 0.01) return;
@@ -92,16 +114,39 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
   if (b.solid) {
     box(0, (H - PLINTH) / 2, 0, W, H + PLINTH, D);
     roof(spec, W, D, H, box, trim, rng);
-    return { objects: out, height: H + 1.5 };
+    return { objects: out, height: H + 1.5, windows };
   }
 
   const doors = new Set((b.doors ?? 's').split(''));
   // Walls: n/s run the full width, e/w fit between them.
-  const sides: { id: string; len: number; place: (a: number, len: number, y: number, h: number) => void }[] = [
-    { id: 'n', len: W, place: (a, len, y, h) => box(-W / 2 + a + len / 2, y + h / 2, -D / 2 + WALL / 2, len, h, WALL) },
-    { id: 's', len: W, place: (a, len, y, h) => box(W / 2 - a - len / 2, y + h / 2, D / 2 - WALL / 2, len, h, WALL) },
-    { id: 'w', len: D - 2 * WALL, place: (a, len, y, h) => box(-W / 2 + WALL / 2, y + h / 2, D / 2 - WALL - a - len / 2, WALL, h, len) },
-    { id: 'e', len: D - 2 * WALL, place: (a, len, y, h) => box(W / 2 - WALL / 2, y + h / 2, -D / 2 + WALL + a + len / 2, WALL, h, len) },
+  const s = WINDOW_STANDOFF;
+  const sides: {
+    id: string;
+    len: number;
+    place: (a: number, len: number, y: number, h: number) => void;
+    /** Firing spot for an opening centred at `a` along the wall, on the floor at y. */
+    window: ((a: number, y: number) => void) | null;
+  }[] = [
+    {
+      id: 'n',
+      len: W,
+      place: (a, len, y, h) => box(-W / 2 + a + len / 2, y + h / 2, -D / 2 + WALL / 2, len, h, WALL),
+      window: (a, y) => spot(-W / 2 + a, y, -D / 2 + WALL + s, 0, -1),
+    },
+    {
+      id: 's',
+      len: W,
+      place: (a, len, y, h) => box(W / 2 - a - len / 2, y + h / 2, D / 2 - WALL / 2, len, h, WALL),
+      window: (a, y) => spot(W / 2 - a, y, D / 2 - WALL - s, 0, 1),
+    },
+    {
+      id: 'w',
+      len: D - 2 * WALL,
+      place: (a, len, y, h) => box(-W / 2 + WALL / 2, y + h / 2, D / 2 - WALL - a - len / 2, WALL, h, len),
+      window: (a, y) => spot(-W / 2 + WALL + s, y, D / 2 - WALL - a, -1, 0),
+    },
+    // The stairwell runs along the east wall: no standing at its windows.
+    { id: 'e', len: D - 2 * WALL, place: (a, len, y, h) => box(W / 2 - WALL / 2, y + h / 2, -D / 2 + WALL + a + len / 2, WALL, h, len), window: null },
   ];
   for (const side of sides) {
     const bays = Math.max(1, Math.round(side.len / BAY));
@@ -123,6 +168,7 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
         }
         const [ow, oh, sill] = open;
         const pier = (bw - ow) / 2;
+        if (sill > 0 && sill <= MAX_SILL && side.window) side.window(a + pier + ow / 2, y0 + (f === 0 ? 0.2 : 0));
         side.place(a, pier, bottom, top - bottom);
         side.place(a + pier + ow, pier, bottom, top - bottom);
         if (sill > 0) side.place(a + pier, ow, bottom, y0 + sill - bottom);
@@ -156,7 +202,7 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
     box(stairX - STAIR_W / 2 - 0.05, f * spec.storey + 0.5, (holeZ0 + holeZ1) / 2, 0.08, 1, holeZ1 - holeZ0, 'cover', trim, 'metal');
   }
   roof(spec, W, D, H, box, trim, rng);
-  return { objects: out, height: H + (spec.roof === 'pitched' ? Math.min(W, D) * 0.3 : 1) };
+  return { objects: out, height: H + (spec.roof === 'pitched' ? Math.min(W, D) * 0.3 : 1), windows };
 }
 
 type BoxFn = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, type?: MapObject['type'], col?: string, mat?: SurfaceMaterial, pitch?: number, roll?: number) => void;

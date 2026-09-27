@@ -256,6 +256,7 @@ export class Game {
       if (this.nav) {
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
         this.bots.grenades = this.throwables;
+        this.bots.setTactical(built.windows, built.footprints);
       }
     }
     const mode = this.options.mode ?? 'auto';

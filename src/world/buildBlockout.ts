@@ -5,7 +5,7 @@ import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
-import { buildBuilding } from './buildings';
+import { buildBuilding, type WindowSpot } from './buildings';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
@@ -47,6 +47,10 @@ export interface BuiltMap {
   root: THREE.Group;
   /** Walkable terrain triangles for the navmesh (null on flat box maps). */
   navExtra: { positions: number[]; indices: number[] } | null;
+  /** Window firing spots of all buildings. */
+  windows: WindowSpot[];
+  /** Building footprints: centre, yaw (radians), half extents. */
+  footprints: { x: number; z: number; yaw: number; hw: number; hd: number }[];
 }
 
 /**
@@ -69,6 +73,8 @@ export function buildBlockout(
   const groundKind = map.world.groundMaterial ?? 'ground';
   let navExtra: BuiltMap['navExtra'] = null;
   let groundHandle: number | null = null;
+  const windows: WindowSpot[] = [];
+  const footprints: BuiltMap['footprints'] = [];
 
   if (terrain) {
     const built = buildTerrain(terrain, surfaces.get(groundKind), physics);
@@ -101,7 +107,10 @@ export function buildBlockout(
   }
   for (const b of map.buildings ?? []) {
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
-    for (const obj of buildBuilding(b, base).objects) addBox(obj, batches, physics, surfaces, impacts);
+    const built = buildBuilding(b, base);
+    for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts);
+    windows.push(...built.windows);
+    footprints.push({ x: b.pos[0], z: b.pos[1], yaw: ((b.rot ?? 0) * Math.PI) / 180, hw: b.size[0] / 2, hd: b.size[1] / 2 });
   }
 
   for (const b of batches.values()) {
@@ -116,7 +125,7 @@ export function buildBlockout(
   }
 
   scene.add(root);
-  return { root, navExtra };
+  return { root, navExtra, windows, footprints };
 }
 
 /** Top of a thin snapped floor within this height of the terrain = paint on the ground (roads, pavements). */
