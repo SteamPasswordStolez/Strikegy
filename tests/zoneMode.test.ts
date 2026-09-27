@@ -49,10 +49,13 @@ describe('ZoneMode', () => {
     expect(zm.spawnPoint('blue', 'C', null).pos.x).toBe(-120); // not ours: base
   });
 
-  it('ranks objectives: defend, then neutral, then enemy', () => {
+  it('ranks objectives: defend, then neutral, then enemy, then guard what we hold', () => {
     const { zm } = setup();
     for (let i = 0; i < 12; i++) zm.step(0.1, [at('blue', -60), at('red', 60)]);
-    expect(zm.objectives('blue').map((o) => o.pos.x)).toEqual([0, 60]);
+    const goals = zm.objectives('blue');
+    expect(goals.map((o) => o.pos.x)).toEqual([0, 60, -60]);
+    expect(goals.map((o) => !!o.defend)).toEqual([false, false, true]);
+    expect(goals[2]!.front!.x).toBeGreaterThan(0.9); // attacks come from the red side
     zm.step(0.1, [at('red', -60)]);
     expect(zm.objectives('blue')[0]!.pos.x).toBe(-60);
   });

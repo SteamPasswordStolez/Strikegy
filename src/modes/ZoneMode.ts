@@ -17,6 +17,10 @@ export interface SpawnOption {
 export interface Objective {
   pos: THREE.Vector3;
   radius: number;
+  /** Held by the asking team: guard it. */
+  defend?: boolean;
+  /** Unit direction (xz) from the zone toward the enemy base: where attacks come from. */
+  front?: THREE.Vector3;
 }
 
 interface Presence {
@@ -147,13 +151,20 @@ export class ZoneMode {
       .map((z) => {
         const d = Math.hypot(z.x - base.x, z.z - base.z);
         let s: number;
-        if (z.owner === team) s = ZoneRules.underAttack(z) ? 3 : z.pushing === null && z.control !== (team === 'blue' ? 1 : -1) ? 1 : -1;
+        // Owned and quiet: a low-priority guard post (squads left over after the other goals).
+        if (z.owner === team) s = ZoneRules.underAttack(z) ? 3 : z.pushing === null && z.control !== (team === 'blue' ? 1 : -1) ? 1 : 0.2;
         else if (z.owner === null) s = 2;
         else s = 1.6;
         return { z, s: s - d / 400 };
       })
       .filter((e) => e.s > -0.5)
       .sort((a, b) => b.s - a.s);
-    return scored.map(({ z }) => ({ pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius }));
+    const enemy = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
+    return scored.map(({ z }) => ({
+      pos: new THREE.Vector3(z.x, z.y, z.z),
+      radius: z.radius,
+      defend: z.owner === team,
+      front: new THREE.Vector3(enemy.x - z.x, 0, enemy.z - z.z).normalize(),
+    }));
   }
 }

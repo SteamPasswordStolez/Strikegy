@@ -25,6 +25,8 @@ export interface BrainInput {
   inCover: boolean;
   /** Fell far behind its squad leader. */
   regroup?: boolean;
+  /** Sent around the side of the enemy the squad is fighting. */
+  flanking?: boolean;
   /** Personality (0..1, default 0.5): keen to push and chase. */
   aggression?: number;
   /** Personality (0..1, default 0.5): prefers fighting from cover. */
@@ -60,7 +62,8 @@ export function scoreActions(i: BrainInput): Record<BotAction, number> {
     // Check out noises.
     investigate: !i.hasTarget && i.heardAge < 6 ? 0.22 + aggression * 0.16 + 0.15 * (1 - i.heardAge / 6) : 0,
     // Default: move with the squad toward the objective; catching up with the leader beats checking noises.
-    advance: i.regroup ? 0.6 : 0.25,
+    // A flank run beats chasing what the squad is already shooting at.
+    advance: i.regroup ? 0.6 : i.flanking ? 0.85 : 0.25,
   };
 }
 

@@ -46,7 +46,15 @@ export interface BotServices {
   squadGoal(bot: Bot): THREE.Vector3;
   /** The team's most recent sighting of any enemy. */
   teamSighting(team: Team): { pos: THREE.Vector3; time: number } | null;
-  reportSighting(team: Team, pos: THREE.Vector3): void;
+  reportSighting(bot: Bot, pos: THREE.Vector3): void;
+  /** The bot's squad's current fight (shared over any distance), if recent. */
+  squadContact(bot: Bot): { pos: THREE.Vector3; time: number } | null;
+  /** On a flank run around the squad's fight (squadGoal returns the flank point). */
+  isFlanking(bot: Bot): boolean;
+  /** Where to look when idle at a post, or null. */
+  watchDir(bot: Bot): THREE.Vector3 | null;
+  /** Following a leader who is walking: don't sprint. */
+  keepPace(bot: Bot): boolean;
   /** Resolves one trigger pull (all pellets) along `dir` from the bot's eye. */
   fire(bot: Bot, dir: THREE.Vector3): void;
   footstep(bot: Bot, sprinting: boolean): void;
@@ -311,7 +319,7 @@ export class Bot implements Damageable, Combatant {
         if (progress >= 1) {
           this.lastSeen.pos.copy(e.feet);
           this.lastSeen.time = s.time;
-          s.reportSighting(this.team, e.feet);
+          s.reportSighting(this, e.feet);
           // Prefer the current target, then the closest.
           const d = e === this.target ? dist * 0.6 : dist;
           if (d < bestDist) {
@@ -347,8 +355,10 @@ export class Bot implements Damageable, Combatant {
     }
     const inCover = !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
     // Teammates' sightings only matter nearby; otherwise the whole team converges on one fight.
+    // Squadmates share their fight over any distance.
     const sighting = s.teamSighting(this.team);
-    const team = sighting && sighting.pos.distanceTo(this.feet) < TEAM_INTEL_RANGE ? sighting : null;
+    const squad = s.squadContact(this);
+    const team = squad ?? (sighting && sighting.pos.distanceTo(this.feet) < TEAM_INTEL_RANGE ? sighting : null);
     const ownAge = s.time - this.lastSeen.time;
     const teamAge = team ? s.time - team.time : Infinity;
     this.action = chooseAction(
@@ -363,6 +373,7 @@ export class Bot implements Damageable, Combatant {
         coverKnown: !!this.cover,
         inCover,
         regroup: s.mustRegroup(this),
+        flanking: s.isFlanking(this),
         aggression: this.personality.aggression,
         caution: this.personality.caution,
       },
@@ -542,6 +553,10 @@ export class Bot implements Damageable, Combatant {
         yaw += Math.sin(s.time * 2.3 + this.id) * 2.5 * DEG;
         pitch += Math.sin(s.time * 3.1 + this.id * 2) * 1.2 * DEG;
       }
+    } else if (!this.hasGoal && this.action === 'advance' && s.watchDir(this)) {
+      // At a post: watch the assigned direction.
+      const w = s.watchDir(this)!;
+      yaw = Math.atan2(-w.x, -w.z);
     } else if (this.hasGoal && this.path.length > 0) {
       // Look where we are going, or toward the last threat when hunting.
       const look = this.action === 'hunt' || this.action === 'investigate' ? this.goal : this.path[Math.min(this.pathIndex, this.path.length - 1)]!;
@@ -585,7 +600,8 @@ export class Bot implements Damageable, Combatant {
         wz = dz / Math.max(dl, 1e-4);
         const engaged = !!this.target;
         const wary = this.personality.caution > 0.55 && s.time - this.lastSeen.time < 6;
-        const sprint = !engaged && !wary && (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') && d > 4;
+        const sprint =
+          !engaged && !wary && !s.keepPace(this) && (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') && d > 4;
         speed = (engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed) * this.personality.pace;
       } else {
         this.hasGoal = false;
@@ -599,7 +615,9 @@ export class Bot implements Damageable, Combatant {
       speed === 0 &&
       (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)
         ? !this.peeking
-        : !!this.target && this.feet.distanceTo(this.target.feet) > crouchRange);
+        : this.target
+          ? this.feet.distanceTo(this.target.feet) > crouchRange
+          : this.action === 'advance' && !this.hasGoal && this.personality.caution > 0.5 && !!s.watchDir(this));
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 

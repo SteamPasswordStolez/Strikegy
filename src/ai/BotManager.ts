@@ -27,6 +27,7 @@ const SEPARATION_RADIUS = 1.1;
 const SEPARATION_SPEED = 2.2;
 const BLOB_SIZE = 1.1;
 /** Cover searches allowed per sim step across all bots (each is ~0.1-0.3 ms). */
+const squadKey = (team: Team, squad: number): string => `${team}:${squad}`;
 /** Neighbour grid cell (m); at least the separation radius. */
 const CELL = 2;
 const cellKey = (x: number, z: number): number => (Math.floor(x / CELL) + 32768) * 65536 + (Math.floor(z / CELL) + 32768);
@@ -48,10 +49,19 @@ export interface BotOptions {
   difficulty: Difficulty;
 }
 
+/** A place for a squad to go: take it, or (defend) guard it facing `front`. */
+export interface BotObjective {
+  pos: THREE.Vector3;
+  radius: number;
+  defend?: boolean;
+  /** Unit direction attacks come from. */
+  front?: THREE.Vector3;
+}
+
 /** Game-mode hooks: where squads go and where bots respawn. */
 export interface BotModeHooks {
   /** Places worth going for, best first (empty = push toward the enemy base). */
-  objectives(team: Team): { pos: THREE.Vector3; radius: number }[];
+  objectives(team: Team): BotObjective[];
   /** Respawn position for a bot (given the squad objective it is assigned to). */
   spawnAt(bot: Bot, objective: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
 }
@@ -61,6 +71,13 @@ export interface BotSquad {
   index: number;
   botIds: number[];
   leader: Combatant | null;
+}
+
+/** A squad's current fight: where, since when, last seen. */
+interface SquadContact {
+  pos: THREE.Vector3;
+  since: number;
+  last: number;
 }
 
 interface TeamState {
@@ -78,13 +95,19 @@ interface BotEntry {
   marker: THREE.Sprite | null;
   /** Stable offset around the squad objective, re-rolled each plan. */
   offset: THREE.Vector3;
+  /** Flankers swing around the side of a fight the squad is in. */
   role: 'assault' | 'flank';
   flankSide: number;
   wasAlive: boolean;
   /** Alive at the end of the last sim step (for death events). */
   simAlive: boolean;
   /** Mode objective this bot is assigned to, if any. */
-  objective: { pos: THREE.Vector3; radius: number } | null;
+  objective: BotObjective | null;
+  /** Flank run in progress, and the contact (its start time) it was for. */
+  flankGoal: THREE.Vector3 | null;
+  flankFor: number;
+  /** Direction to watch when idle at a guard post or around the leader. */
+  watch: THREE.Vector3 | null;
   squad: number;
   /** Squad leader to stay close to (the player's squad), else null. */
   leader: Combatant | null;
@@ -114,6 +137,7 @@ export class BotManager implements BotServices {
   private readonly listener = new THREE.Vector3();
   private readonly enemies: Record<Team, Combatant[]> = { blue: [], red: [] };
   private readonly grid = new Map<number, Bot[]>();
+  private readonly contacts = new Map<string, SquadContact>();
   private readonly sightCache = new Map<number, { time: number; visible: boolean }>();
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
@@ -175,6 +199,9 @@ export class BotManager implements BotServices {
           leader: null,
           slot: 0,
           via: null,
+          flankGoal: null,
+          flankFor: -1,
+          watch: null,
         });
         this.byBot.set(bot, this.entries[this.entries.length - 1]!);
       }
@@ -222,14 +249,23 @@ export class BotManager implements BotServices {
   /** Groups bots into squads; bots in a squad with a leader follow it. Squad-mates of the player get green markers. */
   setSquads(squads: BotSquad[]): void {
     for (const sq of squads) {
+      const members: BotEntry[] = [];
       sq.botIds.forEach((id, k) => {
         const e = this.entries.find((x) => x.bot.id === id);
         if (!e) return;
         e.squad = sq.index;
         e.leader = sq.leader;
         e.slot = k + 1;
+        e.role = 'assault';
+        members.push(e);
         if (e.marker && sq.leader) e.marker.material = this.markerMaterial('#6bdc6b');
       });
+      // The keenest member of a bot squad of three or more is its flanker.
+      if (!sq.leader && members.length >= 3) {
+        const f = members.reduce((a, b) => (b.bot.personality.aggression > a.bot.personality.aggression ? b : a));
+        f.role = 'flank';
+        f.flankSide = Math.random() < 0.5 ? -1 : 1;
+      }
     }
   }
 
@@ -281,16 +317,37 @@ export class BotManager implements BotServices {
       const n = Math.min(goals.length, Math.max(1, Math.ceil(squads.length / 2)));
       // Each squad picks a way in (left, straight or right) so they don't all funnel down one street.
       const sides = squads.map(() => Math.floor(Math.random() * 3) - 1);
+      const guards = new Map<BotObjective, BotEntry[]>();
       for (const e of this.entries) {
         if (e.bot.team !== team) continue;
         const k = Math.max(0, squads.indexOf(e.squad));
         const g = goals[k % n]!;
-        const changed = e.objective?.pos !== g.pos;
+        const changed = !e.objective || e.objective.pos.distanceToSquared(g.pos) > 1;
         e.objective = g;
-        const a = Math.random() * Math.PI * 2;
-        const r = Math.sqrt(Math.random()) * g.radius * 0.7;
-        e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+        if (g.defend) {
+          const list = guards.get(g) ?? [];
+          list.push(e);
+          guards.set(g, list);
+        } else {
+          e.watch = null;
+          if (changed) {
+            const a = Math.random() * Math.PI * 2;
+            const r = Math.sqrt(Math.random()) * g.radius * 0.7;
+            e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+          }
+        }
         if (changed) e.via = e.bot.alive ? this.approach(e.bot.feet, g.pos, sides[k]!) : null;
+      }
+      // Guard posts: spread along the side of the zone facing the enemy, each watching outward.
+      for (const [g, list] of guards) {
+        const front = g.front ?? new THREE.Vector3(0, 0, -1);
+        const base = Math.atan2(front.z, front.x);
+        list.forEach((e, j) => {
+          const a = base + (list.length > 1 ? (j / (list.length - 1) - 0.5) * 2.4 : 0);
+          const r = g.radius * (0.55 + 0.15 * (j % 3));
+          e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+          e.watch = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).lerp(front, 0.4).normalize();
+        });
       }
       t.objective.copy(goals[0]!.pos);
       return;
@@ -405,6 +462,7 @@ export class BotManager implements BotServices {
     const e = this.entryOf(bot);
     const follow = this.followPoint(e);
     if (follow) return follow;
+    if (this.isFlanking(bot)) return e.flankGoal!.clone();
     if (e.objective) {
       if (e.via) {
         const toGoal = bot.feet.distanceTo(e.objective.pos);
@@ -443,12 +501,84 @@ export class BotManager implements BotServices {
   private followPoint(e: BotEntry): THREE.Vector3 | null {
     const l = e.leader;
     if (!l || !l.alive) return null;
-    // Staggered behind the leader, alternating sides.
     const side = e.slot % 2 ? 1 : -1;
-    const ang = l.yaw + Math.PI + side * (0.45 + 0.2 * e.slot);
-    const dist = 4 + e.slot * 1.8;
+    const speed = Math.hypot(l.velocity.x, l.velocity.z);
+    let ang: number;
+    let dist: number;
+    if (speed > 1) {
+      // On the move: staggered behind, along the way the leader is actually going.
+      const heading = Math.atan2(-l.velocity.x, -l.velocity.z);
+      ang = heading + Math.PI + side * (0.45 + 0.2 * e.slot);
+      dist = 4 + e.slot * 1.8;
+      e.watch = null;
+    } else {
+      // Stopped: fan out around the leader and cover the other directions.
+      const posts = [2.4, -2.4, 1.3, -1.3, Math.PI];
+      ang = l.yaw + posts[(e.slot - 1) % posts.length]!;
+      dist = 4.5 + (e.slot > 2 ? 1.5 : 0);
+      e.watch = new THREE.Vector3(-Math.sin(ang), 0, -Math.cos(ang));
+    }
     const p = new THREE.Vector3(l.feet.x - Math.sin(ang) * dist, l.feet.y, l.feet.z - Math.cos(ang) * dist);
     return this.nav.closest(p) ?? l.feet.clone();
+  }
+
+  /** Squad member heading for (or on) a flank of the squad's current fight. */
+  isFlanking(bot: Bot): boolean {
+    const e = this.entryOf(bot);
+    if (e.role !== 'flank' || e.leader) return false;
+    const c = this.contacts.get(squadKey(bot.team, e.squad));
+    if (!c || this.time - c.last > 6 || this.time - c.since < 4 || e.flankFor === c.since) {
+      e.flankGoal = null;
+      return false;
+    }
+    if (!e.flankGoal) {
+      // Out to the side of the enemy, level with them, from where the squad is.
+      const mates = this.entries.filter((x) => x.squad === e.squad && x.bot.team === bot.team && x.bot.alive);
+      const centre = mates.reduce((a, x) => a.add(x.bot.feet), new THREE.Vector3()).divideScalar(Math.max(1, mates.length));
+      const back = this.tmp.subVectors(centre, c.pos).setY(0);
+      if (back.lengthSq() < 1) back.set(1, 0, 0);
+      back.normalize();
+      const p = c.pos.clone().addScaledVector(back, 5);
+      p.x += -back.z * 22 * e.flankSide;
+      p.z += back.x * 22 * e.flankSide;
+      e.flankGoal = this.nav.closest(p);
+      if (!e.flankGoal) {
+        e.flankFor = c.since;
+        return false;
+      }
+    }
+    if (bot.feet.distanceTo(e.flankGoal) < 5) {
+      // Arrived: done with this flank (hunt / engage takes over from here).
+      e.flankFor = c.since;
+      e.flankGoal = null;
+      return false;
+    }
+    return true;
+  }
+
+  /** The squad's current fight, if recent. */
+  squadContact(bot: Bot): { pos: THREE.Vector3; time: number } | null {
+    const e = this.entryOf(bot);
+    const c = e.squad >= 0 ? this.contacts.get(squadKey(bot.team, e.squad)) : undefined;
+    return c && this.time - c.last < 8 ? { pos: c.pos, time: c.last } : null;
+  }
+
+  /** Where to look when idle (guard post / around the leader), or null. */
+  watchDir(bot: Bot): THREE.Vector3 | null {
+    return this.entryOf(bot).watch;
+  }
+
+  /** Walking with a leader who is walking or crouching: don't sprint ahead. */
+  keepPace(bot: Bot): boolean {
+    const l = this.entryOf(bot).leader;
+    return !!l && l.alive && Math.hypot(l.velocity.x, l.velocity.z) < 3.3 && l.feet.distanceTo(bot.feet) < 14;
+  }
+
+  /** The player spotted / was shot by an enemy at `pos`: tell the player's team and squad. */
+  playerContact(pos: THREE.Vector3): void {
+    this.noteSighting(this.player.team, pos);
+    const e = this.entries.find((x) => x.leader === this.player);
+    if (e) this.noteContact(this.player.team, e.squad, pos);
   }
 
   mustRegroup(bot: Bot): boolean {
@@ -458,6 +588,7 @@ export class BotManager implements BotServices {
 
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean {
     const e = this.entryOf(bot);
+    if (e.flankGoal && e.flankGoal.distanceTo(current) > 4 && this.isFlanking(bot)) return true;
     const l = e.leader;
     if (!l || !l.alive) return false;
     // Re-path when the leader has walked well away from where we were heading.
@@ -468,7 +599,23 @@ export class BotManager implements BotServices {
     return this.teams[team].sighting;
   }
 
-  reportSighting(team: Team, pos: THREE.Vector3): void {
+  reportSighting(bot: Bot, pos: THREE.Vector3): void {
+    this.noteSighting(bot.team, pos);
+    const e = this.entryOf(bot);
+    if (e.squad >= 0) this.noteContact(bot.team, e.squad, pos);
+  }
+
+  private noteContact(team: Team, squad: number, pos: THREE.Vector3): void {
+    const key = squadKey(team, squad);
+    const c = this.contacts.get(key);
+    if (!c || this.time - c.last > 6) this.contacts.set(key, { pos: pos.clone(), since: this.time, last: this.time });
+    else {
+      c.pos.copy(pos);
+      c.last = this.time;
+    }
+  }
+
+  private noteSighting(team: Team, pos: THREE.Vector3): void {
     const t = this.teams[team];
     if (!t.sighting) t.sighting = { pos: pos.clone(), time: this.time };
     else {

@@ -905,6 +905,14 @@ export class Game {
         leader: sq.has(PLAYER_ID) ? this.playerCombatant : null,
       })),
     );
+    // The player's fights are the squad's fights: whoever they hit or get shot by.
+    this.bus.on('combat:hit', (e) => {
+      const victim = e.byPlayer ? bots.bots.find((b) => b.id === e.targetId) : undefined;
+      if (victim) bots.playerContact(victim.feet);
+    });
+    this.bus.on('player:damaged', (e) => {
+      if (e.from) bots.playerContact(e.from);
+    });
     const zm = this.zoneMode;
     bots.hooks = {
       objectives: (team) => zm?.objectives(team) ?? [],
