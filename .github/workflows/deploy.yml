@@ -27,6 +27,9 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      # The strikegy-v2 mirror (github.io) must not claim strikegy.org, which serves p1 from this repo's main.
+      - if: github.repository != 'SteamPasswordStolez/Strikegy'
+        run: rm -f dist/CNAME
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:

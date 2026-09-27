@@ -8,6 +8,7 @@ The owner writes in Korean; reply in Korean.
 
 - **Branch `v2` only.** Commit and push finished work to `v2` without asking (`git push origin v2`).
 - **Never push to or modify `main`.** strikegy.org serves the old p1 game from main; changing that needs the owner's explicit OK.
+- **v2 is deployed from a second repo**, `SteamPasswordStolez/strikegy-v2` (GitHub Pages, https://steampasswordstolez.github.io/strikegy-v2/). Its `main` mirrors this repo's `v2`: after pushing `v2` here, also push it there (`git push https://github.com/SteamPasswordStolez/strikegy-v2 v2:main`; add the repo to a cloud session first). The workflow drops `CNAME` on that repo so it never claims strikegy.org.
 - **Downloads need approval first.** Before fetching any asset/texture/model/sound, show the owner the list with sources, licenses and sizes, and wait for a yes. Prefer CC0 (Poly Haven etc.). Record new assets in `assets.manifest.json` / `sounds.manifest.json`.
 - Don't port p1 code wholesale; port numbers and concepts.
 - The campaign story and the class redesign (M4-C) are co-designed with the owner — ask before building content for them.
