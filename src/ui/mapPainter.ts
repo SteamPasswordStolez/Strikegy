@@ -58,6 +58,27 @@ export function paintMap(map: MapDef, boundary: Boundary, maxPx = 1400): MapImag
     g.fillRect((-o.size[0] / 2) * scale, (-o.size[2] / 2) * scale, o.size[0] * scale, o.size[2] * scale);
     g.restore();
   };
+  // Rivers under everything else, trees on top of the ground.
+  for (const r of map.world.terrain?.rivers ?? []) {
+    g.beginPath();
+    r.pts.forEach(([x, z], i) => {
+      const [u, v] = project(x, z);
+      if (i === 0) g.moveTo(u, v);
+      else g.lineTo(u, v);
+    });
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.strokeStyle = '#3f6275';
+    g.lineWidth = Math.max(2, r.width * scale);
+    g.stroke();
+  }
+  g.fillStyle = 'rgba(28, 48, 34, 0.75)';
+  for (const [x, z, sc] of map.trees ?? []) {
+    const [u, v] = project(x, z);
+    g.beginPath();
+    g.arc(u, v, Math.max(1, (1.6 + sc * 1.4) * scale), 0, Math.PI * 2);
+    g.fill();
+  }
   // Flat things first (roads, pads), then walls and cover on top.
   for (const o of map.objects) if (o.type === 'floor' && o.size[1] < 1.5) rect(o, o.color && isDark(o.color) ? '#353634' : '#5d5e57');
   for (const o of map.objects) if (o.type === 'wall' || (o.type === 'floor' && o.size[1] >= 1.5)) rect(o, '#9a9a8e');

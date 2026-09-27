@@ -61,7 +61,13 @@ export interface BotServices {
   /** Following a leader who is walking: don't sprint. */
   keepPace(bot: Bot): boolean;
   /** Lobs a grenade onto `at`; false if it can't (out of reach, team just threw one). */
-  throwGrenade(bot: Bot, type: 'frag' | 'smoke', at: THREE.Vector3): boolean;
+  throwGrenade(bot: Bot, type: 'frag' | 'smoke' | 'flash', at: THREE.Vector3): boolean;
+  /** Walls or terrain between two points (smoke does not count: bullets go through it). */
+  wallsBlock(from: THREE.Vector3, to: THREE.Vector3): boolean;
+  /** Inside an active smoke cloud. */
+  inSmoke(p: THREE.Vector3): boolean;
+  /** This bot has noticed enemy `e` (shown on its team's minimap). */
+  spot(bot: Bot, e: Combatant): void;
   /** Living members of `team` within `radius` of `pos` (the player included). */
   alliesNear(team: Team, pos: THREE.Vector3, radius: number): number;
   /** Living enemies of `team` within `radius` of `pos`. */
@@ -154,6 +160,10 @@ export class Bot implements Damageable, Combatant {
   // Grenades
   private frags = 0;
   private smokes = 0;
+  private flashes = 0;
+  /** After throwing a flashbang: face away from where it will pop until this time. */
+  private lookAwayUntil = -Infinity;
+  private readonly lookAwayFrom = new THREE.Vector3();
   private grenadeReadyAt = 0;
   /** Running from a live grenade until this time. */
   private dodgeUntil = -Infinity;
@@ -244,6 +254,9 @@ export class Bot implements Damageable, Combatant {
     const p = this.personality;
     this.frags = p.grenades > 0.25 ? (p.grenades > 0.7 ? 2 : 1) : 0;
     this.smokes = p.caution > 0.5 || p.archetype === 'rusher' ? 1 : 0;
+    this.flashes = p.aggression > 0.55 || p.archetype === 'rusher' ? 1 : 0;
+    this.lookAwayUntil = -Infinity;
+    this.blindUntil = -Infinity;
     this.grenadeReadyAt = 0;
     this.dodgeUntil = -Infinity;
     this.deadTime = 0;
@@ -395,6 +408,7 @@ export class Bot implements Damageable, Combatant {
           this.lastSeen.pos.copy(e.feet);
           this.lastSeen.time = s.time;
           s.reportSighting(this, e.feet);
+          s.spot(this, e);
           // Prefer whoever is shooting at us, then the current target, then the closest.
           let d = e === this.target ? dist * 0.6 : dist;
           if (e.id === this.lastAttacker && s.time - this.lastHurt < 3) d *= 0.4;
@@ -417,6 +431,10 @@ export class Bot implements Damageable, Combatant {
     const w = this.weapon;
     // Running from a grenade: nothing else matters for a moment.
     if (s.time < this.dodgeUntil) return;
+    if (this.blinded) {
+      this.reactBlind(s);
+      return;
+    }
     // At our window: it is our cover (duck below the sill, stand up to shoot).
     const post = s.postHere(this);
     if (post && (!this.cover || this.cover.distanceTo(post) > 0.5)) {
@@ -510,6 +528,8 @@ export class Bot implements Damageable, Combatant {
         }
         break;
     }
+    // Someone just vanished into smoke: keep firing into it.
+    if (!this.target && s.time - this.lastSeen.time < 3.5 && s.inSmoke(this.lastSeen.pos)) this.planSuppress(s, true);
     // Reload opportunistically when nothing is visible.
     if (!this.target && w.ammo < this.def.magSize * 0.4 && w.canReload()) w.startReload();
     this.considerGrenade(s, inCover);
@@ -524,6 +544,33 @@ export class Bot implements Damageable, Combatant {
       if (e.feet.distanceToSquared(this.feet) < r2) n++;
     }
     return n;
+  }
+
+  private get blinded(): boolean {
+    return this.nowRef < this.blindUntil;
+  }
+
+  /**
+   * Flashbanged: steadier types stumble back from where the threat was,
+   * bolder ones crouch and hold the trigger down toward it; nobody advances.
+   */
+  private reactBlind(s: BotServices): void {
+    const p = this.personality;
+    this.peeking = false;
+    const age = s.time - this.lastSeen.time;
+    const auto = this.def.fireMode === 'auto' || this.def.fireMode === 'burst';
+    if (age < 5 && p.aggression > 0.45 && auto && this.weapon.ammo > 0) {
+      this.suppressPos.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1.1);
+      this.suppressUntil = this.blindUntil;
+    }
+    const threat = age < 6 ? this.lastSeen.pos : s.time - this.heard.time < 4 ? this.heard.pos : null;
+    if (threat && p.caution > 0.5) {
+      if (this.action !== 'cover' || !this.hasGoal) this.backOff(threat, s);
+      this.action = 'cover';
+    } else {
+      this.hasGoal = false;
+      this.action = 'hold';
+    }
   }
 
   /** A live enemy frag landed nearby: sprint away from it. */
@@ -548,6 +595,25 @@ export class Bot implements Damageable, Combatant {
     if (s.time < this.grenadeReadyAt || this.weapon.reloading) return;
     const p = this.personality;
     const eye = this.eyePos(this.eye);
+    // Flash an enemy who ducked out of sight around a corner or into a
+    // building, then go in after them.
+    if (this.flashes > 0 && !this.target && (this.action === 'hunt' || p.aggression > 0.6) && Math.random() < 0.5) {
+      const age = s.time - this.lastSeen.time;
+      const d = this.feet.distanceTo(this.lastSeen.pos);
+      const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1);
+      if (age > 0.5 && age < 6 && d > 6 && d < 24 && !s.lineOfSight(eye, spot) && s.alliesNear(this.team, this.lastSeen.pos, 10) === 0) {
+        const at = this.tmp2.copy(this.lastSeen.pos);
+        if (s.throwGrenade(this, 'flash', at)) {
+          this.flashes--;
+          this.afterThrow(at, s);
+          this.lookAwayFrom.copy(at);
+          this.lookAwayUntil = s.time + 1.9;
+          // Keep the chase going through the flash.
+          this.lastSeen.time = s.time;
+          return;
+        }
+      }
+    }
     if (this.frags > 0 && Math.random() < p.grenades * 0.4) {
       let at: THREE.Vector3 | null = null;
       const age = s.time - this.lastSeen.time;
@@ -638,13 +704,15 @@ export class Bot implements Damageable, Combatant {
    * Keep an enemy who just ducked out of sight pinned: a few bursts at where
    * they were (automatic weapons, steadier characters, clear line to the spot).
    */
-  private planSuppress(s: BotServices): void {
+  private planSuppress(s: BotServices, intoSmoke = false): void {
     const age = s.time - this.lastSeen.time;
     const auto = this.def.fireMode === 'auto' || this.def.fireMode === 'burst';
-    if (!auto || age > 2.5 || this.weapon.ammo < this.def.magSize * 0.3 || this.personality.archetype === 'rusher') return;
+    if (!auto || age > (intoSmoke ? 3.5 : 2.5) || this.weapon.ammo < this.def.magSize * 0.3) return;
+    if (this.personality.archetype === 'rusher' && !intoSmoke) return;
     if (s.time < this.suppressUntil) return;
     const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1.1);
-    if (!s.lineOfSight(this.eyePos(this.eye), spot)) return;
+    // Smoke hides the target but not the spot from bullets.
+    if (s.wallsBlock(this.eyePos(this.eye), spot)) return;
     this.suppressPos.copy(spot);
     this.suppressUntil = s.time + 1.2 + Math.random() * 1.3;
   }
@@ -697,7 +765,10 @@ export class Bot implements Damageable, Combatant {
     let yaw = this.aimYaw;
     let pitch = 0;
     const t = this.target;
-    if (t) {
+    if (s.time < this.lookAwayUntil) {
+      // Our own flash is about to pop: turn our back to it.
+      [yaw] = yawPitchOf(this.feet.x - this.lookAwayFrom.x, 0, this.feet.z - this.lookAwayFrom.z);
+    } else if (t) {
       this.tracked += dt;
       // Error drifts smoothly between re-sampled offsets, shrinking as the bot settles.
       if (s.time > this.jitterAt) {
@@ -724,8 +795,10 @@ export class Bot implements Damageable, Combatant {
       [yaw, pitch] = yawPitchOf(p.x - eye.x, p.y - eye.y, p.z - eye.z);
       if (this.suppressing) {
         // Suppression is loose: sweep around the spot.
-        yaw += Math.sin(s.time * 2.3 + this.id) * 2.5 * DEG;
-        pitch += Math.sin(s.time * 3.1 + this.id * 2) * 1.2 * DEG;
+        // Firing blind after a flash: much wilder.
+        const wild = this.blinded ? 4 : 1;
+        yaw += Math.sin(s.time * 2.3 + this.id) * 2.5 * DEG * wild;
+        pitch += Math.sin(s.time * 3.1 + this.id * 2) * 1.2 * DEG * wild;
       }
     } else if (!this.hasGoal && this.action === 'advance' && s.watchDir(this)) {
       // At a post: watch the assigned direction.
@@ -779,12 +852,14 @@ export class Bot implements Damageable, Combatant {
         const sprint =
           !engaged &&
           !wary &&
+          !this.blinded &&
           !clearing &&
           !s.keepPace(this) &&
           (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') &&
           d > 4;
         speed = (engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed) * this.personality.pace;
         if (s.waterDepth(this.feet) > WADE_DEPTH) speed *= WADE_SPEED;
+        if (this.blinded) speed *= 0.6;
       } else {
         this.hasGoal = false;
       }
@@ -800,6 +875,7 @@ export class Bot implements Damageable, Combatant {
         : this.target
           ? this.feet.distanceTo(this.target.feet) > crouchRange || this.suppression > 0.55
           : this.suppression > 0.45 ||
+            this.blinded ||
             this.action === 'advance' && !this.hasGoal && this.personality.caution > 0.5 && !!s.watchDir(this) && !s.postHere(this));
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);

@@ -47,6 +47,10 @@ const NEAR_MISS_AMOUNT = 0.22;
 const BLAST_SUPPRESS = 14;
 /** Mates within this distance of a killed bot learn where the killer was. */
 const KILL_INTEL_RANGE = 35;
+/** Enemies noticed by a bot stay on the team's minimap this long (s). */
+const SPOT_SEC = 2.5;
+/** Enemies firing within this range of the player show up on the minimap (m). */
+const SPOT_FIRING_RANGE = 60;
 /** Wading this far (m) or more makes a bot consider a bridge instead. */
 const WADE_MIN = 5;
 /** A bridge is taken when it adds at most this much walking (m); rushers accept less. */
@@ -654,6 +658,37 @@ export class BotManager implements BotServices {
     return visible;
   }
 
+  wallsBlock(from: THREE.Vector3, to: THREE.Vector3): boolean {
+    return this.physics.blocked(from, to, Layer.WORLD);
+  }
+
+  inSmoke(p: THREE.Vector3): boolean {
+    for (const s of this.effects.activeSmokes()) if (s.pos.distanceToSquared(p) < s.radius * s.radius) return true;
+    return false;
+  }
+
+  /** When each enemy was last noticed by any bot of the other team (combatant id -> sim time). */
+  private readonly spottedAt = new Map<number, number>();
+
+  spot(_bot: Bot, e: Combatant): void {
+    this.spottedAt.set(e.id, this.time);
+  }
+
+  /**
+   * Enemies of `team` its side currently knows about: noticed by one of its
+   * bots in the last couple of seconds, or firing within earshot of `near`.
+   */
+  spottedEnemies(team: Team, near: THREE.Vector3, out: Combatant[] = []): Combatant[] {
+    out.length = 0;
+    for (const e of this.enemies[team]) {
+      if (!e.alive) continue;
+      const seen = this.time - (this.spottedAt.get(e.id) ?? -Infinity) < SPOT_SEC;
+      const loud = e.firingUntil > this.time && e.feet.distanceToSquared(near) < SPOT_FIRING_RANGE * SPOT_FIRING_RANGE;
+      if (seen || loud) out.push(e);
+    }
+    return out;
+  }
+
   lineOfSight(from: THREE.Vector3, to: THREE.Vector3): boolean {
     const dir = this.tmp.subVectors(to, from);
     const dist = dir.length();
@@ -820,7 +855,7 @@ export class BotManager implements BotServices {
     return !!l && l.alive && Math.hypot(l.velocity.x, l.velocity.z) < 3.3 && l.feet.distanceTo(bot.feet) < 14;
   }
 
-  throwGrenade(bot: Bot, type: 'frag' | 'smoke', at: THREE.Vector3): boolean {
+  throwGrenade(bot: Bot, type: 'frag' | 'smoke' | 'flash', at: THREE.Vector3): boolean {
     if (!this.grenades || this.time < this.grenadeAt[bot.team]) return false;
     const origin = bot.eyePos(new THREE.Vector3());
     origin.y += 0.1;

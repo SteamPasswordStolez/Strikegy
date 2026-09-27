@@ -53,16 +53,16 @@ Performance work: measure first. A reliable CPU benchmark in a hidden/automated 
 
 Milestones: M0 setup → M1 core → M2 combat → M3 bots → M4 modes/meta → M5 mobile → M6 campaign → M7 content.
 
-M4 is split: **M4-A** Zone mode (done: rules, map 1 "Iron Gate", squads, BF-style deploy screen), **M4-B** scoreboard + minimap (reuse `src/ui/mapPainter.ts`), **M4-C** classes + economy (redesign with owner), **M4-D** lobby + settings.
+M4 is split: **M4-A** Zone mode (done: rules, map 1 "Iron Gate", squads, BF-style deploy screen), **M4-B** scoreboard + minimap (minimap done), **M4-C** classes + economy (redesign with owner), **M4-D** lobby + settings.
 
 Zone decisions: death-only tickets; respawn at base / owned zones (zone under attack → spawn a bit away) / next to a squadmate (not while the mate is dead or in combat; squad wipe = +5 s respawn).
 
-Done since: bot overhaul (personalities, peeking / suppression, squad flanking and guard posts, grenades and smoke, window posts; then being suppressed by near misses and blasts, targeting whoever shoots them, kill intel to nearby mates, local odds (hold when outnumbered, press when ahead), concealment by tree crowns (foliage grid), wading slowdown and routing via bridges (`crossings` on rivers)), procedural models for map stand-ins and closed-block facades, first-person hands with fingers, smooth walking on roads, big-fight CPU optimizations.
+Done since: bot overhaul (personalities, peeking / suppression, squad flanking and guard posts, grenades and smoke, window posts; then being suppressed by near misses and blasts, targeting whoever shoots them, kill intel to nearby mates, local odds (hold when outnumbered, press when ahead), concealment by tree crowns (foliage grid), wading slowdown and routing via bridges (`crossings` on rivers); blinded bots spray or stumble back, bots fire into smoke where someone vanished, and throw flashbangs themselves while turning away), procedural models for map stand-ins and closed-block facades, first-person hands with fingers, smooth walking on roads, big-fight CPU optimizations.
 
 Next (owner approved, in this order):
 
 1. Map 2 "Ardennes forest" (`?map=ardennes`, `scripts/maps/ardennes.mjs`), winter. First pass done (2026-09-27): layout designed by Claude (owner's choice), blue west / red east of a N–S river that is knee deep and wadeable (owner's choice: "shallow ford + bridges"), stone bridge (C), sawmill footbridge (A), rail bridge (G); 7 zones (A sawmill, B farm, C stone bridge, D village crossroads, E chapel hill, F bunker ridge, G rail halt), ~200,000 m²; ~2,000 in-map trees; Poly Haven `snow_02` ground (approved, downloaded); `winter` visual profile; new kits logPile / hayBale / bunker / fence. Still to do: real models for the chapel (steeple), barn, sawmill, stone arch bridge and truss rail bridge (now boxes/generic styles), snow on roofs, falling snow, softer road edges in snow, navmesh build is ~5 s on this map. Owner has not seen it yet.
-2. M4-B scoreboard + minimap, M4-C classes/economy (co-design), M4-D lobby/settings.
+2. M4-B: minimap done (`src/ui/Minimap.ts`: round, heading-up, zones, teammates, enemies spotted by bots or firing nearby); scoreboard still to do. M4-C classes/economy (co-design), M4-D lobby/settings.
 3. Later: BF-style resupply stations at zones.
 
 Sound (2026-09-27): ambience and procedural handling sounds (reload per class, bolt/pump, dry fire, landing by surface/speed, grenade pin) are done, and the approved CC0 recordings are in: magazine out/in, rifle charging handle, pistol slide, shotgun pump, bolt open/close (OpenGameArt airsoft reload + "equipment clicks III"), two denoised forest bird calls, and grass / snow / metal footsteps (Kenney). New `ImpactSurface` values `grass` and `snow` exist but no map uses them yet; map 2's snow ground should. Sample total is ~2.2 MB; keep it ≲2.3 MB. The bolt cuts and the birds (noisy source) still need an ear check by the owner.

@@ -48,7 +48,8 @@ import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
 import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
 import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeployScreen';
-import { paintMap } from '@/ui/mapPainter';
+import { paintMap, type MapImage } from '@/ui/mapPainter';
+import { Minimap, type MinimapFrame } from '@/ui/Minimap';
 import { COMBAT_WINDOW, WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
 import type { Team } from '@/world/mapTypes';
@@ -130,6 +131,10 @@ export class Game {
   private deployFlow = false;
   private deployed = true;
   private deployScreen: DeployScreen | null = null;
+  /** Top-down picture of the map (deploy screen and minimap). */
+  private mapImage: MapImage | null = null;
+  private minimap: Minimap | null = null;
+  private readonly minimapFrame: MinimapFrame = { x: 0, z: 0, yaw: 0, zones: [], allies: [], enemies: [] };
   private deployAt = 0;
   private deployRefresh = 0;
   /** Deploy choice: 'base', 'zone:<id>' or 'mate:<id>'. */
@@ -279,6 +284,8 @@ export class Game {
         this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, PLAYER_TEAM, hitId, pellet ? 0.35 : 1);
       }
     }
+    this.mapImage = paintMap(map, terrain.boundary, 2048);
+    this.minimap = new Minimap(this.hud.root, this.mapImage);
     const mode = this.options.mode ?? 'auto';
     if ((mode === 'zone' || (mode === 'auto' && this.bots)) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain);
@@ -848,7 +855,37 @@ export class Game {
     });
   }
 
+  /** Feeds the minimap: zones, teammates, spotted enemies around the player. */
+  private updateMinimap(dt: number): void {
+    const mm = this.minimap;
+    if (!mm) return;
+    const w = this.weapons;
+    const show = this.player.alive && (this.deployed || !this.deployFlow) && !(w.def.scope && w.adsBlend > 0.9);
+    mm.setVisible(show);
+    if (!show) return;
+    const f = this.minimapFrame;
+    const p = this.player;
+    f.x = p.feet.x;
+    f.z = p.feet.z;
+    f.yaw = p.yaw;
+    const zm = this.zoneMode;
+    f.zones = zm
+      ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: z.owner === null ? null : z.owner === PLAYER_TEAM ? 'ally' : 'enemy', contested: z.contested }))
+      : [];
+    f.allies.length = 0;
+    f.enemies.length = 0;
+    if (this.bots) {
+      const squad = this.playerSquad;
+      for (const b of this.bots.bots) {
+        if (b.alive && b.team === PLAYER_TEAM) f.allies.push({ x: b.feet.x, z: b.feet.z, squad: !!squad?.has(b.id) });
+      }
+      for (const e of this.bots.spottedEnemies(PLAYER_TEAM, p.feet)) f.enemies.push({ x: e.feet.x, z: e.feet.z });
+    }
+    mm.draw(f, dt);
+  }
+
   private updateHud(dt: number): void {
+    this.updateMinimap(dt);
     const w = this.weapons;
     const s = w.state;
     const cam = this.renderer.camera;
@@ -979,7 +1016,7 @@ export class Game {
     this.playerBoxes.setEnabled(false);
     this.deployScreen = new DeployScreen(
       this.container,
-      paintMap(map, terrain.boundary),
+      this.mapImage ?? paintMap(map, terrain.boundary),
       (key) => (this.spawnKey = key),
       () => this.deploy(),
     );
