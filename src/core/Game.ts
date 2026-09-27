@@ -50,6 +50,8 @@ import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
 import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeployScreen';
 import { paintMap, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
+import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimAssist';
+import { wrapAngle, yawPitchOf } from '@/ai/aim';
 import { COMBAT_WINDOW, WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
 import type { Team } from '@/world/mapTypes';
@@ -185,9 +187,19 @@ export class Game {
     this.sources.push(this.kbm);
     if (isTouchDevice()) {
       container.classList.add('is-touch');
-      this.touch = new TouchControls(container, () => this.settings.sensitivity);
+      this.touch = new TouchControls(
+        container,
+        () => this.settings.sensitivity,
+        () => this.pause(),
+      );
       this.touch.setVisible(false);
       this.sources.push(this.touch);
+      const hint = document.createElement('div');
+      hint.className = 'rotate-hint';
+      hint.textContent = t('rotate.hint');
+      container.appendChild(hint);
+      // Phones: spatial audio without HRTF (it costs a convolver per voice on a weak CPU).
+      this.audio.maxHrtf = 0;
     }
   }
 
@@ -231,7 +243,7 @@ export class Game {
     const terrain = new Terrain(terrainDef, Boundary.fromMap(map), map.world.size);
     const shaped = hasTerrain(map);
     if (shaped) snapToTerrain(map, terrain);
-    const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null);
+    const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null, r.preset === 'low' ? 2 : 1);
     this.navExtra = built.navExtra;
     const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
     const water = terrain.rivers.length ? new WaterMap(terrain) : null;
@@ -239,11 +251,12 @@ export class Game {
     const winter = map.world.visualProfile === 'winter';
     const kit = outdoor ? createConiferKit(q.msaa, winter) : null;
     if (kit && map.trees?.length) {
-      this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene);
+      // Low quality (phones): 3D trees only close by, impostors beyond.
+      this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
       r.scene.add(this.forest.group);
     }
     this.fitShadows(map, terrain, built.root, props);
-    if (kit) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter });
+    if (kit) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, phone: r.preset === 'low' });
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
@@ -467,7 +480,10 @@ export class Game {
     }
     if (this.touch) {
       this.touch.setVisible(true);
-      document.documentElement.requestFullscreen?.().catch(() => {});
+      document.documentElement
+        .requestFullscreen?.()
+        .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
+        .catch(() => {});
     } else {
       this.kbm.requestLock();
     }
@@ -480,7 +496,8 @@ export class Game {
   private pause(): void {
     if (!this.started) return;
     this.running = false;
-    this.overlay.show(t('paused'), t('start.click'), t('start.hint'));
+    this.touch?.setVisible(false);
+    this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? '' : t('start.hint'));
   }
 
   private frame = (now: number): void => {
@@ -510,6 +527,9 @@ export class Game {
       if (p.alive) {
         lookYaw = input.lookYaw * sens;
         lookPitch = input.lookPitch * sens;
+        if (this.touch && this.deployed) {
+          [lookYaw, lookPitch] = applyAimAssist(lookYaw, lookPitch, this.assistTarget(), { ads: w.adsBlend > 0.5, firing: input.fire, dt });
+        }
         p.applyLook(lookYaw, lookPitch);
       }
       const tSim = performance.now();
@@ -756,6 +776,7 @@ export class Game {
     const killed = p.health.damage(amount);
     this.playerHurtAt = this.bots?.time ?? 0;
     this.bus.emit('player:damaged', { amount, from, cause });
+    if (this.touch) navigator.vibrate?.(Math.min(60, 15 + amount));
     let yaw: number | null = null;
     if (from) {
       const d = from.clone().sub(p.feet);
@@ -800,6 +821,7 @@ export class Game {
     this.weapons.resetAmmo();
     this.grenades.reset();
     this.hud.clearDamage();
+    this.touch?.reset();
     this.flashLeft = 0;
     this.bus.emit('player:respawned', {});
   }
@@ -855,6 +877,41 @@ export class Game {
     });
   }
 
+  private readonly assistEye = new THREE.Vector3();
+  private readonly assistAt = new THREE.Vector3();
+
+  /**
+   * Touch aim assist: the visible enemy closest to the crosshair within a
+   * small cone (one line-of-sight ray for the best candidate only).
+   */
+  private assistTarget(): AssistTarget | null {
+    if (!this.bots) return null;
+    const p = this.player;
+    const eye = this.assistEye.set(p.feet.x, p.feet.y + p.eyeHeight, p.feet.z);
+    const cone = (ASSIST_CONE_DEG * Math.PI) / 180;
+    let best: AssistTarget | null = null;
+    let bestOff = cone;
+    let bestPos: THREE.Vector3 | null = null;
+    for (const e of this.bots.enemiesOf(PLAYER_TEAM)) {
+      if (!e.alive) continue;
+      const dx = e.feet.x - eye.x;
+      const dz = e.feet.z - eye.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 90 || dist < 1) continue;
+      const [ty, tp] = yawPitchOf(dx, e.feet.y + e.eyeHeight * 0.7 - eye.y, dz);
+      const yaw = wrapAngle(ty - p.yaw);
+      const pitch = tp - p.pitch;
+      const off = Math.hypot(yaw, pitch);
+      if (off >= bestOff) continue;
+      bestOff = off;
+      best = { yaw, pitch, distance: dist };
+      bestPos = e.feet;
+    }
+    if (!best || !bestPos) return null;
+    this.assistAt.set(bestPos.x, bestPos.y + 1.2, bestPos.z);
+    return this.bots.lineOfSight(eye, this.assistAt) ? best : null;
+  }
+
   /** Feeds the minimap: zones, teammates, spotted enemies around the player. */
   private updateMinimap(dt: number): void {
     const mm = this.minimap;
@@ -896,6 +953,7 @@ export class Game {
     // Flash: full white-out for the first half, then fade.
     const flash = this.flashTotal > 0 ? Math.min(1, this.flashLeft / (this.flashTotal * 0.5)) * this.flashPeak : 0;
     const sel = this.grenades.selected;
+    this.touch?.setGrenade(t(`grenade.${sel}` as MessageKey), this.grenades.counts[sel]);
     this.hud.update(
       {
         weaponName: w.def.name,

@@ -37,6 +37,8 @@ export interface BackdropOptions {
   kit?: ConiferKit;
   /** Snow-covered ground and trees, no green undergrowth. */
   winter?: boolean;
+  /** Weakest devices (low preset): fewer 3D trees along the edge. */
+  phone?: boolean;
 }
 
 /**
@@ -132,7 +134,7 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
     return out.sort((a, b) => a.pos.x * a.pos.x + a.pos.z * a.pos.z - (b.pos.x * b.pos.x + b.pos.z * b.pos.z));
   };
   // A dense tree line right behind the walls, then woods and clearings.
-  const near = scatter(opts.lowDetail ? 160 : 300, 4, 48, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
+  const near = scatter(opts.lowDetail ? (opts.phone ? 90 : 160) : 300, 4, 48, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
   const far = scatter(opts.lowDetail ? 3500 : 7000, 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
   for (const chunk of bySector(near, (p) => p.pos)) group.add(buildNearTrees(kit, chunk));
   for (const chunk of bySector(far, (p) => p.pos)) group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, chunk));

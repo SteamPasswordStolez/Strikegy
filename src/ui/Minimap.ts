@@ -30,6 +30,7 @@ export class Minimap {
   private readonly g: CanvasRenderingContext2D;
   private size = 0;
   private time = 0;
+  private sinceDraw = Infinity;
 
   constructor(
     parent: HTMLElement,
@@ -47,6 +48,10 @@ export class Minimap {
 
   draw(f: MinimapFrame, dt: number): void {
     this.time += dt;
+    // 30 redraws a second is plenty for a map.
+    this.sinceDraw += dt;
+    if (this.sinceDraw < 1 / 30) return;
+    this.sinceDraw = 0;
     const css = this.canvas.clientWidth;
     if (css === 0) return;
     const px = Math.round(css * Math.min(2, window.devicePixelRatio || 1));

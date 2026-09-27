@@ -3,12 +3,19 @@ import type { InputSource, InputState } from './InputState';
 
 const LOOK_RAD_PER_PX = 0.006;
 const STICK_RADIUS = 56;
+/** Holding the grenade button this long switches grenade type instead of throwing. */
+const LONG_PRESS_MS = 420;
+/** Stick pushed this far forward sprints. */
+const SPRINT_PUSH = 0.92;
 
-type ButtonAction = 'fire' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade';
+type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'pause';
 
 /**
- * Basic touch controls: left side = floating move stick, right side = look drag,
- * plus action buttons. The fire button also works as a look surface while held.
+ * Touch controls for phones in landscape: the left side is a floating move
+ * stick (push it all the way forward to sprint), the right side drags the
+ * view, plus action buttons. Both fire buttons also steer the view while held,
+ * so you can shoot and aim with one thumb. Layout lives in CSS (sized by
+ * screen height, clear of the notch).
  */
 export class TouchControls implements InputSource {
   readonly root: HTMLDivElement;
@@ -18,16 +25,20 @@ export class TouchControls implements InputSource {
   private lookTouches = new Map<number, { x: number; y: number }>();
   private lookDx = 0;
   private lookDy = 0;
-  private firing = false;
-  private pulses = new Set<ButtonAction>();
+  /** Touch ids holding a fire button. */
+  private firing = new Set<number>();
+  private pulses = new Set<ButtonAction | 'cycleGrenade'>();
   private adsToggled = false;
   private crouchToggled = false;
+  private grenadeDown: { id: number; at: number; timer: number } | null = null;
   private stickEl: HTMLDivElement;
   private knobEl: HTMLDivElement;
+  private readonly buttons = new Map<ButtonAction, HTMLDivElement>();
 
   constructor(
     parent: HTMLElement,
     private readonly getSensitivity: () => number,
+    private readonly onPause: () => void = () => {},
   ) {
     this.root = document.createElement('div');
     this.root.className = 'touch-layer';
@@ -38,25 +49,29 @@ export class TouchControls implements InputSource {
     this.stickEl.appendChild(this.knobEl);
     this.root.appendChild(this.stickEl);
 
-    const buttons: [ButtonAction, MessageKey][] = [
+    const buttons: [ButtonAction, MessageKey | null][] = [
       ['fire', 'touch.fire'],
+      ['fire2', null],
       ['ads', 'touch.ads'],
       ['jump', 'touch.jump'],
       ['reload', 'touch.reload'],
       ['crouch', 'touch.crouch'],
       ['grenade', 'touch.grenade'],
+      ['switch', 'touch.switch'],
+      ['pause', null],
     ];
     for (const [action, label] of buttons) {
       const b = document.createElement('div');
       b.className = `touch-btn touch-${action}`;
-      b.textContent = t(label);
+      if (label) b.textContent = t(label);
       b.addEventListener('touchstart', (e) => this.onButton(e, action, true), { passive: false });
       b.addEventListener('touchend', (e) => this.onButton(e, action, false), { passive: false });
       b.addEventListener('touchcancel', (e) => this.onButton(e, action, false), { passive: false });
-      if (action === 'fire') {
+      if (action === 'fire' || action === 'fire2') {
         b.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
       }
       this.root.appendChild(b);
+      this.buttons.set(action, b);
     }
 
     this.root.addEventListener('touchstart', (e) => this.onStart(e), { passive: false });
@@ -69,25 +84,60 @@ export class TouchControls implements InputSource {
   private onButton(e: TouchEvent, action: ButtonAction, down: boolean): void {
     e.preventDefault();
     e.stopPropagation();
-    if (action === 'fire') {
-      this.firing = down;
-      if (down) this.pulses.add('fire');
-      for (const tch of Array.from(e.changedTouches)) {
-        if (down) this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY });
-        else this.lookTouches.delete(tch.identifier);
+    const touches = Array.from(e.changedTouches);
+    const btn = this.buttons.get(action)!;
+    if (action === 'fire' || action === 'fire2') {
+      for (const tch of touches) {
+        if (down) {
+          if (this.firing.size === 0) this.pulses.add('fire');
+          this.firing.add(tch.identifier);
+          this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY });
+        } else {
+          this.firing.delete(tch.identifier);
+          this.lookTouches.delete(tch.identifier);
+        }
+      }
+      btn.classList.toggle('held', down);
+      return;
+    }
+    if (action === 'grenade') {
+      // Tap throws; a long press switches the grenade type.
+      if (down && !this.grenadeDown) {
+        const id = touches[0]!.identifier;
+        const timer = window.setTimeout(() => {
+          if (this.grenadeDown?.id !== id) return;
+          this.pulses.add('cycleGrenade');
+          this.grenadeDown = null;
+          btn.classList.remove('held');
+          navigator.vibrate?.(15);
+        }, LONG_PRESS_MS);
+        this.grenadeDown = { id, at: performance.now(), timer };
+        btn.classList.add('held');
+      } else if (!down && this.grenadeDown) {
+        window.clearTimeout(this.grenadeDown.timer);
+        if (performance.now() - this.grenadeDown.at < LONG_PRESS_MS) this.pulses.add('grenade');
+        this.grenadeDown = null;
+        btn.classList.remove('held');
       }
       return;
     }
+    btn.classList.toggle('held', down);
     if (!down) return;
-    if (action === 'ads') this.adsToggled = !this.adsToggled;
-    else if (action === 'crouch') this.crouchToggled = !this.crouchToggled;
-    else this.pulses.add(action);
+    if (action === 'ads') {
+      this.adsToggled = !this.adsToggled;
+      btn.classList.toggle('on', this.adsToggled);
+    } else if (action === 'crouch') {
+      this.crouchToggled = !this.crouchToggled;
+      btn.classList.toggle('on', this.crouchToggled);
+    } else if (action === 'pause') {
+      this.onPause();
+    } else this.pulses.add(action);
   }
 
   private onStart(e: TouchEvent): void {
     e.preventDefault();
     for (const tch of Array.from(e.changedTouches)) {
-      if (tch.clientX < window.innerWidth * 0.45 && this.stickId === null) {
+      if (tch.clientX < window.innerWidth * 0.42 && this.stickId === null) {
         this.stickId = tch.identifier;
         this.stickOrigin = { x: tch.clientX, y: tch.clientY };
         this.stickVec = { x: 0, y: 0 };
@@ -110,11 +160,18 @@ export class TouchControls implements InputSource {
         let dy = tch.clientY - this.stickOrigin.y;
         const len = Math.hypot(dx, dy);
         if (len > STICK_RADIUS) {
+          // Past the rim the stick follows the thumb, so a long drag doesn't strand it.
+          const over = len - STICK_RADIUS;
+          this.stickOrigin.x += (dx / len) * over;
+          this.stickOrigin.y += (dy / len) * over;
+          this.stickEl.style.left = `${this.stickOrigin.x - STICK_RADIUS}px`;
+          this.stickEl.style.top = `${this.stickOrigin.y - STICK_RADIUS}px`;
           dx = (dx / len) * STICK_RADIUS;
           dy = (dy / len) * STICK_RADIUS;
         }
         this.stickVec = { x: dx / STICK_RADIUS, y: -dy / STICK_RADIUS };
         this.knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+        this.stickEl.classList.toggle('sprint', this.stickVec.y > SPRINT_PUSH);
         continue;
       }
       const prev = this.lookTouches.get(tch.identifier);
@@ -133,8 +190,10 @@ export class TouchControls implements InputSource {
         this.stickId = null;
         this.stickVec = { x: 0, y: 0 };
         this.stickEl.style.display = 'none';
+        this.stickEl.classList.remove('sprint');
       }
       this.lookTouches.delete(tch.identifier);
+      this.firing.delete(tch.identifier);
     }
   }
 
@@ -143,22 +202,39 @@ export class TouchControls implements InputSource {
     if (x || y) {
       s.moveX = x;
       s.moveY = y;
-      // Pushing the stick nearly all the way forward sprints.
-      s.sprint ||= y > 0.92;
+      s.sprint ||= y > SPRINT_PUSH;
     }
     const scale = LOOK_RAD_PER_PX * this.getSensitivity();
     s.lookYaw += -this.lookDx * scale;
     s.lookPitch += -this.lookDy * scale;
     this.lookDx = 0;
     this.lookDy = 0;
-    s.fire ||= this.firing;
+    s.fire ||= this.firing.size > 0;
     s.firePressed ||= this.pulses.has('fire');
     s.ads ||= this.adsToggled;
     s.crouch ||= this.crouchToggled;
     s.jump ||= this.pulses.has('jump');
     s.reload ||= this.pulses.has('reload');
     s.throwGrenade ||= this.pulses.has('grenade');
+    s.cycleGrenade ||= this.pulses.has('cycleGrenade');
+    if (this.pulses.has('switch')) s.weaponCycle = 1;
     this.pulses.clear();
+  }
+
+  /** Shows the selected grenade type and how many are left on its button. */
+  setGrenade(label: string, count: number): void {
+    const b = this.buttons.get('grenade')!;
+    const text = `${label} ${count}`;
+    if (b.textContent !== text) b.textContent = text;
+    b.classList.toggle('empty', count === 0);
+  }
+
+  /** Drops toggles (after death / respawn) so the player doesn't spawn aiming or crouched. */
+  reset(): void {
+    this.adsToggled = false;
+    this.crouchToggled = false;
+    this.buttons.get('ads')!.classList.remove('on');
+    this.buttons.get('crouch')!.classList.remove('on');
   }
 
   setVisible(v: boolean): void {

@@ -58,6 +58,7 @@ export class DeployScreen {
   private listKey = '';
   private squadKey = '';
   private hover: string | null = null;
+  private readonly touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
   constructor(
     parent: HTMLElement,
@@ -150,7 +151,9 @@ export class DeployScreen {
     this.note.textContent = s.note ?? '';
     const ready = s.wait <= 0;
     this.button.disabled = !ready;
-    this.button.textContent = ready ? t('deploy.go') : `${t('deploy.wait')} ${Math.ceil(s.wait)}`;
+    // Touch screens have no Space key: drop the hint.
+    const go = this.touch ? t('deploy.go').replace(/\s*\(.*\)$/, '') : t('deploy.go');
+    this.button.textContent = ready ? go : `${t('deploy.wait')} ${Math.ceil(s.wait)}`;
 
     const listKey = `${s.selected}|${s.options.map((o) => `${o.key}${o.blocked}${o.warn}`).join()}`;
     if (listKey !== this.listKey) {

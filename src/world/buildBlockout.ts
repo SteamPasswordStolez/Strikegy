@@ -67,6 +67,8 @@ export function buildBlockout(
   surfaces: SurfaceLibrary,
   impacts: SurfaceRegistry,
   terrain: Terrain | null,
+  /** Terrain render mesh detail: 1 = every grid line, 2 = every other (weak devices). */
+  terrainStep = 1,
 ): BuiltMap {
   const root = new THREE.Group();
   root.name = `map:${map.meta.id}`;
@@ -78,7 +80,7 @@ export function buildBlockout(
   const footprints: BuiltMap['footprints'] = [];
 
   if (terrain) {
-    const built = buildTerrain(terrain, surfaces.get(groundKind), physics);
+    const built = buildTerrain(terrain, surfaces.get(groundKind), physics, terrainStep);
     impacts.set(built.collider.handle, SURFACE_FROM_MATERIAL[groundKind]);
     groundHandle = built.collider.handle;
     built.mesh.matrixAutoUpdate = false;
@@ -105,7 +107,8 @@ export function buildBlockout(
       continue;
     }
     if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
-      addDraped(obj, terrain, batches, surfaces);
+      // A coarse terrain mesh cuts corners between grid lines: lift paint clear of it.
+      addDraped(obj, terrain, batches, surfaces, terrainStep > 1 ? 0.12 : 0);
       const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
       impacts.paint(groundHandle, obj.pos[0], obj.pos[2], (obj.rot?.[1] ?? 0) * DEG, obj.size[0], obj.size[2], SURFACE_FROM_MATERIAL[kind]);
     }
@@ -152,12 +155,12 @@ function isGroundPaint(obj: MapObject, terrain: Terrain): boolean {
  * stopped the character controller dead; with no collider here you walk on
  * the smooth terrain underneath.
  */
-function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>, surfaces: SurfaceLibrary): void {
+function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>, surfaces: SurfaceLibrary, extraLift = 0): void {
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
   const material = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
   // Keep the authored layering (pavement over road over pad) as the lift above the ground.
-  const lift = Math.max(0.02, obj.pos[1] + h / 2 - terrain.heightAt(obj.pos[0], obj.pos[2]));
+  const lift = Math.max(0.02, obj.pos[1] + h / 2 - terrain.heightAt(obj.pos[0], obj.pos[2])) + extraLift;
   const geo = new THREE.PlaneGeometry(w, d, Math.max(1, Math.ceil(w / DRAPE_STEP)), Math.max(1, Math.ceil(d / DRAPE_STEP)));
   geo.rotateX(-Math.PI / 2);
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;

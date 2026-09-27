@@ -20,6 +20,8 @@
   "grenade.frag": "FRAG",
   "grenade.flash": "FLASH",
   "grenade.smoke": "SMOKE",
+  "touch.switch": "SWAP",
+  "rotate.hint": "Turn your phone sideways to play",
   "touch.grenade": "NADE",
   "error.gpu": "The graphics device was reset",
   "error.gpuReload": "Click to reload",

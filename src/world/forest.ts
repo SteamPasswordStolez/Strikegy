@@ -39,6 +39,8 @@ export class Forest {
     kit: ConiferKit,
     gl: THREE.WebGLRenderer,
     scene: THREE.Scene,
+    /** Distance (m) within which chunks draw full 3D trees (lower on weak devices). */
+    private readonly near = NEAR,
   ) {
     this.group.name = 'forest';
     const rng = makeRng(31);
@@ -81,7 +83,7 @@ export class Forest {
   update(camera: THREE.Vector3): void {
     for (const c of this.chunks) {
       const d = c.box.distanceToPoint(camera);
-      const near = c.isNear ? d < NEAR + HYSTERESIS : d < NEAR - HYSTERESIS;
+      const near = c.isNear ? d < this.near + HYSTERESIS : d < this.near - HYSTERESIS;
       if (near === c.isNear) continue;
       c.isNear = near;
       c.near.visible = near;

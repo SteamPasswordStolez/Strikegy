@@ -20,6 +20,8 @@
   "grenade.frag": "파편",
   "grenade.flash": "섬광",
   "grenade.smoke": "연막",
+  "touch.switch": "교체",
+  "rotate.hint": "가로 모드로 돌려서 플레이해 주세요",
   "touch.grenade": "투척",
   "error.gpu": "그래픽 장치가 재설정되었습니다",
   "error.gpuReload": "클릭하여 다시 불러오기",

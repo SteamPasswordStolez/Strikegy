@@ -193,18 +193,28 @@ export function buildTerrain(
   terrain: Terrain,
   material: THREE.Material,
   physics: PhysicsWorld,
+  /** Render mesh uses every `renderStep`-th grid line (the collider always uses all). */
+  renderStep = 1,
 ): { mesh: THREE.Mesh; collider: RAPIER.Collider; grid: ReturnType<Terrain['sample']> } {
   const grid = terrain.sample();
   const { cols, rows, heights } = grid;
   const [sx, sz] = terrain.size;
 
-  const geo = new THREE.PlaneGeometry(sx, sz, cols, rows);
+  const step = Math.max(1, Math.floor(renderStep));
+  const rc = Math.ceil(cols / step);
+  const rr = Math.ceil(rows / step);
+  const geo = new THREE.PlaneGeometry(sx, sz, rc, rr);
   geo.rotateX(-Math.PI / 2);
   // PlaneGeometry rows run from -z to +z after the rotation, matching the grid order.
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;
   const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
   for (let i = 0; i < pos.count; i++) {
-    pos.setY(i, heights[i]!);
+    const c = Math.min(cols, (i % (rc + 1)) * step);
+    const r = Math.min(rows, Math.floor(i / (rc + 1)) * step);
+    // Snap to the exact grid lines so the coarse mesh shares vertices with the collider.
+    pos.setX(i, -sx / 2 + (c / cols) * sx);
+    pos.setZ(i, -sz / 2 + (r / rows) * sz);
+    pos.setY(i, heights[r * (cols + 1) + c]!);
     // World-scale UVs (meters), like the blockout boxes.
     uv.setXY(i, pos.getX(i), -pos.getZ(i));
   }

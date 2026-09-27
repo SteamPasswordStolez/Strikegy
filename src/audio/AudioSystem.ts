@@ -119,6 +119,9 @@ export class AudioSystem {
   private ambience: Ambience | null = null;
   private ambienceLevels: AmbienceLevels | null = null;
 
+  /** Nearest voices that get HRTF panning (0 on phones). */
+  maxHrtf = MAX_HRTF;
+
   constructor(private volume: number) {}
 
   /** Must be called from a user gesture. */
@@ -303,7 +306,7 @@ export class AudioSystem {
     }
     let hrtfCount = 0;
     for (const v of this.voices) if (v.hrtf) hrtfCount++;
-    const voice: Voice = { until: now + seconds, loud, hrtf: dist < HRTF_RANGE_M && hrtfCount < MAX_HRTF, gain };
+    const voice: Voice = { until: now + seconds, loud, hrtf: dist < HRTF_RANGE_M && hrtfCount < this.maxHrtf, gain };
     this.voices.push(voice);
     return voice;
   }
