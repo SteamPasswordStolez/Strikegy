@@ -1,3 +1,4 @@
+import type { ModelKind } from './modelKits';
 export type Vec3 = [number, number, number];
 export type Team = 'blue' | 'red';
 export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor';
@@ -16,6 +17,10 @@ export interface MapObject {
   color?: string;
   /** pos[1] is relative to the ground at (x, z) instead of absolute. */
   snap?: boolean;
+  /** Draw a procedural model filling the box instead of the box itself (see world/modelKits). */
+  model?: ModelKind;
+  /** Height of the model's ground above the box bottom (boxes sink a little into the terrain). */
+  base?: number;
 }
 
 export interface SpawnPoint {

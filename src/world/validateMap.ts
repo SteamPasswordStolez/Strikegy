@@ -1,4 +1,5 @@
 import type { MapDef } from './mapTypes';
+import { MODEL_KINDS } from './modelKits';
 
 const OBJECT_TYPES = new Set(['wall', 'cover', 'floor', 'ramp', 'prop']);
 const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor']);
@@ -68,6 +69,10 @@ export function validateMap(raw: unknown): string[] {
       if (o.material !== undefined && !MATERIALS.has(String(o.material))) {
         errs.push(`objects[${i}].material: unknown "${String(o.material)}"`);
       }
+      if (o.model !== undefined && !(MODEL_KINDS as readonly string[]).includes(String(o.model))) {
+        errs.push(`objects[${i}].model: unknown "${String(o.model)}"`);
+      }
+      if (o.base !== undefined && (!isNum(o.base) || o.base < 0)) errs.push(`objects[${i}].base: expected a number >= 0`);
     });
   }
 

@@ -117,8 +117,11 @@ export function stripAlong(pts, width, { thickness = 0.3, y = 0.05, material = '
   return out;
 }
 
-/** An axis-aligned or rotated box sitting on the ground (bottom at ground + lift). */
-export function block(x, z, w, h, d, { yaw = 0, lift = 0, type = 'cover', material, color, sink = 0.3 } = {}) {
+/**
+ * An axis-aligned or rotated box sitting on the ground (bottom at ground + lift).
+ * `model` draws a procedural model (src/world/modelKits.ts) filling the box.
+ */
+export function block(x, z, w, h, d, { yaw = 0, lift = 0, type = 'cover', material, color, sink = 0.3, model } = {}) {
   return {
     type,
     pos: [round(x), round(lift + (h - sink) / 2), round(z)],
@@ -126,12 +129,13 @@ export function block(x, z, w, h, d, { yaw = 0, lift = 0, type = 'cover', materi
     ...(yaw ? { rot: [0, round(yaw, 1), 0] } : {}),
     ...(material ? { material } : {}),
     ...(color ? { color } : {}),
+    ...(model ? { model, base: round(sink) } : {}),
     snap: true,
   };
 }
 
 /** A wall line made of boxes between points, with optional gaps (distance ranges along the line). */
-export function wallLine(pts, { height = 3, thick = 0.4, material = 'concrete', color, gaps = [], type = 'wall' } = {}) {
+export function wallLine(pts, { height = 3, thick = 0.4, material = 'concrete', color, gaps = [], type = 'wall', model } = {}) {
   const out = [];
   let dist = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -155,7 +159,7 @@ export function wallLine(pts, { height = 3, thick = 0.4, material = 'concrete', 
     for (const [p0, p1] of pieces) {
       if (p1 - p0 < 0.2) continue;
       const m = (p0 + p1) / 2 / len;
-      out.push(block(ax + (bx - ax) * m, az + (bz - az) * m, thick, height, p1 - p0 + thick, { yaw, type, material, color }));
+      out.push(block(ax + (bx - ax) * m, az + (bz - az) * m, thick, height, p1 - p0 + thick, { yaw, type, material, color, model }));
     }
     dist += len;
   }

@@ -6,6 +6,7 @@ import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces'
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
 import { buildBuilding, type WindowSpot } from './buildings';
+import { buildKit, kitMaterials, type KitMaterial } from './modelKits';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
@@ -97,7 +98,12 @@ export function buildBlockout(
       'ground',
     );
   }
+  let kitMats: ReturnType<typeof kitMaterials> | null = null;
   for (const obj of map.objects) {
+    if (obj.model) {
+      addModel(obj, batches, physics, surfaces, impacts, (kitMats ??= kitMaterials()));
+      continue;
+    }
     if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
       addDraped(obj, terrain, batches, surfaces);
       const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
@@ -175,6 +181,88 @@ function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>
     batches.set(key, batch);
   }
   batch.geometries.push(geo);
+}
+
+/**
+ * A procedural model in place of the object's box: pieces go into per-material
+ * batches (their own, since kit geometry is non-indexed), colliders are the
+ * kit's boxes or the object's box.
+ */
+function addModel(
+  obj: MapObject,
+  batches: Map<string, Batch>,
+  physics: PhysicsWorld,
+  surfaces: SurfaceLibrary,
+  impacts: SurfaceRegistry,
+  shared: ReturnType<typeof kitMaterials>,
+): void {
+  const [w, h, d] = obj.size;
+  const base = obj.base ?? 0;
+  const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
+  const seed = Math.abs(Math.round(obj.pos[0] * 91 + obj.pos[2] * 37)) + 1;
+  let state = seed;
+  const rand = () => ((state = (state * 16807) % 2147483647) - 1) / 2147483646;
+  const kit = buildKit(obj.model!, w, h - base, d, rand);
+
+  if (obj.rot) tmpEuler.set(obj.rot[0] * DEG, obj.rot[1] * DEG, obj.rot[2] * DEG);
+  else tmpEuler.set(0, 0, 0);
+  tmpQuat.setFromEuler(tmpEuler);
+  // Kit space: y = 0 on the ground, which is `base` above the box bottom.
+  const toWorld = new THREE.Matrix4()
+    .compose(new THREE.Vector3(...obj.pos), tmpQuat, one)
+    .multiply(new THREE.Matrix4().makeTranslation(0, -h / 2 + base, 0));
+
+  const color = obj.color;
+  const trim = color ? `#${new THREE.Color(color).multiplyScalar(0.72).getHexString()}` : undefined;
+  const materialFor = (m: KitMaterial): THREE.Material => {
+    switch (m) {
+      case 'body':
+        return color ? surfaces.tinted(kind, color) : surfaces.get(kind);
+      case 'trim':
+        return trim ? surfaces.tinted(kind, trim) : surfaces.get(kind);
+      case 'metal':
+        return surfaces.get('metal');
+      case 'wood':
+        return surfaces.get('wood');
+      case 'concrete':
+        return surfaces.get('concrete');
+      case 'dirt':
+        return surfaces.tinted('ground', color ?? '#9c8a64');
+      default:
+        return shared[m];
+    }
+  };
+  for (const p of kit.pieces) {
+    p.geo.applyMatrix4(toWorld);
+    const material = materialFor(p.mat);
+    const key = `${material.uuid}kit`;
+    let batch = batches.get(key);
+    if (!batch) {
+      batch = { material, geometries: [], castShadow: true };
+      batches.set(key, batch);
+    }
+    batch.geometries.push(p.geo);
+  }
+
+  const surface = SURFACE_FROM_MATERIAL[kind];
+  if (!kit.colliders) {
+    const c = physics.addStaticBox(
+      { x: obj.pos[0], y: obj.pos[1], z: obj.pos[2] },
+      { x: w / 2, y: h / 2, z: d / 2 },
+      { x: tmpQuat.x, y: tmpQuat.y, z: tmpQuat.z, w: tmpQuat.w },
+    );
+    impacts.set(c.handle, surface);
+    return;
+  }
+  const at = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const turn = new THREE.Quaternion();
+  for (const box of kit.colliders) {
+    at.set(...box.center).applyMatrix4(toWorld);
+    q.copy(tmpQuat).multiply(turn.setFromAxisAngle(new THREE.Vector3(0, 1, 0), box.yaw ?? 0));
+    const c = physics.addStaticBox({ x: at.x, y: at.y, z: at.z }, { x: box.size[0] / 2, y: box.size[1] / 2, z: box.size[2] / 2 }, { x: q.x, y: q.y, z: q.z, w: q.w });
+    impacts.set(c.handle, surface);
+  }
 }
 
 const tmpMatrix = new THREE.Matrix4();

@@ -99,25 +99,25 @@ objects.push(
   }),
 );
 for (const [x, z] of [[42, -104], [128, -104], [176, -58], [132, -26], [26, -52]]) {
-  objects.push(block(x, z, 3, 7.5, 3, { type: 'wall', material: 'wood', color: '#6d6450' }));
+  objects.push(block(x, z, 3, 7.5, 3, { type: 'wall', material: 'wood', color: '#6d6450', model: 'watchtower' }));
 }
 buildings.push({ pos: [96, -95], size: [24, 11], style: 'hq', floors: 2, doors: 'sw' });
 for (const [x, z] of [[92, -78], [134, -77], [92, -63], [134, -63]]) {
   buildings.push({ pos: [x, z], size: [24, 8], style: 'barracks', doors: 'ew' });
 }
 buildings.push({ pos: [150, -42], size: [26, 18], style: 'hangar', doors: 'w' });
-for (let i = 0; i < 4; i++) objects.push(block(64 + (i % 2) * 8, -62 + Math.floor(i / 2) * 10, 2.5, 3, 7, { color: '#55603f', material: 'metal' }));
+for (let i = 0; i < 4; i++) objects.push(block(64 + (i % 2) * 8, -62 + Math.floor(i / 2) * 10, 2.5, 3, 7, { color: '#55603f', material: 'metal', model: 'truck' }));
 // Sandbag rings at C.
 for (let i = 0; i < 6; i++) {
   const a = (i / 6) * Math.PI * 2 + 0.3;
-  objects.push(block(Z.C[0] + Math.cos(a) * 9, Z.C[1] + Math.sin(a) * 9, 3, 1.1, 0.8, { yaw: (a * 180) / Math.PI + 90, material: 'ground', color: '#9c8a64' }));
+  objects.push(block(Z.C[0] + Math.cos(a) * 9, Z.C[1] + Math.sin(a) * 9, 3, 1.1, 0.8, { yaw: (a * 180) / Math.PI + 90, material: 'ground', color: '#9c8a64', model: 'sandbags' }));
 }
 
 // --- E: helipad + fuel depot -----------------------------------------------
 objects.push({ type: 'floor', pos: [Z.E[0] - 10, 0.05, Z.E[1] + 2], size: [20, 0.3, 20], material: 'concrete_floor', color: '#8e8c86', snap: true });
-for (const [dx, dz] of [[16, -12], [22, 6], [10, 18]]) objects.push(block(Z.E[0] + dx, Z.E[1] + dz, 6, 5, 6, { type: 'wall', material: 'metal', color: '#c9c6ba' }));
+for (const [dx, dz] of [[16, -12], [22, 6], [10, 18]]) objects.push(block(Z.E[0] + dx, Z.E[1] + dz, 6, 5, 6, { type: 'wall', material: 'metal', color: '#c9c6ba', model: 'fuelTank' }));
 buildings.push({ pos: [Z.E[0] - 6, Z.E[1] + 20], size: [9, 6], style: 'shed', doors: 'n' });
-objects.push(...wallLine([[Z.E[0] - 22, Z.E[1] - 12], [Z.E[0] - 22, Z.E[1] + 14]], { height: 1.1, thick: 0.9, material: 'ground', color: '#9c8a64', gaps: [[11, 15]], type: 'cover' }));
+objects.push(...wallLine([[Z.E[0] - 22, Z.E[1] - 12], [Z.E[0] - 22, Z.E[1] + 14]], { height: 1.1, thick: 0.9, material: 'ground', color: '#9c8a64', gaps: [[11, 15]], type: 'cover', model: 'sandbags' }));
 
 // --- A: checkpoint + gas station ------------------------------------------
 {
@@ -125,11 +125,11 @@ objects.push(...wallLine([[Z.E[0] - 22, Z.E[1] - 12], [Z.E[0] - 22, Z.E[1] + 14]
   // Canopy on four pillars.
   for (const [dx, dz] of [[-7, -4], [7, -4], [-7, 4], [7, 4]]) objects.push(block(ax + 2 + dx, az - 8 + dz, 0.4, 4.6, 0.4, { type: 'wall', color: '#d9d4c7' }));
   objects.push({ type: 'floor', pos: [ax + 2, 4.6, az - 8], size: [18, 0.4, 11], material: 'metal', color: '#d9d4c7', snap: true });
-  for (const dx of [-3, 3]) objects.push(block(ax + 2 + dx, az - 8, 1, 1.6, 0.6, { color: '#b3312b', material: 'metal' }));
+  for (const dx of [-3, 3]) objects.push(block(ax + 2 + dx, az - 8, 1, 1.6, 0.6, { color: '#b3312b', material: 'metal', model: 'pump' }));
   buildings.push({ pos: [ax - 12, az - 6], size: [11, 8], style: 'shop', floors: 1, doors: 'e' });
-  objects.push(block(ax + 12, az + 6, 2.4, 2.8, 2.4, { type: 'wall', material: 'wood', color: '#6d6450' }));
+  objects.push(block(ax + 12, az + 6, 2.4, 2.8, 2.4, { type: 'wall', material: 'wood', color: '#6d6450', model: 'booth' }));
   for (let i = 0; i < 5; i++) props.push({ model: 'concrete_road_barrier', pos: [round(ax + 20 + i * 1.6), 0, round(az + 12 + (i % 2) * 0.4)], rot: [0, 90, 0], snap: true });
-  for (const [dx, dz, yaw] of [[-4, 14, 0], [8, -20, 90], [-18, 10, 30]]) objects.push(block(ax + dx, az + dz, 4, 1.1, 0.9, { yaw, material: 'ground', color: '#9c8a64' }));
+  for (const [dx, dz, yaw] of [[-4, 14, 0], [8, -20, 90], [-18, 10, 30]]) objects.push(block(ax + dx, az + dz, 4, 1.1, 0.9, { yaw, material: 'ground', color: '#9c8a64', model: 'sandbags' }));
 }
 for (const [x, z] of [[-178, -24], [-162, 32], [-140, -32], [-184, 12], [-150, 28]]) {
   buildings.push({ pos: [x, z], size: [10 + R() * 3, 8 + R() * 2], style: 'house', doors: 'ns', rot: round((R() - 0.5) * 20) });
@@ -140,9 +140,9 @@ for (const [x, z] of [[-178, -24], [-162, 32], [-140, -32], [-184, 12], [-150, 2
   const [bx, bz] = Z.B;
   objects.push({ type: 'floor', pos: [bx, 0.05, bz], size: [34, 0.3, 26], material: 'concrete_floor', color: '#b9b2a3', snap: true });
   buildings.push({ pos: [bx, bz - 21], size: [28, 12], style: 'townhall', doors: 's' });
-  objects.push(block(bx, bz + 1, 3.4, 1, 3.4, { material: 'concrete', color: '#c9c3b5' }));
-  objects.push(block(bx, bz + 1, 0.8, 3.2, 0.8, { material: 'concrete', color: '#8a8478' }));
-  for (const [dx, dz] of [[-10, 6], [10, 6], [-10, -5], [10, -5]]) objects.push(block(bx + dx, bz + dz, 2.2, 0.8, 0.6, { material: 'wood', color: '#6a4a33' }));
+  objects.push(block(bx, bz + 1, 3.4, 1, 3.4, { material: 'concrete', color: '#c9c3b5', model: 'fountain' }));
+  objects.push(block(bx, bz + 1, 0.8, 3.2, 0.8, { material: 'concrete', color: '#8a8478', model: 'statue' }));
+  for (const [dx, dz] of [[-10, 6], [10, 6], [-10, -5], [10, -5]]) objects.push(block(bx + dx, bz + dz, 2.2, 0.8, 0.6, { material: 'wood', color: '#6a4a33', model: 'bench' }));
 }
 
 // --- D: freight station ----------------------------------------------------
@@ -153,7 +153,7 @@ for (const [x, z] of [[-178, -24], [-162, 32], [-140, -32], [-184, 12], [-150, 2
   const colors = ['#b5523b', '#3b6aa0', '#5f7f45', '#c28a2c', '#7d7d7d'];
   const cont = (x, z, yaw, stack = 1) => {
     for (let s = 0; s < stack; s++) {
-      objects.push(block(x, z, 2.44, 2.6, 6.1, { yaw, lift: s * 2.6, sink: s ? 0 : 0.3, type: 'cover', material: 'metal', color: colors[Math.floor(R() * colors.length)] }));
+      objects.push(block(x, z, 2.44, 2.6, 6.1, { yaw, lift: s * 2.6, sink: s ? 0 : 0.3, type: 'cover', material: 'metal', color: colors[Math.floor(R() * colors.length)], model: 'container' }));
     }
   };
   cont(dx - 6, dz - 8, 90, 2);
@@ -164,16 +164,28 @@ for (const [x, z] of [[-178, -24], [-162, 32], [-140, -32], [-184, 12], [-150, 2
   cont(dx + 14, dz - 14, 80);
   // Platform along the siding and boxcars on it.
   objects.push(block(dx - 4, dz + 17, 36, 1.1, 4, { yaw: -15, type: 'floor', material: 'concrete', color: '#a19c90' }));
-  for (const [x, z] of [[-50, 92], [-30, 84], [18, 74]]) objects.push(block(x, z, 3, 3.6, 12, { yaw: 68, lift: 0.35, type: 'wall', material: 'metal', color: '#6a4a3a' }));
+  // Boxcars standing on the siding (wheels on the rail tops), lined up with the track.
+  const lengths = siding.slice(1).map(([x, z], i) => Math.hypot(x - siding[i][0], z - siding[i][1]));
+  const total = lengths.reduce((a, l) => a + l, 0);
+  for (const t of [0.22, 0.5, 0.8]) {
+    let left = t * total;
+    let i = 0;
+    while (i < lengths.length - 1 && left > lengths[i]) left -= lengths[i++];
+    const [ax, az] = siding[i];
+    const [bx, bz] = siding[i + 1];
+    const f = left / lengths[i];
+    const yaw = (Math.atan2(bx - ax, bz - az) * 180) / Math.PI;
+    objects.push(block(ax + (bx - ax) * f, az + (bz - az) * f, 3, 3.6, 12, { yaw, lift: 0.36, type: 'wall', material: 'metal', color: '#6a4a3a', model: 'boxcar' }));
+  }
 }
 
 // --- Blue FOB (SW) -----------------------------------------------------------
 {
   const [bx, bz] = BLUE;
   const ring = [[bx - 20, bz - 16], [bx + 18, bz - 20], [bx + 26, bz + 4], [bx + 6, bz + 16], [bx - 18, bz + 12], [bx - 20, bz - 16]];
-  objects.push(...wallLine(ring, { height: 2.1, thick: 1.1, material: 'ground', color: '#a89a74', gaps: [[33, 43], [70, 76]] }));
+  objects.push(...wallLine(ring, { height: 2.1, thick: 1.1, material: 'ground', color: '#a89a74', gaps: [[33, 43], [70, 76]], model: 'hesco' }));
   // Tents at the back of the compound, clear of the spawn ring.
-  for (let i = 0; i < 3; i++) objects.push(block(bx - 12 + i * 8, bz + 9.5, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e' }));
+  for (let i = 0; i < 3; i++) objects.push(block(bx - 12 + i * 8, bz + 9.5, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' }));
 }
 
 // --- Old town ---------------------------------------------------------------
@@ -257,7 +269,7 @@ for (let i = 0, placed = 0; placed < 26 && i < 400; i++) {
   const z = (az + bz) / 2 + ((bx - ax) / len) * off * side;
   if (!inside(boundary, x, z) || Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < 8)) continue;
   const yaw = (Math.atan2(bx - ax, bz - az) * 180) / Math.PI + (R() - 0.5) * 20;
-  objects.push(block(x, z, 1.9, 1.5, 4.4, { yaw, material: 'metal', color: carColors[Math.floor(R() * carColors.length)] }));
+  objects.push(block(x, z, 1.9, 1.5, 4.4, { yaw, material: 'metal', color: carColors[Math.floor(R() * carColors.length)], model: 'car' }));
   placed++;
 }
 const crateModels = ['wooden_military_crate', 'old_military_crate', 'barrel_03', 'ammo_box', 'old_tyre'];
