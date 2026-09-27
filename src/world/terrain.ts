@@ -184,7 +184,7 @@ export function buildTerrain(
   }
   // Rays that land exactly on a grid vertex of a flat area can slip through the
   // heightfield; a sub-millimeter offset keeps round coordinates off the vertices.
-  const desc = RAPIER.ColliderDesc.heightfield(rows, cols, hf, { x: sx, y: 1, z: sz })
+  const desc = RAPIER.ColliderDesc.heightfield(rows, cols, hf, { x: sx, y: 1, z: sz }, RAPIER.HeightFieldFlags.FIX_INTERNAL_EDGES)
     .setTranslation(0.00137, 0, 0.00171)
     .setCollisionGroups(groups(Layer.WORLD, 0xffff));
   const collider = physics.world.createCollider(desc);

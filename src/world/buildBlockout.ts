@@ -68,10 +68,12 @@ export function buildBlockout(
   const batches = new Map<string, Batch>();
   const groundKind = map.world.groundMaterial ?? 'ground';
   let navExtra: BuiltMap['navExtra'] = null;
+  let groundHandle: number | null = null;
 
   if (terrain) {
     const built = buildTerrain(terrain, surfaces.get(groundKind), physics);
     impacts.set(built.collider.handle, SURFACE_FROM_MATERIAL[groundKind]);
+    groundHandle = built.collider.handle;
     built.mesh.matrixAutoUpdate = false;
     root.add(built.mesh);
     if (map.world.boundary) buildBoundaryWalls(terrain.boundary, terrain, physics);
@@ -89,7 +91,14 @@ export function buildBlockout(
       'ground',
     );
   }
-  for (const obj of map.objects) addBox(obj, batches, physics, surfaces, impacts);
+  for (const obj of map.objects) {
+    if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
+      addDraped(obj, terrain, batches, surfaces);
+      const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
+      impacts.paint(groundHandle, obj.pos[0], obj.pos[2], (obj.rot?.[1] ?? 0) * DEG, obj.size[0], obj.size[2], SURFACE_FROM_MATERIAL[kind]);
+    }
+    else addBox(obj, batches, physics, surfaces, impacts);
+  }
   for (const b of map.buildings ?? []) {
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
     for (const obj of buildBuilding(b, base).objects) addBox(obj, batches, physics, surfaces, impacts);
@@ -108,6 +117,55 @@ export function buildBlockout(
 
   scene.add(root);
   return { root, navExtra };
+}
+
+/** Top of a thin snapped floor within this height of the terrain = paint on the ground (roads, pavements). */
+const PAINT_MAX_LIFT = 0.2;
+/** Grid step of draped floors (m). */
+const DRAPE_STEP = 1.5;
+
+function isGroundPaint(obj: MapObject, terrain: Terrain): boolean {
+  if (!obj.snap || obj.type !== 'floor' || obj.size[1] > 0.5 || obj.rot?.[0] || obj.rot?.[2]) return false;
+  const top = obj.pos[1] + obj.size[1] / 2 - terrain.heightAt(obj.pos[0], obj.pos[2]);
+  return top <= PAINT_MAX_LIFT;
+}
+
+/**
+ * Roads and pavements on terrain: a sheet that follows the ground instead of
+ * a flat box. Overlapping flat boxes left millimeter ledges at every seam that
+ * stopped the character controller dead; with no collider here you walk on
+ * the smooth terrain underneath.
+ */
+function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>, surfaces: SurfaceLibrary): void {
+  const [w, h, d] = obj.size;
+  const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
+  const material = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
+  // Keep the authored layering (pavement over road over pad) as the lift above the ground.
+  const lift = Math.max(0.02, obj.pos[1] + h / 2 - terrain.heightAt(obj.pos[0], obj.pos[2]));
+  const geo = new THREE.PlaneGeometry(w, d, Math.max(1, Math.ceil(w / DRAPE_STEP)), Math.max(1, Math.ceil(d / DRAPE_STEP)));
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
+  const yaw = (obj.rot?.[1] ?? 0) * DEG;
+  const c = Math.cos(yaw);
+  const sn = Math.sin(yaw);
+  for (let i = 0; i < pos.count; i++) {
+    const lx = pos.getX(i);
+    const lz = pos.getZ(i);
+    // Same rotation as the box (about +Y), then the world position.
+    const x = obj.pos[0] + lx * c + lz * sn;
+    const z = obj.pos[2] - lx * sn + lz * c;
+    pos.setXYZ(i, x, terrain.surfaceAt(x, z) + lift, z);
+    uv.setXY(i, uv.getX(i) * w, uv.getY(i) * d);
+  }
+  geo.computeVertexNormals();
+  const key = `${material.uuid}drape`;
+  let batch = batches.get(key);
+  if (!batch) {
+    batch = { material, geometries: [], castShadow: false };
+    batches.set(key, batch);
+  }
+  batch.geometries.push(geo);
 }
 
 const tmpMatrix = new THREE.Matrix4();

@@ -255,7 +255,7 @@ export class WeaponController {
       this.bus.emit('combat:impact', {
         point: to,
         normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z),
-        surface: this.surfaces.get(hit.collider.handle),
+        surface: this.surfaces.get(hit.collider.handle, hit.point),
       });
     }
     this.traces.push({ from: this.eye.clone(), to });

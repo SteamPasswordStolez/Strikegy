@@ -501,7 +501,7 @@ export class BotManager implements BotServices {
         this.bus.emit('combat:impact', {
           point: to,
           normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z),
-          surface: this.surfaces.get(hit.collider.handle),
+          surface: this.surfaces.get(hit.collider.handle, hit.point),
         });
       }
       if (pellets === 1 || i < 3) this.effects.spawnShots([{ from: eye, to }], this.muzzle);
@@ -516,7 +516,7 @@ export class BotManager implements BotServices {
     const d = bot.feet.distanceTo(this.listener);
     if (d < 30) {
       const hit = this.physics.raycast({ x: bot.feet.x, y: bot.feet.y + 0.2, z: bot.feet.z }, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
-      if (hit) this.audio.remoteFootstep(this.surfaces.get(hit.collider.handle), bot.feet, sprinting);
+      if (hit) this.audio.remoteFootstep(this.surfaces.get(hit.collider.handle, hit.point), bot.feet, sprinting);
     }
     this.alert(bot.feet, sprinting ? HEAR_STEP * 1.4 : HEAR_STEP, bot);
   }

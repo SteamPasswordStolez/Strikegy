@@ -122,8 +122,15 @@ export class Player {
     }
 
     const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.collider, desired, undefined, groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOT | Layer.BOUNDS));
-    const moved = this.controller.computedMovement();
+    const filter = groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOT | Layer.BOUNDS);
+    this.controller.computeColliderMovement(this.collider, desired, undefined, filter);
+    let moved = this.controller.computedMovement();
+    if (this.grounded && desired.y <= 0 && this.snaggedOnFloor(desired, moved)) {
+      // Rapier occasionally stops a grounded capsule dead on flat ground (a
+      // contact at time 0 with an upward normal). Moving level gets through.
+      this.controller.computeColliderMovement(this.collider, { x: desired.x, y: 0, z: desired.z }, undefined, filter);
+      moved = this.controller.computedMovement();
+    }
     const wasGrounded = this.grounded;
     this.grounded = this.controller.computedGrounded();
 
@@ -147,6 +154,17 @@ export class Player {
     this.stepFootsteps(Math.hypot(moved.x, moved.z));
   }
 
+  /** Lost most of the horizontal move while only touching floor-like surfaces. */
+  private snaggedOnFloor(desired: { x: number; z: number }, moved: { x: number; z: number }): boolean {
+    const want = desired.x * desired.x + desired.z * desired.z;
+    if (want < 1e-6 || moved.x * moved.x + moved.z * moved.z > want * 0.5) return false;
+    for (let i = 0; i < this.controller.numComputedCollisions(); i++) {
+      const c = this.controller.computedCollision(i);
+      if (!c || c.normal1.y < 0.7) return false;
+    }
+    return true;
+  }
+
   private stepFootsteps(dist: number): void {
     if (!this.grounded || dist < 1e-4) return;
     this.strideLeft -= dist;
@@ -158,7 +176,7 @@ export class Player {
     const hit = this.physics.raycast(from, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
     if (!hit) return;
     this.bus.emit('player:footstep', {
-      surface: this.surfaces.get(hit.collider.handle),
+      surface: this.surfaces.get(hit.collider.handle, hit.point),
       sprinting: this.sprinting,
       point: this.feet.clone(),
     });
