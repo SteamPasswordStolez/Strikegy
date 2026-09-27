@@ -31,7 +31,8 @@ export interface BotServices {
   enemiesOf(team: Team): readonly Combatant[];
   /** Clear line of sight between two points (world geometry and smoke). */
   lineOfSight(from: THREE.Vector3, to: THREE.Vector3): boolean;
-  findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null;
+  /** Cover spot against `threat`; undefined when the search budget for this step is spent (ask again later). */
+  findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null | undefined;
   /** Where this bot should head when nothing is going on (squad objective / flank). */
   squadGoal(bot: Bot): THREE.Vector3;
   /** The team's most recent sighting of any enemy. */
@@ -291,8 +292,11 @@ export class Bot implements Damageable, Combatant {
     const w = this.weapon;
     const threat = this.target ? this.target.feet : this.lastSeen.time > s.time - 4 ? this.lastSeen.pos : null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
-      this.cover = s.findCover(this, threat);
-      this.coverUntil = s.time + 3;
+      const found = s.findCover(this, threat);
+      if (found !== undefined) {
+        this.cover = found;
+        this.coverUntil = s.time + 3;
+      }
     } else if (!threat) {
       this.cover = null;
     }

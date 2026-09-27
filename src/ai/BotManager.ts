@@ -25,6 +25,9 @@ const HEAR_STEP = 13;
 const SEPARATION_RADIUS = 1.1;
 const SEPARATION_SPEED = 2.2;
 const BLOB_SIZE = 1.1;
+/** Cover searches allowed per sim step across all bots (each is ~0.1-0.3 ms). */
+const COVER_SEARCHES_PER_STEP = 3;
+const COVER_SAMPLES = 10;
 
 /** Loadout pool: weighted so most bots carry rifles. */
 const POOL: [WeaponId, number][] = [
@@ -98,6 +101,7 @@ export class BotManager implements BotServices {
   /** Soft contact shadows under every bot, one draw call. */
   private readonly blobs: THREE.InstancedMesh;
   private readonly blobMatrix = new THREE.Matrix4();
+  private coverBudget = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -159,6 +163,7 @@ export class BotManager implements BotServices {
 
   step(dt: number): void {
     this.time += dt;
+    this.coverBudget = COVER_SEARCHES_PER_STEP;
     for (const team of ['blue', 'red'] as const) this.plan(team);
     for (const e of this.entries) {
       const b = e.bot;
@@ -240,13 +245,21 @@ export class BotManager implements BotServices {
     return true;
   }
 
-  findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null {
+  findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null | undefined {
+    if (this.coverBudget <= 0) return undefined;
+    this.coverBudget--;
     const threatEye = new THREE.Vector3(threat.x, threat.y + 1.6, threat.z);
     let best: THREE.Vector3 | null = null;
     let bestScore = Infinity;
     const p = new THREE.Vector3();
-    for (let i = 0; i < 14; i++) {
-      if (!this.nav.randomAround(bot.feet, 11, p)) continue;
+    const probe = new THREE.Vector3();
+    const start = Math.random() * Math.PI * 2;
+    for (let i = 0; i < COVER_SAMPLES; i++) {
+      // Spread candidates around the bot (one cheap nearest-point query each).
+      const a = start + (i / COVER_SAMPLES) * Math.PI * 2;
+      const r = 3 + Math.random() * 8;
+      probe.set(bot.feet.x + Math.cos(a) * r, bot.feet.y, bot.feet.z + Math.sin(a) * r);
+      if (!this.nav.closest(probe, p) || Math.abs(p.y - bot.feet.y) > 3) continue;
       const toThreat = p.distanceTo(threat);
       if (toThreat < 6) continue;
       // Hidden when crouched...
