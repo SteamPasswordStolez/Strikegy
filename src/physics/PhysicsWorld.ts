@@ -10,9 +10,8 @@ export const Layer = {
   /** Thrown objects: collide with the world only. */
   DEBRIS: 0x0008,
   /**
-   * Bot movement capsules. Bots don't collide with each other (overlapping
-   * character controllers cost milliseconds per step); they keep apart by
-   * steering instead. They do collide with the world and the player.
+   * Bot bodies. Bots walk on the navmesh and keep apart by steering; the
+   * capsule only exists so the player's controller runs into them.
    */
   BOT: 0x0010,
   /** Invisible walls at the edge of the playable area: block characters only. */
