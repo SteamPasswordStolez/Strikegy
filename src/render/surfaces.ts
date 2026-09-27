@@ -218,7 +218,30 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
       return woodRecipe(n);
     case 'brick':
       return brickRecipe(n);
+    case 'snow':
+      return snowRecipe(n);
   }
+}
+
+/** Wind-packed snow: soft drifts, footprint dimples and a faint blue in the hollows. */
+function snowRecipe(n: TileNoise): SurfaceRecipe {
+  const white = hexToRgb(0xf2f4f6);
+  const shade = hexToRgb(0xc9d3de);
+  return {
+    tileMeters: 4,
+    normalStrength: 2.5,
+    paint(u, v, o) {
+      const drift = n.fbm(u, v, 3, 4);
+      const detail = n.fbm(u, v, 48, 3);
+      const dimple = smoothstep(0.62, 0.72, n.fbm(u + 0.21, v + 0.63, 24, 2));
+      const h = 0.6 * drift + 0.3 * detail - 0.25 * dimple;
+      o.color = mixRgb(shade, white, clamp01(0.35 + h));
+      o.height = clamp01(h);
+      o.rough = 0.82 + 0.1 * detail;
+      o.metal = 0;
+      o.ao = 0.88 + 0.12 * clamp01(h * 1.5);
+    },
+  };
 }
 
 export interface SurfaceImages {

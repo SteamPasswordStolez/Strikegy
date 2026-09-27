@@ -26,7 +26,7 @@ function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2
 }
 
 /** A fir branch seen from above: stem along +u, side twigs, dense needles. */
-function needleTexture(): THREE.CanvasTexture {
+function needleTexture(snow: boolean): THREE.CanvasTexture {
   const rng = makeRng(5);
   return canvasTexture(256, 256, (ctx) => {
     ctx.lineCap = 'round';
@@ -87,6 +87,25 @@ function needleTexture(): THREE.CanvasTexture {
     needles(0, y, 250, y, 24, 260, 14);
     for (const [x0, y0, x1, y1] of twigs) needles(x0, y0, x1, y1, 15, 90, 24);
     needles(100, y, 250, y, 16, 100, 29);
+    if (snow) {
+      // Clumps of snow resting on the branch, thickest along the stem and twigs
+      // (drawn only over needles, so the card outline stays the same).
+      ctx.globalCompositeOperation = 'source-atop';
+      const clump = (x: number, yy: number, r: number) => {
+        ctx.fillStyle = `rgba(${236 + rng() * 14}, ${240 + rng() * 12}, 250, ${0.75 + rng() * 0.2})`;
+        ctx.beginPath();
+        ctx.ellipse(x, yy, r * (1.2 + rng() * 0.6), r, rng() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      for (let i = 0; i < 70; i++) clump(10 + rng() * 235, y + (rng() - 0.5) * 34, 4 + rng() * 9);
+      for (const [x0, y0, x1, y1] of twigs) {
+        for (let i = 0; i < 7; i++) {
+          const t = rng();
+          clump(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 3 + rng() * 6);
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
   });
 }
 
@@ -220,10 +239,10 @@ export interface ConiferKit {
   impostorMaterial?: THREE.MeshBasicMaterial;
 }
 
-export function createConiferKit(alphaToCoverage: boolean): ConiferKit {
+export function createConiferKit(alphaToCoverage: boolean, snow = false): ConiferKit {
   const variants = Array.from({ length: VARIANTS }, (_, i) => buildVariant(101 + i * 17));
   const foliageMaterial = new THREE.MeshStandardMaterial({
-    map: needleTexture(),
+    map: needleTexture(snow),
     color: 0xa3ad9c,
     vertexColors: true,
     alphaTest: 0.45,

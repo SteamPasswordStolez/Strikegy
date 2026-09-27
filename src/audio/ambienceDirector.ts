@@ -21,6 +21,7 @@ export type AmbienceEvent =
 export const AMBIENCE_BY_PROFILE: Record<string, AmbienceLevels> = {
   outdoor_day: { wind: 0.35, birds: 0.6, battle: 0.5 },
   overcast: { wind: 0.55, birds: 0.35, battle: 0.5 },
+  winter: { wind: 0.6, birds: 0.15, battle: 0.55 },
   indoor: { wind: 0, birds: 0, battle: 0 },
 };
 

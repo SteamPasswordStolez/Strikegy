@@ -2,8 +2,8 @@ import type { MapDef } from './mapTypes';
 import { MODEL_KINDS } from './modelKits';
 
 const OBJECT_TYPES = new Set(['wall', 'cover', 'floor', 'ramp', 'prop']);
-const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor']);
-const MATERIALS = new Set(['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick']);
+const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor', 'winter']);
+const MATERIALS = new Set(['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow']);
 
 function isNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -42,6 +42,19 @@ export function validateMap(raw: unknown): string[] {
     }
     if (world.groundMaterial !== undefined && !MATERIALS.has(String(world.groundMaterial))) {
       errs.push(`world.groundMaterial: unknown "${String(world.groundMaterial)}"`);
+    }
+    const rivers = isObj(world.terrain) ? world.terrain.rivers : undefined;
+    if (rivers !== undefined) {
+      if (!Array.isArray(rivers)) errs.push('world.terrain.rivers: expected array');
+      else
+        rivers.forEach((r, i) => {
+          const okPts = isObj(r) && Array.isArray(r.pts) && r.pts.length >= 2 && r.pts.every((p) => Array.isArray(p) && p.length === 2 && p.every(isNum));
+          if (!okPts || !isNum(r.width) || r.width <= 0 || !isNum(r.depth) || r.depth <= 0) {
+            errs.push(`world.terrain.rivers[${i}]: expected { pts: [x,z][] (2+), width > 0, depth > 0 }`);
+          } else if ((r.water !== undefined && !(isNum(r.water) && r.water >= 0 && r.water < r.depth)) || (r.bank !== undefined && !(isNum(r.bank) && r.bank >= 0))) {
+            errs.push(`world.terrain.rivers[${i}]: water must be 0..depth, bank >= 0`);
+          }
+        });
     }
     if (world.ambience !== undefined) {
       const amb = world.ambience;
@@ -104,6 +117,14 @@ export function validateMap(raw: unknown): string[] {
         if (p.rot !== undefined && !isVec3(p.rot)) errs.push(`props[${i}].rot: expected [x,y,z] degrees`);
         if (p.scale !== undefined && !(isNum(p.scale) && p.scale > 0)) errs.push(`props[${i}].scale: expected positive number`);
       });
+  }
+
+  if (raw.trees !== undefined) {
+    if (!Array.isArray(raw.trees)) errs.push('trees: expected array');
+    else {
+      const bad = raw.trees.findIndex((t) => !Array.isArray(t) || t.length !== 3 || !t.every(isNum) || (t[2] as number) <= 0);
+      if (bad >= 0) errs.push(`trees[${bad}]: expected [x, z, scale > 0]`);
+    }
   }
 
   if (raw.targets !== undefined) {

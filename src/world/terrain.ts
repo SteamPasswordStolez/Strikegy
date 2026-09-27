@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RAPIER, Layer, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { TileNoise, smoothstep } from '@/render/noise';
-import type { MapDef, TerrainDef } from './mapTypes';
+import type { MapDef, RiverDef, TerrainDef } from './mapTypes';
 
 type P2 = readonly [number, number];
 
@@ -93,7 +93,28 @@ export class Terrain {
       const w = 1 - smoothstep(pad.radius, pad.radius + blend, d);
       h += (target - h) * w;
     }
+    for (const r of this.def.rivers ?? []) h -= r.depth * this.riverShape(r, x, z);
     return h;
+  }
+
+  /** 1 on the river bed, easing to 0 at the top of the banks. */
+  private riverShape(r: RiverDef, x: number, z: number): number {
+    const d = polylineDistance(r.pts, x, z);
+    return 1 - smoothstep(r.width / 2, r.width / 2 + (r.bank ?? 5), d);
+  }
+
+  /** 1 near a river's course, fading out over `reach` meters beyond its banks (valleys continue past the edge). */
+  private riverValley(x: number, z: number, reach: number): number {
+    let v = 0;
+    for (const r of this.def.rivers ?? []) {
+      const d = polylineDistance(r.pts, x, z);
+      v = Math.max(v, 1 - smoothstep(r.width / 2, r.width / 2 + (r.bank ?? 5) + reach, d));
+    }
+    return v;
+  }
+
+  get rivers(): readonly RiverDef[] {
+    return this.def.rivers ?? [];
   }
 
   /** Height of the unflattened ground at a pad center (pads keep the local level). */
@@ -117,7 +138,9 @@ export class Terrain {
     const u = x / SCENERY_EXTENT + 0.5;
     const v = z / SCENERY_EXTENT + 0.5;
     const hills = this.hillNoise.fbm(u, v, 3, 5);
-    return h + smoothstep(8, 160, d) * (8 + hills * 70) + smoothstep(300, 700, d) * 60 * this.hillNoise.fbm(u + 0.3, v, 2, 3);
+    const rise = smoothstep(8, 160, d) * (8 + hills * 70) + smoothstep(300, 700, d) * 60 * this.hillNoise.fbm(u + 0.3, v, 2, 3);
+    // Rivers leave through a valley instead of running into the hills.
+    return h + rise * (1 - 0.85 * this.riverValley(x, z, 40));
   }
 
   /** Bounding box of the playable area [minX, minZ, maxX, maxZ]. */
@@ -145,6 +168,21 @@ export class Terrain {
     }
     return { cols, rows, heights };
   }
+}
+
+/** Distance from (x, z) to a polyline. */
+export function polylineDistance(pts: readonly (readonly [number, number])[], x: number, z: number): number {
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i]!;
+    const [bx, bz] = pts[i + 1]!;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const len = dx * dx + dz * dz;
+    const t = len > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len)) : 0;
+    best = Math.min(best, Math.hypot(x - (ax + t * dx), z - (az + t * dz)));
+  }
+  return best;
 }
 
 /**

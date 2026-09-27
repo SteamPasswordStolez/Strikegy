@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TileNoise, makeRng, smoothstep } from '@/render/noise';
 import type { ModelLibrary } from '@/render/models';
-import { buildImpostors, buildNearTrees, createConiferKit } from './conifers';
+import { buildImpostors, buildNearTrees, createConiferKit, type ConiferKit } from './conifers';
 import { instanceModel } from './placeProps';
 import { LAYER_BACKDROP } from '@/render/layers';
 import { SCENERY_EXTENT, type Terrain } from './terrain';
@@ -33,6 +33,10 @@ export interface BackdropOptions {
   models: ModelLibrary;
   /** Canvas MSAA is on: foliage can use alpha-to-coverage for soft edges. */
   msaa: boolean;
+  /** Shared tree kit (the map's own forest uses the same one). */
+  kit?: ConiferKit;
+  /** Snow-covered ground and trees, no green undergrowth. */
+  winter?: boolean;
 }
 
 /**
@@ -75,10 +79,11 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   geo.rotateX(-Math.PI / 2);
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
-  const grass = new THREE.Color(0x5f6e40);
-  const dryGrass = new THREE.Color(0x958a5d);
-  const floor = new THREE.Color(0x3a3a26);
-  const rock = new THREE.Color(0x807b70);
+  const winter = !!opts.winter;
+  const grass = new THREE.Color(winter ? 0xe6ebf0 : 0x5f6e40);
+  const dryGrass = new THREE.Color(winter ? 0xd2dae3 : 0x958a5d);
+  const floor = new THREE.Color(winter ? 0xb4bcc2 : 0x3a3a26);
+  const rock = new THREE.Color(winter ? 0x8e9194 : 0x807b70);
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
@@ -104,7 +109,7 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   group.add(ground);
 
   // --- Trees ---------------------------------------------------------------
-  const kit = createConiferKit(opts.msaa);
+  const kit = opts.kit ?? createConiferKit(opts.msaa, winter);
   type TreeSpot = { pos: THREE.Vector3; scale: number; yaw: number; variant: number; tint: number };
   const scatter = (count: number, minD: number, maxD: number, accept: (x: number, z: number, d: number) => boolean): TreeSpot[] => {
     const out: TreeSpot[] = [];
@@ -157,9 +162,11 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   place('rock_moss_set_02', Math.round(6 * k), 4, 60, [1, 1.8], 0.1);
   place('tree_stump_01', Math.round(10 * k), 4, 45, [0.9, 1.4]);
   place('dead_tree_trunk', Math.round(8 * k), 4, 45, [1.5, 2.5], 0.02);
-  place('shrub_02', Math.round(14 * k), 3, 40, [0.8, 1.3]);
-  // Undergrowth along the inside of the edge softens it.
-  placeAlongEdge(opts.models, group, terrain, rng, k);
+  if (!winter) {
+    place('shrub_02', Math.round(14 * k), 3, 40, [0.8, 1.3]);
+    // Undergrowth along the inside of the edge softens it.
+    placeAlongEdge(opts.models, group, terrain, rng, k);
+  }
 
   group.traverse((o) => o.layers.set(LAYER_BACKDROP));
   scene.add(group);

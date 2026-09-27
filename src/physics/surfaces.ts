@@ -10,6 +10,7 @@ export const SURFACE_FROM_MATERIAL: Record<SurfaceMaterial, ImpactSurface> = {
   metal: 'metal',
   wood: 'wood',
   brick: 'brick',
+  snow: 'snow',
 };
 
 /** Impact surface for each prop model; unknown models default to wood. */

@@ -19,6 +19,10 @@ describe('model kits', () => {
       fountain: [3.4, 1, 3.4],
       statue: [0.8, 3.2, 0.8],
       bench: [2.2, 0.8, 0.6],
+      logPile: [6, 1.6, 2.4],
+      hayBale: [2.6, 1.5, 1.5],
+      bunker: [7, 3, 5],
+      fence: [8, 1.1, 0.3],
     };
     for (const kind of MODEL_KINDS) {
       const [w, h, d] = size[kind]!;

@@ -1,8 +1,8 @@
 import type { ModelKind } from './modelKits';
 export type Vec3 = [number, number, number];
 export type Team = 'blue' | 'red';
-export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor';
-export type SurfaceMaterial = 'ground' | 'concrete' | 'concrete_floor' | 'metal' | 'wood' | 'brick';
+export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter';
+export type SurfaceMaterial = 'ground' | 'concrete' | 'concrete_floor' | 'metal' | 'wood' | 'brick' | 'snow';
 export type ObjectType = 'wall' | 'cover' | 'floor' | 'ramp' | 'prop';
 
 export interface MapObject {
@@ -60,6 +60,21 @@ export interface TerrainDef {
   hills?: { pos: [number, number]; radius: number; height: number }[];
   /** Level pads (buildings get one automatically). `height` defaults to the local ground. */
   flats?: { pos: [number, number]; radius: number; height?: number; blend?: number }[];
+  /** River channels carved into the ground, with a water surface (see world/river.ts). */
+  rivers?: RiverDef[];
+}
+
+export interface RiverDef {
+  /** Centre line [x, z][], upstream first. */
+  pts: [number, number][];
+  /** Width of the flat river bed (m). */
+  width: number;
+  /** Depth of the bed below the surrounding ground (m). */
+  depth: number;
+  /** Width of the sloped bank on each side (m, default 5). */
+  bank?: number;
+  /** Water depth above the bed (m, default 0.6: wadeable). */
+  water?: number;
 }
 
 export type BuildingStyle = 'house' | 'shop' | 'apartment' | 'townhall' | 'warehouse' | 'barracks' | 'hangar' | 'hq' | 'station' | 'shed';
@@ -109,6 +124,8 @@ export interface MapDef {
   objects: MapObject[];
   buildings?: BuildingDef[];
   props?: PropDef[];
+  /** Conifers standing in the playable area: [x, z, scale] (trunks collide; see world/forest.ts). */
+  trees?: [number, number, number][];
   /** Practice dummies (sandbox/training maps). */
   targets?: TargetDef[];
 }

@@ -41,6 +41,16 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     envIntensity: 1.1,
     exposure: 0.8,
   },
+  // Low winter sun through thin high cloud; cold, hazy air.
+  winter: {
+    // Hazy (high turbidity + rayleigh) so the sky reads pale and the cloud gaps stay light.
+    sky: { turbidity: 20, rayleigh: 3, mieCoefficient: 0.02, mieDirectionalG: 0.6, cloudCoverage: 0.85, cloudDensity: 0.8 },
+    sun: { elevation: 30, azimuth: -150, color: 0xfff2e6, intensity: 1.4 },
+    fog: { color: 0xbfc7d0, density: 0.0042 },
+    hemi: { sky: 0xdfe8f4, ground: 0xb8bcc2, intensity: 0.45 },
+    envIntensity: 0.95,
+    exposure: 0.5,
+  },
   indoor: {
     background: 0x15171a,
     fog: { color: 0x15171a, density: 0.012 },

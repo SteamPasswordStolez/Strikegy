@@ -20,6 +20,10 @@
     "red_brick_03": {
       "res": "1k",
       "surface": "brick"
+    },
+    "snow_02": {
+      "res": "1k",
+      "surface": "snow"
     }
   },
   "models": {

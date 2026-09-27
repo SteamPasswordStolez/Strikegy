@@ -16,6 +16,9 @@ import { buildBlockout, hasTerrain, snapToTerrain } from '@/world/buildBlockout'
 import { Boundary, Terrain } from '@/world/terrain';
 import { buildingPadRadius } from '@/world/buildings';
 import { BACKDROP_MODELS, buildBackdrop } from '@/world/backdrop';
+import { createConiferKit } from '@/world/conifers';
+import { Forest } from '@/world/forest';
+import { buildRivers } from '@/world/river';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
@@ -114,6 +117,7 @@ export class Game {
   private bots: BotManager | null = null;
   private nav: NavWorld | null = null;
   private navExtra: { positions: number[]; indices: number[] } | null = null;
+  private forest: Forest | null = null;
   /** The player as seen by bots. */
   private playerCombatant!: Combatant;
   private playerFiringUntil = -1;
@@ -224,8 +228,15 @@ export class Game {
     const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null);
     this.navExtra = built.navExtra;
     const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
+    if (terrain.rivers.length) r.scene.add(buildRivers(terrain, r.scene.environment));
+    const winter = map.world.visualProfile === 'winter';
+    const kit = outdoor ? createConiferKit(q.msaa, winter) : null;
+    if (kit && map.trees?.length) {
+      this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene);
+      r.scene.add(this.forest.group);
+    }
     this.fitShadows(map, terrain, built.root, props);
-    if (outdoor) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped });
+    if (kit) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter });
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
@@ -324,6 +335,7 @@ export class Game {
     cam.updateMatrixWorld();
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     this.atmosphere.update(cam.position, 0);
+    this.forest?.update(cam.position);
 
     const temp = this.throwables.warmupMeshes();
     temp.forEach((m, i) => {
@@ -803,6 +815,7 @@ export class Game {
     }
     cam.updateMatrixWorld();
     this.atmosphere.update(cam.position, this.elapsed);
+    this.forest?.update(cam.position);
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);

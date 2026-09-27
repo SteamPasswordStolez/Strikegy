@@ -22,7 +22,11 @@ export type ModelKind =
   | 'pump'
   | 'fountain'
   | 'statue'
-  | 'bench';
+  | 'bench'
+  | 'logPile'
+  | 'hayBale'
+  | 'bunker'
+  | 'fence';
 
 export const MODEL_KINDS: readonly ModelKind[] = [
   'car',
@@ -39,10 +43,14 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   'fountain',
   'statue',
   'bench',
+  'logPile',
+  'hayBale',
+  'bunker',
+  'fence',
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
-export type KitMaterial = 'body' | 'trim' | 'metal' | 'dark' | 'glass' | 'rubber' | 'wood' | 'canvas' | 'concrete' | 'light' | 'redLight' | 'water' | 'dirt' | 'mesh';
+export type KitMaterial = 'body' | 'trim' | 'metal' | 'dark' | 'glass' | 'rubber' | 'wood' | 'canvas' | 'concrete' | 'light' | 'redLight' | 'water' | 'dirt' | 'mesh' | 'snow';
 
 export interface KitPiece {
   geo: THREE.BufferGeometry;
@@ -478,6 +486,107 @@ const KITS: Record<ModelKind, Kit> = {
       b.pieces.push(p);
     }
   },
+
+  logPile(b, w, h, d, rand) {
+    // Felled trunks stacked in a pyramid along the long side, cut ends showing.
+    const alongX = w >= d;
+    const L = alongX ? w : d;
+    const T = alongX ? d : w;
+    const r = Math.min(0.32, h / 5);
+    const layers = Math.max(1, Math.floor(h / (r * 1.75)));
+    const logs = new Builder();
+    for (let k = 0; k < layers; k++) {
+      const n = Math.max(1, Math.floor(T / (2 * r)) - k);
+      for (let i = 0; i < n; i++) {
+        const z = -((n - 1) * r) + i * 2 * r;
+        const y = r + k * r * 1.72;
+        const rr = r * (0.85 + rand() * 0.2);
+        const len = L - rand() * 0.4;
+        const off = (rand() - 0.5) * 0.3;
+        logs.cyl('body', rr, rr, len, [off, y, z], [0, 0, Math.PI / 2], 9);
+        for (const s of [-1, 1]) logs.cyl('trim', rr * 0.92, rr * 0.92, 0.02, [off + (s * len) / 2, y, z], [0, 0, Math.PI / 2], 9);
+      }
+    }
+    // Stakes holding the bottom row.
+    for (const s of [-1, 1]) for (const e of [-1, 1]) logs.box('wood', [0.1, h * 0.8, 0.1], [e * (L / 2 - 0.5), h * 0.4, s * (T / 2 + 0.05)]);
+    for (const p of logs.pieces) {
+      if (!alongX) p.geo.rotateY(Math.PI / 2);
+      b.pieces.push(p);
+    }
+  },
+
+  hayBale(b, w, h, d) {
+    // Round bales lying on their side, rolled along the long side.
+    const alongX = w >= d;
+    const L = alongX ? w : d;
+    const r = Math.min(h / 2, (alongX ? d : w) / 2);
+    const len = Math.min(1.3, L);
+    const n = Math.max(1, Math.floor(L / len));
+    const bales = new Builder();
+    for (let i = 0; i < n; i++) {
+      const x = -L / 2 + (L / n) * (i + 0.5);
+      bales.cyl('body', r, r, (L / n) * 0.95, [x, r, 0], [0, 0, Math.PI / 2], 16);
+      // Wrap bands.
+      for (const s of [-0.25, 0.25]) bales.cyl('trim', r + 0.01, r + 0.01, 0.06, [x + (s * L) / n, r, 0], [0, 0, Math.PI / 2], 16, true);
+      bales.box('snow', [(L / n) * 0.8, 0.08, r * 0.9], [x, r * 2 - 0.02, 0]);
+    }
+    for (const p of bales.pieces) {
+      if (!alongX) p.geo.rotateY(Math.PI / 2);
+      b.pieces.push(p);
+    }
+  },
+
+  bunker(b, w, h, d) {
+    // Concrete pillbox: firing slit across the front (-z), door at the back
+    // (+z, right side), thick roof slab with snow on it. Enterable.
+    const t = 0.5;
+    const roof = 0.6;
+    const inner = h - roof;
+    const slit0 = 1.15;
+    const slit1 = 1.55;
+    const door = 1.3;
+    const cols: KitBox[] = [];
+    const wall = (size: V3, at: V3) => {
+      b.box('body', size, at);
+      cols.push({ center: at, size });
+    };
+    // Front: below and above the slit, with pillars at the ends.
+    wall([w, slit0, t], [0, slit0 / 2, -d / 2 + t / 2]);
+    wall([w, inner - slit1, t], [0, (slit1 + inner) / 2, -d / 2 + t / 2]);
+    for (const s of [-1, 1]) wall([0.6, slit1 - slit0, t], [s * (w / 2 - 0.3), (slit0 + slit1) / 2, -d / 2 + t / 2]);
+    // Sides.
+    for (const s of [-1, 1]) wall([t, inner, d - 2 * t], [s * (w / 2 - t / 2), inner / 2, 0]);
+    // Back with a door opening on the right.
+    const doorX = w / 2 - t - 0.3 - door / 2;
+    const leftLen = doorX - door / 2 + w / 2;
+    wall([leftLen, inner, t], [-w / 2 + leftLen / 2, inner / 2, d / 2 - t / 2]);
+    const rightLen = w / 2 - (doorX + door / 2);
+    wall([rightLen, inner, t], [w / 2 - rightLen / 2, inner / 2, d / 2 - t / 2]);
+    wall([door, inner - 2.2, t], [doorX, (2.2 + inner) / 2, d / 2 - t / 2]);
+    // Roof slab overhanging the slit, and snow on top.
+    wall([w + 0.4, roof, d + 0.6], [0, inner + roof / 2, -0.1]);
+    b.box('trim', [w + 0.5, 0.15, 0.3], [0, slit1 + 0.05, -d / 2 - 0.1]);
+    b.box('snow', [w + 0.2, 0.12, d + 0.4], [0, h + 0.04, -0.1]);
+    // Floor inside (darker).
+    b.box('trim', [w - 2 * t, 0.05, d - 2 * t], [0, 0.03, 0]);
+    return cols;
+  },
+
+  fence(b, w, h, d) {
+    // Split-rail farm fence: posts every ~2.2 m and two rails.
+    const alongX = w >= d;
+    const L = alongX ? w : d;
+    const n = Math.max(1, Math.round(L / 2.2));
+    const parts = new Builder();
+    for (let i = 0; i <= n; i++) parts.box('wood', [0.12, h, 0.12], [-L / 2 + (L / n) * i, h / 2, 0]);
+    for (const y of [h * 0.45, h * 0.85]) parts.box('wood', [L, 0.08, 0.06], [0, y, 0.07]);
+    parts.box('snow', [L, 0.04, 0.08], [0, h * 0.85 + 0.06, 0.07]);
+    for (const p of parts.pieces) {
+      if (!alongX) p.geo.rotateY(Math.PI / 2);
+      b.pieces.push(p);
+    }
+    return [{ center: [0, h / 2, 0], size: alongX ? [L, h, 0.2] : [0.2, h, L] }];
+  },
 };
 
 /** Shared looks for kit pieces that don't use the object's own surface. */
@@ -491,5 +600,6 @@ export function kitMaterials(): Record<Exclude<KitMaterial, 'body' | 'trim' | 'm
     redLight: new THREE.MeshStandardMaterial({ color: 0x9a1c16, emissive: 0x2a0503, roughness: 0.4 }),
     water: new THREE.MeshStandardMaterial({ color: 0x2c4550, roughness: 0.05, metalness: 0.2 }),
     mesh: new THREE.MeshStandardMaterial({ color: 0x6b6c63, roughness: 0.6, metalness: 0.6 }),
+    snow: new THREE.MeshStandardMaterial({ color: 0xeef2f6, roughness: 0.85 }),
   };
 }
