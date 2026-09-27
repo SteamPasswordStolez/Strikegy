@@ -7,11 +7,12 @@ import type { AudioSystem } from '@/audio/AudioSystem';
 import type { Effects } from '@/render/Effects';
 import { LAYER_FX } from '@/render/layers';
 import type { SpawnPoint, Team } from '@/world/mapTypes';
-import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { WEAPONS, damageAtDistance, type WeaponDef } from '@/weapons/weaponData';
 import { Bot, type BotServices } from './Bot';
 import type { NavWorld } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel } from './SoldierModel';
+import { BOT_WEAPONS, rollPersonality, weaponFor } from './personality';
 import { PLAYER_TEAM, otherTeam, type Combatant } from './types';
 
 const DEG = Math.PI / 180;
@@ -35,18 +36,6 @@ const SIGHT_SHARE_SEC = 0.09;
 const FAR_SQ = 60 * 60;
 const COVER_SEARCHES_PER_STEP = 3;
 const COVER_SAMPLES = 10;
-
-/** Loadout pool: weighted so most bots carry rifles. */
-const POOL: [WeaponId, number][] = [
-  ['ar1', 3],
-  ['ar2', 2],
-  ['ar3', 1],
-  ['smg1', 2],
-  ['smg2', 1],
-  ['lmg1', 1],
-  ['dmr1', 1],
-  ['sg1', 1],
-];
 
 const NAMES: Record<Team, string[]> = {
   blue: ['Hawk', 'Bishop', 'Rook', 'Nomad', 'Sparrow', 'Atlas', 'Echo', 'Kodiak'],
@@ -101,16 +90,13 @@ interface BotEntry {
   leader: Combatant | null;
   /** Slot in the leader's formation (1..). */
   slot: number;
+  /** Detour on the way to the objective (the squad's approach route), cleared once passed. */
+  via: THREE.Vector3 | null;
 }
 
-function pickWeapon(): WeaponDef {
-  const total = POOL.reduce((a, [, w]) => a + w, 0);
-  let r = Math.random() * total;
-  for (const [id, w] of POOL) {
-    r -= w;
-    if (r <= 0) return WEAPONS[id];
-  }
-  return WEAPONS.ar1;
+/** A weapon that suits the bot's fighting style (re-rolled every life). */
+function loadout(bot: Bot): WeaponDef {
+  return WEAPONS[weaponFor(bot.personality)];
 }
 
 /**
@@ -122,6 +108,7 @@ export class BotManager implements BotServices {
   time = 0;
   readonly skill: BotSkill;
   private readonly entries: BotEntry[] = [];
+  private readonly byBot = new Map<Combatant, BotEntry>();
   private readonly teams: Record<Team, TeamState>;
   private readonly damageScale: number;
   private readonly listener = new THREE.Vector3();
@@ -163,11 +150,12 @@ export class BotManager implements BotServices {
     };
     this.teams = { blue: teamState('blue'), red: teamState('red') };
     // Build every soldier + weapon mesh now rather than hitching on first respawn.
-    SoldierModel.prewarm(['blue', 'red'], POOL.map(([id]) => WEAPONS[id]));
+    SoldierModel.prewarm(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]));
 
     const add = (team: Team, n: number) => {
       for (let i = 0; i < n; i++) {
-        const bot = new Bot(NAMES[team][i % NAMES[team].length]!, team, pickWeapon(), physics, registry);
+        const style = rollPersonality();
+        const bot = new Bot(NAMES[team][i % NAMES[team].length]!, team, WEAPONS[weaponFor(style)], physics, registry, style);
         this.respawn(bot);
         const model = new SoldierModel(team, bot.def);
         scene.add(model.root);
@@ -186,7 +174,9 @@ export class BotManager implements BotServices {
           squad: -1,
           leader: null,
           slot: 0,
+          via: null,
         });
+        this.byBot.set(bot, this.entries[this.entries.length - 1]!);
       }
     };
     add(PLAYER_TEAM, opts.allies);
@@ -197,6 +187,10 @@ export class BotManager implements BotServices {
     bus.on('combat:kill', (e) => {
       if (e.attackerTeam && e.attackerTeam !== e.victimTeam) this.teams[e.attackerTeam].kills++;
     });
+  }
+
+  private entryOf(bot: Bot): BotEntry {
+    return this.byBot.get(bot)!;
   }
 
   get bots(): readonly Bot[] {
@@ -246,9 +240,10 @@ export class BotManager implements BotServices {
 
   private respawn(bot: Bot): void {
     if (this.hooks) {
-      const e = this.entries.find((x) => x.bot === bot);
-      const at = this.hooks.spawnAt(bot, e?.objective?.pos ?? null);
-      bot.spawn(at.pos, at.yaw, pickWeapon());
+      const e = this.entryOf(bot);
+      const at = this.hooks.spawnAt(bot, e.objective?.pos ?? null);
+      bot.spawn(at.pos, at.yaw, loadout(bot));
+      e.via = e.objective ? this.approach(bot.feet, e.objective.pos, Math.floor(Math.random() * 3) - 1) : null;
       return;
     }
     const t = this.teams[bot.team];
@@ -264,7 +259,7 @@ export class BotManager implements BotServices {
     }
     const [ex, , ez] = [t.base.x - this.teams[otherTeam(bot.team)].base.x, 0, t.base.z - this.teams[otherTeam(bot.team)].base.z];
     // Face the enemy base.
-    bot.spawn(pos, Math.atan2(ex, ez), pickWeapon());
+    bot.spawn(pos, Math.atan2(ex, ez), loadout(bot));
   }
 
   /** New model on respawn (the bot may carry a different weapon). */
@@ -284,14 +279,18 @@ export class BotManager implements BotServices {
       // Whole squads go for an objective together; about half the squads per objective.
       const squads = [...new Set(this.entries.filter((e) => e.bot.team === team).map((e) => e.squad))].sort((a, b) => a - b);
       const n = Math.min(goals.length, Math.max(1, Math.ceil(squads.length / 2)));
+      // Each squad picks a way in (left, straight or right) so they don't all funnel down one street.
+      const sides = squads.map(() => Math.floor(Math.random() * 3) - 1);
       for (const e of this.entries) {
         if (e.bot.team !== team) continue;
         const k = Math.max(0, squads.indexOf(e.squad));
         const g = goals[k % n]!;
+        const changed = e.objective?.pos !== g.pos;
         e.objective = g;
         const a = Math.random() * Math.PI * 2;
         const r = Math.sqrt(Math.random()) * g.radius * 0.7;
         e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+        if (changed) e.via = e.bot.alive ? this.approach(e.bot.feet, g.pos, sides[k]!) : null;
       }
       t.objective.copy(goals[0]!.pos);
       return;
@@ -403,10 +402,15 @@ export class BotManager implements BotServices {
 
   squadGoal(bot: Bot): THREE.Vector3 {
     const t = this.teams[bot.team];
-    const e = this.entries.find((x) => x.bot === bot)!;
+    const e = this.entryOf(bot);
     const follow = this.followPoint(e);
     if (follow) return follow;
     if (e.objective) {
+      if (e.via) {
+        const toGoal = bot.feet.distanceTo(e.objective.pos);
+        if (bot.feet.distanceTo(e.via) < 8 || toGoal < e.via.distanceTo(e.objective.pos) + 5) e.via = null;
+        else return e.via.clone();
+      }
       const goal = e.objective.pos.clone().add(e.offset);
       return this.nav.closest(goal) ?? e.objective.pos.clone();
     }
@@ -417,6 +421,22 @@ export class BotManager implements BotServices {
       goal.z += dir.x * 16 * e.flankSide;
     }
     return this.nav.closest(goal) ?? t.objective.clone();
+  }
+
+  /**
+   * A detour point for approaching `goal` from `from` along side `side`
+   * (-1 left, 0 straight, 1 right), or null when it is close anyway.
+   */
+  private approach(from: THREE.Vector3, goal: THREE.Vector3, side: number): THREE.Vector3 | null {
+    const dist = from.distanceTo(goal);
+    if (side === 0 || dist < 50) return null;
+    const dir = this.tmp.subVectors(goal, from).setY(0).normalize();
+    // Halfway there, swung out to the side by up to 35 m.
+    const swing = Math.min(35, dist * 0.35) * side;
+    const p = new THREE.Vector3().lerpVectors(from, goal, 0.5);
+    p.x += -dir.z * swing;
+    p.z += dir.x * swing;
+    return this.nav.closest(p);
   }
 
   /** Formation spot behind the squad leader, or null when not following. */
@@ -432,12 +452,12 @@ export class BotManager implements BotServices {
   }
 
   mustRegroup(bot: Bot): boolean {
-    const l = this.entries.find((x) => x.bot === bot)!.leader;
+    const l = this.entryOf(bot).leader;
     return !!l && l.alive && l.feet.distanceTo(bot.feet) > 18;
   }
 
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean {
-    const e = this.entries.find((x) => x.bot === bot)!;
+    const e = this.entryOf(bot);
     const l = e.leader;
     if (!l || !l.alive) return false;
     // Re-path when the leader has walked well away from where we were heading.
@@ -466,7 +486,7 @@ export class BotManager implements BotServices {
     const up = new THREE.Vector3().crossVectors(right, dir).normalize();
     const pellets = def.pellets ?? 1;
     const source: DamageSource = { pos: eye.clone(), name: bot.name, team: bot.team, weapon: def.name, id: bot.id };
-    const e = this.entries.find((x) => x.bot === bot)!;
+    const e = this.entryOf(bot);
     e.model.muzzleWorld(this.muzzle);
     for (let i = 0; i < pellets; i++) {
       const r = Math.tan(spread) * Math.sqrt(Math.random());
@@ -494,7 +514,7 @@ export class BotManager implements BotServices {
               victimTeam: owner.team ?? null,
             });
           }
-          const hitEntry = this.entries.find((x) => x.bot === owner);
+          const hitEntry = this.byBot.get(owner as Bot);
           hitEntry?.model.onHit();
         }
       } else if (hit && (pellets === 1 || Math.random() < 0.4)) {

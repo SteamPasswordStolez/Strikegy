@@ -25,23 +25,34 @@ export interface BrainInput {
   inCover: boolean;
   /** Fell far behind its squad leader. */
   regroup?: boolean;
+  /** Personality (0..1, default 0.5): keen to push and chase. */
+  aggression?: number;
+  /** Personality (0..1, default 0.5): prefers fighting from cover. */
+  caution?: number;
 }
 
 export function scoreActions(i: BrainInput): Record<BotAction, number> {
   const hurt = 1 - i.health;
   const pressured = i.sinceHurt < 2.5 || i.hasTarget;
   const empty = i.ammo <= 0;
+  const aggression = i.aggression ?? 0.5;
+  const caution = i.caution ?? 0.5;
   return {
     // Fight whatever is visible; less keen with an empty magazine.
     engage: i.hasTarget ? (empty ? 0.3 : 0.75) : 0,
     // Break contact when hurt or out of ammo in a fight; only if cover is known.
-    cover: i.coverKnown && pressured && !i.inCover ? hurt * 1.1 + (empty || i.reloading ? 0.45 : 0) + (i.sinceHurt < 1 ? 0.15 : 0) : 0,
+    // Careful types also move into cover as soon as a fight starts and shoot from there.
+    cover:
+      i.coverKnown && pressured && !i.inCover
+        ? (hurt * 1.1 + (empty || i.reloading ? 0.45 : 0) + (i.sinceHurt < 1 ? 0.15 : 0)) * (0.6 + caution * 0.8) +
+          (i.hasTarget ? Math.max(0, caution - 0.4) * 1.8 : 0)
+        : 0,
     // Top up between fights; forced when empty and nowhere to hide.
     reload: !i.reloading && i.ammo < 1 ? (empty ? (i.hasTarget ? 0.6 : 0.95) : i.hasTarget ? 0 : (1 - i.ammo) * 0.8) : 0,
     // Chase the last known position of a recently seen enemy.
-    hunt: !i.hasTarget && i.lastSeenAge < 10 ? 0.35 + 0.3 * (1 - i.lastSeenAge / 10) : 0,
+    hunt: !i.hasTarget && i.lastSeenAge < 10 ? 0.25 + aggression * 0.2 + 0.3 * (1 - i.lastSeenAge / 10) : 0,
     // Check out noises.
-    investigate: !i.hasTarget && i.heardAge < 6 ? 0.3 + 0.15 * (1 - i.heardAge / 6) : 0,
+    investigate: !i.hasTarget && i.heardAge < 6 ? 0.22 + aggression * 0.16 + 0.15 * (1 - i.heardAge / 6) : 0,
     // Default: move with the squad toward the objective; catching up with the leader beats checking noises.
     advance: i.regroup ? 0.6 : 0.25,
   };

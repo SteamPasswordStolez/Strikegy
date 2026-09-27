@@ -13,6 +13,7 @@ import type { BotSkill } from './difficulty';
 import { chooseAction, type BotAction } from './brain';
 import { aimErrorDeg, noticeTime, offAxisDeg, turnToward, wrapAngle, yawPitchOf } from './aim';
 import type { Combatant } from './types';
+import { rollPersonality, type Personality } from './personality';
 import { COMBAT_WINDOW } from '@/modes/squads';
 
 const DEG = Math.PI / 180;
@@ -20,6 +21,8 @@ const DOWN = { x: 0, y: -1, z: 0 };
 const PERCEIVE_EVERY = 0.1;
 const THINK_EVERY = 0.25;
 const CROUCH_HEIGHT = MOVE.crouchHeight;
+/** How far off the path centre a bot keeps (m, at lane = +-1). */
+const LANE_WIDTH = 1.8;
 
 /** Preferred fighting distance per weapon class (meters). */
 const PREFERRED_RANGE: Record<WeaponDef['class'], number> = { ar: 20, smg: 10, lmg: 24, sg: 6, dmr: 32, sr: 40, pistol: 10 };
@@ -133,6 +136,7 @@ export class Bot implements Damageable, Combatant {
     public def: WeaponDef,
     physics: PhysicsWorld,
     registry: HitboxRegistry,
+    readonly personality: Personality = rollPersonality(),
   ) {
     this.weapon = new WeaponState(def);
     const world = physics.world;
@@ -292,7 +296,7 @@ export class Bot implements Damageable, Combatant {
         visible = s.canSee(this, e, eye, head, chest);
       }
       if (visible) {
-        progress = Math.min(1.5, progress + dt / noticeTime(skill.reaction, dist, off, skill.fov / 2, firing));
+        progress = Math.min(1.5, progress + dt / noticeTime(skill.reaction * this.personality.reaction, dist, off, skill.fov / 2, firing));
         if (progress >= 1) {
           this.lastSeen.pos.copy(e.feet);
           this.lastSeen.time = s.time;
@@ -341,6 +345,8 @@ export class Bot implements Damageable, Combatant {
         coverKnown: !!this.cover,
         inCover,
         regroup: s.mustRegroup(this),
+        aggression: this.personality.aggression,
+        caution: this.personality.caution,
       },
       this.action,
     );
@@ -377,7 +383,7 @@ export class Bot implements Damageable, Combatant {
   private planEngage(s: BotServices): void {
     const t = this.target!;
     const dist = this.feet.distanceTo(t.feet);
-    const pref = PREFERRED_RANGE[this.def.class];
+    const pref = PREFERRED_RANGE[this.def.class] * this.personality.range;
     if (dist > pref * 1.4) {
       this.setGoal(t.feet, s);
       return;
@@ -428,7 +434,8 @@ export class Bot implements Damageable, Combatant {
       this.tracked += dt;
       // Error drifts smoothly between re-sampled offsets, shrinking as the bot settles.
       if (s.time > this.jitterAt) {
-        const err = aimErrorDeg(skill.aimError, skill.aimErrorMin, skill.settleTime, this.tracked) * DEG;
+        const p = this.personality;
+        const err = aimErrorDeg(skill.aimError * p.aim, skill.aimErrorMin * p.aim, skill.settleTime, this.tracked) * DEG;
         const a = Math.random() * Math.PI * 2;
         const r = err * Math.sqrt(Math.random());
         this.jitterGoal.set(Math.cos(a) * r, Math.sin(a) * r);
@@ -467,15 +474,26 @@ export class Bot implements Damageable, Combatant {
       while (Math.hypot(corner.x - this.feet.x, corner.z - this.feet.z) < 0.45 && this.pathIndex < this.path.length - 1) {
         corner = this.path[++this.pathIndex]!;
       }
-      const dx = corner.x - this.feet.x;
-      const dz = corner.z - this.feet.z;
+      let dx = corner.x - this.feet.x;
+      let dz = corner.z - this.feet.z;
       const d = Math.hypot(dx, dz);
       if (d > 0.3 || this.pathIndex < this.path.length - 1) {
-        wx = dx / Math.max(d, 1e-4);
-        wz = dz / Math.max(d, 1e-4);
+        // Keep to this bot's side of the path on long legs (fading out near
+        // corners, where the path hugs walls) so groups don't walk single file.
+        const lane = this.personality.lane * LANE_WIDTH * THREE.MathUtils.clamp((d - 2) / 5, 0, 1);
+        if (lane !== 0 && this.action !== 'cover') {
+          const px = -dz / d;
+          const pz = dx / d;
+          dx += px * lane;
+          dz += pz * lane;
+        }
+        const dl = Math.hypot(dx, dz);
+        wx = dx / Math.max(dl, 1e-4);
+        wz = dz / Math.max(dl, 1e-4);
         const engaged = !!this.target;
-        const sprint = !engaged && (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') && d > 4;
-        speed = engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed;
+        const wary = this.personality.caution > 0.55 && s.time - this.lastSeen.time < 6;
+        const sprint = !engaged && !wary && (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') && d > 4;
+        speed = (engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed) * this.personality.pace;
       } else {
         this.hasGoal = false;
       }
