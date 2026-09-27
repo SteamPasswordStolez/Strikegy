@@ -88,6 +88,7 @@ const bridgeG = { x: railCrossX, z: round(railZ(railCrossX)), len: 36, w: 5 };
 for (const b of [bridgeC, footA, bridgeG]) {
   for (const s of [-1, 1]) flats.push({ pos: [round(b.x + s * (b.len / 2 - 3)), b.z], radius: 7, height: 0, blend: 8 });
 }
+river.crossings = [bridgeC, footA, bridgeG].map((b) => [b.x, b.z]);
 const terrain = {
   cell: 2,
   noise: 1.1,

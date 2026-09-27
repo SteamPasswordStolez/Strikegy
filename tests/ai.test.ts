@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { aimErrorDeg, noticeTime, offAxisDeg, turnToward, wrapAngle, yawPitchOf } from '@/ai/aim';
-import { chooseAction, type BrainInput } from '@/ai/brain';
+import { chooseAction, scoreActions, type BrainInput } from '@/ai/brain';
+import { Boundary, Terrain } from '@/world/terrain';
+import { WaterMap } from '@/world/water';
 import { NavWorld } from '@/ai/NavWorld';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
 
@@ -68,6 +70,38 @@ describe('utility brain', () => {
     expect(chooseAction({ ...calm, lastSeenAge: 2 }, null)).toBe('hunt');
     expect(chooseAction({ ...calm, heardAge: 1 }, null)).toBe('investigate');
     expect(chooseAction({ ...calm, ammo: 0 }, null)).toBe('reload');
+  });
+  it('gets into cover when pinned down, even at full health', () => {
+    const fight = { ...calm, hasTarget: true, lastSeenAge: 0, coverKnown: true, sinceHurt: 5 };
+    expect(chooseAction(fight, 'engage')).toBe('engage');
+    expect(chooseAction({ ...fight, suppression: 0.9 }, 'engage')).toBe('cover');
+    // In cover with the shooter out of sight: stay down rather than chase.
+    expect(chooseAction({ ...calm, inCover: true, lastSeenAge: 20, heardAge: 0.5, suppression: 0.8 }, null)).toBe('hold');
+  });
+
+  it('stops chasing when outnumbered and presses on when ahead', () => {
+    const seen = { ...calm, lastSeenAge: 4 };
+    const scores = (odds: number) => scoreActions({ ...seen, odds }).hunt;
+    expect(scores(0.3)).toBeLessThan(scores(1));
+    expect(scores(3)).toBeGreaterThan(scores(1));
+    expect(chooseAction({ ...seen, odds: 0.25, inCover: true }, null)).toBe('hold');
+  });
+});
+
+describe('WaterMap', () => {
+  it('reports depth in the river and nothing on the banks', () => {
+    const square = new Boundary([
+      [-60, -60],
+      [60, -60],
+      [60, 60],
+      [-60, 60],
+    ]);
+    const t = new Terrain({ rivers: [{ pts: [[0, -80], [0, 80]], width: 10, depth: 2, bank: 4, water: 0.6 }] }, square, [160, 160]);
+    const w = new WaterMap(t);
+    expect(w.any).toBe(true);
+    expect(w.depthAt(0, -2, 0)).toBeCloseTo(0.6, 1);
+    expect(w.depthAt(20, 0, 0)).toBe(0);
+    expect(w.depthAt(0, 1, 0)).toBe(0);
   });
 });
 

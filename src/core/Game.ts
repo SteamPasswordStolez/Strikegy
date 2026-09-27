@@ -19,6 +19,7 @@ import { BACKDROP_MODELS, buildBackdrop } from '@/world/backdrop';
 import { createConiferKit } from '@/world/conifers';
 import { Forest } from '@/world/forest';
 import { buildRivers } from '@/world/river';
+import { WaterMap } from '@/world/water';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
@@ -228,7 +229,8 @@ export class Game {
     const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null);
     this.navExtra = built.navExtra;
     const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
-    if (terrain.rivers.length) r.scene.add(buildRivers(terrain, r.scene.environment));
+    const water = terrain.rivers.length ? new WaterMap(terrain) : null;
+    if (water) r.scene.add(buildRivers(terrain, r.scene.environment));
     const winter = map.world.visualProfile === 'winter';
     const kit = outdoor ? createConiferKit(q.msaa, winter) : null;
     if (kit && map.trees?.length) {
@@ -243,6 +245,7 @@ export class Game {
     this.throwables = new Throwables(r.scene, this.physics, this.bus);
     this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
+    this.player.water = water;
     this.playerSpawns = map.spawns.filter((s) => s.team === 'player' || s.team === PLAYER_TEAM);
     this.mapSpawns = map.spawns;
     this.mapName = map.meta.name;
@@ -270,6 +273,10 @@ export class Game {
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
         this.bots.grenades = this.throwables;
         this.bots.setTactical(built.windows, built.footprints);
+        if (map.trees) this.bots.setForest(map.trees, map.world.size);
+        if (water) this.bots.setWater(water);
+        const bots = this.bots;
+        this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, PLAYER_TEAM, hitId, pellet ? 0.35 : 1);
       }
     }
     const mode = this.options.mode ?? 'auto';

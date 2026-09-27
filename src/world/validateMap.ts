@@ -51,6 +51,8 @@ export function validateMap(raw: unknown): string[] {
           const okPts = isObj(r) && Array.isArray(r.pts) && r.pts.length >= 2 && r.pts.every((p) => Array.isArray(p) && p.length === 2 && p.every(isNum));
           if (!okPts || !isNum(r.width) || r.width <= 0 || !isNum(r.depth) || r.depth <= 0) {
             errs.push(`world.terrain.rivers[${i}]: expected { pts: [x,z][] (2+), width > 0, depth > 0 }`);
+          } else if (r.crossings !== undefined && !(Array.isArray(r.crossings) && r.crossings.every((p) => Array.isArray(p) && p.length === 2 && p.every(isNum)))) {
+            errs.push(`world.terrain.rivers[${i}].crossings: expected [x, z][]`);
           } else if ((r.water !== undefined && !(isNum(r.water) && r.water >= 0 && r.water < r.depth)) || (r.bank !== undefined && !(isNum(r.bank) && r.bank >= 0))) {
             errs.push(`world.terrain.rivers[${i}]: water must be 0..depth, bank >= 0`);
           }

@@ -6,6 +6,7 @@ import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import { Health } from '@/player/health';
 import { MOVE, approachVelocity, capsuleHalfHeight } from '@/player/movement';
 import type { Team } from '@/world/mapTypes';
+import { WADE_DEPTH, WADE_SPEED } from '@/world/water';
 import { WeaponState } from '@/weapons/WeaponState';
 import type { WeaponDef } from '@/weapons/weaponData';
 import type { NavWorld } from './NavWorld';
@@ -25,6 +26,10 @@ const CROUCH_HEIGHT = MOVE.crouchHeight;
 const TEAM_INTEL_RANGE = 45;
 /** How far off the path centre a bot keeps (m, at lane = +-1). */
 const LANE_WIDTH = 1.8;
+/** Suppression lost per second. */
+const SUPPRESSION_DECAY = 0.3;
+/** Radius for weighing local odds (known enemies vs friends around). */
+const ODDS_RANGE = 40;
 
 /** Preferred fighting distance per weapon class (meters). */
 const PREFERRED_RANGE: Record<WeaponDef['class'], number> = { ar: 20, smg: 10, lmg: 24, sg: 6, dmr: 32, sr: 40, pistol: 10 };
@@ -76,6 +81,12 @@ export interface BotServices {
   mustRegroup(bot: Bot): boolean;
   /** Push away from nearby bots (m/s, horizontal) so they don't stack up. */
   separation(bot: Bot, out: THREE.Vector3): THREE.Vector3;
+  /** How much foliage (tree crowns) lies between two points: 0 = none, ~1 = a few thick trees. */
+  foliage(from: THREE.Vector3, to: THREE.Vector3): number;
+  /** Depth of water over a point (0 when dry). */
+  waterDepth(p: THREE.Vector3): number;
+  /** Navmesh path for this bot to `to` (round by a bridge rather than wading when it isn't far). */
+  route(bot: Bot, to: THREE.Vector3, out: THREE.Vector3[]): boolean;
 }
 
 let nextBotId = 1;
@@ -115,6 +126,11 @@ export class Bot implements Damageable, Combatant {
   private readonly lastSeen = { pos: new THREE.Vector3(), time: -Infinity };
   private readonly heard = { pos: new THREE.Vector3(), time: -Infinity };
   private lastHurt = -Infinity;
+  /** Who shot us last (combatant id) and from where. */
+  private lastAttacker = -1;
+  private readonly lastAttackerPos = new THREE.Vector3();
+  /** 0..1: rounds cracking past recently (near misses and hits); decays over a few seconds. */
+  suppression = 0;
   /** Flashbanged: blind until this sim time. */
   private blindUntil = -Infinity;
   private tracked = 0;
@@ -247,6 +263,9 @@ export class Bot implements Damageable, Combatant {
     if (source) {
       this.lastSeen.pos.copy(source.pos);
       this.lastSeen.time = this.nowRef;
+      this.lastAttacker = source.id;
+      this.lastAttackerPos.copy(source.pos);
+      this.suppression = Math.min(1, this.suppression + 0.35);
       if (!this.target) this.faceToward(source.pos, 0.6);
     }
     if (killed) this.die();
@@ -275,6 +294,31 @@ export class Bot implements Damageable, Combatant {
     this.heard.time = time;
   }
 
+  /**
+   * A round cracked past (or a burst landed close). Pins the bot down: worse
+   * aim, keener to get into cover, less peeking; also gives away roughly
+   * where the shooter is. Rushers shrug more of it off.
+   */
+  suppress(amount: number, from: THREE.Vector3, time: number): void {
+    if (!this.alive) return;
+    this.suppression = Math.min(1, this.suppression + amount * (1.25 - this.personality.aggression * 0.7));
+    this.heard.pos.copy(from);
+    this.heard.time = time;
+  }
+
+  /** A mate next to us was killed from `killerPos`: look for the killer (unless already fighting). */
+  mateKilled(killerPos: THREE.Vector3, time: number): void {
+    if (!this.alive || this.target) return;
+    this.lastSeen.pos.copy(killerPos);
+    this.lastSeen.time = time;
+    this.suppression = Math.min(1, this.suppression + 0.15);
+  }
+
+  /** Last attacker's position, for the manager's intel when this bot dies. */
+  get killerPos(): THREE.Vector3 | null {
+    return this.lastAttacker >= 0 ? this.lastAttackerPos : null;
+  }
+
   // ---------------------------------------------------------------------------
   // Simulation
 
@@ -286,6 +330,7 @@ export class Bot implements Damageable, Combatant {
       return;
     }
     this.health.step(dt);
+    this.suppression = Math.max(0, this.suppression - dt * SUPPRESSION_DECAY);
 
     this.perceiveTimer -= dt;
     if (this.perceiveTimer <= 0) {
@@ -337,14 +382,23 @@ export class Bot implements Damageable, Combatant {
         const chest = this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7);
         visible = s.canSee(this, e, eye, head, chest);
       }
+      // Tree crowns in between hide people at range (thick woods completely).
+      let leaves = 0;
+      if (visible && dist > 12) {
+        leaves = s.foliage(eye, this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7));
+        if (leaves > (firing ? 2.4 : 1.4) && progress < 1) visible = false;
+      }
       if (visible) {
-        progress = Math.min(1.5, progress + dt / noticeTime(skill.reaction * this.personality.reaction, dist, off, skill.fov / 2, firing));
+        const hidden = 1 + leaves * (firing ? 0.8 : 2);
+        progress = Math.min(1.5, progress + dt / (noticeTime(skill.reaction * this.personality.reaction, dist, off, skill.fov / 2, firing) * hidden));
         if (progress >= 1) {
           this.lastSeen.pos.copy(e.feet);
           this.lastSeen.time = s.time;
           s.reportSighting(this, e.feet);
-          // Prefer the current target, then the closest.
-          const d = e === this.target ? dist * 0.6 : dist;
+          // Prefer whoever is shooting at us, then the current target, then the closest.
+          let d = e === this.target ? dist * 0.6 : dist;
+          if (e.id === this.lastAttacker && s.time - this.lastHurt < 3) d *= 0.4;
+          else if (firing) d *= 0.8;
           if (d < bestDist) {
             best = e;
             bestDist = d;
@@ -369,7 +423,14 @@ export class Bot implements Damageable, Combatant {
       this.cover = post.clone();
       this.coverUntil = s.time + 4;
     }
-    const threat = this.target ? this.target.feet : this.lastSeen.time > s.time - 4 ? this.lastSeen.pos : null;
+    // Pinned down by fire we can't see: the shooter's rough position is the threat.
+    const threat = this.target
+      ? this.target.feet
+      : this.lastSeen.time > s.time - 4
+        ? this.lastSeen.pos
+        : this.suppression > 0.3 && s.time - this.heard.time < 2
+          ? this.heard.pos
+          : null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
       // Keep a cover spot while it still hides us; only look for a new one when it doesn't.
       if (this.cover && this.coverHolds(this.cover, threat, s)) {
@@ -392,6 +453,9 @@ export class Bot implements Damageable, Combatant {
     const team = squad ?? (sighting && sighting.pos.distanceTo(this.feet) < TEAM_INTEL_RANGE ? sighting : null);
     const ownAge = s.time - this.lastSeen.time;
     const teamAge = team ? s.time - team.time : Infinity;
+    // Local odds: friends around us vs the enemies we know are near.
+    const known = this.knownEnemies(s, ODDS_RANGE);
+    const odds = known > 0 ? s.alliesNear(this.team, this.feet, ODDS_RANGE * 0.6) / known : 1;
     this.action = chooseAction(
       {
         health: this.health.value / 100,
@@ -408,6 +472,8 @@ export class Bot implements Damageable, Combatant {
         posted: s.hasPost(this),
         aggression: this.personality.aggression,
         caution: this.personality.caution,
+        suppression: this.suppression,
+        odds,
       },
       this.action,
     );
@@ -447,6 +513,17 @@ export class Bot implements Damageable, Combatant {
     // Reload opportunistically when nothing is visible.
     if (!this.target && w.ammo < this.def.magSize * 0.4 && w.canReload()) w.startReload();
     this.considerGrenade(s, inCover);
+  }
+
+  /** Enemies within `range` this bot has noticed. */
+  private knownEnemies(s: BotServices, range: number): number {
+    let n = 0;
+    const r2 = range * range;
+    for (const e of s.enemiesOf(this.team)) {
+      if (!e.alive || (this.notice.get(e.id) ?? 0) < 1) continue;
+      if (e.feet.distanceToSquared(this.feet) < r2) n++;
+    }
+    return n;
   }
 
   /** A live enemy frag landed nearby: sprint away from it. */
@@ -589,19 +666,21 @@ export class Bot implements Damageable, Combatant {
     }
     const p = this.personality;
     const hit = s.time - this.lastHurt < 0.25;
+    // Heavy fire keeps heads down: shorter looks, longer waits.
+    const pinned = 1 + this.suppression * 1.5;
     if (this.peeking && (s.time > this.peekSwitchAt || hit || this.weapon.reloading)) {
       this.peeking = false;
-      this.peekSwitchAt = s.time + (0.6 + p.caution * 1.1) * (0.7 + Math.random() * 0.6);
+      this.peekSwitchAt = s.time + (0.6 + p.caution * 1.1) * (0.7 + Math.random() * 0.6) * pinned;
     } else if (!this.peeking && s.time > this.peekSwitchAt && !this.weapon.reloading) {
       this.peeking = true;
-      this.peekSwitchAt = s.time + (1 + p.aggression * 1.6) * (0.7 + Math.random() * 0.6);
+      this.peekSwitchAt = s.time + ((1 + p.aggression * 1.6) * (0.7 + Math.random() * 0.6)) / pinned;
     }
   }
 
   private setGoal(p: THREE.Vector3, s: BotServices): void {
     if (this.hasGoal && this.goal.distanceTo(p) < 1.5 && s.time < this.repathAt && this.path.length > 0) return;
     this.goal.copy(p);
-    this.hasGoal = s.nav.path(this.feet, p, this.path);
+    this.hasGoal = s.route(this, p, this.path);
     this.pathIndex = this.path.length > 1 ? 1 : 0;
     this.repathAt = s.time + 1.2;
   }
@@ -623,7 +702,8 @@ export class Bot implements Damageable, Combatant {
       // Error drifts smoothly between re-sampled offsets, shrinking as the bot settles.
       if (s.time > this.jitterAt) {
         const p = this.personality;
-        const err = aimErrorDeg(skill.aimError * p.aim, skill.aimErrorMin * p.aim, skill.settleTime, this.tracked) * DEG;
+        const shaken = 1 + this.suppression * 1.2;
+        const err = aimErrorDeg(skill.aimError * p.aim, skill.aimErrorMin * p.aim, skill.settleTime, this.tracked) * DEG * shaken;
         const a = Math.random() * Math.PI * 2;
         const r = err * Math.sqrt(Math.random());
         this.jitterGoal.set(Math.cos(a) * r, Math.sin(a) * r);
@@ -704,6 +784,7 @@ export class Bot implements Damageable, Combatant {
           (this.action === 'advance' || this.action === 'cover' || this.action === 'hunt') &&
           d > 4;
         speed = (engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed) * this.personality.pace;
+        if (s.waterDepth(this.feet) > WADE_DEPTH) speed *= WADE_SPEED;
       } else {
         this.hasGoal = false;
       }
@@ -717,8 +798,9 @@ export class Bot implements Damageable, Combatant {
       (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)
         ? !this.peeking
         : this.target
-          ? this.feet.distanceTo(this.target.feet) > crouchRange
-          : this.action === 'advance' && !this.hasGoal && this.personality.caution > 0.5 && !!s.watchDir(this) && !s.postHere(this));
+          ? this.feet.distanceTo(this.target.feet) > crouchRange || this.suppression > 0.55
+          : this.suppression > 0.45 ||
+            this.action === 'advance' && !this.hasGoal && this.personality.caution > 0.5 && !!s.watchDir(this) && !s.postHere(this));
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 
@@ -776,7 +858,7 @@ export class Bot implements Damageable, Combatant {
 
   private setGoalForce(p: THREE.Vector3, s: BotServices): void {
     this.goal.copy(p);
-    this.hasGoal = s.nav.path(this.feet, p, this.path);
+    this.hasGoal = s.route(this, p, this.path);
     this.pathIndex = this.path.length > 1 ? 1 : 0;
     this.repathAt = s.time + 1.2;
   }

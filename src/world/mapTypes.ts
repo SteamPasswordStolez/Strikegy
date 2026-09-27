@@ -75,6 +75,8 @@ export interface RiverDef {
   bank?: number;
   /** Water depth above the bed (m, default 0.6: wadeable). */
   water?: number;
+  /** Bridge centres [x, z]: bots walk round to these rather than wade when it isn't far. */
+  crossings?: [number, number][];
 }
 
 export type BuildingStyle = 'house' | 'shop' | 'apartment' | 'townhall' | 'warehouse' | 'barracks' | 'hangar' | 'hq' | 'station' | 'shed';

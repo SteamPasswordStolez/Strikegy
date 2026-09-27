@@ -11,6 +11,7 @@ import {
   targetSpeed,
   wishDirection,
 } from './movement';
+import { WADE_DEPTH, WADE_SPEED, type WaterMap } from '@/world/water';
 
 const MAX_PITCH = (89 * Math.PI) / 180;
 /** Meters travelled per footstep sound. */
@@ -30,6 +31,8 @@ export class Player {
   grounded = false;
   crouching = false;
   sprinting = false;
+  /** Rivers on the map (wading slows the player), set by the game. */
+  water: WaterMap | null = null;
   readonly health = new Health();
   private strideLeft: number = STRIDE.walk / 2;
   private jumpBuffered = 0;
@@ -100,11 +103,14 @@ export class Player {
       crouching: this.crouching,
       ads,
     });
+    // Wading: knee-deep water slows everyone down.
+    const wading = !!this.water && this.water.depthAt(this.feet.x, this.feet.y, this.feet.z) > WADE_DEPTH;
     const [wx, wz] = moving ? wishDirection(input.moveX, input.moveY, this.yaw) : [0, 0];
     // Brake harder than we accelerate: releasing or reversing input stops crisply.
     const braking = !moving || wx * this.velocity.x + wz * this.velocity.z < 0;
     const accel = this.grounded ? (braking ? MOVE.groundDecel : MOVE.groundAccel) : MOVE.airAccel;
-    const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * speed, wz * speed, accel, dt);
+    const top = wading ? speed * WADE_SPEED : speed;
+    const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * top, wz * top, accel, dt);
     this.velocity.x = vx;
     this.velocity.z = vz;
 

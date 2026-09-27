@@ -16,6 +16,7 @@ import { BOT_WEAPONS, rollPersonality, weaponFor } from './personality';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_TEAM, otherTeam, type Combatant } from './types';
+import type { WaterMap } from '@/world/water';
 
 const DEG = Math.PI / 180;
 const RESPAWN_SEC = 5;
@@ -38,6 +39,23 @@ const SIGHT_SHARE_SEC = 0.09;
 /** Beyond this distance from the viewer (and out of combat) bots move at half rate. */
 const FAR_SQ = 60 * 60;
 const COVER_SEARCHES_PER_STEP = 3;
+/** A round passing within this distance of a bot's head suppresses it (m). */
+const NEAR_MISS = 2.5;
+/** Suppression added by one rifle round passing right by (less for pellets, further away). */
+const NEAR_MISS_AMOUNT = 0.22;
+/** Frag blasts suppress everyone within this radius (m). */
+const BLAST_SUPPRESS = 14;
+/** Mates within this distance of a killed bot learn where the killer was. */
+const KILL_INTEL_RANGE = 35;
+/** Wading this far (m) or more makes a bot consider a bridge instead. */
+const WADE_MIN = 5;
+/** A bridge is taken when it adds at most this much walking (m); rushers accept less. */
+const BRIDGE_DETOUR = 90;
+/** Foliage grid cell (m) and sampling step along a sight line (m). */
+const LEAF_CELL = 3;
+const LEAF_STEP = 2;
+/** Foliage per unit of tree scale in a cell, per sample. */
+const LEAF_WEIGHT = 0.25;
 const COVER_SAMPLES = 10;
 
 const NAMES: Record<Team, string[]> = {
@@ -158,6 +176,8 @@ export class BotManager implements BotServices {
   private readonly enemies: Record<Team, Combatant[]> = { blue: [], red: [] };
   private readonly grid = new Map<number, Bot[]>();
   private readonly contacts = new Map<string, SquadContact>();
+  private leaves: { data: Float32Array; cols: number; rows: number; x0: number; z0: number } | null = null;
+  private water: WaterMap | null = null;
   private posts: Post[] = [];
   private footprints: Footprint[] = [];
   private readonly sightCache = new Map<number, { time: number; visible: boolean }>();
@@ -241,6 +261,15 @@ export class BotManager implements BotServices {
     bus.on('combat:kill', (e) => {
       if (e.attackerTeam && e.attackerTeam !== e.victimTeam) this.teams[e.attackerTeam].kills++;
     });
+    // Explosions nearby rattle everyone (either side), frags more than the rest.
+    bus.on('grenade:detonate', (e) => {
+      if (e.type !== 'frag') return;
+      for (const en of this.entries) {
+        const b = en.bot;
+        const d = b.feet.distanceTo(e.point);
+        if (b.alive && d < BLAST_SUPPRESS) b.suppress(0.9 * (1 - d / BLAST_SUPPRESS), e.point, this.time);
+      }
+    });
   }
 
   private entryOf(bot: Bot): BotEntry {
@@ -271,10 +300,124 @@ export class BotManager implements BotServices {
       if (e.simAlive && !b.alive) {
         this.bus.emit('combatant:died', { team: b.team, id: b.id });
         this.release(e);
+        this.shareKill(b);
       }
       if (!b.alive && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
       e.simAlive = b.alive;
     }
+  }
+
+  /** Mates near a fallen bot learn where the fatal shot came from. */
+  private shareKill(victim: Bot): void {
+    const killer = victim.killerPos;
+    if (!killer) return;
+    const r2 = KILL_INTEL_RANGE * KILL_INTEL_RANGE;
+    for (const e of this.entries) {
+      const b = e.bot;
+      if (b !== victim && b.team === victim.team && b.alive && b.feet.distanceToSquared(victim.feet) < r2) b.mateKilled(killer, this.time);
+    }
+  }
+
+  /**
+   * A round flew from `from` to `to` (the shooter's team is `team`): bots of
+   * the other side it passed close to are suppressed. `hitId` is who it hit
+   * (already hurt, not counted twice). `weight` scales pellets down.
+   */
+  nearMiss(from: THREE.Vector3, to: THREE.Vector3, team: Team, hitId: number, weight = 1): void {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+    const len2 = dx * dx + dy * dy + dz * dz;
+    if (len2 < 1) return;
+    for (const e of this.entries) {
+      const b = e.bot;
+      if (!b.alive || b.team === team || b.id === hitId) continue;
+      const hx = b.feet.x - from.x;
+      const hy = b.feet.y + 1.4 - from.y;
+      const hz = b.feet.z - from.z;
+      const t = (hx * dx + hy * dy + hz * dz) / len2;
+      // Behind the muzzle, or the round stopped well short of the bot.
+      if (t < 0.02 || t > 1.05) continue;
+      const d = Math.hypot(hx - dx * t, hy - dy * t, hz - dz * t);
+      if (d < NEAR_MISS) b.suppress(NEAR_MISS_AMOUNT * weight * (1 - d / NEAR_MISS), from, this.time);
+    }
+  }
+
+  /** Trees in the playable area ([x, z, scale]): tree crowns hide people at range. */
+  setForest(trees: readonly (readonly [number, number, number])[], size: readonly [number, number]): void {
+    if (!trees.length) return;
+    const cols = Math.ceil(size[0] / LEAF_CELL);
+    const rows = Math.ceil(size[1] / LEAF_CELL);
+    const x0 = -size[0] / 2;
+    const z0 = -size[1] / 2;
+    const data = new Float32Array(cols * rows);
+    for (const [x, z, s] of trees) {
+      const c = Math.floor((x - x0) / LEAF_CELL);
+      const r = Math.floor((z - z0) / LEAF_CELL);
+      if (c >= 0 && r >= 0 && c < cols && r < rows) data[r * cols + c]! += s;
+    }
+    this.leaves = { data, cols, rows, x0, z0 };
+  }
+
+  setWater(water: WaterMap): void {
+    this.water = water.any ? water : null;
+  }
+
+  foliage(from: THREE.Vector3, to: THREE.Vector3): number {
+    const g = this.leaves;
+    if (!g) return 0;
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    // The trees right next to either end don't hide anything (you look past them).
+    const n = Math.floor((len - 6) / LEAF_STEP);
+    let sum = 0;
+    for (let i = 0; i <= n; i++) {
+      const t = (3 + i * LEAF_STEP) / len;
+      const c = Math.floor((from.x + dx * t - g.x0) / LEAF_CELL);
+      const r = Math.floor((from.z + dz * t - g.z0) / LEAF_CELL);
+      if (c >= 0 && r >= 0 && c < g.cols && r < g.rows) sum += g.data[r * g.cols + c]!;
+    }
+    return sum * LEAF_WEIGHT;
+  }
+
+  waterDepth(p: THREE.Vector3): number {
+    return this.water ? this.water.depthAt(p.x, p.y, p.z) : 0;
+  }
+
+  private readonly legA: THREE.Vector3[] = [];
+  private readonly legB: THREE.Vector3[] = [];
+  private readonly via = new THREE.Vector3();
+
+  route(bot: Bot, to: THREE.Vector3, out: THREE.Vector3[]): boolean {
+    if (!this.nav.path(bot.feet, to, out)) return false;
+    const w = this.water;
+    // Already in the river, or fighting: just go.
+    if (!w || !w.crossings.length || bot.target || this.waterDepth(bot.feet) > 0.1) return true;
+    if (w.wetLength(out) < WADE_MIN) return true;
+    let direct = 0;
+    for (let i = 1; i < out.length; i++) direct += out[i]!.distanceTo(out[i - 1]!);
+    // The bridge with the shortest straight-line detour.
+    let best: readonly [number, number] | null = null;
+    let bestLen = Infinity;
+    for (const c of w.crossings) {
+      const len = Math.hypot(c[0] - bot.feet.x, c[1] - bot.feet.z) + Math.hypot(to.x - c[0], to.z - c[1]);
+      if (len < bestLen) {
+        bestLen = len;
+        best = c;
+      }
+    }
+    const allowed = BRIDGE_DETOUR * (1.2 - bot.personality.aggression * 0.7);
+    if (!best || bestLen > direct + allowed) return true;
+    // Bridge decks sit at about the banks' height: snap the centre onto the deck, not the bed below.
+    const at = this.via.set(best[0], w.levelAt(best[0], best[1]) + 2, best[1]);
+    if (Number.isNaN(at.y)) at.y = 1;
+    if (!this.nav.path(bot.feet, at, this.legA) || !this.nav.path(at, to, this.legB)) return true;
+    const alt = [...this.legA, ...this.legB.slice(1)];
+    if (w.wetLength(alt) >= w.wetLength(out)) return true;
+    out.length = 0;
+    for (const p of alt) out.push(p);
+    return true;
   }
 
   /** Buildings: window firing spots (kept if they are on the navmesh) and footprints. */
@@ -792,6 +935,7 @@ export class BotManager implements BotServices {
       const hit = this.physics.raycast(eye, d, max, Layer.WORLD | Layer.HITBOX, undefined, bot.hitboxes.body);
       const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : eye.clone().addScaledVector(d, max);
       const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+      this.nearMiss(eye, to, bot.team, target?.owner.id ?? -1, pellets > 1 ? 0.35 : 1);
       if (hit && target) {
         const owner = target.owner;
         // No friendly fire: the round is simply stopped.

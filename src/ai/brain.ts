@@ -33,6 +33,10 @@ export interface BrainInput {
   aggression?: number;
   /** Personality (0..1, default 0.5): prefers fighting from cover. */
   caution?: number;
+  /** 0..1: rounds cracking past recently. */
+  suppression?: number;
+  /** Friends near / known enemies near (1 = even, below 1 = outnumbered). */
+  odds?: number;
 }
 
 export function scoreActions(i: BrainInput): Record<BotAction, number> {
@@ -42,28 +46,35 @@ export function scoreActions(i: BrainInput): Record<BotAction, number> {
   const aggression = i.aggression ?? 0.5;
   const caution = i.caution ?? 0.5;
   const roam = i.posted ? 0.35 : 1;
+  const pinned = i.suppression ?? 0;
+  const odds = i.odds ?? 1;
+  // Outnumbered: fight from cover and stop chasing; ahead: press on.
+  const outnumbered = Math.max(0, Math.min(1, (1 - odds) * 1.5));
+  const ahead = Math.max(0, Math.min(1, (odds - 1.3) / 1.5));
+  const push = (1 - 0.6 * outnumbered - 0.5 * pinned) * (1 + ahead * (0.3 + aggression * 0.5));
   return {
-    // Fight whatever is visible; less keen with an empty magazine.
-    engage: i.hasTarget ? (empty ? 0.3 : 0.75) : 0,
+    // Fight whatever is visible; less keen with an empty magazine or under heavy fire.
+    engage: i.hasTarget ? (empty ? 0.3 : 0.75 - pinned * 0.15) : 0,
     // Break contact when hurt or out of ammo in a fight (with no cover known: back off).
     // Careful types also move into cover as soon as a fight starts and shoot from there.
     cover:
       pressured && !i.inCover
         ? i.coverKnown
           ? (hurt * 1.1 + (empty || i.reloading ? 0.45 : 0) + (i.sinceHurt < 1 ? 0.15 : 0)) * (0.6 + caution * 0.8) +
-            (i.hasTarget ? Math.max(0, caution - 0.4) * 1.8 : 0)
+            (i.hasTarget ? Math.max(0, caution - 0.4) * 1.8 : 0) +
+            (pinned * 0.9 + outnumbered * 0.35) * (0.5 + caution * 0.7)
           : hurt > 0.6 && i.sinceHurt < 2
             ? hurt * (0.5 + caution * 0.6)
             : 0
         : 0,
     // In cover with the enemy just out of sight: stay, peek and wait for them rather than chase.
-    hold: i.inCover && !i.hasTarget && i.lastSeenAge < 8 ? 0.4 + caution * 0.5 - i.lastSeenAge * 0.03 : 0,
+    hold: i.inCover && !i.hasTarget && (i.lastSeenAge < 8 || pinned > 0.3) ? 0.4 + caution * 0.5 - Math.min(8, i.lastSeenAge) * 0.03 + pinned * 0.3 + outnumbered * 0.2 : 0,
     // Top up between fights; forced when empty and nowhere to hide.
     reload: !i.reloading && i.ammo < 1 ? (empty ? (i.hasTarget ? 0.6 : 0.95) : i.hasTarget ? 0 : (1 - i.ammo) * 0.8) : 0,
     // Chase the last known position of a recently seen enemy.
-    hunt: !i.hasTarget && i.lastSeenAge < 10 ? (0.25 + aggression * 0.2 + 0.3 * (1 - i.lastSeenAge / 10)) * roam : 0,
+    hunt: !i.hasTarget && i.lastSeenAge < 10 ? (0.25 + aggression * 0.2 + 0.3 * (1 - i.lastSeenAge / 10)) * roam * push : 0,
     // Check out noises.
-    investigate: !i.hasTarget && i.heardAge < 6 ? (0.22 + aggression * 0.16 + 0.15 * (1 - i.heardAge / 6)) * roam : 0,
+    investigate: !i.hasTarget && i.heardAge < 6 ? (0.22 + aggression * 0.16 + 0.15 * (1 - i.heardAge / 6)) * roam * push : 0,
     // Default: move with the squad toward the objective; catching up with the leader beats checking noises.
     // A flank run beats chasing what the squad is already shooting at.
     advance: i.regroup ? 0.6 : i.flanking ? 0.85 : i.posted ? 0.4 : 0.25,

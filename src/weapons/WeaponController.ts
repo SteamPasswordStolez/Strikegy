@@ -66,6 +66,8 @@ export class WeaponController {
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
   /** The shooter's own hitboxes, excluded from its rays. */
   ignoreBody: RAPIER.RigidBody | undefined;
+  /** Called for every round fired (pellets flagged): where it went and whom it hit (-1: nobody). */
+  onRound: ((from: THREE.Vector3, to: THREE.Vector3, hitId: number, pellet: boolean) => void) | null = null;
 
   constructor(
     loadout: WeaponId[],
@@ -231,6 +233,7 @@ export class WeaponController {
       ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z)
       : this.eye.clone().addScaledVector(dir, maxDist);
     const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+    this.onRound?.(this.eye, to, target?.owner.id ?? -1, isPellet);
 
     if (hit && target) {
       // Friendly fire is off: teammates simply stop the round.
