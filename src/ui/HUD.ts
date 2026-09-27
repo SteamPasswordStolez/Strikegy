@@ -24,6 +24,8 @@ export interface HudFrame {
   score: { allies: number; enemies: number } | null;
   /** Zone mode: tickets and zone states from the player's point of view. */
   zone: ZoneHud | null;
+  /** The player's squad (bot matches). */
+  squad: SquadHud | null;
   fps: number | null;
   debug: string | null;
 }
@@ -35,8 +37,11 @@ export interface ZoneHud {
   zones: { id: string; owner: Side | null; progress: number; pushing: Side | null; contested: boolean }[];
   /** The zone the player stands in, with a status line. */
   here: { id: string; text: string; progress: number; tone: Side | 'neutral' } | null;
-  /** While dead: spawn choices (labels) and the selected index. */
-  spawn: { options: { label: string; warn: boolean }[]; selected: number } | null;
+}
+
+export interface SquadHud {
+  name: string;
+  members: { name: string; state: 'ok' | 'combat' | 'dead'; you: boolean }[];
 }
 
 export interface KillEntry {
@@ -91,7 +96,7 @@ export class HUD {
   private zoneHere: HTMLDivElement;
   private zoneHereFill: HTMLDivElement;
   private zoneHereText: HTMLDivElement;
-  private spawnList: HTMLDivElement;
+  private squadEl: HTMLDivElement;
   private notices: HTMLDivElement;
   private noticeItems: { el: HTMLDivElement; life: number }[] = [];
   private arcs: DamageArc[] = [];
@@ -126,7 +131,8 @@ export class HUD {
     this.death = el('div', 'hud-death', this.root);
     this.score = el('div', 'hud-score', this.root);
     this.deathText = el('div', 'hud-death-text', this.death);
-    this.spawnList = el('div', 'spawn-list', this.death);
+    this.squadEl = el('div', 'hud-squad', bottomLeft);
+    bottomLeft.prepend(this.squadEl);
     this.zoneBar = el('div', 'zone-bar', this.root);
     this.zoneHere = el('div', 'zone-here', this.root);
     this.zoneHereText = el('div', 'zone-here-text', this.zoneHere);
@@ -252,6 +258,7 @@ export class HUD {
       this.death.classList.toggle('on', dead);
     });
     this.updateZone(f.zone, dead);
+    this.updateSquad(f.squad);
 
     for (let i = this.noticeItems.length - 1; i >= 0; i--) {
       const n = this.noticeItems[i]!;
@@ -296,16 +303,19 @@ export class HUD {
       this.zoneHereText.textContent = `${here.id} · ${here.text}`;
       this.zoneHereFill.style.width = `${Math.round(here.progress * 100)}%`;
     });
-    const spawn = dead && z?.spawn ? z.spawn : null;
-    const spawnKey = spawn ? `${spawn.selected}|${spawn.options.map((o) => `${o.label}${o.warn}`).join()}` : '';
-    this.set('spawn', spawnKey, () => {
-      this.spawnList.replaceChildren();
-      if (!spawn) return;
-      el('div', 'spawn-title', this.spawnList).textContent = t('spawn.choose');
-      spawn.options.forEach((o, i) => {
-        const row = el('div', `spawn-opt${i === spawn.selected ? ' sel' : ''}${o.warn ? ' warn' : ''}`, this.spawnList);
-        row.textContent = `${i + 1}  ${o.label}${o.warn ? ` · ${t('spawn.underAttack')}` : ''}`;
-      });
+  }
+
+  private updateSquad(sq: SquadHud | null): void {
+    const key = sq ? `${sq.name}|${sq.members.map((m) => m.name + m.state).join()}` : '';
+    this.set('squad', key, () => {
+      this.squadEl.replaceChildren();
+      if (!sq) return;
+      el('div', 'hs-title', this.squadEl).textContent = `${t('squad.label')} ${sq.name}`;
+      for (const m of sq.members) {
+        const row = el('div', `hs-member m-${m.state}${m.you ? ' you' : ''}`, this.squadEl);
+        el('span', 'dot', row);
+        el('span', 'name', row).textContent = m.name;
+      }
     });
   }
 }

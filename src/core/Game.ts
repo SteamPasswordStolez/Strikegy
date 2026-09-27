@@ -41,7 +41,11 @@ import { Overlay } from '@/ui/Overlay';
 import { ZoneMode } from '@/modes/ZoneMode';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
-import type { Side, ZoneHud } from '@/ui/HUD';
+import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
+import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeployScreen';
+import { paintMap } from '@/ui/mapPainter';
+import { COMBAT_WINDOW, WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
+import type { Bot } from '@/ai/Bot';
 import type { Team } from '@/world/mapTypes';
 
 const DEG = Math.PI / 180;
@@ -50,6 +54,8 @@ const AUTHORED_FOV = 78;
 const SIM_HZ = 60;
 const ASSET_BASE = `${import.meta.env.BASE_URL}assets/`;
 const RESPAWN_SEC = 4;
+/** Seconds of death cam before the deploy screen opens. */
+const DEATH_CAM_SEC = 1.6;
 /** Maps up to this size (m) get one shadow map fitted over the whole area, rendered once. */
 const STATIC_SHADOW_MAX = 420;
 /** Weapon is unusable this long after starting a throw. */
@@ -101,6 +107,8 @@ export class Game {
   private weapons!: WeaponController;
   private spawn!: SpawnPoint;
   private playerSpawns: SpawnPoint[] = [];
+  private mapSpawns: SpawnPoint[] = [];
+  private mapName = '';
   private playerBoxes!: CharacterHitboxes;
   private bots: BotManager | null = null;
   private nav: NavWorld | null = null;
@@ -111,10 +119,19 @@ export class Game {
   private killedBy: string | null = null;
   private zoneMode: ZoneMode | null = null;
   private zoneVisuals: ZoneVisuals | null = null;
-  /** Selected spawn option index while dead (0 = base). */
-  private spawnChoice = 0;
-  private spawnChoiceId = 'base';
   private matchOver = false;
+  /** Bot matches use a deploy screen: the player is off the field until deploying. */
+  private deployFlow = false;
+  private deployed = true;
+  private deployScreen: DeployScreen | null = null;
+  private deployAt = 0;
+  private deployRefresh = 0;
+  /** Deploy choice: 'base', 'zone:<id>' or 'mate:<id>'. */
+  private spawnKey = 'base';
+  private squads: Squad[] = [];
+  private playerSquad: Squad | null = null;
+  private squadWiped = false;
+  private playerHurtAt = -Infinity;
   private lastAlpha = 0;
   private elapsed = 0;
   private running = false;
@@ -214,6 +231,8 @@ export class Game {
     this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
     this.playerSpawns = map.spawns.filter((s) => s.team === 'player' || s.team === PLAYER_TEAM);
+    this.mapSpawns = map.spawns;
+    this.mapName = map.meta.name;
     this.createPlayerCombatant();
 
     const botOpts = this.options.bots ?? null;
@@ -242,6 +261,7 @@ export class Game {
     if ((mode === 'zone' || (mode === 'auto' && this.bots)) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain);
     }
+    if (this.bots) this.setupSquads(map, terrain);
     this.wireEvents();
 
     // Lights are filtered by camera layers like meshes; they must light every layer
@@ -258,7 +278,7 @@ export class Game {
     this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? '' : t('start.hint'));
     this.overlay.root.addEventListener('click', () => this.resume());
     document.addEventListener('pointerlockchange', () => {
-      if (!this.kbm.locked && !this.touch) this.pause();
+      if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
     });
     // GPU resets (driver timeout, device removed) lose the WebGL context; recover by reloading.
     r.canvas.addEventListener('webglcontextlost', (e) => {
@@ -406,6 +426,15 @@ export class Game {
   private resume(): void {
     if (this.matchOver) return;
     this.audio.unlock();
+    if (this.deployFlow && !this.deployed) {
+      // Not on the field yet: the world runs behind the deploy screen.
+      this.running = true;
+      this.started = true;
+      this.loop.reset();
+      this.overlay.hide();
+      this.openDeploy();
+      return;
+    }
     if (this.touch) {
       this.touch.setVisible(true);
       document.documentElement.requestFullscreen?.().catch(() => {});
@@ -466,6 +495,14 @@ export class Game {
     for (const tg of this.targets) tg.update(simDt);
     this.bots?.render(this.lastAlpha, dt, this.renderer.camera.position);
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
+    if (this.deployScreen && this.running) {
+      if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver) this.openDeploy();
+      this.deployRefresh -= dt;
+      if (this.deployScreen.visible && this.deployRefresh <= 0) {
+        this.deployRefresh = 0.2;
+        this.deployScreen.update(this.deployState());
+      }
+    }
     if (this.throwables.castersChanged || this.targets.some((tg) => tg.moved)) this.renderer.requestShadowUpdate();
     this.throwables.sync();
     this.updateViewModel(dt, lookYaw, lookPitch);
@@ -498,10 +535,16 @@ export class Game {
         return t('feed.you');
       },
       get alive() {
-        return game.player.alive;
+        return game.player.alive && game.deployed;
       },
       get feet() {
         return game.player.feet;
+      },
+      get yaw() {
+        return game.player.yaw;
+      },
+      inCombat(now: number) {
+        return game.playerFiringUntil > now - COMBAT_WINDOW || now - game.playerHurtAt < COMBAT_WINDOW;
       },
       get velocity() {
         return game.player.velocity;
@@ -518,7 +561,7 @@ export class Game {
       name: 'You',
       team: PLAYER_TEAM,
       get alive() {
-        return game.player.alive;
+        return game.player.alive && game.deployed;
       },
       applyDamage: (amount, _part, source) => {
         this.damagePlayer(amount, source?.pos ?? null, 'bullet', source);
@@ -558,7 +601,7 @@ export class Game {
 
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
-    if (p.alive) {
+    if (p.alive && this.deployed) {
       if (input.cycleGrenade) this.grenades.cycle();
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
       const firing = input.fire;
@@ -570,16 +613,9 @@ export class Game {
       this.weapons.step(dt, input, p, this.throwBlock > 0);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
     } else {
-      // Number keys pick the spawn point while dead.
-      if (this.zoneMode && input.weaponSlot >= 0) {
-        const opts = this.zoneMode.spawnOptions(PLAYER_TEAM);
-        if (input.weaponSlot < opts.length) {
-          this.spawnChoice = input.weaponSlot;
-          this.spawnChoiceId = opts[input.weaponSlot]!.id;
-        }
-      }
       this.respawnTimer -= dt;
-      if (this.respawnTimer <= 0) this.respawn();
+      // With a deploy screen the player chooses when to go; otherwise respawn automatically.
+      if (!this.deployFlow && this.respawnTimer <= 0) this.respawn();
     }
     this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
     this.bots?.step(dt);
@@ -675,6 +711,7 @@ export class Game {
     const p = this.player;
     if (!p.alive) return;
     const killed = p.health.damage(amount);
+    this.playerHurtAt = this.bots?.time ?? 0;
     this.bus.emit('player:damaged', { amount, from, cause });
     let yaw: number | null = null;
     if (from) {
@@ -690,6 +727,10 @@ export class Game {
   private die(cause: DamageCause, source?: DamageSource): void {
     this.respawnTimer = RESPAWN_SEC;
     this.weapons.adsBlend = 0;
+    if (this.deployFlow) {
+      this.deployed = false;
+      this.deployAt = this.elapsed + DEATH_CAM_SEC;
+    }
     this.playerBoxes.setEnabled(false);
     this.bus.emit('player:died', { cause });
     this.bus.emit('combatant:died', { team: PLAYER_TEAM, id: PLAYER_ID });
@@ -701,11 +742,11 @@ export class Game {
     }
   }
 
-  private respawn(): void {
+  private respawn(key = 'base'): void {
     const p = this.player;
     p.health.reset();
-    if (this.zoneMode) {
-      const at = this.zoneMode.spawnPoint(PLAYER_TEAM, this.spawnChoiceId, this.nav);
+    if (this.bots) {
+      const at = this.spawnFor(PLAYER_TEAM, key, PLAYER_ID);
       p.teleport(at.pos, at.yaw);
     } else {
       const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
@@ -765,7 +806,7 @@ export class Game {
       reloading: w.state.reloading,
       reloadProgress: w.state.reloadProgress,
       magReload: w.def.reloadStyle === 'mag',
-      drawProgress: p.alive ? 1 - w.drawTimer / DRAW_TIME : 0,
+      drawProgress: p.alive && this.deployed ? 1 - w.drawTimer / DRAW_TIME : 0,
       hideForScope: !!w.def.scope && w.adsBlend > 0.95,
     });
   }
@@ -800,6 +841,7 @@ export class Game {
         killedBy: this.killedBy,
         score: this.bots ? { allies: this.bots.score(PLAYER_TEAM), enemies: this.bots.score(otherTeam(PLAYER_TEAM)) } : null,
         zone: this.zoneHud(),
+        squad: this.squadHud(),
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
           ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)}`
@@ -827,12 +869,6 @@ export class Game {
     const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets });
     this.zoneMode = zm;
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
-    if (this.bots) {
-      this.bots.hooks = {
-        objectives: (team) => zm.objectives(team),
-        spawnAt: (team, near) => zm.spawnPoint(team, this.botSpawnChoice(team, near), this.nav),
-      };
-    }
     const side = (team: Team): Side => (team === PLAYER_TEAM ? 'ally' : 'enemy');
     this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
     this.bus.on('zone:captured', (e) => {
@@ -846,30 +882,206 @@ export class Game {
       const ours = e.team === PLAYER_TEAM;
       this.hud.notify(`${e.zone} ${t(ours ? 'zone.lost' : 'zone.enemyLost')}`, ours ? 'enemy' : 'ally');
       this.audio.zoneCue(!ours);
-      if (ours && this.spawnChoiceId === e.zone) this.spawnChoiceId = 'base';
+      if (ours && this.spawnKey === `zone:${e.zone}`) this.spawnKey = 'base';
       this.bots?.replan('blue');
       this.bots?.replan('red');
     });
     this.bus.on('match:ended', (e) => this.endMatch(e.winner));
   }
 
-  /** Bots respawn at the owned spawn option closest to their objective. */
-  private botSpawnChoice(team: Team, near: THREE.Vector3 | null): string {
-    const zm = this.zoneMode!;
-    if (!near) return 'base';
-    let best = 'base';
-    let bestD = Infinity;
-    for (const o of zm.spawnOptions(team)) {
+  // ---------------------------------------------------------------------------
+  // Squads & deploying
+
+  private setupSquads(map: MapDef, terrain: Terrain): void {
+    const bots = this.bots!;
+    const blue = bots.bots.filter((b) => b.team === 'blue');
+    const red = bots.bots.filter((b) => b.team === 'red');
+    this.squads = [...formSquads('blue', [this.playerCombatant, ...blue]), ...formSquads('red', red)];
+    this.playerSquad = this.squads.find((s) => s.has(PLAYER_ID)) ?? null;
+    bots.setSquads(
+      this.squads.map((sq) => ({
+        index: sq.index,
+        botIds: sq.members.filter((m) => m.id !== PLAYER_ID).map((m) => m.id),
+        leader: sq.has(PLAYER_ID) ? this.playerCombatant : null,
+      })),
+    );
+    const zm = this.zoneMode;
+    bots.hooks = {
+      objectives: (team) => zm?.objectives(team) ?? [],
+      spawnAt: (bot, objective) => this.spawnFor(bot.team, this.botSpawnKey(bot, objective), bot.id),
+    };
+    // Squads already penalized for their current wipe (cleared once someone is back).
+    const penalized = new Set<Squad>();
+    this.bus.on('combatant:died', (e) => {
+      for (const s of penalized) if (!s.wiped) penalized.delete(s);
+      const sq = this.squads.find((s) => s.team === e.team && s.has(e.id));
+      if (!sq || !sq.wiped || penalized.has(sq)) return;
+      penalized.add(sq);
+      // Everyone in a wiped squad waits longer.
+      for (const m of sq.members) {
+        if (m.id === PLAYER_ID) this.respawnTimer += WIPE_PENALTY;
+        else (m as Bot).respawnPenalty = WIPE_PENALTY;
+      }
+      if (sq === this.playerSquad) {
+        this.squadWiped = true;
+        this.hud.notify(t('squad.wiped'), 'enemy');
+      }
+    });
+    this.bus.on('player:respawned', () => (this.squadWiped = false));
+
+    this.deployFlow = true;
+    this.deployed = false;
+    this.playerBoxes.setEnabled(false);
+    this.deployScreen = new DeployScreen(
+      this.container,
+      paintMap(map, terrain.boundary),
+      (key) => (this.spawnKey = key),
+      () => this.deploy(),
+    );
+  }
+
+  private openDeploy(): void {
+    const ds = this.deployScreen!;
+    ds.update(this.deployState());
+    ds.show();
+    this.touch?.setVisible(false);
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  private deploy(): void {
+    if (this.matchOver || this.deployed || this.respawnTimer > 0) return;
+    const opts = this.deployOptions();
+    const choice = opts.find((o) => o.key === this.spawnKey && !o.blocked) ?? opts[0]!;
+    this.deployed = true;
+    this.respawn(choice.key);
+    this.deployScreen!.hide();
+    if (this.touch) this.touch.setVisible(true);
+    else this.kbm.requestLock();
+  }
+
+  private baseCenter(team: Team): THREE.Vector3 {
+    const list = this.mapSpawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+    return list.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(Math.max(1, list.length));
+  }
+
+  /** Spawn position for a deploy key ('base' | 'zone:<id>' | 'mate:<id>'); invalid keys fall back to the base. */
+  private spawnFor(team: Team, key: string, selfId: number): { pos: THREE.Vector3; yaw: number } {
+    const [kind, id] = key.split(':');
+    if (kind === 'mate') {
+      const sq = this.squads.find((s) => s.team === team && s.has(selfId));
+      const mate = sq?.members.find((m) => String(m.id) === id);
+      if (mate && !mateSpawnBlock(mate, this.bots!.time)) return this.besideMate(mate);
+    }
+    const zm = this.zoneMode;
+    if (zm) return zm.spawnPoint(team, kind === 'zone' ? id! : 'base', this.nav);
+    const list = this.mapSpawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+    const sp = list[Math.floor(Math.random() * list.length)];
+    const pos = sp ? new THREE.Vector3(...sp.pos) : this.baseCenter(team);
+    return { pos: this.nav?.randomAround(pos, 3) ?? pos, yaw: (sp?.yaw ?? 0) * DEG };
+  }
+
+  /** A step behind a squadmate, facing where they face. */
+  private besideMate(m: SquadMember): { pos: THREE.Vector3; yaw: number } {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const back = new THREE.Vector3(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(2.2);
+    const lateral = new THREE.Vector3(Math.cos(m.yaw), 0, -Math.sin(m.yaw)).multiplyScalar(side * 1.2);
+    const want = m.feet.clone().add(back).add(lateral);
+    const pos = (this.nav && (this.nav.randomAround(want, 1.2) ?? this.nav.closest(want))) || want;
+    return { pos, yaw: m.yaw };
+  }
+
+  /**
+   * Where a bot respawns: on its leader (the player) when allowed, else the
+   * option nearest its objective among base, owned zones and free squadmates.
+   */
+  private botSpawnKey(bot: Bot, objective: THREE.Vector3 | null): string {
+    const now = this.bots!.time;
+    const sq = this.squads.find((s) => s.team === bot.team && s.has(bot.id));
+    const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, now)) : [];
+    if (sq === this.playerSquad && mates.some((m) => m.id === PLAYER_ID)) return `mate:${PLAYER_ID}`;
+    const target = objective ?? this.baseCenter(otherTeam(bot.team));
+    const cands: { key: string; x: number; z: number }[] = [];
+    const base = this.baseCenter(bot.team);
+    cands.push({ key: 'base', x: base.x, z: base.z });
+    for (const o of this.zoneMode?.spawnOptions(bot.team) ?? []) {
       if (o.id === 'base') continue;
-      const z = zm.zone(o.id)!;
-      const d = Math.hypot(z.x - near.x, z.z - near.z);
+      const z = this.zoneMode!.zone(o.id)!;
+      cands.push({ key: `zone:${o.id}`, x: z.x, z: z.z });
+    }
+    for (const m of mates) cands.push({ key: `mate:${m.id}`, x: m.feet.x, z: m.feet.z });
+    let best = cands[0]!;
+    let bestD = Infinity;
+    for (const c of cands) {
+      const d = Math.hypot(c.x - target.x, c.z - target.z);
       if (d < bestD) {
         bestD = d;
-        best = o.id;
+        best = c;
       }
     }
-    // A far-off owned zone is no better than the base.
-    return bestD < 160 ? best : 'base';
+    return best.key;
+  }
+
+  private deployOptions(): DeployOption[] {
+    const out: DeployOption[] = [];
+    const base = this.baseCenter(PLAYER_TEAM);
+    out.push({ key: 'base', kind: 'base', label: t('spawn.base'), x: base.x, z: base.z, blocked: null, warn: null });
+    const zm = this.zoneMode;
+    for (const o of zm?.spawnOptions(PLAYER_TEAM) ?? []) {
+      if (o.id === 'base') continue;
+      const z = zm!.zone(o.id)!;
+      out.push({ key: `zone:${o.id}`, kind: 'zone', label: `${t('spawn.zone')} ${o.id}`, x: z.x, z: z.z, blocked: null, warn: o.underAttack ? t('deploy.underAttack') : null });
+    }
+    const now = this.bots?.time ?? 0;
+    for (const m of this.playerSquad?.mates(PLAYER_ID) ?? []) {
+      const block = mateSpawnBlock(m, now);
+      out.push({
+        key: `mate:${m.id}`,
+        kind: 'mate',
+        label: m.name,
+        x: m.feet.x,
+        z: m.feet.z,
+        blocked: block === 'dead' ? t('deploy.dead') : block === 'combat' ? t('deploy.combat') : null,
+        warn: null,
+      });
+    }
+    return out;
+  }
+
+  private squadHud(): SquadHud | null {
+    const sq = this.playerSquad;
+    if (!sq) return null;
+    const now = this.bots?.time ?? 0;
+    return {
+      name: sq.name,
+      members: sq.members.map((m) => ({
+        name: m.id === PLAYER_ID ? t('feed.you') : m.name,
+        // Before the first deploy the player is waiting, not dead.
+        state: m.id === PLAYER_ID ? (this.player.alive ? (this.deployed && m.inCombat(now) ? 'combat' : 'ok') : 'dead') : !m.alive ? 'dead' : m.inCombat(now) ? 'combat' : 'ok',
+        you: m.id === PLAYER_ID,
+      })),
+    };
+  }
+
+  private deployState(): DeployState {
+    const options = this.deployOptions();
+    const sel = options.find((o) => o.key === this.spawnKey && !o.blocked) ? this.spawnKey : 'base';
+    const zm = this.zoneMode;
+    const tone = (team: Team | null) => (team === null ? 'neutral' : team === PLAYER_TEAM ? 'ally' : 'enemy') as 'ally' | 'enemy' | 'neutral';
+    const squad = this.squadHud();
+    return {
+      options,
+      selected: sel,
+      wait: Math.max(0, this.respawnTimer),
+      note: this.squadWiped ? t('squad.wiped') : null,
+      title: `${t('deploy.title')} · ${this.mapName}`,
+      tickets: zm ? { allies: zm.rules.tickets[PLAYER_TEAM], enemies: zm.rules.tickets[otherTeam(PLAYER_TEAM)] } : null,
+      zones: zm ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: tone(z.owner), pushing: z.pushing !== null })) : [],
+      enemyBase: (() => {
+        const b = this.baseCenter(otherTeam(PLAYER_TEAM));
+        return { x: b.x, z: b.z };
+      })(),
+      squad: squad && { name: squad.name, members: squad.members.map((m) => ({ ...m, name: m.you ? this.playerCombatant.name : m.name })) },
+    };
   }
 
   private *combatants(): Iterable<{ team: Team; alive: boolean; feet: THREE.Vector3 }> {
@@ -900,14 +1112,7 @@ export class Game {
       const lean = PLAYER_TEAM === 'blue' ? inZone.control : -inZone.control;
       here = { id: inZone.id, text, progress: (lean + 1) / 2, tone };
     }
-    let spawn: ZoneHud['spawn'] = null;
-    if (!this.player.alive) {
-      const opts = zm.spawnOptions(PLAYER_TEAM);
-      const sel = Math.max(0, opts.findIndex((o) => o.id === this.spawnChoiceId));
-      this.spawnChoice = sel;
-      spawn = { selected: sel, options: opts.map((o) => ({ label: o.id === 'base' ? t('spawn.base') : `${t('spawn.zone')} ${o.id}`, warn: o.underAttack })) };
-    }
-    return { tickets: { allies: zm.rules.tickets[PLAYER_TEAM], enemies: zm.rules.tickets[otherTeam(PLAYER_TEAM)] }, zones, here, spawn };
+    return { tickets: { allies: zm.rules.tickets[PLAYER_TEAM], enemies: zm.rules.tickets[otherTeam(PLAYER_TEAM)] }, zones, here };
   }
 
   private endMatch(winner: Team): void {

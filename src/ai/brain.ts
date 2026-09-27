@@ -23,6 +23,8 @@ export interface BrainInput {
   coverKnown: boolean;
   /** The bot is standing at that cover spot. */
   inCover: boolean;
+  /** Fell far behind its squad leader. */
+  regroup?: boolean;
 }
 
 export function scoreActions(i: BrainInput): Record<BotAction, number> {
@@ -40,8 +42,8 @@ export function scoreActions(i: BrainInput): Record<BotAction, number> {
     hunt: !i.hasTarget && i.lastSeenAge < 10 ? 0.35 + 0.3 * (1 - i.lastSeenAge / 10) : 0,
     // Check out noises.
     investigate: !i.hasTarget && i.heardAge < 6 ? 0.3 + 0.15 * (1 - i.heardAge / 6) : 0,
-    // Default: move with the squad toward the objective.
-    advance: 0.25,
+    // Default: move with the squad toward the objective; catching up with the leader beats checking noises.
+    advance: i.regroup ? 0.6 : 0.25,
   };
 }
 

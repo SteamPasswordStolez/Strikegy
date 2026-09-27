@@ -57,7 +57,14 @@ export interface BotModeHooks {
   /** Places worth going for, best first (empty = push toward the enemy base). */
   objectives(team: Team): { pos: THREE.Vector3; radius: number }[];
   /** Respawn position for a bot (given the squad objective it is assigned to). */
-  spawnAt(team: Team, near: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
+  spawnAt(bot: Bot, objective: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
+}
+
+/** A squad as the bots see it: members and, for the player's squad, the leader to follow. */
+export interface BotSquad {
+  index: number;
+  botIds: number[];
+  leader: Combatant | null;
 }
 
 interface TeamState {
@@ -82,6 +89,11 @@ interface BotEntry {
   simAlive: boolean;
   /** Mode objective this bot is assigned to, if any. */
   objective: { pos: THREE.Vector3; radius: number } | null;
+  squad: number;
+  /** Squad leader to stay close to (the player's squad), else null. */
+  leader: Combatant | null;
+  /** Slot in the leader's formation (1..). */
+  slot: number;
 }
 
 function pickWeapon(): WeaponDef {
@@ -109,7 +121,7 @@ export class BotManager implements BotServices {
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
   private readonly muzzle = new THREE.Vector3();
-  private markerMaterial: THREE.SpriteMaterial | null = null;
+  private markerMaterials = new Map<string, THREE.SpriteMaterial>();
   /** Soft contact shadows under every bot, one draw call. */
   private readonly blobs: THREE.InstancedMesh;
   private readonly blobMatrix = new THREE.Matrix4();
@@ -149,7 +161,7 @@ export class BotManager implements BotServices {
         this.respawn(bot);
         const model = new SoldierModel(team, bot.def);
         scene.add(model.root);
-        const marker = team === PLAYER_TEAM ? this.makeMarker() : null;
+        const marker = team === PLAYER_TEAM ? this.makeMarker('#4d8cff') : null;
         if (marker) scene.add(marker);
         this.entries.push({
           bot,
@@ -161,6 +173,9 @@ export class BotManager implements BotServices {
           wasAlive: true,
           simAlive: true,
           objective: null,
+          squad: -1,
+          leader: null,
+          slot: 0,
         });
       }
     };
@@ -193,8 +208,22 @@ export class BotManager implements BotServices {
       const b = e.bot;
       b.step(dt, this);
       if (e.simAlive && !b.alive) this.bus.emit('combatant:died', { team: b.team, id: b.id });
-      if (!b.alive && b.deadTime > RESPAWN_SEC) this.respawn(b);
+      if (!b.alive && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
       e.simAlive = b.alive;
+    }
+  }
+
+  /** Groups bots into squads; bots in a squad with a leader follow it. Squad-mates of the player get green markers. */
+  setSquads(squads: BotSquad[]): void {
+    for (const sq of squads) {
+      sq.botIds.forEach((id, k) => {
+        const e = this.entries.find((x) => x.bot.id === id);
+        if (!e) return;
+        e.squad = sq.index;
+        e.leader = sq.leader;
+        e.slot = k + 1;
+        if (e.marker && sq.leader) e.marker.material = this.markerMaterial('#6bdc6b');
+      });
     }
   }
 
@@ -206,7 +235,7 @@ export class BotManager implements BotServices {
   private respawn(bot: Bot): void {
     if (this.hooks) {
       const e = this.entries.find((x) => x.bot === bot);
-      const at = this.hooks.spawnAt(bot.team, e?.objective?.pos ?? null);
+      const at = this.hooks.spawnAt(bot, e?.objective?.pos ?? null);
       bot.spawn(at.pos, at.yaw, pickWeapon());
       return;
     }
@@ -240,16 +269,17 @@ export class BotManager implements BotServices {
     t.planAt = this.time + 7 + Math.random() * 4;
     const goals = this.hooks?.objectives(team) ?? [];
     if (goals.length > 0) {
-      // Most of the team on the top objective, the rest on the next one.
-      let i = 0;
+      // Whole squads go for an objective together; about half the squads per objective.
+      const squads = [...new Set(this.entries.filter((e) => e.bot.team === team).map((e) => e.squad))].sort((a, b) => a - b);
+      const n = Math.min(goals.length, Math.max(1, Math.ceil(squads.length / 2)));
       for (const e of this.entries) {
         if (e.bot.team !== team) continue;
-        const g = goals.length > 1 && i % 5 >= 3 ? goals[1]! : goals[0]!;
+        const k = Math.max(0, squads.indexOf(e.squad));
+        const g = goals[k % n]!;
         e.objective = g;
         const a = Math.random() * Math.PI * 2;
         const r = Math.sqrt(Math.random()) * g.radius * 0.7;
         e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-        i++;
       }
       t.objective.copy(goals[0]!.pos);
       return;
@@ -332,6 +362,8 @@ export class BotManager implements BotServices {
   squadGoal(bot: Bot): THREE.Vector3 {
     const t = this.teams[bot.team];
     const e = this.entries.find((x) => x.bot === bot)!;
+    const follow = this.followPoint(e);
+    if (follow) return follow;
     if (e.objective) {
       const goal = e.objective.pos.clone().add(e.offset);
       return this.nav.closest(goal) ?? e.objective.pos.clone();
@@ -343,6 +375,31 @@ export class BotManager implements BotServices {
       goal.z += dir.x * 16 * e.flankSide;
     }
     return this.nav.closest(goal) ?? t.objective.clone();
+  }
+
+  /** Formation spot behind the squad leader, or null when not following. */
+  private followPoint(e: BotEntry): THREE.Vector3 | null {
+    const l = e.leader;
+    if (!l || !l.alive) return null;
+    // Staggered behind the leader, alternating sides.
+    const side = e.slot % 2 ? 1 : -1;
+    const ang = l.yaw + Math.PI + side * (0.45 + 0.2 * e.slot);
+    const dist = 4 + e.slot * 1.8;
+    const p = new THREE.Vector3(l.feet.x - Math.sin(ang) * dist, l.feet.y, l.feet.z - Math.cos(ang) * dist);
+    return this.nav.closest(p) ?? l.feet.clone();
+  }
+
+  mustRegroup(bot: Bot): boolean {
+    const l = this.entries.find((x) => x.bot === bot)!.leader;
+    return !!l && l.alive && l.feet.distanceTo(bot.feet) > 18;
+  }
+
+  squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean {
+    const e = this.entries.find((x) => x.bot === bot)!;
+    const l = e.leader;
+    if (!l || !l.alive) return false;
+    // Re-path when the leader has walked well away from where we were heading.
+    return l.feet.distanceTo(current) > 10;
   }
 
   teamSighting(team: Team): { pos: THREE.Vector3; time: number } | null {
@@ -515,13 +572,22 @@ export class BotManager implements BotServices {
     return mesh;
   }
 
-  /** Blue chevron over allies (seen through walls, constant screen size). */
-  private makeMarker(): THREE.Sprite {
-    if (!this.markerMaterial) {
+  /** Chevron over allies (seen through walls, constant screen size). */
+  private makeMarker(color: string): THREE.Sprite {
+    const s = new THREE.Sprite(this.markerMaterial(color));
+    s.scale.set(0.022, 0.022, 1);
+    s.renderOrder = 10;
+    s.layers.set(LAYER_FX);
+    return s;
+  }
+
+  private markerMaterial(color: string): THREE.SpriteMaterial {
+    let mat = this.markerMaterials.get(color);
+    if (!mat) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;
       const g = c.getContext('2d')!;
-      g.fillStyle = '#4d8cff';
+      g.fillStyle = color;
       g.strokeStyle = 'rgba(0,0,0,0.6)';
       g.lineWidth = 4;
       g.beginPath();
@@ -534,13 +600,10 @@ export class BotManager implements BotServices {
       g.fill();
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
-      this.markerMaterial = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false, toneMapped: false });
+      mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false, toneMapped: false });
+      this.markerMaterials.set(color, mat);
     }
-    const s = new THREE.Sprite(this.markerMaterial);
-    s.scale.set(0.022, 0.022, 1);
-    s.renderOrder = 10;
-    s.layers.set(LAYER_FX);
-    return s;
+    return mat;
   }
 
   dispose(): void {

@@ -13,6 +13,7 @@ import type { BotSkill } from './difficulty';
 import { chooseAction, type BotAction } from './brain';
 import { aimErrorDeg, noticeTime, offAxisDeg, turnToward, wrapAngle, yawPitchOf } from './aim';
 import type { Combatant } from './types';
+import { COMBAT_WINDOW } from '@/modes/squads';
 
 const DEG = Math.PI / 180;
 const PERCEIVE_EVERY = 0.1;
@@ -41,6 +42,10 @@ export interface BotServices {
   /** Resolves one trigger pull (all pellets) along `dir` from the bot's eye. */
   fire(bot: Bot, dir: THREE.Vector3): void;
   footstep(bot: Bot, sprinting: boolean): void;
+  /** The squad goal moved enough that a bot heading to the old one should re-path (following a leader). */
+  squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean;
+  /** Far from the squad leader: prefer catching up. */
+  mustRegroup(bot: Bot): boolean;
   /** Push away from nearby bots (m/s, horizontal) so they don't stack up. */
   separation(bot: Bot, out: THREE.Vector3): THREE.Vector3;
 }
@@ -63,6 +68,8 @@ export class Bot implements Damageable, Combatant {
   grounded = false;
   firingUntil = -1;
   deadTime = 0;
+  /** Extra respawn wait (squad wiped out); cleared on spawn. */
+  respawnPenalty = 0;
   action: BotAction = 'advance';
   /** Current enemy being fought (visible and noticed). */
   target: Combatant | null = null;
@@ -171,6 +178,11 @@ export class Bot implements Damageable, Combatant {
     this.hasGoal = false;
     this.cover = null;
     this.deadTime = 0;
+    this.respawnPenalty = 0;
+  }
+
+  inCombat(now: number): boolean {
+    return !!this.target || now - this.lastHurt < COMBAT_WINDOW || this.firingUntil > now - COMBAT_WINDOW;
   }
 
   applyDamage(amount: number, part: HitPart, source?: DamageSource): boolean {
@@ -315,6 +327,7 @@ export class Bot implements Damageable, Combatant {
         sinceHurt: s.time - this.lastHurt,
         coverKnown: !!this.cover,
         inCover,
+        regroup: s.mustRegroup(this),
       },
       this.action,
     );
@@ -338,7 +351,9 @@ export class Bot implements Damageable, Combatant {
         this.setGoal(this.heard.pos, s);
         break;
       case 'advance':
-        if (!this.hasGoal || this.feet.distanceTo(this.goal) < 3 || s.time > this.repathAt + 8) this.setGoal(s.squadGoal(this), s);
+        if (!this.hasGoal || this.feet.distanceTo(this.goal) < 3 || s.time > this.repathAt + 8 || s.squadGoalMoved(this, this.goal)) {
+          this.setGoal(s.squadGoal(this), s);
+        }
         break;
     }
     // Reload opportunistically when nothing is visible.

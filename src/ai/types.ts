@@ -18,6 +18,10 @@ export interface Combatant {
   readonly eyeHeight: number;
   /** Sim time until which this combatant counts as "just fired" (easier to spot). */
   readonly firingUntil: number;
+  /** Facing (radians, 0 = -Z). */
+  readonly yaw: number;
+  /** Fired, got hit or had an enemy in sight recently (sim time). */
+  inCombat(now: number): boolean;
 }
 
 export function otherTeam(t: Team): Team {
