@@ -40,6 +40,7 @@ M4 is split: **M4-A** Zone mode (done: rules, map 1 "Iron Gate", squads, BF-styl
 Zone decisions: death-only tickets; respawn at base / owned zones (zone under attack → spawn a bit away) / next to a squadmate (not while the mate is dead or in combat; squad wipe = +5 s respawn).
 
 In progress / next (owner approved, in this order):
+
 1. Bot overhaul: (1) personalities + no single-file lines, (2) combat (peeking, strafing, crouch, suppressive fire, fall back to reload), (3) squad tactics (roles, flanking, holding angles, smarter following), (4) grenades/smoke, (5) building use (window/second-floor spots, clearing).
 2. Replace remaining placeholder (unmodeled) objects with models.
 3. Map 2 "Ardennes forest" in winter: 7 zones (A sawmill, B farm, C stone bridge, D village crossroads, E chapel hill, F bunker ridge, G rail halt), river N–S, ~200,000 m², irregular outline. Snow texture download (Poly Haven `snow_02`) still awaiting the owner's answer — ask, or use procedural snow.
