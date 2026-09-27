@@ -7,6 +7,8 @@
 ```bash
 npm install
 npm run dev        # http://localhost:5173  (?map=sandbox&bots=4v5&difficulty=normal, ?bots=0 = 사격장)
+                   # Zone: ?map=iron_gate&bots=12v12 (&tickets=200, &mode=skirmish = 거점 없이 교전만)
+npm run maps       # scripts/maps/*.mjs로 생성형 맵 JSON 다시 만들기
 npm test           # Vitest 단위 테스트
 npm run lint
 npm run build      # tsc 검사 + dist/ 빌드 (scripts/clean.mjs로 dist 정리)
@@ -59,11 +61,12 @@ src/
   combat/    Hitboxes(부위 판정), CharacterHitboxes(플레이어·봇 공용), TargetDummy
   ai/        NavWorld(recast navmesh), Bot(인지·판단·이동·사격), brain(utility AI), aim·difficulty, BotManager(분대·엄폐·사격 판정), SoldierModel(절차적 스킨 메시)
   render/    Renderer, PostFX(후처리), visualProfiles(하늘/IBL/태양), surfaces·textures(절차적 PBR), Effects
-  world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout, backdrop(원경 지형·나무)
+  world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout, terrain(지형·다각형 경계), buildings(진입 가능한 건물 생성), backdrop(원경 지형·나무)
+  modes/     zoneRules(티켓·점령 순수 로직), ZoneMode(스폰·봇 목표), zoneVisuals(거점 표시)
   audio/     AudioSystem(임시 합성 SFX)
   ui/        HUD, Overlay
   i18n/      ko.json / en.json
-public/maps/ 맵 JSON
+public/maps/ 맵 JSON (iron_gate.json은 scripts/maps/iron-gate.mjs가 생성)
 tests/       단위 테스트
 ```
 

@@ -52,6 +52,14 @@ export interface BotOptions {
   difficulty: Difficulty;
 }
 
+/** Game-mode hooks: where squads go and where bots respawn. */
+export interface BotModeHooks {
+  /** Places worth going for, best first (empty = push toward the enemy base). */
+  objectives(team: Team): { pos: THREE.Vector3; radius: number }[];
+  /** Respawn position for a bot (given the squad objective it is assigned to). */
+  spawnAt(team: Team, near: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
+}
+
 interface TeamState {
   objective: THREE.Vector3;
   planAt: number;
@@ -70,6 +78,10 @@ interface BotEntry {
   role: 'assault' | 'flank';
   flankSide: number;
   wasAlive: boolean;
+  /** Alive at the end of the last sim step (for death events). */
+  simAlive: boolean;
+  /** Mode objective this bot is assigned to, if any. */
+  objective: { pos: THREE.Vector3; radius: number } | null;
 }
 
 function pickWeapon(): WeaponDef {
@@ -102,6 +114,8 @@ export class BotManager implements BotServices {
   private readonly blobs: THREE.InstancedMesh;
   private readonly blobMatrix = new THREE.Matrix4();
   private coverBudget = 0;
+  /** Set by the game mode (Zone): squad objectives and respawn points. */
+  hooks: BotModeHooks | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -137,7 +151,17 @@ export class BotManager implements BotServices {
         scene.add(model.root);
         const marker = team === PLAYER_TEAM ? this.makeMarker() : null;
         if (marker) scene.add(marker);
-        this.entries.push({ bot, model, marker, offset: new THREE.Vector3(), role: i % 3 === 2 ? 'flank' : 'assault', flankSide: i % 2 ? 1 : -1, wasAlive: true });
+        this.entries.push({
+          bot,
+          model,
+          marker,
+          offset: new THREE.Vector3(),
+          role: i % 3 === 2 ? 'flank' : 'assault',
+          flankSide: i % 2 ? 1 : -1,
+          wasAlive: true,
+          simAlive: true,
+          objective: null,
+        });
       }
     };
     add(PLAYER_TEAM, opts.allies);
@@ -168,11 +192,24 @@ export class BotManager implements BotServices {
     for (const e of this.entries) {
       const b = e.bot;
       b.step(dt, this);
+      if (e.simAlive && !b.alive) this.bus.emit('combatant:died', { team: b.team, id: b.id });
       if (!b.alive && b.deadTime > RESPAWN_SEC) this.respawn(b);
+      e.simAlive = b.alive;
     }
   }
 
+  /** Re-plan squad objectives now (e.g. a zone changed hands). */
+  replan(team: Team): void {
+    this.teams[team].planAt = Math.min(this.teams[team].planAt, this.time + 0.5 + Math.random());
+  }
+
   private respawn(bot: Bot): void {
+    if (this.hooks) {
+      const e = this.entries.find((x) => x.bot === bot);
+      const at = this.hooks.spawnAt(bot.team, e?.objective?.pos ?? null);
+      bot.spawn(at.pos, at.yaw, pickWeapon());
+      return;
+    }
     const t = this.teams[bot.team];
     const sp = t.spawns.length ? t.spawns[Math.floor(Math.random() * t.spawns.length)]! : null;
     const base = sp ? new THREE.Vector3(...sp.pos) : t.base;
@@ -201,6 +238,23 @@ export class BotManager implements BotServices {
     const t = this.teams[team];
     if (this.time < t.planAt) return;
     t.planAt = this.time + 7 + Math.random() * 4;
+    const goals = this.hooks?.objectives(team) ?? [];
+    if (goals.length > 0) {
+      // Most of the team on the top objective, the rest on the next one.
+      let i = 0;
+      for (const e of this.entries) {
+        if (e.bot.team !== team) continue;
+        const g = goals.length > 1 && i % 5 >= 3 ? goals[1]! : goals[0]!;
+        e.objective = g;
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(Math.random()) * g.radius * 0.7;
+        e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+        i++;
+      }
+      t.objective.copy(goals[0]!.pos);
+      return;
+    }
+    for (const e of this.entries) if (e.bot.team === team) e.objective = null;
     const enemyBase = this.teams[otherTeam(team)].base;
     if (t.sighting && this.time - t.sighting.time < 12) {
       t.objective.copy(t.sighting.pos);
@@ -278,6 +332,10 @@ export class BotManager implements BotServices {
   squadGoal(bot: Bot): THREE.Vector3 {
     const t = this.teams[bot.team];
     const e = this.entries.find((x) => x.bot === bot)!;
+    if (e.objective) {
+      const goal = e.objective.pos.clone().add(e.offset);
+      return this.nav.closest(goal) ?? e.objective.pos.clone();
+    }
     const goal = t.objective.clone().add(e.offset);
     if (e.role === 'flank') {
       const dir = this.tmp.subVectors(t.objective, t.base).setY(0).normalize();

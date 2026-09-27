@@ -22,8 +22,21 @@ export interface HudFrame {
   killedBy: string | null;
   /** Team kill counts (bot matches), or null on the range. */
   score: { allies: number; enemies: number } | null;
+  /** Zone mode: tickets and zone states from the player's point of view. */
+  zone: ZoneHud | null;
   fps: number | null;
   debug: string | null;
+}
+
+export type Side = 'ally' | 'enemy';
+
+export interface ZoneHud {
+  tickets: { allies: number; enemies: number };
+  zones: { id: string; owner: Side | null; progress: number; pushing: Side | null; contested: boolean }[];
+  /** The zone the player stands in, with a status line. */
+  here: { id: string; text: string; progress: number; tone: Side | 'neutral' } | null;
+  /** While dead: spawn choices (labels) and the selected index. */
+  spawn: { options: { label: string; warn: boolean }[]; selected: number } | null;
 }
 
 export interface KillEntry {
@@ -73,6 +86,14 @@ export class HUD {
   private feed: HTMLDivElement;
   private death: HTMLDivElement;
   private score: HTMLDivElement;
+  private deathText: HTMLDivElement;
+  private zoneBar: HTMLDivElement;
+  private zoneHere: HTMLDivElement;
+  private zoneHereFill: HTMLDivElement;
+  private zoneHereText: HTMLDivElement;
+  private spawnList: HTMLDivElement;
+  private notices: HTMLDivElement;
+  private noticeItems: { el: HTMLDivElement; life: number }[] = [];
   private arcs: DamageArc[] = [];
   private feedItems: { el: HTMLDivElement; life: number }[] = [];
   private hitTimer = 0;
@@ -104,6 +125,13 @@ export class HUD {
     this.fps = el('div', 'hud-fps', this.root);
     this.death = el('div', 'hud-death', this.root);
     this.score = el('div', 'hud-score', this.root);
+    this.deathText = el('div', 'hud-death-text', this.death);
+    this.spawnList = el('div', 'spawn-list', this.death);
+    this.zoneBar = el('div', 'zone-bar', this.root);
+    this.zoneHere = el('div', 'zone-here', this.root);
+    this.zoneHereText = el('div', 'zone-here-text', this.zoneHere);
+    this.zoneHereFill = el('div', 'zone-here-fill', el('div', 'zone-here-track', this.zoneHere));
+    this.notices = el('div', 'hud-notices', this.root);
     this.flashEl = el('div', 'hud-flash', this.root);
   }
 
@@ -136,6 +164,14 @@ export class HUD {
     el('span', cls(k.victim, k.victimTeam), row).textContent = k.victim === 'You' ? t('feed.you') : k.victim;
     this.feedItems.push({ el: row, life: FEED_LIFE });
     while (this.feedItems.length > FEED_MAX) this.feedItems.shift()!.el.remove();
+  }
+
+  /** Short centered message (zone captured / lost ...). */
+  notify(text: string, tone: Side | 'neutral'): void {
+    const row = el('div', `hud-notice n-${tone}`, this.notices);
+    row.textContent = text;
+    this.noticeItems.push({ el: row, life: 3 });
+    while (this.noticeItems.length > 3) this.noticeItems.shift()!.el.remove();
   }
 
   clearDamage(): void {
@@ -212,11 +248,21 @@ export class HUD {
     const killer = f.killedBy ? `\n${t('hud.killedBy')} ${f.killedBy}` : '';
     const deathText = dead ? `${t('hud.dead')}${killer}\n${t('hud.respawnIn')} ${Math.ceil(f.respawnIn!)}` : '';
     this.set('death', deathText, () => {
-      this.death.textContent = deathText;
+      this.deathText.textContent = deathText;
       this.death.classList.toggle('on', dead);
     });
+    this.updateZone(f.zone, dead);
 
-    const scoreText = f.score ? `${t('hud.allies')} ${f.score.allies} : ${f.score.enemies} ${t('hud.enemies')}` : '';
+    for (let i = this.noticeItems.length - 1; i >= 0; i--) {
+      const n = this.noticeItems[i]!;
+      n.life -= dt;
+      if (n.life <= 0) {
+        n.el.remove();
+        this.noticeItems.splice(i, 1);
+      } else if (n.life < 0.6) n.el.style.opacity = (n.life / 0.6).toFixed(2);
+    }
+
+    const scoreText = f.score && !f.zone ? `${t('hud.allies')} ${f.score.allies} : ${f.score.enemies} ${t('hud.enemies')}` : '';
     this.set('score', scoreText, () => {
       this.score.textContent = scoreText;
       this.score.style.display = scoreText ? 'block' : 'none';
@@ -224,5 +270,42 @@ export class HUD {
 
     const fpsText = f.fps === null ? '' : `${f.fps} FPS${f.debug ? ` · ${f.debug}` : ''}`;
     this.set('fps', fpsText, () => (this.fps.textContent = fpsText));
+  }
+
+  private updateZone(z: ZoneHud | null, dead: boolean): void {
+    const barKey = z
+      ? `${z.tickets.allies}|${z.tickets.enemies}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${Math.round(s.progress * 20)}`).join()}`
+      : '';
+    this.set('zoneBar', barKey, () => {
+      this.zoneBar.style.display = z ? 'flex' : 'none';
+      if (!z) return;
+      this.zoneBar.replaceChildren();
+      el('div', 'zb-tickets zb-ally', this.zoneBar).textContent = String(z.tickets.allies);
+      for (const s of z.zones) {
+        const cell = el('div', `zb-zone own-${s.owner ?? 'none'}${s.contested ? ' contested' : ''}`, this.zoneBar);
+        if (s.pushing) el('div', `zb-fill push-${s.pushing}`, cell).style.height = `${Math.round(s.progress * 100)}%`;
+        el('span', 'zb-id', cell).textContent = s.id;
+      }
+      el('div', 'zb-tickets zb-enemy', this.zoneBar).textContent = String(z.tickets.enemies);
+    });
+    const here = z?.here && !dead ? z.here : null;
+    const hereKey = here ? `${here.id}|${here.text}|${here.tone}|${Math.round(here.progress * 100)}` : '';
+    this.set('zoneHere', hereKey, () => {
+      this.zoneHere.className = here ? `zone-here on tone-${here.tone}` : 'zone-here';
+      if (!here) return;
+      this.zoneHereText.textContent = `${here.id} · ${here.text}`;
+      this.zoneHereFill.style.width = `${Math.round(here.progress * 100)}%`;
+    });
+    const spawn = dead && z?.spawn ? z.spawn : null;
+    const spawnKey = spawn ? `${spawn.selected}|${spawn.options.map((o) => `${o.label}${o.warn}`).join()}` : '';
+    this.set('spawn', spawnKey, () => {
+      this.spawnList.replaceChildren();
+      if (!spawn) return;
+      el('div', 'spawn-title', this.spawnList).textContent = t('spawn.choose');
+      spawn.options.forEach((o, i) => {
+        const row = el('div', `spawn-opt${i === spawn.selected ? ' sel' : ''}${o.warn ? ' warn' : ''}`, this.spawnList);
+        row.textContent = `${i + 1}  ${o.label}${o.warn ? ` · ${t('spawn.underAttack')}` : ''}`;
+      });
+    });
   }
 }

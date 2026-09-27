@@ -576,6 +576,16 @@ export class AudioSystem {
     else this.tone(out, t, 1200, 0.04, 0.12, 'square');
   }
 
+  /** Zone captured (good) or lost (bad): a short two-note cue. */
+  zoneCue(good: boolean): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0.1);
+    const [a, b] = good ? [523, 784] : [440, 311];
+    this.tone(out, t, a, 0.16, 0.16, 'triangle');
+    this.tone(out, t + 0.14, b, 0.28, 0.16, 'triangle');
+  }
+
   hurt(amount: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;

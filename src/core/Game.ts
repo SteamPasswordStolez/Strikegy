@@ -38,6 +38,11 @@ import { AudioSystem } from '@/audio/AudioSystem';
 import { HUD } from '@/ui/HUD';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
+import { ZoneMode } from '@/modes/ZoneMode';
+import { ZoneRules } from '@/modes/zoneRules';
+import { ZoneVisuals } from '@/modes/zoneVisuals';
+import type { Side, ZoneHud } from '@/ui/HUD';
+import type { Team } from '@/world/mapTypes';
 
 const DEG = Math.PI / 180;
 /** FOV that the weapon adsFov values were authored against. */
@@ -58,6 +63,10 @@ export interface GameOptions {
   viewModels?: string[];
   /** Bot match settings; null = practice range (targets only). */
   bots?: BotOptions | null;
+  /** Game mode; 'auto' = Zone when the map has zones and there are bots. */
+  mode?: 'auto' | 'zone' | 'skirmish';
+  /** Zone mode ticket count per team. */
+  tickets?: number;
 }
 
 export class Game {
@@ -100,6 +109,12 @@ export class Game {
   private playerCombatant!: Combatant;
   private playerFiringUntil = -1;
   private killedBy: string | null = null;
+  private zoneMode: ZoneMode | null = null;
+  private zoneVisuals: ZoneVisuals | null = null;
+  /** Selected spawn option index while dead (0 = base). */
+  private spawnChoice = 0;
+  private spawnChoiceId = 'base';
+  private matchOver = false;
   private lastAlpha = 0;
   private elapsed = 0;
   private running = false;
@@ -222,6 +237,10 @@ export class Game {
       if (this.nav) {
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
       }
+    }
+    const mode = this.options.mode ?? 'auto';
+    if ((mode === 'zone' || (mode === 'auto' && this.bots)) && (map.zones?.length ?? 0) > 0) {
+      this.setupZoneMode(map, terrain);
     }
     this.wireEvents();
 
@@ -385,6 +404,7 @@ export class Game {
   }
 
   private resume(): void {
+    if (this.matchOver) return;
     this.audio.unlock();
     if (this.touch) {
       this.touch.setVisible(true);
@@ -445,6 +465,7 @@ export class Game {
 
     for (const tg of this.targets) tg.update(simDt);
     this.bots?.render(this.lastAlpha, dt, this.renderer.camera.position);
+    this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.throwables.castersChanged || this.targets.some((tg) => tg.moved)) this.renderer.requestShadowUpdate();
     this.throwables.sync();
     this.updateViewModel(dt, lookYaw, lookPitch);
@@ -549,11 +570,20 @@ export class Game {
       this.weapons.step(dt, input, p, this.throwBlock > 0);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
     } else {
+      // Number keys pick the spawn point while dead.
+      if (this.zoneMode && input.weaponSlot >= 0) {
+        const opts = this.zoneMode.spawnOptions(PLAYER_TEAM);
+        if (input.weaponSlot < opts.length) {
+          this.spawnChoice = input.weaponSlot;
+          this.spawnChoiceId = opts[input.weaponSlot]!.id;
+        }
+      }
       this.respawnTimer -= dt;
       if (this.respawnTimer <= 0) this.respawn();
     }
     this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
     this.bots?.step(dt);
+    this.zoneMode?.step(dt, this.combatants());
     this.throwables.step(dt);
     this.physics.step();
     consumePulses(input);
@@ -662,6 +692,7 @@ export class Game {
     this.weapons.adsBlend = 0;
     this.playerBoxes.setEnabled(false);
     this.bus.emit('player:died', { cause });
+    this.bus.emit('combatant:died', { team: PLAYER_TEAM, id: PLAYER_ID });
     this.killedBy = source && source.id !== PLAYER_ID ? source.name : null;
     // Kills by others are reported by whoever made them; self-inflicted ones here.
     if (!this.killedBy) {
@@ -673,8 +704,13 @@ export class Game {
   private respawn(): void {
     const p = this.player;
     p.health.reset();
-    const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
-    p.teleport(new THREE.Vector3(...sp.pos), sp.yaw * DEG);
+    if (this.zoneMode) {
+      const at = this.zoneMode.spawnPoint(PLAYER_TEAM, this.spawnChoiceId, this.nav);
+      p.teleport(at.pos, at.yaw);
+    } else {
+      const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
+      p.teleport(new THREE.Vector3(...sp.pos), sp.yaw * DEG);
+    }
     this.playerBoxes.setEnabled(true);
     this.killedBy = null;
     this.weapons.resetAmmo();
@@ -763,6 +799,7 @@ export class Game {
         respawnIn: this.player.alive ? null : Math.max(0, this.respawnTimer),
         killedBy: this.killedBy,
         score: this.bots ? { allies: this.bots.score(PLAYER_TEAM), enemies: this.bots.score(otherTeam(PLAYER_TEAM)) } : null,
+        zone: this.zoneHud(),
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
           ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)}`
@@ -781,6 +818,111 @@ export class Game {
       this.fpsFrames = 0;
       this.fpsTime = 0;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Zone mode
+
+  private setupZoneMode(map: MapDef, terrain: Terrain): void {
+    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets });
+    this.zoneMode = zm;
+    this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
+    if (this.bots) {
+      this.bots.hooks = {
+        objectives: (team) => zm.objectives(team),
+        spawnAt: (team, near) => zm.spawnPoint(team, this.botSpawnChoice(team, near), this.nav),
+      };
+    }
+    const side = (team: Team): Side => (team === PLAYER_TEAM ? 'ally' : 'enemy');
+    this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
+    this.bus.on('zone:captured', (e) => {
+      const ours = e.team === PLAYER_TEAM;
+      this.hud.notify(`${e.zone} ${t(ours ? 'zone.captured' : 'zone.enemyCaptured')}`, side(e.team));
+      this.audio.zoneCue(ours);
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
+    });
+    this.bus.on('zone:neutralized', (e) => {
+      const ours = e.team === PLAYER_TEAM;
+      this.hud.notify(`${e.zone} ${t(ours ? 'zone.lost' : 'zone.enemyLost')}`, ours ? 'enemy' : 'ally');
+      this.audio.zoneCue(!ours);
+      if (ours && this.spawnChoiceId === e.zone) this.spawnChoiceId = 'base';
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
+    });
+    this.bus.on('match:ended', (e) => this.endMatch(e.winner));
+  }
+
+  /** Bots respawn at the owned spawn option closest to their objective. */
+  private botSpawnChoice(team: Team, near: THREE.Vector3 | null): string {
+    const zm = this.zoneMode!;
+    if (!near) return 'base';
+    let best = 'base';
+    let bestD = Infinity;
+    for (const o of zm.spawnOptions(team)) {
+      if (o.id === 'base') continue;
+      const z = zm.zone(o.id)!;
+      const d = Math.hypot(z.x - near.x, z.z - near.z);
+      if (d < bestD) {
+        bestD = d;
+        best = o.id;
+      }
+    }
+    // A far-off owned zone is no better than the base.
+    return bestD < 160 ? best : 'base';
+  }
+
+  private *combatants(): Iterable<{ team: Team; alive: boolean; feet: THREE.Vector3 }> {
+    yield this.playerCombatant;
+    if (this.bots) yield* this.bots.bots;
+  }
+
+  private zoneHud(): ZoneHud | null {
+    const zm = this.zoneMode;
+    if (!zm) return null;
+    const side = (team: Team | null): Side | null => (team === null ? null : team === PLAYER_TEAM ? 'ally' : 'enemy');
+    const zones = zm.zones.map((z) => ({ id: z.id, owner: side(z.owner), progress: ZoneRules.progress(z), pushing: side(z.pushing), contested: z.contested }));
+    let here: ZoneHud['here'] = null;
+    const inZone = this.player.alive ? zm.zoneAt(this.player.feet) : null;
+    if (inZone) {
+      const ours = inZone.owner === PLAYER_TEAM;
+      let text: string;
+      let tone: Side | 'neutral' = inZone.owner === null ? 'neutral' : ours ? 'ally' : 'enemy';
+      if (inZone.contested) text = t('zone.contested');
+      else if (inZone.pushing === PLAYER_TEAM) {
+        text = inZone.owner === null ? t('zone.capturing') : t('zone.neutralizing');
+        tone = 'ally';
+      } else if (inZone.pushing) {
+        text = ours ? t('zone.losing') : t('zone.capturing');
+        tone = 'enemy';
+      } else text = inZone.owner === null ? t('zone.neutral') : ours ? t('zone.held') : t('zone.enemyHeld');
+      // Bar: how much the zone leans toward us (full = ours).
+      const lean = PLAYER_TEAM === 'blue' ? inZone.control : -inZone.control;
+      here = { id: inZone.id, text, progress: (lean + 1) / 2, tone };
+    }
+    let spawn: ZoneHud['spawn'] = null;
+    if (!this.player.alive) {
+      const opts = zm.spawnOptions(PLAYER_TEAM);
+      const sel = Math.max(0, opts.findIndex((o) => o.id === this.spawnChoiceId));
+      this.spawnChoice = sel;
+      spawn = { selected: sel, options: opts.map((o) => ({ label: o.id === 'base' ? t('spawn.base') : `${t('spawn.zone')} ${o.id}`, warn: o.underAttack })) };
+    }
+    return { tickets: { allies: zm.rules.tickets[PLAYER_TEAM], enemies: zm.rules.tickets[otherTeam(PLAYER_TEAM)] }, zones, here, spawn };
+  }
+
+  private endMatch(winner: Team): void {
+    if (this.matchOver) return;
+    this.matchOver = true;
+    const zm = this.zoneMode!;
+    const won = winner === PLAYER_TEAM;
+    // Let the moment land, then stop and show the result.
+    window.setTimeout(() => {
+      this.running = false;
+      if (document.pointerLockElement) document.exitPointerLock();
+      const tk = zm.rules.tickets;
+      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), `${t('match.tickets')} ${tk[PLAYER_TEAM]} : ${tk[otherTeam(PLAYER_TEAM)]}`, t('match.again'));
+      this.overlay.root.addEventListener('click', () => location.reload(), { once: true });
+    }, 2500);
   }
 
   /** Dev-only inspection handle (see main.ts). */

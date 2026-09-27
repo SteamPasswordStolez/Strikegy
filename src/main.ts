@@ -11,6 +11,9 @@ const botsParam = params.get('bots') ?? '4v5';
 const botMatch = /^(\d+)v(\d+)$/.exec(botsParam);
 const difficulty = (['easy', 'normal', 'hard'] as const).find((d) => d === params.get('difficulty')) ?? 'normal';
 const bots = botMatch ? { allies: Number(botMatch[1]), enemies: Number(botMatch[2]), difficulty } : null;
+// ?mode=zone|skirmish (default: Zone on maps with zones); ?tickets=200
+const mode = (['zone', 'skirmish'] as const).find((m) => m === params.get('mode')) ?? 'auto';
+const tickets = Number(params.get('tickets')) || undefined;
 
 Game.create(container, {
   mapUrl,
@@ -18,6 +21,8 @@ Game.create(container, {
   loadout: ['ar1', 'smg1', 'lmg1', 'sg1', 'dmr1', 'sr1', 'pistol1', 'ar3', 'dmr2'],
   viewModels: ['bolt_action_rifle_7_62', 'service_pistol'],
   bots,
+  mode,
+  tickets,
 })
   .then((game) => {
     if (import.meta.env.DEV) {

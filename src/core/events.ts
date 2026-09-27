@@ -46,6 +46,12 @@ export interface GameEvents {
   'player:flashed': { intensity: number; duration: number };
   'player:died': { cause: DamageCause };
   'player:respawned': Record<string, never>;
+  /** Anyone (player or bot) died; modes count tickets from this. */
+  'combatant:died': { team: Team; id: number };
+  'zone:captured': { zone: string; team: Team };
+  /** `team` lost the zone (it is neutral now). */
+  'zone:neutralized': { zone: string; team: Team };
+  'match:ended': { winner: Team };
 }
 
 export type GameBus = EventBus<GameEvents>;
