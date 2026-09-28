@@ -24,6 +24,12 @@ export interface GameEvents {
   'weapon:cycle': { weaponId: string };
   'weapon:dryFire': { weaponId: string };
   'weapon:switched': { weaponId: string };
+  /** Melee swing started. */
+  'weapon:meleeSwing': { weaponId: string };
+  /** Melee swing reached its strike point: what it met. */
+  'weapon:melee': { weaponId: string; hit: 'body' | 'world' | 'none' };
+  /** Inspection magazine check (sound cue). */
+  'weapon:inspectCue': { weaponId: string; cue: 'magOut' | 'magIn' };
   /** A bullet struck world geometry. */
   'combat:impact': { point: THREE.Vector3; normal: THREE.Vector3; surface: ImpactSurface };
   'combat:hit': {

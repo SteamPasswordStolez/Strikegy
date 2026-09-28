@@ -26,6 +26,10 @@ export interface InputState {
   throwGrenade: boolean;
   /** Pulse: select the next grenade type. */
   cycleGrenade: boolean;
+  /** Pulse: melee strike with the gun. */
+  melee: boolean;
+  /** Pulse: inspect the weapon. */
+  inspect: boolean;
 }
 
 export function createInputState(): InputState {
@@ -45,6 +49,8 @@ export function createInputState(): InputState {
     weaponSlot: -1,
     throwGrenade: false,
     cycleGrenade: false,
+    melee: false,
+    inspect: false,
   };
 }
 
@@ -57,6 +63,8 @@ export function consumePulses(s: InputState): void {
   s.weaponSlot = -1;
   s.throwGrenade = false;
   s.cycleGrenade = false;
+  s.melee = false;
+  s.inspect = false;
 }
 
 export function resetFrameInput(s: InputState): void {

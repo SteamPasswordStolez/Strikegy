@@ -377,6 +377,22 @@ body {
   right: calc(var(--r) + var(--F) + var(--B) + var(--gap) * 2);
   bottom: calc(var(--fireBottom) + (var(--F) - var(--B)) / 2);
 }
+.touch-melee {
+  right: calc(var(--r) + (var(--B) + var(--gap)) * 2);
+  bottom: var(--bt);
+}
+.touch-inspect {
+  top: max(6px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  width: 120px;
+  height: 56px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+}
+.touch-inspect.held {
+  background: rgba(255, 255, 255, 0.1);
+}
 .touch-pause {
   left: 50%;
   margin-left: calc(var(--B) * -0.35);

@@ -8,7 +8,7 @@ const LONG_PRESS_MS = 420;
 /** Stick pushed this far forward sprints. */
 const SPRINT_PUSH = 0.92;
 
-type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'pause';
+type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'melee' | 'inspect' | 'pause';
 
 /**
  * Touch controls for phones in landscape: the left side is a floating move
@@ -58,6 +58,9 @@ export class TouchControls implements InputSource {
       ['crouch', 'touch.crouch'],
       ['grenade', 'touch.grenade'],
       ['switch', 'touch.switch'],
+      ['melee', 'touch.melee'],
+      // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
+      ['inspect', null],
       ['pause', null],
     ];
     for (const [action, label] of buttons) {
@@ -218,6 +221,8 @@ export class TouchControls implements InputSource {
     s.throwGrenade ||= this.pulses.has('grenade');
     s.cycleGrenade ||= this.pulses.has('cycleGrenade');
     if (this.pulses.has('switch')) s.weaponCycle = 1;
+    s.melee ||= this.pulses.has('melee');
+    s.inspect ||= this.pulses.has('inspect');
     this.pulses.clear();
   }
 

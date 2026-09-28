@@ -15,6 +15,8 @@ export class KeyboardMouse implements InputSource {
   private slotQueued = -1;
   private grenadeQueued = false;
   private grenadeCycleQueued = false;
+  private meleeQueued = false;
+  private inspectQueued = false;
   private disposers: (() => void)[] = [];
 
   constructor(
@@ -30,6 +32,8 @@ export class KeyboardMouse implements InputSource {
       if (e.code === 'KeyQ') this.cycleQueued = 1;
       if (e.code === 'KeyG') this.grenadeQueued = true;
       if (e.code === 'KeyT') this.grenadeCycleQueued = true;
+      if (e.code === 'KeyV') this.meleeQueued = true;
+      if (e.code === 'Backquote') this.inspectQueued = true;
       const digit = /^Digit([1-9])$/.exec(e.code);
       if (digit) this.slotQueued = Number(digit[1]) - 1;
       if (this.locked && ['Space', 'ControlLeft', 'Tab'].includes(e.code)) e.preventDefault();
@@ -111,6 +115,10 @@ export class KeyboardMouse implements InputSource {
     this.slotQueued = -1;
     this.grenadeQueued = false;
     this.grenadeCycleQueued = false;
+    s.melee ||= this.meleeQueued;
+    s.inspect ||= this.inspectQueued;
+    this.meleeQueued = false;
+    this.inspectQueued = false;
   }
 
   private releaseAll(): void {

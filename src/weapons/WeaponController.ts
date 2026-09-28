@@ -11,6 +11,7 @@ import type { Player } from '@/player/Player';
 import { WeaponState } from './WeaponState';
 import { recoilKick, recoilScale } from './recoil';
 import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from './weaponData';
+import { INSPECT_CUES } from './viewAnims';
 
 const DEG = Math.PI / 180;
 export const DRAW_TIME = 0.35;
@@ -22,6 +23,22 @@ const MAX_RECOIL_PITCH = 12 * DEG;
 const SPRAY_RESET = 0.28;
 /** Delay after a pump/bolt shot before the cycling action is heard/seen. */
 const CYCLE_DELAY = 0.22;
+
+/** Melee: whole swing, when it lands, reach and damage (two body hits kill, head 70). */
+export const MELEE_TIME = 0.6;
+export const MELEE_HIT = 0.22;
+export const MELEE_RANGE = 2.0;
+export const MELEE_DAMAGE = { head: 70, body: 55, limb: 55 } as const;
+/** Weapon inspection length (s). */
+export const INSPECT_TIME = 3.2;
+/** Aim offsets (tangents right / up) of the melee probe rays: forgiving at close range. */
+const MELEE_PROBES: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [0.12, 0],
+  [-0.12, 0],
+  [0, 0.1],
+  [0, -0.14],
+];
 
 /** Reload progress points (0..1) at which magazine cues fire. */
 const MAG_CUES = [
@@ -58,6 +75,10 @@ export class WeaponController {
   private cycleTimer = -1;
   private cueIndex = 0;
   private lastAmmo = 0;
+  /** Seconds into a melee swing, or -1. */
+  meleeTime = -1;
+  /** Seconds into an inspection, or -1. */
+  inspectTime = -1;
 
   private readonly eye = new THREE.Vector3();
   private readonly fwd = new THREE.Vector3();
@@ -100,6 +121,17 @@ export class WeaponController {
     this.bloom = 0;
     this.adsBlend = 0;
     this.drawTimer = DRAW_TIME;
+    this.meleeTime = this.inspectTime = -1;
+  }
+
+  /** 0..1 through the melee swing, or -1. */
+  get meleeProgress(): number {
+    return this.meleeTime < 0 ? -1 : this.meleeTime / MELEE_TIME;
+  }
+
+  /** 0..1 through the inspection, or -1. */
+  get inspectProgress(): number {
+    return this.inspectTime < 0 ? -1 : this.inspectTime / INSPECT_TIME;
   }
 
   /** Current total spread half-angle in degrees. */
@@ -119,13 +151,16 @@ export class WeaponController {
     const s = this.state;
     const d = this.def;
     this.drawTimer = Math.max(0, this.drawTimer - dt);
-    const ready = this.drawTimer === 0 && !player.sprinting && !blocked;
+    this.stepMelee(dt, input, player, blocked);
+    const meleeing = this.meleeTime >= 0;
+    const ready = this.drawTimer === 0 && !player.sprinting && !blocked && !meleeing;
     const wantAds = input.ads && ready && !(s.reloading && d.reloadStyle === 'mag');
     const adsRate = dt / d.adsTime;
     this.adsBlend = THREE.MathUtils.clamp(this.adsBlend + (wantAds ? adsRate : -adsRate), 0, 1);
 
     const wasReloading = s.reloading;
-    const res = s.step(dt, { trigger: input.fire && ready, reload: input.reload && !blocked });
+    const res = s.step(dt, { trigger: input.fire && ready, reload: input.reload && !blocked && !meleeing });
+    this.stepInspect(dt, input, player, ready && !s.reloading && !input.fire && !input.ads);
     if (res.reloadStarted) {
       this.cueIndex = 0;
       this.lastAmmo = s.ammo;
@@ -151,6 +186,91 @@ export class WeaponController {
     }
   }
 
+  /** Starts, advances and resolves a melee swing. */
+  private stepMelee(dt: number, input: InputState, player: Player, blocked: boolean): void {
+    if (input.melee && this.meleeTime < 0 && this.drawTimer === 0 && !blocked) {
+      const s = this.state;
+      // The swing interrupts a reload (the magazine stays out) and an inspection.
+      if (s.reloading) {
+        s.cancelReload();
+        this.bus.emit('weapon:reloadEnd', { weaponId: this.def.id });
+      }
+      this.inspectTime = -1;
+      this.meleeTime = 0;
+      this.bus.emit('weapon:meleeSwing', { weaponId: this.def.id });
+      return;
+    }
+    if (this.meleeTime < 0) return;
+    const before = this.meleeTime;
+    this.meleeTime += dt;
+    if (before < MELEE_HIT && this.meleeTime >= MELEE_HIT) this.strike(player);
+    if (this.meleeTime >= MELEE_TIME) this.meleeTime = -1;
+  }
+
+  private stepInspect(dt: number, input: InputState, player: Player, idle: boolean): void {
+    if (this.inspectTime < 0) {
+      if (input.inspect && idle && this.adsBlend === 0) this.inspectTime = 0;
+      return;
+    }
+    // Anything else you do (shoot, aim, reload, sprint, throw, swing) ends it.
+    if (!idle || player.sprinting) {
+      this.inspectTime = -1;
+      return;
+    }
+    const d = this.def;
+    const before = this.inspectTime / INSPECT_TIME;
+    this.inspectTime += dt;
+    const now = this.inspectTime / INSPECT_TIME;
+    if (d.reloadStyle === 'mag') {
+      if (before < INSPECT_CUES.magOut && now >= INSPECT_CUES.magOut) this.bus.emit('weapon:inspectCue', { weaponId: d.id, cue: 'magOut' });
+      if (before < INSPECT_CUES.magIn && now >= INSPECT_CUES.magIn) this.bus.emit('weapon:inspectCue', { weaponId: d.id, cue: 'magIn' });
+    }
+    if (this.inspectTime >= INSPECT_TIME) this.inspectTime = -1;
+  }
+
+  /**
+   * The melee blow: a few short rays in a narrow cone from the eye. The first
+   * enemy hitbox any of them reaches takes the hit; otherwise a wall is struck.
+   */
+  private strike(player: Player): void {
+    const d = this.def;
+    const { eye, fwd, right, up } = this.aimBasis(player);
+    const dir = new THREE.Vector3();
+    let wall: { point: THREE.Vector3; normal: THREE.Vector3; handle: number; raw: { x: number; y: number; z: number } } | null = null;
+    for (const [a, b] of MELEE_PROBES) {
+      dir.copy(fwd).addScaledVector(right, a).addScaledVector(up, b).normalize();
+      const hit = this.physics.raycast(eye, dir, MELEE_RANGE, Layer.WORLD | Layer.HITBOX, undefined, this.ignoreBody);
+      if (!hit) continue;
+      const point = new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
+      const target = this.registry.lookup(hit.collider.handle);
+      if (target) {
+        if (!target.owner.alive || target.owner.team === PLAYER_TEAM) continue;
+        const dmg = MELEE_DAMAGE[target.part];
+        const source = { pos: eye.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: t('weapon.melee'), id: PLAYER_ID };
+        const killed = target.owner.applyDamage(dmg, target.part, source);
+        this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point, byPlayer: true });
+        if (killed) {
+          this.bus.emit('combat:kill', {
+            attacker: 'You',
+            victim: target.owner.name,
+            weapon: t('weapon.melee'),
+            headshot: false,
+            byPlayer: true,
+            attackerTeam: PLAYER_TEAM,
+            victimTeam: target.owner.team ?? null,
+          });
+        }
+        this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'body' });
+        return;
+      }
+      if (!wall) wall = { point, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), handle: hit.collider.handle, raw: hit.point };
+    }
+    if (wall) {
+      this.bus.emit('combat:impact', { point: wall.point, normal: wall.normal, surface: this.surfaces.get(wall.handle, wall.raw) });
+      this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'world' });
+    } else this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'none' });
+  }
+
   private emitReloadCues(s: WeaponState, d: WeaponDef): void {
     if (d.reloadStyle === 'perShell') {
       if (s.ammo > this.lastAmmo) this.bus.emit('weapon:reloadCue', { weaponId: d.id, cue: 'shell' });
@@ -171,8 +291,9 @@ export class WeaponController {
       const n = this.loadout.length;
       next = (((this.index + input.weaponCycle) % n) + n) % n;
     }
-    if (next === this.index) return;
+    if (next === this.index || this.meleeTime >= 0) return;
     this.state.cancelReload();
+    this.inspectTime = -1;
     this.index = next;
     this.drawTimer = DRAW_TIME;
     this.adsBlend = 0;

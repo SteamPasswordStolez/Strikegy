@@ -543,6 +543,46 @@ export class AudioSystem {
     this.mechClick(out, t + 0.1, 1800, 0.3);
   }
 
+  /** Melee swing: cloth and air, a rising whoosh. */
+  meleeSwing(): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    this.noiseBurst(out, t + 0.08, 0.2, 0.22, { type: 'bandpass', freq: 380, q: 1.2, endFreq: 1500 });
+    this.noiseBurst(out, t, 0.12, 0.08, { type: 'lowpass', freq: 900 });
+  }
+
+  /** The stock lands: a dull thump on a body, a hard knock on a wall (the impact sound adds the surface). */
+  meleeHit(body: boolean): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0.04);
+    if (body) {
+      this.tone(out, t, 110, 0.12, 0.7, 'sine', 55);
+      this.noiseBurst(out, t, 0.09, 0.6, { type: 'lowpass', freq: 520 });
+      this.noiseBurst(out, t + 0.01, 0.05, 0.2, { type: 'bandpass', freq: 1400, q: 1.5 });
+    } else {
+      this.tone(out, t, 160, 0.07, 0.35, 'sine', 90);
+      this.noiseBurst(out, t, 0.06, 0.45, { type: 'bandpass', freq: 900, q: 1.1 });
+      this.mechClick(out, t + 0.005, 2200, 0.2);
+    }
+  }
+
+  /** Inspection magazine check: the reload sounds, softer. */
+  inspectCue(cue: 'magOut' | 'magIn', cls: WeaponClass): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0.03);
+    const { pitch: p, weight: w } = HANDLING[cls];
+    if (cue === 'magOut') {
+      this.mechClick(out, t, 3200 * p, 0.12 * w);
+      this.slide(out, t + 0.02, 0.07, 1600 * p, 1100 * p, 0.07 * w);
+    } else {
+      this.slide(out, t, 0.04, 1000 * p, 2000 * p, 0.05 * w);
+      if (!this.sample('mag_in', out, t + 0.01, 0.12 * w, 1.5 * p)) this.mechClick(out, t + 0.02, 2500 * p, 0.14 * w);
+    }
+  }
+
   /** Dry fire: the hammer/striker falls on nothing. */
   click(): void {
     if (!this.ready) return;

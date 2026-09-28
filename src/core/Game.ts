@@ -405,6 +405,8 @@ export class Game {
         magReload: true,
         drawProgress: 1,
         hideForScope: false,
+        meleeT: -1,
+        inspectT: -1,
       });
       r.render();
     }
@@ -434,6 +436,15 @@ export class Game {
     bus.on('weapon:reloadCue', (e) => this.audio.reloadCue(e.cue, cls(e.weaponId)));
     bus.on('weapon:switched', () => this.audio.switchWeapon());
     bus.on('weapon:dryFire', () => this.audio.click());
+    bus.on('weapon:meleeSwing', () => this.audio.meleeSwing());
+    bus.on('weapon:melee', (e) => {
+      if (e.hit === 'none') return;
+      this.audio.meleeHit(e.hit === 'body');
+      this.viewModel.onMeleeHit();
+      this.shake = Math.min(0.03, this.shake + 0.012);
+      if (this.bots) this.bots.alert(this.player.feet, 20, this.playerCombatant);
+    });
+    bus.on('weapon:inspectCue', (e) => this.audio.inspectCue(e.cue, cls(e.weaponId)));
     bus.on('combat:impact', (e) => {
       this.effects.impact(e.point, e.normal, e.surface);
       this.audio.impact(e.point, e.surface);
@@ -675,8 +686,8 @@ export class Game {
       if (input.cycleGrenade) this.grenades.cycle();
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
       const firing = input.fire;
-      // Pulling the trigger or aiming ends a sprint immediately.
-      if (input.fire || input.ads) {
+      // Pulling the trigger, aiming or swinging ends a sprint immediately.
+      if (input.fire || input.ads || input.melee) {
         input.sprint = false;
         p.sprinting = false;
       }
@@ -894,6 +905,8 @@ export class Game {
       magReload: w.def.reloadStyle === 'mag',
       drawProgress: p.alive && this.deployed ? 1 - w.drawTimer / DRAW_TIME : 0,
       hideForScope: !!w.def.scope && w.adsBlend > 0.95,
+      meleeT: w.meleeProgress,
+      inspectT: w.inspectProgress,
     });
   }
 
