@@ -36,7 +36,7 @@ export class KeyboardMouse implements InputSource {
       if (e.code === 'Backquote') this.inspectQueued = true;
       const digit = /^Digit([1-9])$/.exec(e.code);
       if (digit) this.slotQueued = Number(digit[1]) - 1;
-      if (this.locked && ['Space', 'ControlLeft', 'Tab'].includes(e.code)) e.preventDefault();
+      if ((this.locked || e.code === 'Tab') && ['Space', 'ControlLeft', 'Tab'].includes(e.code)) e.preventDefault();
     });
     this.listen<KeyboardEvent>(window, 'keyup', (e) => this.keys.delete(e.code));
     this.listen(window, 'blur', () => this.releaseAll());
@@ -103,6 +103,7 @@ export class KeyboardMouse implements InputSource {
     s.ads ||= this.buttons.has(2);
     s.sprint ||= k.has('ShiftLeft');
     s.crouch ||= k.has('ControlLeft') || k.has('KeyC');
+    s.scoreboard ||= k.has('Tab');
     s.jump ||= this.jumpQueued;
     s.reload ||= this.reloadQueued;
     if (this.cycleQueued) s.weaponCycle = this.cycleQueued;

@@ -30,6 +30,8 @@ export interface InputState {
   melee: boolean;
   /** Pulse: inspect the weapon. */
   inspect: boolean;
+  /** Held: show the scoreboard. */
+  scoreboard: boolean;
 }
 
 export function createInputState(): InputState {
@@ -51,6 +53,7 @@ export function createInputState(): InputState {
     cycleGrenade: false,
     melee: false,
     inspect: false,
+    scoreboard: false,
   };
 }
 
@@ -74,6 +77,7 @@ export function resetFrameInput(s: InputState): void {
   s.ads = false;
   s.sprint = false;
   s.crouch = false;
+  s.scoreboard = false;
 }
 
 export interface InputSource {

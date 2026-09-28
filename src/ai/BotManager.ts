@@ -63,9 +63,16 @@ const LEAF_WEIGHT = 0.25;
 const COVER_SAMPLES = 10;
 
 const NAMES: Record<Team, string[]> = {
-  blue: ['Hawk', 'Bishop', 'Rook', 'Nomad', 'Sparrow', 'Atlas', 'Echo', 'Kodiak'],
-  red: ['Viper', 'Jackal', 'Cobra', 'Wraith', 'Mako', 'Talon', 'Scorpion', 'Raven'],
+  blue: ['Hawk', 'Bishop', 'Rook', 'Nomad', 'Sparrow', 'Atlas', 'Echo', 'Kodiak', 'Falcon', 'Ranger', 'Bear', 'Moose', 'Otter', 'Badger', 'Heron', 'Lynx', 'Maple', 'Cedar', 'Granite', 'Harbor', 'Beacon', 'Anchor', 'Summit', 'Glacier'],
+  red: ['Viper', 'Jackal', 'Cobra', 'Wraith', 'Mako', 'Talon', 'Scorpion', 'Raven', 'Hyena', 'Adder', 'Vulture', 'Shrike', 'Mamba', 'Barracuda', 'Warden', 'Specter', 'Cinder', 'Onyx', 'Havoc', 'Rogue', 'Vandal', 'Reaper', 'Ember', 'Dagger'],
 };
+
+/** The i-th bot's name on a team: unique, numbered once the list runs out. */
+function botName(team: Team, i: number): string {
+  const list = NAMES[team];
+  const base = list[i % list.length]!;
+  return i < list.length ? base : `${base} ${Math.floor(i / list.length) + 1}`;
+}
 
 export interface BotOptions {
   allies: number;
@@ -229,7 +236,7 @@ export class BotManager implements BotServices {
     const add = (team: Team, n: number) => {
       for (let i = 0; i < n; i++) {
         const style = rollPersonality();
-        const bot = new Bot(NAMES[team][i % NAMES[team].length]!, team, WEAPONS[weaponFor(style)], physics, registry, style);
+        const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(style)], physics, registry, style);
         this.respawn(bot);
         const model = new SoldierModel(team, bot.def);
         scene.add(model.root);
@@ -987,6 +994,8 @@ export class BotManager implements BotServices {
               byPlayer: false,
               attackerTeam: bot.team,
               victimTeam: owner.team ?? null,
+              attackerId: bot.id,
+              victimId: owner.id,
             });
           }
           const hitEntry = this.byBot.get(owner as Bot);

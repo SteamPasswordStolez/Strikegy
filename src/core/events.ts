@@ -49,6 +49,9 @@ export interface GameEvents {
     byPlayer: boolean;
     attackerTeam?: Team | null;
     victimTeam?: Team | null;
+    /** Combatant ids (scoreboard); absent for practice targets. */
+    attackerId?: number;
+    victimId?: number;
   };
   'grenade:thrown': { type: GrenadeType; remaining: number };
   'grenade:bounce': { type: GrenadeType; point: THREE.Vector3; speed: number };

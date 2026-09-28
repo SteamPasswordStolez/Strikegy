@@ -8,7 +8,7 @@ const LONG_PRESS_MS = 420;
 /** Stick pushed this far forward sprints. */
 const SPRINT_PUSH = 0.92;
 
-type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'melee' | 'inspect' | 'pause';
+type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'melee' | 'inspect' | 'score' | 'pause';
 
 /**
  * Touch controls for phones in landscape: the left side is a floating move
@@ -30,6 +30,7 @@ export class TouchControls implements InputSource {
   private pulses = new Set<ButtonAction | 'cycleGrenade'>();
   private adsToggled = false;
   private crouchToggled = false;
+  private scoreOpen = false;
   private grenadeDown: { id: number; at: number; timer: number } | null = null;
   private stickEl: HTMLDivElement;
   private knobEl: HTMLDivElement;
@@ -61,6 +62,8 @@ export class TouchControls implements InputSource {
       ['melee', 'touch.melee'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
+      // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
+      ['score', null],
       ['pause', null],
     ];
     for (const [action, label] of buttons) {
@@ -132,6 +135,8 @@ export class TouchControls implements InputSource {
     } else if (action === 'crouch') {
       this.crouchToggled = !this.crouchToggled;
       btn.classList.toggle('on', this.crouchToggled);
+    } else if (action === 'score') {
+      this.scoreOpen = !this.scoreOpen;
     } else if (action === 'pause') {
       this.onPause();
     } else this.pulses.add(action);
@@ -216,6 +221,7 @@ export class TouchControls implements InputSource {
     s.firePressed ||= this.pulses.has('fire');
     s.ads ||= this.adsToggled;
     s.crouch ||= this.crouchToggled;
+    s.scoreboard ||= this.scoreOpen;
     s.jump ||= this.pulses.has('jump');
     s.reload ||= this.pulses.has('reload');
     s.throwGrenade ||= this.pulses.has('grenade');
@@ -238,6 +244,7 @@ export class TouchControls implements InputSource {
   reset(): void {
     this.adsToggled = false;
     this.crouchToggled = false;
+    this.scoreOpen = false;
     this.buttons.get('ads')!.classList.remove('on');
     this.buttons.get('crouch')!.classList.remove('on');
   }

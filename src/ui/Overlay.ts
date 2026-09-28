@@ -18,6 +18,16 @@ export class Overlay {
     parent.appendChild(this.root);
   }
 
+  /** Extra content between the subtitle and the hint (e.g. the final scoreboard); null removes it. */
+  setExtra(el: HTMLElement | null): void {
+    this.root.querySelector('.overlay-extra')?.remove();
+    if (!el) return;
+    const box = document.createElement('div');
+    box.className = 'overlay-extra';
+    box.appendChild(el);
+    this.root.insertBefore(box, this.hintEl);
+  }
+
   show(title: string, sub = '', hint = ''): void {
     this.titleEl.textContent = title;
     this.subEl.textContent = sub;

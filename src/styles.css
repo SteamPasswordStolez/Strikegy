@@ -393,6 +393,19 @@ body {
 .touch-inspect.held {
   background: rgba(255, 255, 255, 0.1);
 }
+.touch-score {
+  top: max(4px, env(safe-area-inset-top));
+  left: 50%;
+  width: 240px;
+  height: 40px;
+  margin-left: -120px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+}
+.touch-score.held {
+  background: rgba(255, 255, 255, 0.1);
+}
 .touch-pause {
   left: 50%;
   margin-left: calc(var(--B) * -0.35);
@@ -1005,4 +1018,124 @@ body {
 .is-touch .minimap {
   width: 128px;
   height: 128px;
+}
+
+/* ---------- Scoreboard ---------- */
+/* Two team columns; rows shrink with the player count (--rows) so 40v40 fits. */
+.scoreboard {
+  --row: clamp(13px, calc(64vh / var(--rows, 12)), 24px);
+  position: fixed;
+  left: 50%;
+  top: 9vh;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  gap: 14px;
+  width: min(1040px, calc(100vw - 32px));
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(12, 14, 18, 0.9);
+  font-size: calc(var(--row) * 0.58);
+  pointer-events: none;
+}
+.scoreboard.hidden {
+  display: none;
+}
+.scoreboard.final {
+  position: static;
+  transform: none;
+  margin: 4px auto 0;
+  max-height: 58vh;
+  --row: clamp(12px, calc(46vh / var(--rows, 12)), 22px);
+}
+.sb-side {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.sb-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 0 6px 6px;
+  border-bottom: 2px solid currentColor;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sb-side.ally .sb-head {
+  color: #6fb6ff;
+}
+.sb-side.enemy .sb-head {
+  color: #ff7a6b;
+}
+.sb-team {
+  font-size: 16px;
+  letter-spacing: 0.08em;
+}
+.sb-tickets,
+.sb-kills {
+  color: var(--hud-dim);
+}
+.sb-kills {
+  margin-left: auto;
+}
+.sb-row {
+  display: grid;
+  grid-template-columns: 1.6em minmax(0, 1fr) 2.6em 2.6em 2.6em 3.6em;
+  align-items: center;
+  height: var(--row);
+  padding: 0 6px;
+  color: var(--hud-fg);
+  text-align: right;
+}
+.sb-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.04);
+}
+.sb-row .sb-name {
+  overflow: hidden;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sb-row .sb-sq {
+  text-align: left;
+  color: var(--hud-dim);
+}
+.sb-cols {
+  color: var(--hud-dim);
+  font-size: 11px;
+}
+.sb-row.mate .sb-name {
+  color: #7fd98a;
+}
+.sb-row.you {
+  background: rgba(255, 179, 71, 0.22);
+}
+.sb-row.you .sb-name {
+  color: var(--hud-accent);
+  font-weight: 700;
+}
+.sb-row.dead {
+  opacity: 0.45;
+}
+.sb-score {
+  font-weight: 700;
+}
+/* Short (phone) screens: rows keep a readable size and the board scrolls. */
+@media (max-height: 520px) {
+  .scoreboard:not(.final) {
+    --row: 18px;
+    top: 48px;
+    gap: 8px;
+    padding: 8px;
+    max-height: calc(100vh - 56px);
+    overflow-y: auto;
+    pointer-events: auto;
+    touch-action: pan-y;
+  }
+  .sb-head {
+    font-size: 11px;
+  }
+  .sb-team {
+    font-size: 13px;
+  }
 }

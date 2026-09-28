@@ -259,6 +259,8 @@ export class WeaponController {
             byPlayer: true,
             attackerTeam: PLAYER_TEAM,
             victimTeam: target.owner.team ?? null,
+            attackerId: PLAYER_ID,
+            victimId: target.owner.id,
           });
         }
         this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'body' });
@@ -373,6 +375,8 @@ export class WeaponController {
             byPlayer: true,
             attackerTeam: PLAYER_TEAM,
             victimTeam: target.owner.team ?? null,
+            attackerId: PLAYER_ID,
+            victimId: target.owner.id,
           });
         }
       }

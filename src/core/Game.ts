@@ -55,6 +55,8 @@ import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimA
 import { wrapAngle, yawPitchOf } from '@/ai/aim';
 import { COMBAT_WINDOW, WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
+import { ScoreTracker } from '@/modes/scoreTracker';
+import { Scoreboard, type ScoreboardSide } from '@/ui/Scoreboard';
 import type { Team } from '@/world/mapTypes';
 
 const DEG = Math.PI / 180;
@@ -144,6 +146,9 @@ export class Game {
   /** Deploy choice: 'base', 'zone:<id>' or 'mate:<id>'. */
   private spawnKey = 'base';
   private squads: Squad[] = [];
+  private readonly scores = new ScoreTracker();
+  private readonly scoreboard: Scoreboard;
+  private scoreboardTimer = 0;
   private playerSquad: Squad | null = null;
   private squadWiped = false;
   private playerHurtAt = -Infinity;
@@ -178,6 +183,7 @@ export class Game {
     this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
     this.renderer.instrument(this.perf.section);
     this.overlay = new Overlay(container);
+    this.scoreboard = new Scoreboard(container);
     this.audio = new AudioSystem(this.settings.masterVolume);
     this.viewModel = new ViewModel(this.renderer.fpScene, this.models);
 
@@ -594,6 +600,7 @@ export class Game {
     this.audio.updateVitals(p.health.value, p.alive);
     this.audio.updateAmbience(dt);
     this.updateHud(dt);
+    this.updateScoreboard(dt, input.scoreboard);
     const perf = this.perf;
     perf.setVisible(this.settings.showFps);
     const tDraw = performance.now();
@@ -764,6 +771,8 @@ export class Game {
             byPlayer,
             attackerTeam: owner.team,
             victimTeam: b.team,
+            attackerId: owner.id,
+            victimId: b.id,
           });
         }
       }
@@ -771,7 +780,21 @@ export class Game {
       if (byPlayer || owner.team !== PLAYER_TEAM) {
         const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
         const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
-        if (dmg > 0) this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
+        const killed = dmg > 0 && this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
+        // An enemy's grenade: report the kill like a bullet kill (feed, scoreboard).
+        if (killed && !byPlayer) {
+          this.bus.emit('combat:kill', {
+            attacker: owner.name,
+            victim: this.playerCombatant.name,
+            weapon: t('grenade.frag'),
+            headshot: false,
+            byPlayer: false,
+            attackerTeam: owner.team,
+            victimTeam: PLAYER_TEAM,
+            attackerId: owner.id,
+            victimId: PLAYER_ID,
+          });
+        }
       }
     } else if (type === 'flash') {
       this.effects.flashbang(point);
@@ -800,9 +823,10 @@ export class Game {
     }
   }
 
-  private damagePlayer(amount: number, from: THREE.Vector3 | null, cause: DamageCause, source?: DamageSource): void {
+  /** Returns true if this damage killed the player. */
+  private damagePlayer(amount: number, from: THREE.Vector3 | null, cause: DamageCause, source?: DamageSource): boolean {
     const p = this.player;
-    if (!p.alive) return;
+    if (!p.alive) return false;
     const killed = p.health.damage(amount);
     this.playerHurtAt = this.bots?.time ?? 0;
     this.bus.emit('player:damaged', { amount, from, cause });
@@ -816,6 +840,7 @@ export class Game {
     this.audio.hurt(amount);
     this.shake = Math.min(0.05, this.shake + amount * 0.0004);
     if (killed) this.die(cause, source);
+    return killed;
   }
 
   private die(cause: DamageCause, source?: DamageSource): void {
@@ -1052,6 +1077,57 @@ export class Game {
       this.bots?.replan('red');
     });
     this.bus.on('match:ended', (e) => this.endMatch(e.winner));
+
+    // Scoreboard stats.
+    this.bus.on('combat:kill', (e) => this.scores.kill(e.attackerId, e.victimId, e.headshot));
+    this.bus.on('combatant:died', (e) => this.scores.death(e.id));
+    // Credit for zones goes to the side's soldiers standing in the zone at that moment.
+    const inZone = (zone: string, team: Team) => {
+      const ids: number[] = [];
+      for (const c of this.combatants()) if (c.alive && c.team === team && this.zoneMode?.zoneAt(c.feet)?.id === zone) ids.push(c.id);
+      return ids;
+    };
+    this.bus.on('zone:captured', (e) => this.scores.objective(inZone(e.zone, e.team), 'capture'));
+    this.bus.on('zone:neutralized', (e) => this.scores.objective(inZone(e.zone, otherTeam(e.team)), 'neutralize'));
+  }
+
+  /** Scoreboard: while Tab is held (touch: toggled), refreshed a few times a second. */
+  private updateScoreboard(dt: number, held: boolean): void {
+    const sb = this.scoreboard;
+    if (this.matchOver) return;
+    const show = held && !!this.bots && !this.overlay.visible;
+    sb.setVisible(show);
+    if (!show) {
+      this.scoreboardTimer = 0;
+      return;
+    }
+    this.scoreboardTimer -= dt;
+    if (this.scoreboardTimer > 0) return;
+    this.scoreboardTimer = 0.25;
+    this.fillScoreboard();
+  }
+
+  private fillScoreboard(): void {
+    const tickets = this.zoneMode?.rules.tickets;
+    const alive = new Map<number, boolean>();
+    for (const c of this.combatants()) alive.set(c.id, c.alive);
+    const side = (team: Team): ScoreboardSide => ({
+      label: t(team === PLAYER_TEAM ? 'hud.allies' : 'hud.enemies'),
+      tickets: tickets ? tickets[team] : null,
+      kills: this.scores.totals(team).kills,
+      rows: this.scores.table(team).map((r) => ({
+        name: r.name,
+        squad: this.squads.find((s) => s.team === team && s.has(r.id))?.name ?? null,
+        kills: r.kills,
+        deaths: r.deaths,
+        captures: r.captures,
+        score: r.score,
+        alive: alive.get(r.id) ?? false,
+        you: r.id === PLAYER_ID,
+        mate: r.id !== PLAYER_ID && !!this.playerSquad?.has(r.id),
+      })),
+    });
+    this.scoreboard.update(side(PLAYER_TEAM), side(otherTeam(PLAYER_TEAM)));
   }
 
   // ---------------------------------------------------------------------------
@@ -1062,6 +1138,7 @@ export class Game {
     const blue = bots.bots.filter((b) => b.team === 'blue');
     const red = bots.bots.filter((b) => b.team === 'red');
     this.squads = [...formSquads('blue', [this.playerCombatant, ...blue]), ...formSquads('red', red)];
+    for (const c of [this.playerCombatant, ...blue, ...red]) this.scores.add(c.id, c.id === PLAYER_ID ? t('feed.you') : c.name, c.team);
     this.playerSquad = this.squads.find((s) => s.has(PLAYER_ID)) ?? null;
     bots.setSquads(
       this.squads.map((sq) => ({
@@ -1257,7 +1334,7 @@ export class Game {
     };
   }
 
-  private *combatants(): Iterable<{ team: Team; alive: boolean; feet: THREE.Vector3 }> {
+  private *combatants(): Iterable<{ id: number; team: Team; alive: boolean; feet: THREE.Vector3 }> {
     yield this.playerCombatant;
     if (this.bots) yield* this.bots.bots;
   }
@@ -1299,6 +1376,13 @@ export class Game {
       if (document.pointerLockElement) document.exitPointerLock();
       const tk = zm.rules.tickets;
       this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), `${t('match.tickets')} ${tk[PLAYER_TEAM]} : ${tk[otherTeam(PLAYER_TEAM)]}`, t('match.again'));
+      // Final standings under the result.
+      if (this.bots) {
+        this.fillScoreboard();
+        this.scoreboard.setFinal(true);
+        this.scoreboard.setVisible(true);
+        this.overlay.setExtra(this.scoreboard.root);
+      }
       this.overlay.root.addEventListener('click', () => location.reload(), { once: true });
     }, 2500);
   }

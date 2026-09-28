@@ -2,7 +2,7 @@
   "title": "STRIKEGY",
   "start.click": "클릭하여 시작",
   "start.tap": "탭하여 시작",
-  "start.hint": "WASD 이동 · Shift 달리기 · Ctrl 앉기 · Space 점프 · 좌클릭 사격 · 우클릭 조준 · R 재장전 · G 수류탄 · T 수류탄 변경 · V 근접 공격 · ~ 총기 점검 · F3 FPS",
+  "start.hint": "WASD 이동 · Shift 달리기 · Ctrl 앉기 · Space 점프 · 좌클릭 사격 · 우클릭 조준 · R 재장전 · G 수류탄 · T 수류탄 변경 · V 근접 공격 · Tab 점수판 · ~ 총기 점검 · F3 FPS",
   "paused": "일시정지",
   "loading": "로딩 중...",
   "hud.reloading": "재장전 중",
@@ -60,5 +60,11 @@
   "squad.ok": "대기",
   "squad.combat": "교전 중",
   "squad.dead": "사망",
-  "squad.wiped": "분대 전멸 — 부활 대기 +5초"
+  "squad.wiped": "분대 전멸 — 부활 대기 +5초",
+  "score.kills": "처치",
+  "score.name": "이름",
+  "score.k": "처치",
+  "score.d": "사망",
+  "score.zones": "거점",
+  "score.score": "점수"
 }
