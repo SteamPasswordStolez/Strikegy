@@ -98,9 +98,9 @@ function makeMaterials() {
   const std = (p: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial(p);
   return {
     /** Blued / parkerized steel: barrels, bolts, small parts. */
-    steel: std({ color: 0x2a2b2d, metalness: 0.75, roughness: 1, roughnessMap: metalRough, normalMap: metalNormal, normalScale: new THREE.Vector2(0.12, 0.12) }),
+    steel: std({ color: 0x323437, metalness: 0.75, roughness: 1, roughnessMap: metalRough, normalMap: metalNormal, normalScale: new THREE.Vector2(0.12, 0.12) }),
     /** Anodized aluminium receivers. */
-    alloy: std({ color: 0x1d1e20, metalness: 0.55, roughness: 1, roughnessMap: metalRough, normalMap: metalNormal, normalScale: new THREE.Vector2(0.08, 0.08) }),
+    alloy: std({ color: 0x26282b, metalness: 0.55, roughness: 1, roughnessMap: metalRough, normalMap: metalNormal, normalScale: new THREE.Vector2(0.08, 0.08) }),
     /** Near-black details: slots, ports, rail teeth, sights. */
     dark: std({ color: 0x0e0f10, metalness: 0.4, roughness: 0.6 }),
     /** Inside of open tubes (optic bodies), seen from within. */
@@ -109,6 +109,12 @@ function makeMaterials() {
     rubber: std({ color: 0x151515, metalness: 0, roughness: 0.9, normalMap: stipple, normalScale: new THREE.Vector2(0.3, 0.3) }),
     wood: std({ map: woodAlbedo(4), metalness: 0, roughness: 0.55, normalMap: metalNormal, normalScale: new THREE.Vector2(0.1, 0.1) }),
     brass: std({ color: 0xb08a3e, metalness: 1, roughness: 0.3 }),
+    /** Bullet tips. */
+    copper: std({ color: 0xb4643c, metalness: 1, roughness: 0.35 }),
+    /** Shotgun shell hulls. */
+    shellHull: std({ color: 0x9c2a22, metalness: 0, roughness: 0.55 }),
+    /** Weapon light lens (faintly lit). */
+    lightLens: std({ color: 0xdfe6f0, metalness: 0.2, roughness: 0.1, emissive: 0x2a3038 }),
     glass: std({ color: 0x8fb5d0, metalness: 0.9, roughness: 0.05, transparent: true, opacity: 0.22, depthWrite: false }),
     /** Lens seen from the outside (scope front/back). */
     lens: std({ color: 0x0b1a2a, metalness: 1, roughness: 0.05, emissive: 0x06121e }),
@@ -204,6 +210,29 @@ export function tube(r: number, u0: number, u1: number, v: number, x = 0, seg = 
   return g;
 }
 
+/** Cylinder across the gun (along x), e.g. pins and buttons: centered at (u, v, x). */
+export function xcyl(r: number, len: number, u: number, v: number, x = 0, seg = 10): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(r, r, len, seg);
+  g.rotateZ(Math.PI / 2);
+  g.translate(x, v, -u);
+  return g;
+}
+
+/** Upright cylinder (along v) from v0 down/up to v1 at (u, x). */
+export function vcyl(r0: number, r1: number, u: number, v0: number, v1: number, x = 0, seg = 12): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(r1, r0, Math.abs(v1 - v0), seg);
+  g.translate(x, (v0 + v1) / 2, -u);
+  return g;
+}
+
+/** Ring in the u-v plane (sling loops, swivels) centered at (u, v, x). */
+export function loop(r: number, tube: number, u: number, v: number, x = 0): THREE.BufferGeometry {
+  const g = new THREE.TorusGeometry(r, tube, 6, 14);
+  g.rotateY(Math.PI / 2);
+  g.translate(x, v, -u);
+  return g;
+}
+
 /** Turned part: `profile` is (radius, u offset) pairs, revolved around the bore axis starting at u0. */
 export function lathe(profile: [r: number, du: number][], u0: number, v: number, x = 0, seg = 20): THREE.BufferGeometry {
   const g = new THREE.LatheGeometry(
@@ -248,6 +277,20 @@ function boxProjectUVs(g: THREE.BufferGeometry): void {
   }
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
 }
+
+/** Picatinny rail hanging under a surface at vTop (teeth pointing down). */
+export function railUnder(u0: number, u1: number, vTop: number, x = 0): [THREE.BufferGeometry[], number] {
+  const out = [block(u0, u1, vTop - 0.004, vTop, 0.016, x), block(u0, u1, vTop - 0.0065, vTop - 0.004, 0.021, x)];
+  for (let u = u0 + 0.004; u < u1 - 0.004; u += 0.01) out.push(block(u, u + 0.0052, vTop - 0.0095, vTop - 0.0065, 0.021, x));
+  return [out, vTop - 0.0095];
+}
+
+/** A builder that drops everything: fine details on low-detail guns go here. */
+export const DISCARD = {
+  add(): typeof DISCARD {
+    return DISCARD;
+  },
+} as unknown as PartBuilder;
 
 /** Collects parts per material and merges them into one mesh per material. */
 export class PartBuilder {

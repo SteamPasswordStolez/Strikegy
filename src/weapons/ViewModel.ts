@@ -8,10 +8,9 @@ import {
   INSPECT_MAG_HELD,
   INSPECT_POS,
   INSPECT_ROT,
-  MELEE_PISTOL_POS,
-  MELEE_PISTOL_ROT,
-  MELEE_POS,
-  MELEE_ROT,
+  MELEE_LONG,
+  MELEE_PISTOL,
+  pickMelee,
   RELOAD_GUN_ROT,
   RELOAD_HAND,
   RELOAD_HAND_ROT,
@@ -106,6 +105,9 @@ export class ViewModel {
   private magRestGun = new THREE.Vector3();
   private magToParent = new THREE.Matrix4();
   private meleeJolt = 0;
+  /** Index of the current / last melee motion, and whether a swing is under way. */
+  private meleeMove = 0;
+  private meleeActive = false;
   private readonly tv = new THREE.Vector3();
   private readonly tr = new THREE.Vector3();
   private readonly tq = new THREE.Vector3();
@@ -168,7 +170,7 @@ export class ViewModel {
   private buildShell(def: WeaponDef): void {
     if (def.reloadStyle !== 'perShell') return;
     const sg = def.class === 'sg';
-    const mat = sg ? new THREE.MeshStandardMaterial({ color: 0x9c2a22, roughness: 0.6 }) : gunMaterials().brass;
+    const mat = sg ? gunMaterials().shellHull : gunMaterials().brass;
     const r = sg ? 0.0095 : 0.0055;
     const len = sg ? 0.066 : 0.075;
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
@@ -489,9 +491,14 @@ export class ViewModel {
       extraRot.add(sampleTrack(INSPECT_ROT, f.inspectT, this.tq));
     }
     if (f.meleeT >= 0) {
-      extraPos.add(sampleTrack(this.pistol ? MELEE_PISTOL_POS : MELEE_POS, f.meleeT, this.tq));
-      extraRot.add(sampleTrack(this.pistol ? MELEE_PISTOL_ROT : MELEE_ROT, f.meleeT, this.tq));
+      // A new swing picks a different motion from the last one.
+      const set = this.pistol ? MELEE_PISTOL : MELEE_LONG;
+      if (!this.meleeActive) this.meleeMove = pickMelee(set, this.meleeMove);
+      const mv = set[this.meleeMove % set.length]!;
+      extraPos.add(sampleTrack(mv.pos, f.meleeT, this.tq));
+      extraRot.add(sampleTrack(mv.rot, f.meleeT, this.tq));
     }
+    this.meleeActive = f.meleeT >= 0;
     this.meleeJolt *= Math.exp(-14 * dt);
     extraPos.z += this.meleeJolt * 0.04;
     extraRot.x += this.meleeJolt * 0.08;

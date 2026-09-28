@@ -8,7 +8,7 @@ import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import type { Player } from '@/player/Player';
 import { INSPECT_TIME, MELEE_DAMAGE, MELEE_HIT, MELEE_TIME, WeaponController } from '@/weapons/WeaponController';
-import { RELOAD_HAND, RELOAD_MAG_HELD, SHELL_HAND, sampleTrack, type HandAnchor } from '@/weapons/viewAnims';
+import { MELEE_LONG, MELEE_PISTOL, MELEE_STRIKE_T, RELOAD_HAND, RELOAD_MAG_HELD, SHELL_HAND, pickMelee, sampleTrack, type HandAnchor } from '@/weapons/viewAnims';
 
 describe('view motion tracks', () => {
   const anchors: Record<HandAnchor, THREE.Vector3> = {
@@ -85,6 +85,35 @@ function run(w: WeaponController, player: Player, seconds: number, set: (i: Retu
     w.step(dt, input, player, false);
   }
 }
+
+describe('melee motions', () => {
+  it('never repeats the same swing twice in a row and uses every motion', () => {
+    for (const set of [MELEE_LONG, MELEE_PISTOL]) {
+      let last = 0;
+      const seen = new Set<number>();
+      for (let i = 0; i < 200; i++) {
+        const next = pickMelee(set, last);
+        expect(next).not.toBe(last);
+        expect(next).toBeGreaterThanOrEqual(0);
+        expect(next).toBeLessThan(set.length);
+        seen.add(next);
+        last = next;
+      }
+      expect(seen.size).toBe(set.length);
+    }
+  });
+
+  it('every motion starts and ends at rest and strikes at the same moment', () => {
+    const v = new THREE.Vector3();
+    for (const mv of [...MELEE_LONG, ...MELEE_PISTOL]) {
+      for (const track of [mv.pos, mv.rot]) {
+        expect(sampleTrack(track, 0, v).length()).toBe(0);
+        expect(sampleTrack(track, 1, v).length()).toBe(0);
+        expect(track.some((k) => k.t === MELEE_STRIKE_T)).toBe(true);
+      }
+    }
+  });
+});
 
 describe('melee', () => {
   it('lands once at the strike point, hurts an enemy and blocks firing meanwhile', () => {

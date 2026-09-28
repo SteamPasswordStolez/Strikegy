@@ -139,6 +139,11 @@ export class Renderer {
     const key = new THREE.DirectionalLight(0xfff1de, 1.8);
     key.position.set(1.5, 2, 0.5);
     this.fpScene.add(key);
+    // Soft fill from the left: at the hip you mostly see the gun's left side,
+    // which the key light leaves in shadow (controls, pins and seams vanish).
+    const fill = new THREE.DirectionalLight(0xdce6f2, 0.7);
+    fill.position.set(-1.6, 0.9, 0.8);
+    this.fpScene.add(fill);
 
     if (this.quality.postfx) {
       this.postfx = new PostFX(this.gl, this.scene, this.camera, this.fpScene, this.fpCamera, {

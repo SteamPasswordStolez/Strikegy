@@ -135,7 +135,7 @@ function bodyParts(p: Palette, gunParts: Part[], support: THREE.Vector3): Part[]
 
 /** The procedural first-person gun, baked into vertex-colored parts on the aim bone. */
 function gunParts(def: WeaponDef): { parts: Part[]; support: THREE.Vector3; muzzle: THREE.Vector3 } {
-  const g = buildGun(def);
+  const g = buildGun(def, { detail: 'low' });
   g.group.position.copy(GRIP);
   g.group.updateMatrixWorld(true);
   const parts: Part[] = [];

@@ -11,7 +11,7 @@ import type { Player } from '@/player/Player';
 import { WeaponState } from './WeaponState';
 import { recoilKick, recoilScale } from './recoil';
 import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from './weaponData';
-import { INSPECT_CUES } from './viewAnims';
+import { INSPECT_CUES, MELEE_STRIKE_T } from './viewAnims';
 
 const DEG = Math.PI / 180;
 export const DRAW_TIME = 0.35;
@@ -26,7 +26,8 @@ const CYCLE_DELAY = 0.22;
 
 /** Melee: whole swing, when it lands, reach and damage (two body hits kill, head 70). */
 export const MELEE_TIME = 0.6;
-export const MELEE_HIT = 0.22;
+// The blow lands when every melee motion reaches its strike pose.
+export const MELEE_HIT = MELEE_TIME * MELEE_STRIKE_T;
 export const MELEE_RANGE = 2.0;
 export const MELEE_DAMAGE = { head: 70, body: 55, limb: 55 } as const;
 /** Weapon inspection length (s). */

@@ -147,33 +147,56 @@ export const INSPECT_MAG_HELD: readonly [number, number] = [0.22, 0.41];
 /** Magazine pulled / seated during the inspection (cue times). */
 export const INSPECT_CUES = { magOut: 0.24, magIn: 0.4 } as const;
 
-/** Melee (buttstroke): wind up to the right, swing the gun across and forward, recover. */
-export const MELEE_POS: readonly Key[] = [
-  { t: 0, v: O },
-  { t: 0.25, v: [0.05, -0.03, 0.1] },
-  { t: 0.38, v: [-0.12, 0.04, -0.26] },
-  { t: 0.5, v: [-0.1, 0.03, -0.2] },
-  { t: 1, v: O },
+/** A melee motion: whole-gun offset and rotation tracks over the swing (0..1). */
+export interface MeleeMove {
+  name: string;
+  pos: readonly Key[];
+  rot: readonly Key[];
+}
+
+/** Every swing lands at this point of the track (the hit is resolved at MELEE_HIT / MELEE_TIME). */
+export const MELEE_STRIKE_T = 0.38;
+
+const move = (name: string, windup: [Vec, Vec], strike: [Vec, Vec], follow: [Vec, Vec]): MeleeMove => ({
+  name,
+  pos: [
+    { t: 0, v: O },
+    { t: 0.25, v: windup[0] },
+    { t: MELEE_STRIKE_T, v: strike[0] },
+    { t: 0.5, v: follow[0] },
+    { t: 1, v: O },
+  ],
+  rot: [
+    { t: 0, v: O },
+    { t: 0.25, v: windup[1] },
+    { t: MELEE_STRIKE_T, v: strike[1] },
+    { t: 0.5, v: follow[1] },
+    { t: 1, v: O },
+  ],
+});
+
+/** Long guns: one is picked at random for each swing (never the same twice in a row). */
+export const MELEE_LONG: readonly MeleeMove[] = [
+  // Horizontal buttstroke: wind up to the right, swing the gun across.
+  move('buttstroke', [[0.05, -0.03, 0.1], [0.15, -0.45, -0.35]], [[-0.12, 0.04, -0.26], [0, 0.55, 1.0]], [[-0.1, 0.03, -0.2], [0, 0.5, 0.9]]),
+  // Muzzle thrust: pull the gun back to the chest, drive it straight forward.
+  move('thrust', [[-0.03, 0.02, 0.12], [0.08, 0.1, 0.25]], [[-0.07, 0.03, -0.3], [-0.04, 0.12, 0.1]], [[-0.06, 0.02, -0.26], [-0.02, 0.1, 0.08]]),
+  // Overhead chop: raise the gun, bring it down hard.
+  move('chop', [[-0.02, 0.12, 0.06], [0.55, 0.15, 0.3]], [[-0.06, -0.06, -0.22], [-0.45, 0.2, 0.5]], [[-0.05, -0.07, -0.18], [-0.5, 0.2, 0.45]]),
+  // Butt jab: turn the gun so the stock leads, punch it forward.
+  move('buttJab', [[0.06, 0.0, 0.08], [0.1, -0.35, -0.6]], [[-0.1, 0.06, -0.2], [0.2, 0.9, 1.3]], [[-0.09, 0.05, -0.16], [0.18, 0.85, 1.2]]),
 ];
-export const MELEE_ROT: readonly Key[] = [
-  { t: 0, v: O },
-  { t: 0.25, v: [0.15, -0.45, -0.35] },
-  { t: 0.38, v: [0, 0.55, 1.0] },
-  { t: 0.5, v: [0, 0.5, 0.9] },
-  { t: 1, v: O },
+
+/** Pistols: a downward whip, a backhand, a grip punch. */
+export const MELEE_PISTOL: readonly MeleeMove[] = [
+  move('whip', [[0.02, 0.06, 0.08], [0.7, -0.2, -0.3]], [[-0.04, -0.05, -0.22], [-0.6, 0.2, 0.6]], [[-0.03, -0.04, -0.18], [-0.5, 0.15, 0.5]]),
+  move('backhand', [[-0.08, 0.03, 0.06], [0.2, 0.6, 0.8]], [[0.06, 0.0, -0.2], [-0.1, -0.5, -0.7]], [[0.05, -0.01, -0.16], [-0.1, -0.45, -0.6]]),
+  move('gripPunch', [[0.01, -0.01, 0.1], [-0.25, 0.1, 0.2]], [[-0.03, -0.03, -0.24], [-0.5, 0.15, 0.3]], [[-0.03, -0.03, -0.2], [-0.45, 0.12, 0.25]]),
 ];
-/** Pistols: a short downward whip instead. */
-export const MELEE_PISTOL_POS: readonly Key[] = [
-  { t: 0, v: O },
-  { t: 0.25, v: [0.02, 0.06, 0.08] },
-  { t: 0.38, v: [-0.04, -0.05, -0.22] },
-  { t: 0.5, v: [-0.03, -0.04, -0.18] },
-  { t: 1, v: O },
-];
-export const MELEE_PISTOL_ROT: readonly Key[] = [
-  { t: 0, v: O },
-  { t: 0.25, v: [0.7, -0.2, -0.3] },
-  { t: 0.38, v: [-0.6, 0.2, 0.6] },
-  { t: 0.5, v: [-0.5, 0.15, 0.5] },
-  { t: 1, v: O },
-];
+
+/** Picks the next swing from a set, avoiding a repeat of the last one. */
+export function pickMelee(set: readonly MeleeMove[], last: number, rand: () => number = Math.random): number {
+  if (set.length < 2) return 0;
+  const i = Math.floor(rand() * (set.length - 1));
+  return i >= last ? i + 1 : i;
+}
