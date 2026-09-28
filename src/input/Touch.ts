@@ -10,6 +10,23 @@ const SPRINT_PUSH = 0.92;
 
 type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'melee' | 'inspect' | 'score' | 'pause';
 
+/** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
+const ICONS: Partial<Record<ButtonAction, string>> = {
+  fire: '<path d="M9 21V10c0-4 3-7 3-7s3 3 3 7v11z"/><path d="M7.5 21h9"/>',
+  fire2: '<path d="M9 21V10c0-4 3-7 3-7s3 3 3 7v11z"/><path d="M7.5 21h9"/>',
+  ads: '<circle cx="12" cy="12" r="8"/><path d="M12 2v6M12 16v6M2 12h6M16 12h6"/>',
+  reload: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v5h-5"/>',
+  grenade: '<circle cx="11" cy="14.5" r="6"/><path d="M8.5 8.8V6.5h5v2.3M13.5 6.5l4-2.5"/>',
+  switch: '<path d="M4 8h15l-3.5-3.5M20 16H5l3.5 3.5"/>',
+  jump: '<path d="M6 12l6-6 6 6M6 19l6-6 6 6"/>',
+  crouch: '<path d="M6 6l6 6 6-6M5 19h14"/>',
+  melee: '<path d="M4 20l5-5M7.5 12.5l4 4M10 14.5L20 4.5v2.5l-8 9.5"/>',
+  inspect: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+};
+
+const svg = (paths: string) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+
 /**
  * Touch controls for phones in landscape: the left side is a floating move
  * stick (push it all the way forward to sprint), the right side drags the
@@ -34,6 +51,7 @@ export class TouchControls implements InputSource {
   private grenadeDown: { id: number; at: number; timer: number } | null = null;
   private stickEl: HTMLDivElement;
   private knobEl: HTMLDivElement;
+  private restEl: HTMLDivElement;
   private readonly buttons = new Map<ButtonAction, HTMLDivElement>();
 
   constructor(
@@ -48,7 +66,10 @@ export class TouchControls implements InputSource {
     this.knobEl = document.createElement('div');
     this.knobEl.className = 'touch-knob';
     this.stickEl.appendChild(this.knobEl);
-    this.root.appendChild(this.stickEl);
+    // Faint ring where the thumb usually lands, so a new player sees where to move from.
+    this.restEl = document.createElement('div');
+    this.restEl.className = 'touch-stick-rest';
+    this.root.append(this.restEl, this.stickEl);
 
     const buttons: [ButtonAction, MessageKey | null][] = [
       ['fire', 'touch.fire'],
@@ -69,7 +90,14 @@ export class TouchControls implements InputSource {
     for (const [action, label] of buttons) {
       const b = document.createElement('div');
       b.className = `touch-btn touch-${action}`;
-      if (label) b.textContent = t(label);
+      const icon = ICONS[action];
+      if (icon) b.insertAdjacentHTML('beforeend', svg(icon));
+      if (label) {
+        const l = document.createElement('span');
+        l.className = 'tb-label';
+        l.textContent = t(label);
+        b.appendChild(l);
+      }
       b.addEventListener('touchstart', (e) => this.onButton(e, action, true), { passive: false });
       b.addEventListener('touchend', (e) => this.onButton(e, action, false), { passive: false });
       b.addEventListener('touchcancel', (e) => this.onButton(e, action, false), { passive: false });
@@ -150,6 +178,7 @@ export class TouchControls implements InputSource {
         this.stickOrigin = { x: tch.clientX, y: tch.clientY };
         this.stickVec = { x: 0, y: 0 };
         this.stickEl.style.display = 'block';
+        this.restEl.style.display = 'none';
         this.stickEl.style.left = `${tch.clientX - STICK_RADIUS}px`;
         this.stickEl.style.top = `${tch.clientY - STICK_RADIUS}px`;
         this.knobEl.style.transform = 'translate(0px, 0px)';
@@ -199,6 +228,7 @@ export class TouchControls implements InputSource {
         this.stickVec = { x: 0, y: 0 };
         this.stickEl.style.display = 'none';
         this.stickEl.classList.remove('sprint');
+        this.restEl.style.display = '';
       }
       this.lookTouches.delete(tch.identifier);
       this.firing.delete(tch.identifier);
@@ -235,9 +265,17 @@ export class TouchControls implements InputSource {
   /** Shows the selected grenade type and how many are left on its button. */
   setGrenade(label: string, count: number): void {
     const b = this.buttons.get('grenade')!;
+    const l = b.querySelector('.tb-label')!;
     const text = `${label} ${count}`;
-    if (b.textContent !== text) b.textContent = text;
+    if (l.textContent !== text) l.textContent = text;
     b.classList.toggle('empty', count === 0);
+  }
+
+  /** Lights the reload button up when the magazine runs low. */
+  setAmmo(ammo: number, magSize: number, reloading: boolean): void {
+    const b = this.buttons.get('reload')!;
+    b.classList.toggle('warn', !reloading && ammo <= Math.max(1, Math.floor(magSize * 0.25)));
+    b.classList.toggle('on', reloading);
   }
 
   /** Drops toggles (after death / respawn) so the player doesn't spawn aiming or crouched. */

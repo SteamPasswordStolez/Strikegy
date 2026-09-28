@@ -342,7 +342,7 @@ export class Game {
     this.physics.step();
 
     const touch = !!this.touch;
-    this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? '' : t('start.hint'));
+    this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? t('start.hintTouch') : t('start.hint'));
     this.overlay.root.addEventListener('click', () => this.resume());
     document.addEventListener('pointerlockchange', () => {
       if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
@@ -533,7 +533,7 @@ export class Game {
     if (!this.started) return;
     this.running = false;
     this.touch?.setVisible(false);
-    this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? '' : t('start.hint'));
+    this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? t('start.hintTouch') : t('start.hint'));
   }
 
   private frame = (now: number): void => {
@@ -1012,6 +1012,7 @@ export class Game {
     const flash = this.flashTotal > 0 ? Math.min(1, this.flashLeft / (this.flashTotal * 0.5)) * this.flashPeak : 0;
     const sel = this.grenades.selected;
     this.touch?.setGrenade(t(`grenade.${sel}` as MessageKey), this.grenades.counts[sel]);
+    this.touch?.setAmmo(s.ammo, w.def.magSize, s.reloading);
     this.hud.update(
       {
         weaponName: w.def.name,
