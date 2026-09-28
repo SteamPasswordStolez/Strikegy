@@ -2,7 +2,7 @@
   "title": "STRIKEGY",
   "start.click": "Click to start",
   "start.tap": "Tap to start",
-  "start.hint": "WASD move · Shift sprint · Ctrl crouch · Space jump · LMB fire · RMB aim · R reload · G grenade · T switch grenade · V melee · Tab scoreboard · ~ inspect · F3 FPS",
+  "start.hint": "WASD move · Shift sprint · Ctrl crouch · Space jump · LMB fire · RMB aim · R reload · G grenade · T switch grenade · V melee · Z (hold) scoreboard · ~ inspect · F3 FPS",
   "paused": "Paused",
   "loading": "Loading...",
   "hud.reloading": "Reloading",

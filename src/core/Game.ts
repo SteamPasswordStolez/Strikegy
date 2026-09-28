@@ -1091,7 +1091,7 @@ export class Game {
     this.bus.on('zone:neutralized', (e) => this.scores.objective(inZone(e.zone, otherTeam(e.team)), 'neutralize'));
   }
 
-  /** Scoreboard: while Tab is held (touch: toggled), refreshed a few times a second. */
+  /** Scoreboard: while Z is held (touch: toggled), refreshed a few times a second. */
   private updateScoreboard(dt: number, held: boolean): void {
     const sb = this.scoreboard;
     if (this.matchOver) return;

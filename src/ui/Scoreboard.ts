@@ -24,7 +24,7 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 /**
  * BF-style scoreboard: allies left, enemies right, one row per soldier
- * (squad, name, kills, deaths, zones, score). Shown while Tab is held (touch:
+ * (squad, name, kills, deaths, zones, score). Shown while Z is held (touch:
  * tap the zone bar) and at the end of a match. Rows shrink to fit big games.
  */
 export class Scoreboard {
