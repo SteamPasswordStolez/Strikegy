@@ -89,3 +89,22 @@ describe('Terrain', () => {
     physics.dispose();
   });
 });
+
+describe('river distance grid', () => {
+  it('gives finite heights everywhere around a river, also on grid lines at the edge of its reach', () => {
+    const b = new Boundary([
+      [-100, -100],
+      [100, -100],
+      [100, 100],
+      [-100, 100],
+    ]);
+    const t = new Terrain({ rivers: [{ pts: [[0, -150], [3, 0], [0, 150]], width: 10, depth: 2, bank: 5 }] }, b, [260, 260]);
+    for (let x = -80; x <= 80; x += 0.5) {
+      for (const z of [-50, 0, 37.5]) {
+        expect(Number.isFinite(t.heightAt(x, z))).toBe(true);
+        expect(Number.isFinite(t.surfaceAt(x * 1.6, z))).toBe(true);
+      }
+    }
+    expect(t.heightAt(3, 0)).toBeCloseTo(-2, 1);
+  });
+});

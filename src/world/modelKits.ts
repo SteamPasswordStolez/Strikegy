@@ -26,7 +26,11 @@ export type ModelKind =
   | 'logPile'
   | 'hayBale'
   | 'bunker'
-  | 'fence';
+  | 'fence'
+  | 'steeple'
+  | 'sawShed'
+  | 'archBridge'
+  | 'trussBridge';
 
 export const MODEL_KINDS: readonly ModelKind[] = [
   'car',
@@ -47,6 +51,10 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   'hayBale',
   'bunker',
   'fence',
+  'steeple',
+  'sawShed',
+  'archBridge',
+  'trussBridge',
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
@@ -586,6 +594,179 @@ const KITS: Record<ModelKind, Kit> = {
       b.pieces.push(p);
     }
     return [{ center: [0, h / 2, 0], size: alongX ? [L, h, 0.2] : [0.2, h, L] }];
+  },
+
+  steeple(b, w, h, d) {
+    // Square church tower: plain shaft, open belfry with a bell, slate spire and cross.
+    const shaft = h * 0.58;
+    const belfry = h * 0.16;
+    const spire = h - shaft - belfry - 0.9;
+    b.box('body', [w, shaft, d], [0, shaft / 2, 0]);
+    b.box('trim', [w + 0.3, 0.3, d + 0.3], [0, shaft, 0]);
+    // A clock face on two sides and slit windows up the shaft.
+    for (const s of [-1, 1]) {
+      b.cyl('light', 0.7, 0.7, 0.06, [0, shaft - 1.3, s * (d / 2 + 0.03)], [Math.PI / 2, 0, 0], 20);
+      for (let y = 2.5; y < shaft - 2.5; y += 3) b.box('dark', [0.35, 1.3, 0.06], [0, y, s * (d / 2 + 0.02)]);
+    }
+    const p = Math.min(0.9, w * 0.22);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('body', [p, belfry, p], [sx * (w / 2 - p / 2), shaft + belfry / 2, sz * (d / 2 - p / 2)]);
+    for (const s of [-1, 1]) {
+      b.box('trim', [w, 0.5, 0.25], [0, shaft + belfry - 0.25, s * (d / 2 - 0.12)]);
+      b.box('trim', [0.25, 0.5, d], [s * (w / 2 - 0.12), shaft + belfry - 0.25, 0]);
+      // Louvres half way up the openings.
+      b.box('wood', [w - 2 * p, 0.12, 0.08], [0, shaft + belfry * 0.3, s * (d / 2 - 0.3)]);
+    }
+    b.box('trim', [w - 0.2, 0.3, d - 0.2], [0, shaft + 0.15, 0]);
+    b.cyl('metal', 0.18, 0.55, 0.8, [0, shaft + belfry * 0.45, 0], [0, 0, 0], 12);
+    b.box('trim', [w + 0.4, 0.35, d + 0.4], [0, shaft + belfry + 0.17, 0]);
+    // Four-sided spire (a 4-segment cone turned 45 degrees), snow on its lower part.
+    const top = shaft + belfry + 0.35;
+    b.cyl('dark', 0, (Math.max(w, d) / 2) * Math.SQRT2 * 0.92, spire, [0, top + spire / 2, 0], [0, Math.PI / 4, 0], 4);
+    b.box('metal', [0.1, 0.9, 0.1], [0, top + spire + 0.4, 0]);
+    b.box('metal', [0.5, 0.1, 0.1], [0, top + spire + 0.55, 0]);
+    return [{ center: [0, (shaft + belfry) / 2, 0], size: [w, shaft + belfry, d] }];
+  },
+
+  sawShed(b, w, h, d, rand) {
+    // Open-sided saw shed: posts under a pitched roof, a long saw bench with a
+    // circular blade and a log on the carriage, sawdust on the floor.
+    const alongX = w >= d;
+    const L = alongX ? w : d;
+    const T = alongX ? d : w;
+    const parts = new Builder();
+    const cols: KitBox[] = [];
+    const eave = h * 0.62;
+    const n = Math.max(2, Math.round(L / 4));
+    for (let i = 0; i <= n; i++) {
+      for (const s of [-1, 1]) {
+        const x = -L / 2 + 0.2 + ((L - 0.4) * i) / n;
+        parts.box('wood', [0.22, eave, 0.22], [x, eave / 2, s * (T / 2 - 0.2)]);
+        cols.push({ center: [x, eave / 2, s * (T / 2 - 0.2)], size: [0.22, eave, 0.22] });
+      }
+    }
+    const span = T / 2 + 0.5;
+    const rise = h - eave;
+    const pitch = Math.atan2(rise, span);
+    const slant = Math.hypot(span, rise);
+    for (const s of [-1, 1]) {
+      parts.box('trim', [L + 0.6, 0.14, slant], [0, eave + rise / 2, (s * span) / 2], [s * pitch, 0, 0]);
+      parts.box('snow', [L + 0.4, 0.1, slant * 0.95], [0, eave + rise / 2 + 0.12, (s * span) / 2], [s * pitch, 0, 0]);
+    }
+    parts.box('wood', [L, 0.2, 0.2], [0, eave, 0]);
+    // Bench, blade and a log riding on it.
+    const benchL = L * 0.7;
+    parts.box('wood', [benchL, 0.9, 1.1], [0, 0.45, 0]);
+    cols.push({ center: [0, 0.45, 0], size: [benchL, 0.9, 1.1] });
+    parts.cyl('metal', 0.55, 0.55, 0.04, [benchL * 0.1, 1.0, 0], [Math.PI / 2, 0, 0], 24);
+    const r = 0.3 + rand() * 0.1;
+    parts.cyl('body', r, r, benchL * 0.6, [-benchL * 0.15, 0.9 + r, 0], [0, 0, Math.PI / 2], 10);
+    parts.box('dirt', [L - 1, 0.04, T - 1.2], [0, 0.02, 0]);
+    for (const p of parts.pieces) {
+      if (!alongX) p.geo.rotateY(Math.PI / 2);
+      b.pieces.push(p);
+    }
+    if (!alongX) for (const c of cols) c.center = [c.center[2], c.center[1], -c.center[0]] as [number, number, number];
+    if (!alongX) for (const c of cols) c.size = [c.size[2], c.size[1], c.size[0]] as [number, number, number];
+    return cols;
+  },
+
+  archBridge(b, w, hh, d) {
+    // Stone arch bridge along z: a solid side profile with round arches over
+    // the river (extruded across the width), parapets and a cobbled deck.
+    // The deck top is 1.25 m below the box top (the parapets fill that).
+    const h = hh - 1.25;
+    const L = d;
+    const deck = 0.9;
+    const abut = Math.min(4, L * 0.14);
+    const pier = 1.8;
+    const spans = 3;
+    const spanLen = (L - 2 * abut - (spans - 1) * pier) / spans;
+    const spring = h * 0.32;
+    const crown = h - deck - 0.25;
+    const pts: [number, number][] = [
+      [-L / 2, h],
+      [L / 2, h],
+      [L / 2, 0],
+      [L / 2 - abut, 0],
+    ];
+    let z = L / 2 - abut;
+    for (let i = 0; i < spans; i++) {
+      const z0 = z;
+      const z1 = z - spanLen;
+      pts.push([z0, spring]);
+      // Segmental arch from z0 down to z1 (going -z), rising to the crown.
+      const rise = crown - spring;
+      for (let k = 1; k < 12; k++) {
+        const t = k / 12;
+        pts.push([z0 - spanLen * t, spring + rise * Math.sin(Math.PI * t)]);
+      }
+      pts.push([z1, spring]);
+      pts.push([z1, 0]);
+      z = z1 - (i < spans - 1 ? pier : 0);
+      if (i < spans - 1) pts.push([z, 0]);
+    }
+    pts.push([-L / 2, 0]);
+    // The outline above runs clockwise; the extrusion wants counter-clockwise (outward normals).
+    b.profile('body', pts.reverse(), w);
+    // Cutwaters on the piers (upstream and downstream), parapets with copings.
+    const cols: KitBox[] = [];
+    z = L / 2 - abut - spanLen;
+    for (let i = 0; i < spans - 1; i++) {
+      const pz = z - pier / 2;
+      for (const s of [-1, 1]) b.cyl('body', 0, pier * 0.72, spring * 1.6, [s * (w / 2 + 0.3), spring * 0.8, pz], [0, Math.PI / 4, 0], 4);
+      cols.push({ center: [0, (h - deck) / 2, pz], size: [w, h - deck, pier] });
+      z -= pier + spanLen;
+    }
+    const rail = 1.0;
+    for (const s of [-1, 1]) {
+      b.box('body', [0.45, rail, L], [s * (w / 2 - 0.22), h + rail / 2, 0]);
+      b.box('trim', [0.6, 0.14, L + 0.1], [s * (w / 2 - 0.22), h + rail + 0.07, 0]);
+      b.box('snow', [0.55, 0.08, L], [s * (w / 2 - 0.22), h + rail + 0.18, 0]);
+      cols.push({ center: [s * (w / 2 - 0.22), h + rail / 2 + 0.07, 0], size: [0.45, rail + 0.14, L] });
+    }
+    b.box('trim', [w - 0.9, 0.06, L], [0, h + 0.03, 0]);
+    cols.push({ center: [0, h - deck / 2, 0], size: [w, deck, L] });
+    for (const s of [-1, 1]) cols.push({ center: [0, (h - deck) / 2, s * (L / 2 - abut / 2)], size: [w, h - deck, abut] });
+    return cols;
+  },
+
+  trussBridge(b, w, h, d) {
+    // Steel through-truss rail bridge along z on two concrete piers: deck with
+    // sleepers and rails, a Warren truss on each side, cross bracing on top.
+    const L = d;
+    const trussH = Math.min(5, h * 0.55);
+    const deckTop = h - trussH;
+    const cols: KitBox[] = [];
+    for (const pz of [-L / 4, L / 4]) {
+      b.box('concrete', [w + 0.6, deckTop - 0.6, 2.2], [0, (deckTop - 0.6) / 2, pz]);
+      cols.push({ center: [0, (deckTop - 0.6) / 2, pz], size: [w + 0.6, deckTop - 0.6, 2.2] });
+    }
+    b.box('dark', [w, 0.6, L], [0, deckTop - 0.3, 0]);
+    cols.push({ center: [0, deckTop - 0.3, 0], size: [w, 0.6, L] });
+    for (let z = -L / 2 + 0.4; z < L / 2; z += 0.65) b.box('wood', [2.6, 0.14, 0.24], [0, deckTop + 0.07, z]);
+    for (const s of [-1, 1]) b.box('metal', [0.1, 0.16, L], [s * 0.72, deckTop + 0.22, 0]);
+    const panels = Math.max(4, Math.round(L / 4));
+    const pl = L / panels;
+    for (const s of [-1, 1]) {
+      const x = s * (w / 2 - 0.15);
+      b.box('trim', [0.3, 0.35, L], [x, deckTop + 0.15, 0]);
+      b.box('trim', [0.3, 0.35, L - pl], [x, deckTop + trussH, 0]);
+      for (let i = 0; i <= panels; i++) {
+        const z = -L / 2 + i * pl;
+        if (i > 0 && i < panels) b.box('trim', [0.2, trussH, 0.2], [x, deckTop + trussH / 2, z]);
+        if (i < panels) {
+          // Diagonal from the bottom of one panel point to the top of the next (alternating).
+          const up = i % 2 === 0;
+          const len = Math.hypot(pl, trussH);
+          const ang = Math.atan2(pl, trussH) * (up ? 1 : -1);
+          b.box('trim', [0.18, len, 0.18], [x, deckTop + trussH / 2, z + pl / 2], [ang, 0, 0]);
+        }
+      }
+      // Low steel walls at the deck edge: keep people on the bridge.
+      cols.push({ center: [x, deckTop + 0.6, 0], size: [0.3, 1.2, L] });
+    }
+    for (let i = 1; i < panels; i++) b.box('trim', [w - 0.3, 0.2, 0.2], [0, deckTop + trussH, -L / 2 + i * pl]);
+    return cols;
   },
 };
 

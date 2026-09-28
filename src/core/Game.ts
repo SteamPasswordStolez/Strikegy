@@ -20,6 +20,7 @@ import { createConiferKit } from '@/world/conifers';
 import { Forest } from '@/world/forest';
 import { buildRivers } from '@/world/river';
 import { WaterMap } from '@/world/water';
+import { Snowfall } from '@/render/snowfall';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
@@ -122,6 +123,7 @@ export class Game {
   private nav: NavWorld | null = null;
   private navExtra: { positions: number[]; indices: number[] } | null = null;
   private forest: Forest | null = null;
+  private snowfall: Snowfall | null = null;
   /** The player as seen by bots. */
   private playerCombatant!: Combatant;
   private playerFiringUntil = -1;
@@ -237,27 +239,44 @@ export class Game {
       shadowExtent: q.shadowExtent,
     });
     const t0 = performance.now();
+    // Load-time breakdown (dev console): where the seconds go on big maps.
+    const steps: string[] = [];
+    let tStep = t0;
+    const lap = (name: string) => {
+      const now = performance.now();
+      steps.push(`${name} ${Math.round(now - tStep)}`);
+      tStep = now;
+    };
     // Buildings get a level pad so they sit flat on sloped ground.
     const pads = (map.buildings ?? []).map((b) => ({ pos: b.pos, radius: buildingPadRadius(b) - 1, blend: 5 }));
     const terrainDef = { ...map.world.terrain, flats: [...(map.world.terrain?.flats ?? []), ...pads] };
     const terrain = new Terrain(terrainDef, Boundary.fromMap(map), map.world.size);
     const shaped = hasTerrain(map);
     if (shaped) snapToTerrain(map, terrain);
+    lap('terrain');
     const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null, r.preset === 'low' ? 2 : 1);
     this.navExtra = built.navExtra;
+    lap('blockout');
     const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
+    lap('props');
     const water = terrain.rivers.length ? new WaterMap(terrain) : null;
     if (water) r.scene.add(buildRivers(terrain, r.scene.environment));
     const winter = map.world.visualProfile === 'winter';
+    if (winter) {
+      this.snowfall = new Snowfall(r.preset === 'low' ? 1200 : r.preset === 'medium' ? 2500 : 4000);
+      r.scene.add(this.snowfall.points);
+    }
     const kit = outdoor ? createConiferKit(q.msaa, winter) : null;
     if (kit && map.trees?.length) {
       // Low quality (phones): 3D trees only close by, impostors beyond.
       this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
       r.scene.add(this.forest.group);
     }
+    lap('water+forest');
     this.fitShadows(map, terrain, built.root, props);
     if (kit) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, phone: r.preset === 'low' });
-    if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms`);
+    lap('backdrop');
+    if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
     this.throwables = new Throwables(r.scene, this.physics, this.bus);
@@ -852,6 +871,7 @@ export class Game {
     cam.updateMatrixWorld();
     this.atmosphere.update(cam.position, this.elapsed);
     this.forest?.update(cam.position);
+    this.snowfall?.update(cam.position, this.elapsed, this.renderer.canvas.height);
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);

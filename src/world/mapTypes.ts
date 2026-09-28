@@ -79,7 +79,7 @@ export interface RiverDef {
   crossings?: [number, number][];
 }
 
-export type BuildingStyle = 'house' | 'shop' | 'apartment' | 'townhall' | 'warehouse' | 'barracks' | 'hangar' | 'hq' | 'station' | 'shed';
+export type BuildingStyle = 'house' | 'shop' | 'apartment' | 'townhall' | 'warehouse' | 'barracks' | 'hangar' | 'hq' | 'station' | 'shed' | 'barn' | 'chapel';
 
 /**
  * A generated building (world/buildings.ts): outer walls with door and window

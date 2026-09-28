@@ -7,7 +7,16 @@ type P2 = readonly [number, number];
 
 /** Playable-area outline: point-in-polygon and distance to the edge. */
 export class Boundary {
-  constructor(readonly points: readonly P2[]) {}
+  /** Flat [x0, z0, x1, z1, ...] copy for the hot loops (terrain sampling calls these ~10^5 times). */
+  private readonly xz: Float64Array;
+
+  constructor(readonly points: readonly P2[]) {
+    this.xz = new Float64Array(points.length * 2);
+    points.forEach(([x, z], i) => {
+      this.xz[i * 2] = x;
+      this.xz[i * 2 + 1] = z;
+    });
+  }
 
   static fromMap(map: MapDef): Boundary {
     if (map.world.boundary && map.world.boundary.length >= 3) return new Boundary(map.world.boundary);
@@ -21,11 +30,14 @@ export class Boundary {
   }
 
   contains(x: number, z: number): boolean {
-    const p = this.points;
+    const p = this.xz;
+    const n = p.length / 2;
     let inside = false;
-    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
-      const [xi, zi] = p[i]!;
-      const [xj, zj] = p[j]!;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = p[i * 2]!;
+      const zi = p[i * 2 + 1]!;
+      const xj = p[j * 2]!;
+      const zj = p[j * 2 + 1]!;
       if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
     }
     return inside;
@@ -33,16 +45,25 @@ export class Boundary {
 
   /** Distance to the outline (unsigned). */
   edgeDistance(x: number, z: number): number {
-    const p = this.points;
+    return Math.sqrt(this.edgeDistanceSq(x, z));
+  }
+
+  private edgeDistanceSq(x: number, z: number): number {
+    const p = this.xz;
+    const n = p.length / 2;
     let best = Infinity;
-    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
-      const [ax, az] = p[j]!;
-      const [bx, bz] = p[i]!;
-      const dx = bx - ax;
-      const dz = bz - az;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const ax = p[j * 2]!;
+      const az = p[j * 2 + 1]!;
+      const dx = p[i * 2]! - ax;
+      const dz = p[i * 2 + 1]! - az;
       const len = dx * dx + dz * dz;
-      const t = len > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len)) : 0;
-      best = Math.min(best, Math.hypot(x - (ax + t * dx), z - (az + t * dz)));
+      let t = len > 0 ? ((x - ax) * dx + (z - az) * dz) / len : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const ex = x - (ax + t * dx);
+      const ez = z - (az + t * dz);
+      const d = ex * ex + ez * ez;
+      if (d < best) best = d;
     }
     return best;
   }
@@ -62,10 +83,86 @@ export class Boundary {
 /** Extent of the surrounding scenery (backdrop) in meters. */
 export const SCENERY_EXTENT = 1400;
 
+/**
+ * Distance to a polyline, precomputed on a 1 m grid around it and read back
+ * bilinearly (Infinity beyond `reach`). Terrain height samples it ~10^5 times
+ * per load; the exact distance over ~90 segments each time cost seconds.
+ */
+class DistanceGrid {
+  private static readonly CELL = 1;
+  private readonly data: Float32Array;
+  private readonly x0: number;
+  private readonly z0: number;
+  private readonly cols: number;
+  private readonly rows: number;
+
+  constructor(
+    pts: readonly (readonly [number, number])[],
+    private readonly reach: number,
+  ) {
+    const C = DistanceGrid.CELL;
+    const xs = pts.map((p) => p[0]);
+    const zs = pts.map((p) => p[1]);
+    this.x0 = Math.floor(Math.min(...xs) - reach - 1);
+    this.z0 = Math.floor(Math.min(...zs) - reach - 1);
+    this.cols = Math.ceil((Math.max(...xs) + reach + 1 - this.x0) / C) + 1;
+    this.rows = Math.ceil((Math.max(...zs) + reach + 1 - this.z0) / C) + 1;
+    // Rasterize segment by segment: each only touches the cells within `reach` of it.
+    // Cells beyond reach hold a finite cap (not Infinity: interpolating Infinity * 0 gives NaN).
+    const cap = (reach + 3) * (reach + 3);
+    const sq = new Float32Array(this.cols * this.rows).fill(cap);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, az] = pts[i]!;
+      const [bx, bz] = pts[i + 1]!;
+      const dx = bx - ax;
+      const dz = bz - az;
+      const len = dx * dx + dz * dz;
+      const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - reach - 2 - this.x0) / C));
+      const c1 = Math.min(this.cols - 1, Math.ceil((Math.max(ax, bx) + reach + 2 - this.x0) / C));
+      const q0 = Math.max(0, Math.floor((Math.min(az, bz) - reach - 2 - this.z0) / C));
+      const q1 = Math.min(this.rows - 1, Math.ceil((Math.max(az, bz) + reach + 2 - this.z0) / C));
+      for (let r = q0; r <= q1; r++) {
+        const z = this.z0 + r * C;
+        for (let c = c0; c <= c1; c++) {
+          const x = this.x0 + c * C;
+          let t = len > 0 ? ((x - ax) * dx + (z - az) * dz) / len : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const ex = x - (ax + t * dx);
+          const ez = z - (az + t * dz);
+          const d = ex * ex + ez * ez;
+          const k = r * this.cols + c;
+          if (d < sq[k]!) sq[k] = d;
+        }
+      }
+    }
+    this.data = sq.map(Math.sqrt);
+  }
+
+  sample(x: number, z: number): number {
+    const u = (x - this.x0) / DistanceGrid.CELL;
+    const v = (z - this.z0) / DistanceGrid.CELL;
+    if (u < 0 || v < 0 || u >= this.cols - 1 || v >= this.rows - 1) return Infinity;
+    const c = Math.floor(u);
+    const r = Math.floor(v);
+    const fu = u - c;
+    const fv = v - r;
+    const k = r * this.cols + c;
+    const d = this.data;
+    const a = d[k]! + (d[k + 1]! - d[k]!) * fu;
+    const b = d[k + this.cols]! + (d[k + this.cols + 1]! - d[k + this.cols]!) * fu;
+    const out = a + (b - a) * fv;
+    return out > this.reach ? Infinity : out;
+  }
+}
+
+/** Beyond the banks, a river's valley keeps shaping the hills this far out (m). */
+const VALLEY_REACH = 40;
+
 export class Terrain {
   private readonly noise = new TileNoise(41);
   private readonly hillNoise = new TileNoise(99);
   private readonly def: TerrainDef;
+  private readonly riverDist: DistanceGrid[];
 
   constructor(
     def: TerrainDef | undefined,
@@ -74,6 +171,7 @@ export class Terrain {
     readonly size: readonly [number, number],
   ) {
     this.def = def ?? {};
+    this.riverDist = (this.def.rivers ?? []).map((r) => new DistanceGrid(r.pts, r.width / 2 + (r.bank ?? 5) + VALLEY_REACH + 2));
   }
 
   /** Height inside the map before the outside rise (what objects sit on). */
@@ -93,23 +191,25 @@ export class Terrain {
       const w = 1 - smoothstep(pad.radius, pad.radius + blend, d);
       h += (target - h) * w;
     }
-    for (const r of this.def.rivers ?? []) h -= r.depth * this.riverShape(r, x, z);
+    const rivers = this.def.rivers;
+    if (rivers) for (let i = 0; i < rivers.length; i++) h -= rivers[i]!.depth * this.riverShape(i, x, z);
     return h;
   }
 
   /** 1 on the river bed, easing to 0 at the top of the banks. */
-  private riverShape(r: RiverDef, x: number, z: number): number {
-    const d = polylineDistance(r.pts, x, z);
-    return 1 - smoothstep(r.width / 2, r.width / 2 + (r.bank ?? 5), d);
+  private riverShape(i: number, x: number, z: number): number {
+    const r: RiverDef = this.def.rivers![i]!;
+    const d = this.riverDist[i]!.sample(x, z);
+    return d === Infinity ? 0 : 1 - smoothstep(r.width / 2, r.width / 2 + (r.bank ?? 5), d);
   }
 
   /** 1 near a river's course, fading out over `reach` meters beyond its banks (valleys continue past the edge). */
   private riverValley(x: number, z: number, reach: number): number {
     let v = 0;
-    for (const r of this.def.rivers ?? []) {
-      const d = polylineDistance(r.pts, x, z);
-      v = Math.max(v, 1 - smoothstep(r.width / 2, r.width / 2 + (r.bank ?? 5) + reach, d));
-    }
+    (this.def.rivers ?? []).forEach((r, i) => {
+      const d = this.riverDist[i]!.sample(x, z);
+      if (d !== Infinity) v = Math.max(v, 1 - smoothstep(r.width / 2, r.width / 2 + (r.bank ?? 5) + reach, d));
+    });
     return v;
   }
 
@@ -140,7 +240,7 @@ export class Terrain {
     const hills = this.hillNoise.fbm(u, v, 3, 5);
     const rise = smoothstep(8, 160, d) * (8 + hills * 70) + smoothstep(300, 700, d) * 60 * this.hillNoise.fbm(u + 0.3, v, 2, 3);
     // Rivers leave through a valley instead of running into the hills.
-    return h + rise * (1 - 0.85 * this.riverValley(x, z, 40));
+    return h + rise * (1 - 0.85 * this.riverValley(x, z, VALLEY_REACH));
   }
 
   /** Bounding box of the playable area [minX, minZ, maxX, maxZ]. */

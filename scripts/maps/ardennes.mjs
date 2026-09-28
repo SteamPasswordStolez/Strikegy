@@ -85,8 +85,11 @@ const railDir = (x) => {
 };
 const railCrossX = round(riverX(railZ(15)));
 const bridgeG = { x: railCrossX, z: round(railZ(railCrossX)), len: 36, w: 5 };
+// The stone bridge sits on raised approaches (so its arches clear the water);
+// the others sit at the banks' level.
+bridgeC.deck = 0.95;
 for (const b of [bridgeC, footA, bridgeG]) {
-  for (const s of [-1, 1]) flats.push({ pos: [round(b.x + s * (b.len / 2 - 3)), b.z], radius: 7, height: 0, blend: 8 });
+  for (const s of [-1, 1]) flats.push({ pos: [round(b.x + s * (b.len / 2 - 3)), b.z], radius: 7, height: round((b.deck ?? 0.12) - 0.1), blend: 12 });
 }
 river.crossings = [bridgeC, footA, bridgeG].map((b) => [b.x, b.z]);
 const terrain = {
@@ -169,14 +172,22 @@ function bridge({ x, z, len, w }, { top = 0.12, thick = 0.7, rail = 1, material 
     objects.push({ type: 'wall', pos: [px, round((top - thick - 3.4) / 2 + 0.2), pz], size: [pierW, round(3.4 + thick), w + 0.6], material, color, ...rot });
   }
 }
-bridge(bridgeC, { piers: [-6.5, 0, 6.5], pierW: 1.8 });
+/** A bridge model (world/modelKits) at absolute heights: deck top at `deck`, footings below the river bed. */
+function bridgeModel({ x, z, len, w }, model, { deck, above, yaw, color, material }) {
+  const bottom = -3.4;
+  const top = deck + above;
+  objects.push({ type: 'wall', pos: [round(x), round((top + bottom) / 2), round(z)], size: [w, round(top - bottom), len], rot: [0, round(yaw, 1), 0], material, color, model, base: 0 });
+}
+// Stone arch bridge (runs east-west): the model's parapets stand 1.25 m above its deck.
+bridgeModel(bridgeC, 'archBridge', { deck: bridgeC.deck, above: 1.25, yaw: 90, color: STONE, material: 'concrete' });
 // Wooden footbridge at the sawmill: planks on two trestles, low handrails.
 bridge(footA, { top: 0.35, thick: 0.25, rail: 1, material: 'wood', color: '#6e5a44', piers: [-4, 4], pierW: 0.5, parapet: 0.12 });
-// Rail bridge: steel deck with girder sides.
+// Rail bridge: steel through-truss on two piers (the truss is 55% of the model's height).
 {
   const [ux, uz] = railDir(bridgeG.x);
-  const yaw = round((Math.atan2(-uz, ux) * 180) / Math.PI, 1);
-  bridge(bridgeG, { top: 0.3, thick: 0.6, rail: 1.6, material: 'metal', color: '#4d5256', piers: [-6, 6], pierW: 1.2, parapet: 0.35, yaw });
+  const deck = 0.3;
+  const trussOver = ((deck + 3.4) / 0.45) * 0.55;
+  bridgeModel(bridgeG, 'trussBridge', { deck, above: trussOver, yaw: (Math.atan2(ux, uz) * 180) / Math.PI, color: '#4a5055', material: 'metal' });
 }
 
 // --- Buildings, objects -----------------------------------------------------
@@ -192,16 +203,29 @@ const obj = (o, r = 2) => {
   reserve(o.pos[0], o.pos[2], r);
 };
 const SANDBAG = '#9c8f76';
+/** Extra points along a polyline so no piece is longer than `step`. */
+const densify = (pts, step) => {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1];
+    const [bx, bz] = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step));
+    for (let k = 1; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+  }
+  return out;
+};
 const sandbags = (x, z, len, yaw) => obj(block(x, z, len, 1.1, 0.9, { yaw, material: 'ground', color: SANDBAG, model: 'sandbags' }), len / 2 + 0.5);
-const logs = (x, z, len, yaw, h = 1.6) => obj(block(x, z, len, h, 2.4, { yaw, material: 'wood', color: '#5c4633', model: 'logPile' }), len / 2 + 1);
+const logs = (x, z, len, yaw, h = 1.6) => obj(block(x, z, len, h, 2.4, { yaw, material: 'wood', color: '#86684a', model: 'logPile' }), len / 2 + 1);
 
 // A: sawmill — long mill hall, saw shed, log yard, lumber truck.
 {
   const [ax, az] = Z.A;
   addBuilding({ pos: [ax - 16, az - 14], size: [26, 12], style: 'warehouse', material: 'wood', color: '#6b5139', doors: 'se', rot: 8 });
+  // Open saw shed beside the mill hall, logs going in on one side.
+  obj(block(ax + 4, az - 1, 13, 5.2, 7, { yaw: 8, type: 'wall', material: 'wood', color: '#5c4633', model: 'sawShed', sink: 0.1 }), 7);
   addBuilding({ pos: [ax - 12, az + 16], size: [10, 8], style: 'shed', doors: 'ne', rot: -10 });
   addBuilding({ pos: [ax - 34, az + 4], size: [11, 9], style: 'house', floors: 2, doors: 'e', rot: 85 });
-  for (const [dx, dz, yaw] of [[4, -4, 10], [6, 6, 12], [-2, 10, 80], [14, -12, 20], [14, 2, 15]]) logs(ax + dx, az + dz, 6 + R() * 2, yaw);
+  for (const [dx, dz, yaw] of [[6, 9, 12], [-2, 12, 80], [16, -12, 20], [16, 4, 15]]) logs(ax + dx, az + dz, 6 + R() * 2, yaw);
   obj(block(ax + 2, az - 18, 2.5, 3, 7, { yaw: 100, material: 'metal', color: '#4d5a3c', model: 'truck' }), 4);
   sandbags(ax - 2, az - 24, 4, 90);
 }
@@ -209,7 +233,7 @@ const logs = (x, z, len, yaw, h = 1.6) => obj(block(x, z, len, h, 2.4, { yaw, ma
 {
   const [bx, bz] = Z.B;
   addBuilding({ pos: [bx + 8, bz - 16], size: [12, 9], style: 'house', floors: 2, doors: 'se', rot: 4 });
-  addBuilding({ pos: [bx - 14, bz + 2], size: [22, 13], style: 'warehouse', material: 'wood', color: '#7a3b2e', doors: 'ew', rot: 92 });
+  addBuilding({ pos: [bx - 14, bz + 2], size: [22, 13], style: 'barn', doors: 'ew', rot: 92 });
   addBuilding({ pos: [bx + 14, bz + 14], size: [8, 6], style: 'shed', doors: 'n', rot: -6 });
   for (const [dx, dz, yaw] of [[2, 4, 0], [6, 12, 30], [-2, -6, 80], [18, -2, 10]]) obj(block(bx + dx, bz + dz, 2.6, 1.5, 1.5, { yaw, material: 'wood', color: '#b89a5a', model: 'hayBale' }), 2);
   const pad = [[bx + 22, bz - 6], [bx + 40, bz - 4], [bx + 42, bz + 22], [bx + 24, bz + 26]];
@@ -230,9 +254,11 @@ const logs = (x, z, len, yaw, h = 1.6) => obj(block(x, z, len, h, 2.4, { yaw, ma
 // E: chapel hill — chapel nave and tower, low churchyard wall, gravestones.
 {
   const [ex, ez] = Z.E;
-  addBuilding({ pos: [ex + 2, ez - 4], size: [9, 18], style: 'station', material: 'brick', color: '#9a9184', doors: 'se', rot: 0 });
-  addBuilding({ pos: [ex + 2, ez - 16], size: [5, 5], style: 'house', floors: 4, solid: true, color: '#8e867a', rot: 0 });
-  const yard = [[ex - 14, ez - 20], [ex + 16, ez - 20], [ex + 16, ez + 14], [ex - 14, ez + 14], [ex - 14, ez - 20]];
+  addBuilding({ pos: [ex + 2, ez - 4], size: [9, 18], style: 'chapel', doors: 'se', rot: 0 });
+  // Bell tower and spire against the north end of the nave.
+  obj(block(ex + 2, ez - 15.6, 5, 22, 5, { type: 'wall', material: 'brick', color: '#948b7e', model: 'steeple', sink: 0.3 }), 4);
+  // Short pieces so the wall follows the hillside instead of standing out over it.
+  const yard = densify([[ex - 14, ez - 20], [ex + 16, ez - 20], [ex + 16, ez + 14], [ex - 14, ez + 14], [ex - 14, ez - 20]], 3);
   objects.push(...wallLine(yard, { height: 1.0, thick: 0.5, material: 'concrete', color: STONE, type: 'cover', gaps: [[40, 46], [98, 104]] }));
   for (let i = 0; i < 14; i++) {
     const x = ex - 10 + (i % 4) * 2.2 + (i >= 8 ? 20 : 0) - (i >= 8 ? 12 : 0);

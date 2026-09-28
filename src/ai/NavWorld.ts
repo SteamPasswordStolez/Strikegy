@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { init, NavMeshQuery, type NavMesh } from 'recast-navigation';
+import { exportNavMesh, importNavMesh, init, NavMeshQuery, type NavMesh } from 'recast-navigation';
+import { hashNavInput, loadNav, saveNav } from './navCache';
 import { generateSoloNavMesh } from 'recast-navigation/generators';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
@@ -37,7 +38,7 @@ export class NavWorld {
       for (const i of extra.indices) indices.push(base + i);
     }
     if (indices.length === 0) return null;
-    const result = generateSoloNavMesh(positions, indices, {
+    const config = {
       cs: CS,
       ch: CH,
       walkableRadius: Math.ceil(MOVE.radius / CS),
@@ -50,11 +51,23 @@ export class NavWorld {
       maxSimplificationError: 1.3,
       detailSampleDist: 6,
       detailSampleMaxError: 1,
-    });
+    };
+    // Same input and settings as a previous load: reuse that navmesh (seconds saved on big maps).
+    const key = hashNavInput(positions, indices, JSON.stringify(config));
+    const cached = await loadNav(key);
+    if (cached) {
+      try {
+        return new NavWorld(importNavMesh(cached).navMesh);
+      } catch (err) {
+        console.warn('[nav] cached navmesh unusable, rebuilding', err);
+      }
+    }
+    const result = generateSoloNavMesh(positions, indices, config);
     if (!result.success) {
       console.warn('[nav] navmesh generation failed:', result.error);
       return null;
     }
+    void saveNav(key, exportNavMesh(result.navMesh));
     return new NavWorld(result.navMesh);
   }
 

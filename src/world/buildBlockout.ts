@@ -74,6 +74,7 @@ export function buildBlockout(
   root.name = `map:${map.meta.id}`;
   const batches = new Map<string, Batch>();
   const groundKind = map.world.groundMaterial ?? 'ground';
+  const snowy = map.world.visualProfile === 'winter';
   let navExtra: BuiltMap['navExtra'] = null;
   let groundHandle: number | null = null;
   const windows: WindowSpot[] = [];
@@ -108,7 +109,8 @@ export function buildBlockout(
     }
     if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
       // A coarse terrain mesh cuts corners between grid lines: lift paint clear of it.
-      addDraped(obj, terrain, batches, surfaces, terrainStep > 1 ? 0.12 : 0);
+      // In snow, tracks fade out at their sides instead of ending in a hard line.
+      addDraped(obj, terrain, batches, surfaces, terrainStep > 1 ? 0.12 : 0, snowy && obj.size[0] >= SNOW_FADE_MIN_WIDTH);
       const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
       impacts.paint(groundHandle, obj.pos[0], obj.pos[2], (obj.rot?.[1] ?? 0) * DEG, obj.size[0], obj.size[2], SURFACE_FROM_MATERIAL[kind]);
     }
@@ -116,7 +118,7 @@ export function buildBlockout(
   }
   for (const b of map.buildings ?? []) {
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
-    const built = buildBuilding(b, base);
+    const built = buildBuilding(b, base, { snow: map.world.visualProfile === 'winter' });
     for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts);
     for (const obj of built.decor) addBox(obj, batches, physics, surfaces, impacts, '', false);
     windows.push(...built.windows);
@@ -155,10 +157,29 @@ function isGroundPaint(obj: MapObject, terrain: Terrain): boolean {
  * stopped the character controller dead; with no collider here you walk on
  * the smooth terrain underneath.
  */
-function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>, surfaces: SurfaceLibrary, extraLift = 0): void {
+/** Width over which draped paint fades into the snow at its sides (m). */
+const SNOW_FADE = 0.8;
+/** Only tracks at least this wide fade (rail ballast and kerbs keep their edges). */
+const SNOW_FADE_MIN_WIDTH = 4;
+const fadedMaterials = new WeakMap<THREE.Material, THREE.Material>();
+
+/** Same look with dithered alpha from vertex colours (alpha hash: no sorting, no blending). */
+function faded(material: THREE.Material): THREE.Material {
+  let m = fadedMaterials.get(material);
+  if (!m) {
+    m = material.clone();
+    (m as THREE.MeshStandardMaterial).vertexColors = true;
+    m.alphaHash = true;
+    fadedMaterials.set(material, m);
+  }
+  return m;
+}
+
+function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>, surfaces: SurfaceLibrary, extraLift = 0, fade = false): void {
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
-  const material = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
+  const base = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
+  const material = fade ? faded(base) : base;
   // Keep the authored layering (pavement over road over pad) as the lift above the ground.
   const lift = Math.max(0.02, obj.pos[1] + h / 2 - terrain.heightAt(obj.pos[0], obj.pos[2])) + extraLift;
   const geo = new THREE.PlaneGeometry(w, d, Math.max(1, Math.ceil(w / DRAPE_STEP)), Math.max(1, Math.ceil(d / DRAPE_STEP)));
@@ -176,6 +197,16 @@ function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>
     const z = obj.pos[2] - lx * sn + lz * c;
     pos.setXYZ(i, x, terrain.surfaceAt(x, z) + lift, z);
     uv.setXY(i, uv.getX(i) * w, uv.getY(i) * d);
+  }
+  if (fade) {
+    // Alpha from the distance to the long sides (local x), white colour.
+    const col = new Float32Array(pos.count * 4).fill(1);
+    const cols = Math.max(1, Math.ceil(w / DRAPE_STEP));
+    for (let i = 0; i < pos.count; i++) {
+      const lx = (((i % (cols + 1)) / cols) - 0.5) * w;
+      col[i * 4 + 3] = Math.min(1, Math.max(0, (w / 2 - Math.abs(lx)) / Math.min(SNOW_FADE, w / 3)));
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
   }
   geo.computeVertexNormals();
   const key = `${material.uuid}drape`;

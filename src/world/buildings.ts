@@ -33,6 +33,10 @@ const STYLES: Record<BuildingStyle, StyleSpec> = {
   hq: { floors: 2, storey: 3.4, material: 'concrete', colors: ['#8d9078', '#9a9a86'], windows: 0.5, door: [1.6, 2.3], window: [1.2, 1, 1.1], roof: 'parapet' },
   station: { floors: 1, storey: 4.5, material: 'brick', colors: ['#a4735a', '#b08268'], windows: 0.6, door: [1.8, 2.8], window: [1.3, 1.8, 1], roof: 'pitched' },
   shed: { floors: 1, storey: 3, material: 'wood', colors: ['#7b6246', '#6d5a44'], windows: 0.3, door: [1.4, 2.2], window: [0.9, 0.8, 1.2], roof: 'pitched' },
+  // Tall timber barn: wide cart doors, a few high windows.
+  barn: { floors: 1, storey: 6.5, material: 'wood', colors: ['#7a3b2e', '#6e3328', '#5f4a38'], windows: 0.25, door: [4, 4.4], window: [1, 1, 4.4], roof: 'pitched' },
+  // Stone nave: high narrow windows, a tall door (the steeple is a separate model).
+  chapel: { floors: 1, storey: 6, material: 'brick', colors: ['#9a9184', '#8f887c', '#a39a8c'], windows: 0.75, door: [1.8, 3.2], window: [1.1, 2.6, 1.8], roof: 'pitched' },
 };
 
 const WALL = 0.3;
@@ -72,7 +76,12 @@ export function buildingPadRadius(b: BuildingDef): number {
   return Math.hypot(b.size[0], b.size[1]) / 2 + 1;
 }
 
-export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
+export interface BuildOptions {
+  /** Winter: snow lies on the roofs (visual only). */
+  snow?: boolean;
+}
+
+export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions = {}): BuiltBuilding {
   const spec = STYLES[b.style ?? 'house'];
   const rng = makeRng(b.seed ?? Math.round(b.pos[0] * 73 + b.pos[1] * 131));
   const [W, D] = b.size;
@@ -112,17 +121,21 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
     }
     out.push({ type, pos: [x, baseY + ly, z], size: [sx, sy, sz], rot, material: mat, color: col });
   };
+  // Visual-only boxes (no colliders): facades of closed blocks, snow on roofs.
+  const decor: MapObject[] = [];
+  const decoBox: BoxFn = (lx, ly, lz, sx, sy, sz, type = 'prop', col = color, mat = material, pitch = 0, roll = 0) => {
+    const n = out.length;
+    box(lx, ly, lz, sx, sy, sz, type, col, mat, pitch, roll);
+    if (out.length > n) decor.push(out.pop()!);
+  };
+  const snow = opts.snow ? decoBox : null;
 
   if (b.solid) {
     box(0, (H - PLINTH) / 2, 0, W, H + PLINTH, D);
-    roof(spec, W, D, H, box, trim, rng);
+    roof(spec, W, D, H, box, trim, snow);
     // A closed block still looks lived in: windows, sills and a door on its walls.
-    const decor: MapObject[] = [];
-    const deco = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => {
-      const n = out.length;
-      box(lx, ly, lz, sx, sy, sz, 'prop', col, mat);
-      if (out.length > n) decor.push(out.pop()!);
-    };
+    const deco = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) =>
+      decoBox(lx, ly, lz, sx, sy, sz, 'prop', col, mat);
     const doorSides = new Set((b.doors ?? 's').split(''));
     const faces = [
       { id: 'n', len: W, at: (u: number, y: number, out_: number, sx: number, sy: number, sz: number, col: string, mat: SurfaceMaterial) => deco(-W / 2 + u, y, -D / 2 - out_, sx, sy, sz, col, mat) },
@@ -238,15 +251,18 @@ export function buildBuilding(b: BuildingDef, baseY: number): BuiltBuilding {
     // Rail on the open side of the stairwell.
     box(stairX - STAIR_W / 2 - 0.05, f * spec.storey + 0.5, (holeZ0 + holeZ1) / 2, 0.08, 1, holeZ1 - holeZ0, 'cover', trim, 'metal');
   }
-  roof(spec, W, D, H, box, trim, rng);
-  return { objects: out, height: H + (spec.roof === 'pitched' ? Math.min(W, D) * 0.3 : 1), windows, decor: [] };
+  roof(spec, W, D, H, box, trim, snow);
+  return { objects: out, height: H + (spec.roof === 'pitched' ? Math.min(W, D) * 0.3 : 1), windows, decor };
 }
 
 type BoxFn = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, type?: MapObject['type'], col?: string, mat?: SurfaceMaterial, pitch?: number, roll?: number) => void;
 
-function roof(spec: StyleSpec, W: number, D: number, H: number, box: BoxFn, trim: string, rng: () => number): void {
-  void rng;
+/** Snow lying on roofs (a visual layer, lighter than the ground snow in shade). */
+const ROOF_SNOW = '#f1f4f7';
+
+function roof(spec: StyleSpec, W: number, D: number, H: number, box: BoxFn, trim: string, snow: BoxFn | null): void {
   box(0, H + SLAB / 2 - 0.05, 0, W, SLAB, D, 'floor', trim, 'concrete');
+  if (snow && spec.roof !== 'pitched') snow(0, H + SLAB + 0.02, 0, W - (spec.roof === 'parapet' ? 0.7 : 0.1), 0.12, D - (spec.roof === 'parapet' ? 0.7 : 0.1), 'prop', ROOF_SNOW, 'snow');
   if (spec.roof === 'parapet') {
     const p = 0.9;
     box(0, H + p / 2, -D / 2 + 0.15, W, p, 0.3, 'wall', trim);
@@ -269,6 +285,17 @@ function roof(spec: StyleSpec, W: number, D: number, H: number, box: BoxFn, trim
     } else {
       box(-span / 2, H + rise / 2, 0, slant, 0.2, len, 'floor', roofCol, 'wood', 0, pitch);
       box(span / 2, H + rise / 2, 0, slant, 0.2, len, 'floor', roofCol, 'wood', 0, -pitch);
+    }
+    if (snow) {
+      // A blanket on each half, just above the tiles, stopping short of the eaves.
+      const up = 0.15 / Math.cos(pitch);
+      if (alongX) {
+        snow(0, H + rise / 2 + up, -span / 2 + 0.05, len - 0.1, 0.12, slant * 0.94, 'prop', ROOF_SNOW, 'snow', -pitch);
+        snow(0, H + rise / 2 + up, span / 2 - 0.05, len - 0.1, 0.12, slant * 0.94, 'prop', ROOF_SNOW, 'snow', pitch);
+      } else {
+        snow(-span / 2 + 0.05, H + rise / 2 + up, 0, slant * 0.94, 0.12, len - 0.1, 'prop', ROOF_SNOW, 'snow', 0, pitch);
+        snow(span / 2 - 0.05, H + rise / 2 + up, 0, slant * 0.94, 0.12, len - 0.1, 'prop', ROOF_SNOW, 'snow', 0, -pitch);
+      }
     }
   }
 }
