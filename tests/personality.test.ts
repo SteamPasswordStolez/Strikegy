@@ -1,22 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { BOT_WEAPONS, rollPersonality, weaponFor, type Archetype } from '@/ai/personality';
+import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from '@/ai/personality';
+import { CLASSES, CLASS_IDS } from '@/data/classes';
 import { chooseAction, type BrainInput } from '@/ai/brain';
 import { WEAPONS } from '@/weapons/weaponData';
 
 describe('bot personalities', () => {
-  it('rolls a mix of styles with weapons that suit them', () => {
-    const seen = new Map<Archetype, Set<string>>();
-    for (let i = 0; i < 400; i++) {
-      const p = rollPersonality();
-      expect(p.lane).toBeGreaterThanOrEqual(-1);
-      expect(p.lane).toBeLessThanOrEqual(1);
-      const cls = WEAPONS[weaponFor(p)].class;
-      if (!seen.has(p.archetype)) seen.set(p.archetype, new Set());
-      seen.get(p.archetype)!.add(cls);
+  it('gives each class weapons it may carry, and every squad of four one of each role', () => {
+    for (const cls of CLASS_IDS) {
+      for (let i = 0; i < 100; i++) {
+        const p = rollPersonality(Math.random, cls);
+        expect(p.lane).toBeGreaterThanOrEqual(-1);
+        expect(p.lane).toBeLessThanOrEqual(1);
+        expect(CLASSES[cls].primaries).toContain(WEAPONS[weaponFor(cls, p)].class);
+      }
     }
-    expect([...seen.keys()].sort()).toEqual(['anchor', 'marksman', 'rifleman', 'rusher']);
-    expect([...seen.get('marksman')!]).toEqual(['dmr']);
-    expect(seen.get('rusher')!.has('dmr')).toBe(false);
+    expect(rollPersonality(Math.random, 'recon').archetype).toBe('marksman');
+    for (let start = 0; start < 16; start += 4) {
+      const squad = [0, 1, 2, 3].map((k) => botClass(start + k));
+      expect(squad).toContain('medic');
+      expect(squad).toContain('support');
+    }
     for (const id of BOT_WEAPONS) expect(WEAPONS[id]).toBeDefined();
   });
 

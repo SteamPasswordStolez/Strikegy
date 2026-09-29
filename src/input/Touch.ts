@@ -3,12 +3,25 @@ import type { InputSource, InputState } from './InputState';
 
 const LOOK_RAD_PER_PX = 0.006;
 const STICK_RADIUS = 56;
-/** Holding the grenade button this long switches grenade type instead of throwing. */
-const LONG_PRESS_MS = 420;
 /** Stick pushed this far forward sprints. */
 const SPRINT_PUSH = 0.92;
 
-type ButtonAction = 'fire' | 'fire2' | 'ads' | 'jump' | 'reload' | 'crouch' | 'grenade' | 'switch' | 'melee' | 'inspect' | 'score' | 'pause';
+type ButtonAction =
+  | 'fire'
+  | 'fire2'
+  | 'ads'
+  | 'jump'
+  | 'reload'
+  | 'crouch'
+  | 'grenade'
+  | 'switch'
+  | 'melee'
+  | 'inspect'
+  | 'score'
+  | 'pause'
+  | 'medkit'
+  | 'interact'
+  | 'giveup';
 
 /** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
 const ICONS: Partial<Record<ButtonAction, string>> = {
@@ -22,6 +35,9 @@ const ICONS: Partial<Record<ButtonAction, string>> = {
   crouch: '<path d="M6 6l6 6 6-6M5 19h14"/>',
   melee: '<path d="M4 20l5-5M7.5 12.5l4 4M10 14.5L20 4.5v2.5l-8 9.5"/>',
   inspect: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+  medkit: '<rect x="3.5" y="6.5" width="17" height="13" rx="2"/><path d="M9 6.5V4.5h6v2M12 10v6M9 13h6"/>',
+  interact: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3"/>',
+  giveup: '<path d="M6 6l12 12M18 6L6 18"/>',
 };
 
 const svg = (paths: string) =>
@@ -44,11 +60,13 @@ export class TouchControls implements InputSource {
   private lookDy = 0;
   /** Touch ids holding a fire button. */
   private firing = new Set<number>();
-  private pulses = new Set<ButtonAction | 'cycleGrenade'>();
+  private pulses = new Set<ButtonAction>();
+  /** Touches holding the interact / give-up buttons. */
+  private interactHeld = 0;
+  private giveUpHeld = 0;
   private adsToggled = false;
   private crouchToggled = false;
   private scoreOpen = false;
-  private grenadeDown: { id: number; at: number; timer: number } | null = null;
   private stickEl: HTMLDivElement;
   private knobEl: HTMLDivElement;
   private restEl: HTMLDivElement;
@@ -81,6 +99,11 @@ export class TouchControls implements InputSource {
       ['grenade', 'touch.grenade'],
       ['switch', 'touch.switch'],
       ['melee', 'touch.melee'],
+      ['medkit', 'touch.medkit'],
+      // Shown only when there is something to do (revive, hand out a kit); the label says what.
+      ['interact', null],
+      // Shown while down: hold to give up.
+      ['giveup', 'touch.giveUp'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
       // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
@@ -134,25 +157,14 @@ export class TouchControls implements InputSource {
       btn.classList.toggle('held', down);
       return;
     }
-    if (action === 'grenade') {
-      // Tap throws; a long press switches the grenade type.
-      if (down && !this.grenadeDown) {
-        const id = touches[0]!.identifier;
-        const timer = window.setTimeout(() => {
-          if (this.grenadeDown?.id !== id) return;
-          this.pulses.add('cycleGrenade');
-          this.grenadeDown = null;
-          btn.classList.remove('held');
-          navigator.vibrate?.(15);
-        }, LONG_PRESS_MS);
-        this.grenadeDown = { id, at: performance.now(), timer };
-        btn.classList.add('held');
-      } else if (!down && this.grenadeDown) {
-        window.clearTimeout(this.grenadeDown.timer);
-        if (performance.now() - this.grenadeDown.at < LONG_PRESS_MS) this.pulses.add('grenade');
-        this.grenadeDown = null;
-        btn.classList.remove('held');
-      }
+    if (action === 'interact' || action === 'giveup') {
+      // Held actions (revive, give up): count the touches on the button.
+      const n = down ? 1 : -1;
+      if (action === 'interact') {
+        this.interactHeld = Math.max(0, this.interactHeld + n * touches.length);
+        if (down) this.pulses.add('interact');
+      } else this.giveUpHeld = Math.max(0, this.giveUpHeld + n * touches.length);
+      btn.classList.toggle('held', down);
       return;
     }
     btn.classList.toggle('held', down);
@@ -255,20 +267,52 @@ export class TouchControls implements InputSource {
     s.jump ||= this.pulses.has('jump');
     s.reload ||= this.pulses.has('reload');
     s.throwGrenade ||= this.pulses.has('grenade');
-    s.cycleGrenade ||= this.pulses.has('cycleGrenade');
+    s.medkit ||= this.pulses.has('medkit');
+    s.interactPressed ||= this.pulses.has('interact');
+    s.interact ||= this.interactHeld > 0;
+    s.jumpHeld ||= this.giveUpHeld > 0;
     if (this.pulses.has('switch')) s.weaponCycle = 1;
     s.melee ||= this.pulses.has('melee');
     s.inspect ||= this.pulses.has('inspect');
     this.pulses.clear();
   }
 
-  /** Shows the selected grenade type and how many are left on its button. */
+  /** Shows the grenade type carried and how many are left on its button. */
   setGrenade(label: string, count: number): void {
     const b = this.buttons.get('grenade')!;
     const l = b.querySelector('.tb-label')!;
     const text = `${label} ${count}`;
     if (l.textContent !== text) l.textContent = text;
     b.classList.toggle('empty', count === 0);
+  }
+
+  /**
+   * Situation-dependent buttons: the medkit (greyed while none is ready), the
+   * interact button with what it would do (hidden when nothing is in reach)
+   * and, while down, the give-up button instead of the fighting controls.
+   */
+  setContext(c: { medkit: string | null; interact: string | null; downed: boolean }): void {
+    const kit = this.buttons.get('medkit')!;
+    kit.classList.toggle('empty', c.medkit === null);
+    const kl = kit.querySelector('.tb-label')!;
+    const kt = c.medkit ?? '';
+    if (kl.textContent !== kt) kl.textContent = kt;
+    const act = this.buttons.get('interact')!;
+    const text = c.interact ?? '';
+    if (act.dataset.label !== text) {
+      act.dataset.label = text;
+      act.querySelector('.tb-label')?.remove();
+      if (text) {
+        const l = document.createElement('span');
+        l.className = 'tb-label';
+        l.textContent = text;
+        act.appendChild(l);
+      }
+    }
+    act.classList.toggle('off', !c.interact);
+    if (!c.interact) this.interactHeld = 0;
+    this.root.classList.toggle('downed', c.downed);
+    if (!c.downed) this.giveUpHeld = 0;
   }
 
   /** Lights the reload button up when the magazine runs low. */

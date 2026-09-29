@@ -16,6 +16,7 @@ import { aimErrorDeg, noticeTime, offAxisDeg, turnToward, wrapAngle, yawPitchOf 
 import type { Combatant } from './types';
 import { rollPersonality, type Personality } from './personality';
 import { COMBAT_WINDOW } from '@/modes/squads';
+import type { ClassId } from '@/data/classes';
 
 const DEG = Math.PI / 180;
 const DOWN = { x: 0, y: -1, z: 0 };
@@ -196,7 +197,8 @@ export class Bot implements Damageable, Combatant {
     public def: WeaponDef,
     physics: PhysicsWorld,
     registry: HitboxRegistry,
-    readonly personality: Personality = rollPersonality(),
+    readonly cls: ClassId = 'assault',
+    readonly personality: Personality = rollPersonality(Math.random, cls),
   ) {
     this.weapon = new WeaponState(def);
     const world = physics.world;
@@ -251,10 +253,14 @@ export class Bot implements Damageable, Combatant {
     this.cover = null;
     this.peeking = false;
     this.suppressUntil = -Infinity;
+    // One grenade type per life, like the player: rushers favour flashes,
+    // careful types and medics smoke, the rest frags.
     const p = this.personality;
-    this.frags = p.grenades > 0.25 ? (p.grenades > 0.7 ? 2 : 1) : 0;
-    this.smokes = p.caution > 0.5 || p.archetype === 'rusher' ? 1 : 0;
-    this.flashes = p.aggression > 0.55 || p.archetype === 'rusher' ? 1 : 0;
+    const r = Math.random();
+    const type = p.archetype === 'rusher' && r < 0.5 ? 'flash' : (p.caution > 0.6 || this.cls === 'medic') && r < 0.45 ? 'smoke' : 'frag';
+    this.frags = type === 'frag' && p.grenades > 0.25 ? (p.grenades > 0.7 ? 2 : 1) : 0;
+    this.smokes = type === 'smoke' ? 2 : 0;
+    this.flashes = type === 'flash' ? 2 : 0;
     this.lookAwayUntil = -Infinity;
     this.blindUntil = -Infinity;
     this.grenadeReadyAt = 0;

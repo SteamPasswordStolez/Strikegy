@@ -495,6 +495,41 @@ body {
   background: var(--hud-fg);
 }
 
+/* Medkit left of pause; the interact button (revive, hand out a kit) appears
+   above pause only when there is something in reach; give up replaces the
+   fighting buttons while down. */
+.touch-medkit {
+  left: calc(50% - var(--B) * 1.45);
+  bottom: var(--bt);
+  border-color: rgba(120, 220, 140, 0.7);
+}
+.touch-interact {
+  left: 50%;
+  margin-left: calc(var(--B) * -0.6);
+  width: calc(var(--B) * 1.2);
+  height: calc(var(--B) * 1.2);
+  bottom: calc(var(--bt) + var(--B) * 0.7 + var(--gap));
+  border-color: rgba(255, 211, 77, 0.9);
+  background: rgba(60, 50, 20, 0.5);
+}
+.touch-interact.off,
+.touch-giveup {
+  display: none;
+}
+.touch-layer.downed .touch-giveup {
+  display: flex;
+  left: 50%;
+  margin-left: calc(var(--B) * -0.6);
+  width: calc(var(--B) * 1.2);
+  height: calc(var(--B) * 1.2);
+  bottom: calc(var(--bt) + var(--B) * 0.7 + var(--gap));
+  border-color: rgba(255, 120, 110, 0.9);
+}
+.touch-layer.downed .touch-btn:not(.touch-giveup):not(.touch-pause):not(.touch-score),
+.touch-layer.downed .touch-stick-rest {
+  display: none;
+}
+
 /* Touch HUD: ammo moves to the top right (buttons own the bottom right),
    the squad list lives on the deploy screen and minimap only, the kill feed
    sits under the zone bar. */
@@ -1073,6 +1108,257 @@ body {
   .deploy-button {
     padding: 11px;
     font-size: 16px;
+  }
+}
+
+/* ---- Class & kit (deploy screen) ------------------------------------------ */
+.deploy-side {
+  overflow: hidden;
+}
+.deploy-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.loadout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+}
+.lo-classes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.lo-class {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px 5px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.lo-class svg {
+  width: 20px;
+  height: 20px;
+}
+.lo-class.sel {
+  border-color: #ffd34d;
+  background: rgb(255 211 77 / 0.14);
+  color: #ffe08a;
+}
+.lo-passive {
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
+.lo-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  column-gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.04);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lo-row:hover,
+.lo-row.open {
+  background: rgb(255 255 255 / 0.1);
+}
+.lo-row.open {
+  border-color: #9cc2ff;
+}
+.lo-slot {
+  font-size: 11px;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+.lo-value {
+  font-size: 14px;
+  font-weight: 700;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lo-sub {
+  grid-column: 2;
+  font-size: 10px;
+  text-align: right;
+  opacity: 0.55;
+}
+/* Weapon list: covers the map while open. */
+.loadout-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: none;
+  flex-direction: column;
+  border-radius: 4px;
+  background: rgb(12 14 17 / 0.96);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+.loadout-picker.on {
+  display: flex;
+}
+.lp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+}
+.lp-close {
+  padding: 5px 12px;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.lp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  align-content: start;
+  gap: 6px;
+}
+.lp-group {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.65;
+}
+.lp-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.05);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lp-item:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.11);
+}
+.lp-item.sel {
+  border-color: #ffd34d;
+  background: rgb(255 211 77 / 0.12);
+}
+.lp-item.taken {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.lp-item.simple {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.lp-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lp-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+.lp-note {
+  font-size: 11px;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+.lp-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 10px;
+}
+.lp-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+.lp-stat span {
+  width: 36px;
+  opacity: 0.7;
+}
+.lp-stat i {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #9cc2ff calc(var(--v) * 100%), rgb(255 255 255 / 0.12) 0);
+}
+@media (max-height: 500px) {
+  .lo-class {
+    padding: 4px 1px 3px;
+    font-size: 11px;
+  }
+  .lo-class svg {
+    width: 16px;
+    height: 16px;
+  }
+  .lo-passive {
+    display: none;
+  }
+  .lo-row {
+    padding: 4px 6px;
+  }
+  .lo-value {
+    font-size: 12px;
+  }
+  .lo-sub {
+    display: none;
+  }
+  .lp-head {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  .lp-list {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    padding: 6px 8px 8px;
+    gap: 4px;
+  }
+  .lp-item {
+    padding: 5px 7px;
+    gap: 3px;
+  }
+  .lp-name {
+    font-size: 12px;
   }
 }
 

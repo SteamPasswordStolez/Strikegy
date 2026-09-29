@@ -199,7 +199,7 @@ export class HUD {
     this.set('scope', String(scoped), () => this.scope.classList.toggle('on', scoped));
 
     this.set('weapon', f.weaponName, () => (this.weapon.textContent = f.weaponName));
-    const ammoText = f.ammo === 0 && f.reserve === 0 ? t('hud.noAmmo') : `${f.ammo} / ${f.reserve}`;
+    const ammoText = f.ammo === 0 && f.reserve === 0 ? t('hud.noAmmo') : `${f.ammo} / ${Number.isFinite(f.reserve) ? f.reserve : '∞'}`;
     this.set('ammo', ammoText, () => {
       this.ammo.textContent = ammoText;
       this.ammo.classList.toggle('low', f.ammo <= Math.ceil(f.magSize * 0.25));

@@ -58,7 +58,9 @@ export interface ShotTrace {
  * patterns and hitscan resolution. Runs on the fixed simulation step.
  */
 export class WeaponController {
-  readonly loadout: WeaponId[];
+  loadout: WeaponId[];
+  /** Support passive: reserve ammo never runs down. */
+  endlessReserve = false;
   private states = new Map<WeaponId, WeaponState>();
   private index = 0;
   /** 0 = hip, 1 = fully aimed. */
@@ -110,9 +112,31 @@ export class WeaponController {
     let s = this.states.get(id);
     if (!s) {
       s = new WeaponState(WEAPONS[id]);
+      if (this.endlessReserve) s.reserve = Infinity;
       this.states.set(id, s);
     }
     return s;
+  }
+
+  /** New weapons (respawn with another loadout): first slot in hand, everything full. */
+  setLoadout(ids: WeaponId[], endlessReserve: boolean): void {
+    this.loadout = ids;
+    this.endlessReserve = endlessReserve;
+    this.index = 0;
+    this.resetAmmo();
+  }
+
+  /** Reserve ammo is below full on any carried weapon (an ammo box would help). */
+  get needsAmmo(): boolean {
+    return this.loadout.some((id) => {
+      const s = this.states.get(id);
+      return !!s && s.reserve < WEAPONS[id].reserve;
+    });
+  }
+
+  /** Ammo box / station: every carried gun's reserve back to full (magazines stay as they are). */
+  refillReserve(): void {
+    for (const [id, s] of this.states) s.reserve = this.endlessReserve ? Infinity : Math.max(s.reserve, WEAPONS[id].reserve);
   }
 
   /** Refills every weapon (respawn). */

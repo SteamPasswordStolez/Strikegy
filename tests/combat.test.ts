@@ -3,7 +3,8 @@ import { recoilKick, recoilScale } from '@/weapons/recoil';
 import { GRENADES, flashDuration, flashIntensity, fragDamage } from '@/combat/explosions';
 import { HEALTH, Health, fallDamage } from '@/player/health';
 import { WEAPONS } from '@/weapons/weaponData';
-import { GRENADE_LOADOUT, GrenadeInventory } from '@/weapons/Throwables';
+import { GrenadeInventory } from '@/weapons/Throwables';
+import { GRENADE_COUNT } from '@/data/classes';
 
 describe('recoil', () => {
   const spec = { up: 0.5, side: 0.3, first: 1.4 };
@@ -82,18 +83,14 @@ describe('health', () => {
 });
 
 describe('grenade inventory', () => {
-  it('takes from the selected type and skips empty types when cycling', () => {
+  it('carries one chosen type and refills on a new life', () => {
     const inv = new GrenadeInventory();
-    for (let i = 0; i < GRENADE_LOADOUT.frag; i++) expect(inv.take()).toBe('frag');
-    // Frags exhausted: next take falls through to the next type with stock.
-    expect(inv.take()).toBe('flash');
-    inv.counts.flash = 0;
-    inv.cycle();
-    expect(inv.selected).toBe('smoke');
-    expect(inv.take()).toBe('smoke');
+    inv.reset('smoke');
+    for (let i = 0; i < GRENADE_COUNT.smoke; i++) expect(inv.take()).toBe('smoke');
     expect(inv.take()).toBeNull();
-    inv.reset();
-    expect(inv.counts).toEqual(GRENADE_LOADOUT);
+    inv.reset('flash');
+    expect(inv.selected).toBe('flash');
+    expect(inv.count).toBe(GRENADE_COUNT.flash);
   });
 });
 

@@ -24,8 +24,14 @@ export interface InputState {
   weaponSlot: number;
   /** Pulse: throw the selected grenade. */
   throwGrenade: boolean;
-  /** Pulse: select the next grenade type. */
-  cycleGrenade: boolean;
+  /** Pulse: use a medkit (Q). */
+  medkit: boolean;
+  /** Held: interact (E): revive, hand out kits, build. */
+  interact: boolean;
+  /** Pulse: interact pressed this step. */
+  interactPressed: boolean;
+  /** Held: jump key (while down: hold to give up). */
+  jumpHeld: boolean;
   /** Pulse: melee strike with the gun. */
   melee: boolean;
   /** Pulse: inspect the weapon. */
@@ -50,7 +56,10 @@ export function createInputState(): InputState {
     weaponCycle: 0,
     weaponSlot: -1,
     throwGrenade: false,
-    cycleGrenade: false,
+    medkit: false,
+    interact: false,
+    interactPressed: false,
+    jumpHeld: false,
     melee: false,
     inspect: false,
     scoreboard: false,
@@ -65,7 +74,8 @@ export function consumePulses(s: InputState): void {
   s.weaponCycle = 0;
   s.weaponSlot = -1;
   s.throwGrenade = false;
-  s.cycleGrenade = false;
+  s.medkit = false;
+  s.interactPressed = false;
   s.melee = false;
   s.inspect = false;
 }
@@ -78,6 +88,8 @@ export function resetFrameInput(s: InputState): void {
   s.sprint = false;
   s.crouch = false;
   s.scoreboard = false;
+  s.interact = false;
+  s.jumpHeld = false;
 }
 
 export interface InputSource {

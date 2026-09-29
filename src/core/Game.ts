@@ -58,6 +58,9 @@ import type { Bot } from '@/ai/Bot';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { Scoreboard, type ScoreboardSide } from '@/ui/Scoreboard';
 import type { Team } from '@/world/mapTypes';
+import { ASSAULT_WADE_EASE, RECON_ZOOM, loadoutWeapons, moveBonus, zoomedFov, type ClassId } from '@/data/classes';
+import { LoadoutStore } from '@/data/loadoutStore';
+import { LoadoutPanel } from '@/ui/LoadoutPanel';
 
 const DEG = Math.PI / 180;
 /** FOV that the weapon adsFov values were authored against. */
@@ -84,6 +87,8 @@ export interface GameOptions {
   mode?: 'auto' | 'zone' | 'skirmish';
   /** Zone mode ticket count per team. */
   tickets?: number;
+  /** Carry `loadout` (every weapon, for testing) instead of the class loadout picked on the deploy screen. */
+  sandbox?: boolean;
 }
 
 export class Game {
@@ -170,6 +175,13 @@ export class Game {
   /** Camera shake amplitude in radians. */
   private shake = 0;
   private deathBlend = 0;
+  /** Class loadouts picked on the deploy screen (kept per class across matches). */
+  private readonly loadouts = new LoadoutStore();
+  private loadoutPanel: LoadoutPanel | null = null;
+  /** Class of the current life (passives). */
+  private cls: ClassId = 'assault';
+  /** Recon: scope zoomed the extra 1.5x (wheel while aiming). */
+  private reconZoom = false;
 
   private constructor(
     private readonly container: HTMLElement,
@@ -303,7 +315,11 @@ export class Game {
       }
     }
 
-    this.weapons = new WeaponController(this.options.loadout, this.physics, this.registry, this.impacts, this.bus);
+    const firstKit = this.loadouts.current;
+    this.cls = firstKit.cls;
+    this.grenades.reset(firstKit.grenade);
+    this.weapons = new WeaponController(this.options.sandbox ? this.options.loadout : loadoutWeapons(firstKit), this.physics, this.registry, this.impacts, this.bus);
+    this.weapons.endlessReserve = !this.options.sandbox && firstKit.cls === 'support';
     this.weapons.ignoreBody = this.playerBoxes.body;
 
     if (botOpts && botOpts.allies + botOpts.enemies > 0) {
@@ -395,7 +411,7 @@ export class Game {
       r.scene.add(m);
     });
     this.effects.warmup(cam.position, fwd);
-    for (const id of this.options.loadout) {
+    for (const id of this.weapons.loadout) {
       this.viewModel.setWeapon(WEAPONS[id]);
       this.viewModel.onFire(false);
       this.viewModel.update({
@@ -558,8 +574,7 @@ export class Game {
     let lookPitch = 0;
     const simDt = this.running ? dt : 0;
     if (this.running) {
-      const def = w.def;
-      const adsFov = def.adsFov * (this.settings.fov / AUTHORED_FOV);
+      const adsFov = this.aimFov() * (this.settings.fov / AUTHORED_FOV);
       const adsScale = this.settings.adsSensitivity * (adsFov / this.settings.fov);
       const sens = 1 + (adsScale - 1) * w.adsBlend;
       if (p.alive) {
@@ -692,7 +707,14 @@ export class Game {
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
     if (p.alive && this.deployed) {
-      if (input.cycleGrenade) this.grenades.cycle();
+      // Recon: the wheel (touch: swap) changes scope power while aiming instead of weapons.
+      const w = this.weapons;
+      if (this.cls === 'recon' && w.def.scope && w.adsBlend > 0.5 && input.weaponCycle !== 0) {
+        this.reconZoom = !this.reconZoom;
+        input.weaponCycle = 0;
+      }
+      p.speedBonus = moveBonus(this.cls, w.def);
+      p.wadePenalty = this.cls === 'assault' ? ASSAULT_WADE_EASE : 1;
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
       const firing = input.fire;
       // Pulling the trigger, aiming or swinging ends a sprint immediately.
@@ -723,7 +745,7 @@ export class Game {
     this.throwables.throw(type, origin, fwd.clone(), this.player.velocity.clone(), { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM });
     this.throwBlock = THROW_BLOCK;
     this.throwCooldown = THROW_COOLDOWN;
-    this.bus.emit('grenade:thrown', { type, remaining: this.grenades.counts[type] });
+    this.bus.emit('grenade:thrown', { type, remaining: this.grenades.count });
   }
 
   /** True if world geometry blocks the straight line between two points. */
@@ -875,8 +897,13 @@ export class Game {
     }
     this.playerBoxes.setEnabled(true);
     this.killedBy = null;
-    this.weapons.resetAmmo();
-    this.grenades.reset();
+    // The loadout picked on the deploy screen takes effect now.
+    const kit = this.loadouts.current;
+    this.cls = kit.cls;
+    this.reconZoom = false;
+    if (this.options.sandbox) this.weapons.resetAmmo();
+    else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support');
+    this.grenades.reset(kit.grenade);
     this.hud.clearDamage();
     this.touch?.reset();
     this.flashLeft = 0;
@@ -913,6 +940,12 @@ export class Game {
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);
+  }
+
+  /** Vertical FOV while fully aimed (before the user's FOV scaling): recon scopes can zoom further. */
+  private aimFov(): number {
+    const def = this.weapons.def;
+    return this.cls === 'recon' && def.scope && this.reconZoom ? zoomedFov(def.adsFov, RECON_ZOOM) : def.adsFov;
   }
 
   private updateViewModel(dt: number, lookYaw: number, lookPitch: number): void {
@@ -1013,7 +1046,7 @@ export class Game {
     // Flash: full white-out for the first half, then fade.
     const flash = this.flashTotal > 0 ? Math.min(1, this.flashLeft / (this.flashTotal * 0.5)) * this.flashPeak : 0;
     const sel = this.grenades.selected;
-    this.touch?.setGrenade(t(`grenade.${sel}` as MessageKey), this.grenades.counts[sel]);
+    this.touch?.setGrenade(t(`grenade.${sel}` as MessageKey), this.grenades.count);
     this.touch?.setAmmo(s.ammo, w.def.magSize, s.reloading);
     this.hud.update(
       {
@@ -1028,7 +1061,7 @@ export class Game {
         adsBlend: w.adsBlend,
         scoped: !!w.def.scope,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
-        grenadeCount: this.grenades.counts[sel],
+        grenadeCount: this.grenades.count,
         flash,
         respawnIn: this.player.alive ? null : Math.max(0, this.respawnTimer),
         killedBy: this.killedBy,
@@ -1191,6 +1224,7 @@ export class Game {
       (key) => (this.spawnKey = key),
       () => this.deploy(),
     );
+    if (!this.options.sandbox) this.loadoutPanel = new LoadoutPanel(this.deployScreen.sideTop, this.deployScreen.mapBox, this.loadouts, () => {});
   }
 
   private openDeploy(): void {
@@ -1206,6 +1240,7 @@ export class Game {
     const opts = this.deployOptions();
     const choice = opts.find((o) => o.key === this.spawnKey && !o.blocked) ?? opts[0]!;
     this.deployed = true;
+    this.loadoutPanel?.close();
     this.respawn(choice.key);
     this.deployScreen!.hide();
     if (this.touch) this.touch.setVisible(true);
@@ -1401,7 +1436,7 @@ export class Game {
       health: this.player.health.value,
       weapon: this.weapons.def.id,
       ammo: this.weapons.state.ammo,
-      grenades: { ...this.grenades.counts },
+      grenades: { type: this.grenades.type, count: this.grenades.count },
       fps: this.fps,
     };
   }

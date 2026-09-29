@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GRENADE_COUNT } from '@/data/classes';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { GameBus, GrenadeOwner } from '@/core/events';
 import { GRENADES, type GrenadeType } from '@/combat/explosions';
@@ -16,37 +17,28 @@ interface LiveGrenade {
   bounceCooldown: number;
 }
 
-export const GRENADE_ORDER: GrenadeType[] = ['frag', 'flash', 'smoke'];
-
-/** Starting grenade counts per life. */
-export const GRENADE_LOADOUT: Record<GrenadeType, number> = { frag: 2, flash: 2, smoke: 1 };
-
-/** Selected grenade type and remaining counts (pure; reset on respawn). */
+/**
+ * The grenades carried this life: one type, chosen on the deploy screen
+ * (pure; reset on respawn, topped up at an ammo station).
+ */
 export class GrenadeInventory {
-  counts: Record<GrenadeType, number> = { ...GRENADE_LOADOUT };
-  selected: GrenadeType = 'frag';
+  type: GrenadeType = 'frag';
+  count = GRENADE_COUNT.frag;
 
-  cycle(): void {
-    // Skip types with nothing left, unless every type is empty.
-    for (let i = 1; i <= GRENADE_ORDER.length; i++) {
-      const next = GRENADE_ORDER[(GRENADE_ORDER.indexOf(this.selected) + i) % GRENADE_ORDER.length]!;
-      if (this.counts[next] > 0) {
-        this.selected = next;
-        return;
-      }
-    }
+  get selected(): GrenadeType {
+    return this.type;
   }
 
   take(): GrenadeType | null {
-    if (this.counts[this.selected] <= 0) this.cycle();
-    if (this.counts[this.selected] <= 0) return null;
-    this.counts[this.selected]--;
-    return this.selected;
+    if (this.count <= 0) return null;
+    this.count--;
+    return this.type;
   }
 
-  reset(): void {
-    this.counts = { ...GRENADE_LOADOUT };
-    this.selected = 'frag';
+  /** New life (optionally with a different type): full count. */
+  reset(type: GrenadeType = this.type): void {
+    this.type = type;
+    this.count = GRENADE_COUNT[type];
   }
 }
 

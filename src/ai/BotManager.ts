@@ -12,7 +12,7 @@ import { Bot, type BotServices } from './Bot';
 import type { NavWorld } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel } from './SoldierModel';
-import { BOT_WEAPONS, rollPersonality, weaponFor } from './personality';
+import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_TEAM, otherTeam, type Combatant } from './types';
@@ -166,9 +166,9 @@ interface BotEntry {
   via: THREE.Vector3 | null;
 }
 
-/** A weapon that suits the bot's fighting style (re-rolled every life). */
+/** A weapon of the bot's class that suits its fighting style (re-rolled every life). */
 function loadout(bot: Bot): WeaponDef {
-  return WEAPONS[weaponFor(bot.personality)];
+  return WEAPONS[weaponFor(bot.cls, bot.personality)];
 }
 
 /**
@@ -235,8 +235,10 @@ export class BotManager implements BotServices {
 
     const add = (team: Team, n: number) => {
       for (let i = 0; i < n; i++) {
-        const style = rollPersonality();
-        const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(style)], physics, registry, style);
+        // The player's own squad has them in the first slot: allies are counted from 1.
+        const cls = botClass(team === PLAYER_TEAM ? i + 1 : i);
+        const style = rollPersonality(Math.random, cls);
+        const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(cls, style)], physics, registry, cls, style);
         this.respawn(bot);
         const model = new SoldierModel(team, bot.def);
         scene.add(model.root);

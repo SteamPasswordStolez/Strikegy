@@ -54,6 +54,9 @@ export class DeployScreen {
   private readonly title: HTMLDivElement;
   private readonly tickets: HTMLDivElement;
   private readonly note: HTMLDivElement;
+  /** Scrolling part of the side column (the loadout panel goes on top). */
+  readonly sideTop: HTMLDivElement;
+  readonly mapBox: HTMLDivElement;
   private state: DeployState | null = null;
   private listKey = '';
   private squadKey = '';
@@ -72,13 +75,15 @@ export class DeployScreen {
     this.tickets = el('div', 'deploy-tickets', head);
     const body = el('div', 'deploy-body', this.root);
     const mapBox = el('div', 'deploy-map', body);
+    this.mapBox = mapBox;
     this.canvas = el('canvas', 'deploy-canvas', mapBox);
     this.canvas.width = map.canvas.width;
     this.canvas.height = map.canvas.height;
     const side = el('div', 'deploy-side', body);
-    el('div', 'deploy-section', side).textContent = t('deploy.spawns');
-    this.list = el('div', 'deploy-list', side);
-    this.squadEl = el('div', 'deploy-squad', side);
+    this.sideTop = el('div', 'deploy-scroll', side);
+    el('div', 'deploy-section', this.sideTop).textContent = t('deploy.spawns');
+    this.list = el('div', 'deploy-list', this.sideTop);
+    this.squadEl = el('div', 'deploy-squad', this.sideTop);
     const foot = el('div', 'deploy-foot', side);
     this.note = el('div', 'deploy-note', foot);
     this.button = el('button', 'deploy-button', foot);

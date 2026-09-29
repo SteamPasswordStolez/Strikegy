@@ -33,6 +33,9 @@ export class Player {
   sprinting = false;
   /** Rivers on the map (wading slows the player), set by the game. */
   water: WaterMap | null = null;
+  /** Class passives (set by the game each step): speed multiplier and how much of the wading slowdown applies. */
+  speedBonus = 1;
+  wadePenalty = 1;
   readonly health = new Health();
   private strideLeft: number = STRIDE.walk / 2;
   private jumpBuffered = 0;
@@ -109,7 +112,7 @@ export class Player {
     // Brake harder than we accelerate: releasing or reversing input stops crisply.
     const braking = !moving || wx * this.velocity.x + wz * this.velocity.z < 0;
     const accel = this.grounded ? (braking ? MOVE.groundDecel : MOVE.groundAccel) : MOVE.airAccel;
-    const top = wading ? speed * WADE_SPEED : speed;
+    const top = speed * this.speedBonus * (wading ? 1 - (1 - WADE_SPEED) * this.wadePenalty : 1);
     const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * top, wz * top, accel, dt);
     this.velocity.x = vx;
     this.velocity.z = vz;
