@@ -678,6 +678,25 @@ export class AudioSystem {
     this.tone(out, t + 0.1, 990, 0.18, 0.05, 'triangle');
   }
 
+  /** One blow while building: nails into boards, a sack thumped down, or a clang on steel. */
+  hammer(kind: 'wood' | 'bag' | 'metal'): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    const v = 0.85 + Math.random() * 0.3;
+    if (kind === 'bag') {
+      this.noiseBurst(out, t, 0.14 * v, 0.16, { type: 'lowpass', freq: 520, endFreq: 180 });
+      this.noiseBurst(out, t + 0.02, 0.05 * v, 0.1, { type: 'bandpass', freq: 1500, q: 0.7 });
+    } else if (kind === 'metal') {
+      this.mechClick(out, t, 1700 * v, 0.14);
+      this.tone(out, t, 880 * v, 0.35, 0.03, 'triangle');
+      this.tone(out, t, 1330 * v, 0.25, 0.015, 'sine');
+    } else {
+      this.mechClick(out, t, 2100 * v, 0.14);
+      this.noiseBurst(out, t, 0.1 * v, 0.07, { type: 'bandpass', freq: 700, q: 1.1, endFreq: 420 });
+    }
+  }
+
   /** Handing a kit over / receiving one. */
   resupply(): void {
     if (!this.ready) return;

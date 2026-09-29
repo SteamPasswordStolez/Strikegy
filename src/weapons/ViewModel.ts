@@ -58,6 +58,8 @@ export interface ViewModelFrame {
   meleeT: number;
   /** 0..1 through a weapon inspection, or -1. */
   inspectT: number;
+  /** Seconds of hammering (building), or -1: the gun goes down and a hammer comes up. */
+  tool?: number;
 }
 
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
@@ -113,6 +115,9 @@ export class ViewModel {
   private readonly tq = new THREE.Vector3();
   private readonly extraPos = new THREE.Vector3();
   private readonly extraRot = new THREE.Vector3();
+  /** Building hammer (own group in the viewmodel scene) and how far it is raised 0..1. */
+  private hammer: THREE.Group | null = null;
+  private toolBlend = 0;
 
   constructor(
     private readonly fpScene: THREE.Scene,
@@ -481,6 +486,8 @@ export class ViewModel {
     }
     this.throwT = Math.min(1, this.throwT + dt / 0.65);
     const throwDip = Math.sin(this.throwT * Math.PI);
+    this.toolBlend += ((f.tool !== undefined && f.tool >= 0 ? 1 : 0) - this.toolBlend) * ease(9);
+    this.updateHammer(f.tool ?? -1, bobX, bobY);
 
     // Whole-gun motions: seating jolts, inspection, melee.
     const extraPos = this.extraPos.set(0, 0, 0);
@@ -514,20 +521,73 @@ export class ViewModel {
     pos.x += rp.pos[0] * this.reloadBlend;
     pos.y += rp.pos[1] * this.reloadBlend;
     pos.z += rp.pos[2] * this.reloadBlend;
-    pos.y -= (1 - f.drawProgress) * 0.25 + throwDip * 0.28 + this.landDip;
+    pos.y -= (1 - f.drawProgress) * 0.25 + throwDip * 0.28 + this.landDip + this.toolBlend * 0.5;
     pos.z += stroke * (this.pump ? 0.01 : 0.025);
     pos.z += this.kick;
     pos.add(extraPos);
     this.root.position.copy(pos);
     this.root.rotation.set(
-      this.kickRot + this.sway.y * swayScale + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.2 - throwDip * 0.5 + extraRot.x,
+      this.kickRot + this.sway.y * swayScale + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.2 - throwDip * 0.5 - this.toolBlend * 0.9 + extraRot.x,
       this.sway.x * swayScale + rp.rot[1] * this.reloadBlend + this.sprintBlend * 0.6 - throwDip * 0.3 + extraRot.y,
       rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.25 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
     );
 
     this.flashTimer -= dt;
     this.flash.visible = this.flashTimer > 0;
-    this.root.visible = !f.hideForScope;
+    this.root.visible = !f.hideForScope && this.toolBlend < 0.97;
+  }
+
+  /**
+   * Hammering: raise, strike, a short rest; about two blows a second. Rises
+   * into view from below as the gun goes down.
+   */
+  private updateHammer(t: number, bobX: number, bobY: number): void {
+    if (this.toolBlend < 0.02) {
+      if (this.hammer) this.hammer.visible = false;
+      return;
+    }
+    const h = (this.hammer ??= this.buildHammer());
+    h.visible = true;
+    const u = t >= 0 ? (t * 2.1) % 1 : 0.8;
+    // Head angle about x: raised back at 0.55, struck forward by 0.68.
+    let a: number;
+    if (u < 0.55) a = -1.05 + 1.65 * Math.sin(((u / 0.55) * Math.PI) / 2);
+    else if (u < 0.68) a = 0.6 - 1.75 * ((u - 0.55) / 0.13) ** 2;
+    else a = -1.15 + 0.1 * Math.sin(((u - 0.68) / 0.32) * Math.PI);
+    const lift = (1 - this.toolBlend) * 0.45;
+    h.position.set(0.17 + bobX, -0.2 - lift + bobY, -0.44);
+    h.rotation.set(a, -0.25, -0.2);
+  }
+
+  /** A claw hammer in a gloved fist, with the sleeve running off screen. */
+  private buildHammer(): THREE.Group {
+    const m = gunMaterials();
+    const g = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x8b6a45, roughness: 0.7 });
+    const steel = new THREE.MeshStandardMaterial({ color: 0x5c6066, roughness: 0.35, metalness: 0.85 });
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0) => {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z);
+      mesh.rotation.set(rx, ry, rz);
+      g.add(mesh);
+    };
+    // Handle up from the fist, head across the top (face forward, claw back).
+    add(new THREE.CylinderGeometry(0.013, 0.016, 0.34, 10), wood, 0, 0.1, 0);
+    add(new THREE.BoxGeometry(0.034, 0.034, 0.075), steel, 0, 0.265, -0.03);
+    add(new THREE.CylinderGeometry(0.02, 0.02, 0.03, 12), steel, 0, 0.265, -0.075, Math.PI / 2);
+    add(new THREE.BoxGeometry(0.026, 0.02, 0.08), steel, 0, 0.275, 0.04, -0.35);
+    // Fist round the handle.
+    add(new THREE.CapsuleGeometry(0.03, 0.035, 4, 10), m.glove, 0.012, 0.0, 0.012);
+    for (let i = 0; i < 4; i++) add(new THREE.CapsuleGeometry(0.0095, 0.03, 3, 8), m.glove, -0.004, 0.028 - i * 0.019, -0.022, 0, 0, Math.PI / 2);
+    add(new THREE.CapsuleGeometry(0.01, 0.03, 3, 8), m.glove, -0.02, 0.035, 0.01, 0.4, 0, 0.3);
+    add(new THREE.CylinderGeometry(0.036, 0.034, 0.07, 10), m.glove, 0.03, -0.05, 0.04, 0.9, 0, -0.3);
+    const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.042, 0.45, 10), m.sleeve);
+    sleeve.position.set(0.08, -0.18, 0.2);
+    sleeve.rotation.set(1.0, 0, -0.35);
+    g.add(sleeve);
+    g.visible = false;
+    this.fpScene.add(g);
+    return g;
   }
 
   /** Muzzle position mapped from viewmodel space into the world camera's space. */

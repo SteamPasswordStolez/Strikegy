@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { exportNavMesh, importNavMesh, init, NavMeshQuery, type NavMesh } from 'recast-navigation';
+import { exportTileCache, importTileCache, init, NavMeshQuery, type NavMesh, type Obstacle, type TileCache } from 'recast-navigation';
 import { hashNavInput, loadNav, saveNav } from './navCache';
-import { generateSoloNavMesh } from 'recast-navigation/generators';
+import { createDefaultTileCacheMeshProcess, generateTileCache } from 'recast-navigation/generators';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
 
@@ -14,16 +14,64 @@ type V3 = { x: number; y: number; z: number };
 let recastReady: Promise<void> | null = null;
 
 /**
+ * Navmesh tile edge in voxels (32 x 0.2 m = 6.4 m): obstacle changes rebuild only
+ * the tiles they touch. Tile-cache tiles carry no height detail, so smaller tiles
+ * also keep path heights closer to the ground on hills.
+ */
+const TILE = 32;
+/** Obstacles are not grown by the agent radius inside the tile cache: add it here. */
+const OBSTACLE_PAD = MOVE.radius;
+
+/**
  * Navigation mesh for bots, built from the static world colliders (every map
  * block and prop is a box). Wraps the Detour queries the AI needs: paths,
- * nearest walkable points and random points in an area.
+ * nearest walkable points and random points in an area. It is a tile cache,
+ * so things built during a match (sandbags) can cut holes in it.
  */
 export class NavWorld {
   private readonly query: NavMeshQuery;
   private readonly halfExtents = { x: 2, y: 4, z: 2 };
+  /** Obstacle changes not yet baked into the mesh. */
+  private pending = false;
+  /** Bumped whenever tiles are rebuilt (paths planned before may cross new obstacles). */
+  version = 0;
 
-  private constructor(readonly navMesh: NavMesh) {
+  private constructor(
+    readonly navMesh: NavMesh,
+    private readonly tileCache: TileCache,
+  ) {
     this.query = new NavMeshQuery(navMesh);
+  }
+
+  /** Blocks a box on the ground (centre, half extents, yaw in radians); returns a handle, or null. */
+  addBox(center: V3, half: V3, yaw: number): Obstacle | null {
+    const res = this.tileCache.addBoxObstacle(center, { x: half.x + OBSTACLE_PAD, y: half.y, z: half.z + OBSTACLE_PAD }, yaw);
+    if (!res.success || !res.obstacle) return null;
+    this.pending = true;
+    return res.obstacle;
+  }
+
+  /** Pass the obstacle itself: the wrapper can't remove by a bare ref (it reads `.ref` off any object). */
+  remove(obstacle: Obstacle): void {
+    this.tileCache.removeObstacle(obstacle);
+    this.pending = true;
+  }
+
+  /**
+   * Rebuilds tiles touched by obstacle changes. Detour rebuilds one tile per
+   * update call (well under a millisecond each); up to `maxTiles` go per call,
+   * the rest on the next.
+   */
+  update(maxTiles = 48): void {
+    if (!this.pending) return;
+    for (let i = 0; i < maxTiles; i++) {
+      const r = this.tileCache.update(this.navMesh);
+      if (!r.success || r.upToDate) {
+        this.pending = false;
+        break;
+      }
+    }
+    this.version++;
   }
 
   /** Builds from the physics world; returns null if generation fails. */
@@ -31,12 +79,7 @@ export class NavWorld {
   static async build(physics: PhysicsWorld, extra?: { positions: number[]; indices: number[] }): Promise<NavWorld | null> {
     recastReady ??= init();
     await recastReady;
-    const { positions, indices } = collectStaticBoxes(physics);
-    if (extra) {
-      const base = positions.length / 3;
-      for (const v of extra.positions) positions.push(v);
-      for (const i of extra.indices) indices.push(base + i);
-    }
+    const { positions, indices } = collectNavInput(physics, extra);
     if (indices.length === 0) return null;
     const config = {
       cs: CS,
@@ -45,30 +88,33 @@ export class NavWorld {
       walkableHeight: Math.ceil(MOVE.standHeight / CH),
       walkableClimb: Math.floor(0.45 / CH),
       walkableSlopeAngle: 45,
-      maxEdgeLen: Math.round(12 / CS),
-      minRegionArea: 8,
       mergeRegionArea: 20,
       maxSimplificationError: 1.3,
       detailSampleDist: 6,
       detailSampleMaxError: 1,
+      tileSize: TILE,
+      // Buildings stack up to three floors plus roofs and bridges over the river.
+      expectedLayersPerTile: 6,
+      maxObstacles: 256,
     };
     // Same input and settings as a previous load: reuse that navmesh (seconds saved on big maps).
-    const key = hashNavInput(positions, indices, JSON.stringify(config));
-    const cached = await loadNav(key);
+    const key = hashNavInput(positions, indices, `tc1${JSON.stringify(config)}`);
+    const cached = skipCache() ? null : await loadNav(key);
     if (cached) {
       try {
-        return new NavWorld(importNavMesh(cached).navMesh);
+        const imp = importTileCache(cached, createDefaultTileCacheMeshProcess());
+        return new NavWorld(imp.navMesh, imp.tileCache);
       } catch (err) {
         console.warn('[nav] cached navmesh unusable, rebuilding', err);
       }
     }
-    const result = generateSoloNavMesh(positions, indices, config);
+    const result = generateTileCache(positions, indices, config);
     if (!result.success) {
       console.warn('[nav] navmesh generation failed:', result.error);
       return null;
     }
-    void saveNav(key, exportNavMesh(result.navMesh));
-    return new NavWorld(result.navMesh);
+    void saveNav(key, exportTileCache(result.navMesh, result.tileCache));
+    return new NavWorld(result.navMesh, result.tileCache);
   }
 
   /**
@@ -143,8 +189,20 @@ export class NavWorld {
 
   dispose(): void {
     this.query.destroy();
+    this.tileCache.destroy();
     this.navMesh.destroy();
   }
+}
+
+/** Everything the navmesh is built from: static boxes plus `extra` (terrain). */
+export function collectNavInput(physics: PhysicsWorld, extra?: { positions: number[]; indices: number[] }): { positions: number[]; indices: number[] } {
+  const { positions, indices } = collectStaticBoxes(physics);
+  if (extra) {
+    const base = positions.length / 3;
+    for (const v of extra.positions) positions.push(v);
+    for (const i of extra.indices) indices.push(base + i);
+  }
+  return { positions, indices };
 }
 
 /** Triangles of every static box collider (map blocks, props and boundary walls). */
@@ -177,4 +235,9 @@ function collectStaticBoxes(physics: PhysicsWorld): { positions: number[]; indic
   });
   box.dispose();
   return { positions, indices };
+}
+
+/** Dev: `?nocache` rebuilds the navmesh every load (for timing the build). */
+function skipCache(): boolean {
+  return import.meta.env.DEV && typeof location !== 'undefined' && new URLSearchParams(location.search).has('nocache');
 }

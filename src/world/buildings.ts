@@ -54,6 +54,8 @@ export interface WindowSpot {
   pos: [number, number, number];
   /** Unit direction out of the window (world xz). */
   facing: [number, number];
+  /** The opening itself: centre (in the middle of the wall), width and height. */
+  opening: { center: [number, number, number]; width: number; height: number };
 }
 
 export interface BuiltBuilding {
@@ -64,6 +66,13 @@ export interface BuiltBuilding {
   windows: WindowSpot[];
   /** Visual-only boxes (facades of closed blocks): no colliders. */
   decor: MapObject[];
+}
+
+/** A window opening in building space: sill height above the base. */
+interface Opening {
+  width: number;
+  height: number;
+  sill: number;
 }
 
 /** Stand this far inside the wall at a window (clear of the wall for the navmesh). */
@@ -99,10 +108,15 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
   const out: MapObject[] = [];
   const windows: WindowSpot[] = [];
   /** Local (x, z) + direction -> world spot at local floor height y. */
-  const spot = (lx: number, y: number, lz: number, dx: number, dz: number) => {
+  const spot = (lx: number, y: number, lz: number, dx: number, dz: number, o: Opening) => {
+    // The wall's middle is out along the facing from the standing spot.
+    const k = WINDOW_STANDOFF + WALL / 2;
+    const ox = lx + dx * k;
+    const oz = lz + dz * k;
     windows.push({
       pos: [b.pos[0] + lx * cos + lz * sin, baseY + y, b.pos[1] - lx * sin + lz * cos],
       facing: [dx * cos + dz * sin, -dx * sin + dz * cos],
+      opening: { center: [b.pos[0] + ox * cos + oz * sin, baseY + o.sill + o.height / 2, b.pos[1] - ox * sin + oz * cos], width: o.width, height: o.height },
     });
   };
   /** Adds a box given its local center/size (x right, z toward the viewer = south). */
@@ -175,25 +189,25 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
     len: number;
     place: (a: number, len: number, y: number, h: number) => void;
     /** Firing spot for an opening centred at `a` along the wall, on the floor at y. */
-    window: ((a: number, y: number) => void) | null;
+    window: ((a: number, y: number, o: Opening) => void) | null;
   }[] = [
     {
       id: 'n',
       len: W,
       place: (a, len, y, h) => box(-W / 2 + a + len / 2, y + h / 2, -D / 2 + WALL / 2, len, h, WALL),
-      window: (a, y) => spot(-W / 2 + a, y, -D / 2 + WALL + s, 0, -1),
+      window: (a, y, o) => spot(-W / 2 + a, y, -D / 2 + WALL + s, 0, -1, o),
     },
     {
       id: 's',
       len: W,
       place: (a, len, y, h) => box(W / 2 - a - len / 2, y + h / 2, D / 2 - WALL / 2, len, h, WALL),
-      window: (a, y) => spot(W / 2 - a, y, D / 2 - WALL - s, 0, 1),
+      window: (a, y, o) => spot(W / 2 - a, y, D / 2 - WALL - s, 0, 1, o),
     },
     {
       id: 'w',
       len: D - 2 * WALL,
       place: (a, len, y, h) => box(-W / 2 + WALL / 2, y + h / 2, D / 2 - WALL - a - len / 2, WALL, h, len),
-      window: (a, y) => spot(-W / 2 + WALL + s, y, D / 2 - WALL - a, -1, 0),
+      window: (a, y, o) => spot(-W / 2 + WALL + s, y, D / 2 - WALL - a, -1, 0, o),
     },
     // The stairwell runs along the east wall: no standing at its windows.
     { id: 'e', len: D - 2 * WALL, place: (a, len, y, h) => box(W / 2 - WALL / 2, y + h / 2, -D / 2 + WALL + a + len / 2, WALL, h, len), window: null },
@@ -218,7 +232,7 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
         }
         const [ow, oh, sill] = open;
         const pier = (bw - ow) / 2;
-        if (sill > 0 && sill <= MAX_SILL && side.window) side.window(a + pier + ow / 2, y0 + (f === 0 ? 0.2 : 0));
+        if (sill > 0 && sill <= MAX_SILL && side.window) side.window(a + pier + ow / 2, y0 + (f === 0 ? 0.2 : 0), { width: ow, height: oh, sill: y0 + sill });
         side.place(a, pier, bottom, top - bottom);
         side.place(a + pier + ow, pier, bottom, top - bottom);
         if (sill > 0) side.place(a + pier, ow, bottom, y0 + sill - bottom);

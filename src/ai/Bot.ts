@@ -17,6 +17,7 @@ import type { Combatant } from './types';
 import { rollPersonality, type Personality } from './personality';
 import { COMBAT_WINDOW } from '@/modes/squads';
 import { CLASSES, DOWN as DOWN_RULES, MEDKIT, REVIVE_RANGE, type ClassId } from '@/data/classes';
+import type { FortJob } from '@/modes/fortify';
 
 const DEG = Math.PI / 180;
 const DOWN = { x: 0, y: -1, z: 0 };
@@ -61,6 +62,11 @@ export interface BotServices {
   watchDir(bot: Bot): THREE.Vector3 | null;
   /** Following a leader who is walking: don't sprint. */
   keepPace(bot: Bot): boolean;
+  /** Takes on a job at a zone (build, restock or resupply at a station) within `radius`: the job and where to stand. */
+  claimWork(bot: Bot, radius: number): { job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null;
+  releaseWork(bot: Bot): void;
+  /** One step of work at the job; false when it is over. */
+  doWork(bot: Bot, job: FortJob, dt: number): boolean;
   /** Lobs a grenade onto `at`; false if it can't (out of reach, team just threw one). */
   throwGrenade(bot: Bot, type: 'frag' | 'smoke' | 'flash', at: THREE.Vector3): boolean;
   /** Walls or terrain between two points (smoke does not count: bullets go through it). */
@@ -136,6 +142,16 @@ export class Bot implements Damageable, Combatant {
   /** Downed teammate this bot is going to revive, and how far along it is (s). */
   reviveOf: Combatant | null = null;
   reviveProgress = 0;
+  /** Zone job (building, restocking a station, taking supplies), where to stand and what to face. */
+  job: FortJob | null = null;
+  private readonly jobStand = new THREE.Vector3();
+  private readonly jobLook = new THREE.Vector3();
+  /** At the job's spot and working on it. */
+  atWork = false;
+  private nextJobLook = 0;
+  private jobDeadline = 0;
+  /** Grenades this life started with (frags, smokes, flashes): what an ammo station tops up to. */
+  private kit: [number, number, number] = [0, 0, 0];
   /** Extra respawn wait (squad wiped out); cleared on spawn. */
   respawnPenalty = 0;
   action: BotAction = 'advance';
@@ -283,6 +299,9 @@ export class Bot implements Damageable, Combatant {
     this.frags = type === 'frag' && p.grenades > 0.25 ? (p.grenades > 0.7 ? 2 : 1) : 0;
     this.smokes = type === 'smoke' ? 2 : 0;
     this.flashes = type === 'flash' ? 2 : 0;
+    this.kit = [this.frags, this.smokes, this.flashes];
+    this.job = null;
+    this.atWork = false;
     this.lookAwayUntil = -Infinity;
     this.blindUntil = -Infinity;
     this.grenadeReadyAt = 0;
@@ -331,6 +350,8 @@ export class Bot implements Damageable, Combatant {
     this.downTime = 0;
     this.reviveOf = null;
     this.reviveProgress = 0;
+    this.job = null;
+    this.atWork = false;
     this.path.length = 0;
     this.hasGoal = false;
     this.setCrouch(false);
@@ -429,6 +450,7 @@ export class Bot implements Damageable, Combatant {
       this.think(s);
     }
     this.updateRevive(dt, s);
+    this.updateWork(dt, s);
     this.updatePeek(s);
     this.updateAim(dt, s);
     this.updateMovement(dt, s);
@@ -505,6 +527,7 @@ export class Bot implements Damageable, Combatant {
     if (s.time < this.dodgeUntil) return;
     this.considerMedkit(s);
     if (this.planRevive(s)) return;
+    if (this.planWork(s)) return;
     if (this.blinded) {
       this.reactBlind(s);
       return;
@@ -664,6 +687,65 @@ export class Bot implements Damageable, Combatant {
       this.reviveOf = null;
       this.reviveProgress = 0;
     }
+  }
+
+  /**
+   * Zone chores when nothing is going on: supports restock the ammo station,
+   * medics the medical one, anyone builds at a zone their side holds, and bots
+   * short of grenades or a medkit take one from a station. Returns true while
+   * busy with one.
+   */
+  private planWork(s: BotServices): boolean {
+    if (this.job && (this.target || this.suppression > 0.3 || s.time - this.lastHurt < 1.5)) {
+      this.dropJob(s);
+      return false;
+    }
+    if (!this.job) {
+      if (s.time < this.nextJobLook || this.target || this.suppression > 0.15 || s.time - this.lastHurt < 4 || s.time - this.lastSeen.time < 6) return false;
+      this.nextJobLook = s.time + 2 + Math.random() * 2;
+      const found = s.claimWork(this, 30);
+      if (!found) return false;
+      this.job = found.job;
+      this.jobStand.copy(found.stand);
+      this.jobLook.copy(found.look);
+      this.jobDeadline = s.time + 25;
+    }
+    if (!this.atWork && s.time > this.jobDeadline) {
+      // Can't get there: leave it for a while.
+      this.dropJob(s);
+      this.nextJobLook = s.time + 15;
+      return false;
+    }
+    if (Math.hypot(this.feet.x - this.jobStand.x, this.feet.z - this.jobStand.z) > 0.9) {
+      this.atWork = false;
+      this.action = 'cover'; // straight there, no strafing
+      this.setGoal(this.jobStand, s);
+    } else {
+      this.atWork = true;
+      this.hasGoal = false;
+    }
+    return true;
+  }
+
+  private updateWork(dt: number, s: BotServices): void {
+    if (!this.job || !this.atWork) return;
+    if (!s.doWork(this, this.job, dt)) this.dropJob(s);
+  }
+
+  private dropJob(s: BotServices): void {
+    s.releaseWork(this);
+    this.job = null;
+    this.atWork = false;
+  }
+
+  /** Threw some of this life's grenades. */
+  get needsGrenades(): boolean {
+    return this.frags < this.kit[0] || this.smokes < this.kit[1] || this.flashes < this.kit[2];
+  }
+
+  /** Ammo station: grenades back to what this life started with. */
+  restockGrenades(): void {
+    [this.frags, this.smokes, this.flashes] = this.kit;
   }
 
   /** At a downed mate's side and working on them. */
@@ -904,6 +986,9 @@ export class Bot implements Damageable, Combatant {
     if (this.reviveOf && this.feet.distanceTo(this.reviveOf.feet) < REVIVE_RANGE * 2) {
       // Looking down at the mate being revived.
       [yaw, pitch] = yawPitchOf(this.reviveOf.feet.x - this.feet.x, -1.2, this.reviveOf.feet.z - this.feet.z);
+    } else if (this.atWork) {
+      // Looking at what they are working on.
+      [yaw, pitch] = yawPitchOf(this.jobLook.x - this.feet.x, this.jobLook.y - this.feet.y - this.eyeHeight, this.jobLook.z - this.feet.z);
     } else if (s.time < this.lookAwayUntil) {
       // Our own flash is about to pop: turn our back to it.
       [yaw] = yawPitchOf(this.feet.x - this.lookAwayFrom.x, 0, this.feet.z - this.lookAwayFrom.z);
@@ -1009,6 +1094,7 @@ export class Bot implements Damageable, Combatant {
     const crouchRange = 22 - this.personality.caution * 12;
     const wantCrouch =
       this.reviving ||
+      (this.atWork && this.job?.type === 'build' && this.job.slot.kind !== 'barricade') ||
       speed === 0 &&
       (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)
         ? !this.peeking
@@ -1038,9 +1124,12 @@ export class Bot implements Damageable, Combatant {
     // a character controller per bot cost ~70 us a step on terrain.
     const next = this.tmp2.set(this.feet.x + this.velocity.x * dt, this.feet.y, this.feet.z + this.velocity.z * dt);
     this.navRef = s.nav.move(this.navRef, this.feet, next, next);
-    // Navmesh heights are approximate on terrain: take the exact ground below.
-    const ground = s.physics.raycast(this.tmp3.set(next.x, next.y + 0.9, next.z), DOWN, 2, Layer.WORLD);
-    if (ground && Math.abs(ground.point.y - next.y) < 0.8) next.y = ground.point.y;
+    // Navmesh heights are approximate (the tile cache has no height detail, up to
+    // ~0.5 m off on hills): take the exact ground below, looking from above
+    // whichever is higher so a low mesh can't put the ray under the ground.
+    const from = Math.max(this.feet.y, next.y) + 1.1;
+    const ground = s.physics.raycast(this.tmp3.set(next.x, from, next.z), DOWN, 2.6, Layer.WORLD);
+    if (ground && Math.abs(ground.point.y - next.y) < 1.4) next.y = ground.point.y;
     const moved = next.sub(this.feet);
     this.velocity.set(moved.x / dt, 0, moved.z / dt);
     this.grounded = true;

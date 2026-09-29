@@ -12,7 +12,7 @@ import { Effects } from '@/render/Effects';
 import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
-import { buildBlockout, hasTerrain, snapToTerrain } from '@/world/buildBlockout';
+import { buildBlockout, hasTerrain, snapToTerrain, type BuiltMap } from '@/world/buildBlockout';
 import { Boundary, Terrain } from '@/world/terrain';
 import { buildingPadRadius } from '@/world/buildings';
 import { BACKDROP_MODELS, buildBackdrop } from '@/world/backdrop';
@@ -64,6 +64,7 @@ import {
   CLASSES,
   DOWN,
   GIVE_RANGE,
+  GRENADE_COUNT,
   MEDKIT,
   RECON_ZOOM,
   REVIVE_RANGE,
@@ -74,6 +75,8 @@ import {
 } from '@/data/classes';
 import { LoadoutStore } from '@/data/loadoutStore';
 import { LoadoutPanel } from '@/ui/LoadoutPanel';
+import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, planFortifications, worldProbe, type FortJob, type FortSlot, type Station } from '@/modes/fortify';
+import { FortModels } from '@/world/fortModels';
 
 const DEG = Math.PI / 180;
 /** FOV that the weapon adsFov values were authored against. */
@@ -214,7 +217,12 @@ export class Game {
   private reviveOf: Bot | null = null;
   private reviveProgress = 0;
   /** What E does right now (HUD prompt, touch button). */
-  private interact: { kind: 'revive' | 'medkit'; bot: Bot } | null = null;
+  private interact: { kind: 'revive' | 'medkit'; bot: Bot } | { kind: 'fort'; job: FortJob | null; station: Station | null; note: string | null } | null = null;
+  /** Zone supply stations and build spots. */
+  private fort: Fortifications | null = null;
+  /** Holding E at a build spot or station (hands busy, hammer out) and for how long. */
+  private working = -1;
+  private nextBlow = 0;
   /** Next time a giver may hand the same receiver the same thing: 'giver>receiver:kind' -> sim time. */
   private readonly giveReady = new Map<string, number>();
 
@@ -378,6 +386,7 @@ export class Game {
     const mode = this.options.mode ?? 'auto';
     if ((mode === 'zone' || (mode === 'auto' && this.bots)) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain);
+      this.setupFortifications(map, terrain, water, built);
     }
     if (this.bots) this.setupSquads(map, terrain);
     this.wireEvents();
@@ -765,7 +774,7 @@ export class Game {
         p.sprinting = false;
       }
       // Hands busy (throwing, patching up, reviving): no shooting.
-      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0;
+      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0;
       this.weapons.step(dt, input, p, busy);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
     } else if (this.playerDowned) {
@@ -777,6 +786,7 @@ export class Game {
     }
     this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
     this.bots?.step(dt);
+    this.fort?.step();
     this.botsResupplyPlayer();
     this.zoneMode?.step(dt, this.combatants());
     this.throwables.step(dt);
@@ -815,6 +825,10 @@ export class Game {
       this.effects.explosion(point);
       this.audio.explosion(point, listenerDist);
       this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003));
+      // Fortifications in the blast take damage (colliders go at the next physics step).
+      for (const s of this.fort?.blast(point, spec.radius, (d) => fragDamage(spec, d, false)) ?? []) {
+        this.effects.explosion(s.kind === 'barricade' ? s.pos : s.pos.clone().setY(s.pos.y + 0.5));
+      }
       for (const tg of this.targets) {
         if (!tg.alive || !byPlayer) continue;
         const c = tg.center;
@@ -1008,6 +1022,8 @@ export class Game {
    */
   private stepInteract(dt: number, input: InputState): void {
     this.interact = null;
+    const prevWork = this.working;
+    this.working = -1;
     const bots = this.bots;
     if (!bots) return;
     const feet = this.player.feet;
@@ -1052,6 +1068,72 @@ export class Game {
         this.giveReady.set(`${PLAYER_ID}>${give.id}:kit`, this.simTime + MEDKIT.giveCooldown);
         this.scores.resupply(PLAYER_ID);
         this.audio.resupply();
+      }
+      return;
+    }
+    this.stepFort(dt, input, prevWork);
+  }
+
+  /**
+   * At a zone station: tap E to take ammo / a medkit (zone owners only, uses
+   * run out), or hold it to refill (supports: ammo, medics: medical). At a build
+   * spot: hold E to build (hammer out, progress stays when you let go).
+   */
+  private stepFort(dt: number, input: InputState, prevWork: number): void {
+    const fort = this.fort;
+    if (!fort) return;
+    const feet = this.player.feet;
+    const station = fort.stationAt(feet);
+    let job: FortJob | null = null;
+    let note: string | null = null;
+    if (station) {
+      const owned = this.zoneMode?.zone(station.zone)?.owner === PLAYER_TEAM;
+      const need = station.kind === 'ammo' ? this.weapons.needsAmmo || this.grenades.count < GRENADE_COUNT[this.grenades.selected] : this.cls !== 'medic' && this.medkits === 0;
+      if (!owned) note = t('fort.notOwned');
+      else if (need && station.uses > 0) job = { type: 'use', station };
+      else if (canRefill(station.kind, this.cls) && station.uses < STATION.uses) job = { type: 'refill', station };
+      else if (need) note = t(station.kind === 'ammo' ? 'fort.emptyAmmo' : 'fort.emptyMedical');
+    } else {
+      const slot = fort.slotAt(feet);
+      if (slot) job = { type: 'build', slot };
+    }
+    if (!station && !job) return;
+    this.interact = { kind: 'fort', job, station, note };
+    if (!job) return;
+    if (job.type === 'use') {
+      if (!input.interactPressed || !fort.use(job.station)) return;
+      if (job.station.kind === 'ammo') {
+        this.weapons.refillReserve();
+        this.grenades.reset(this.grenades.selected);
+      } else {
+        this.medkits = MEDKIT.carried;
+      }
+      this.audio.resupply();
+      return;
+    }
+    if (!input.interact) return;
+    this.working = Math.max(0, prevWork) + dt;
+    this.weapons.state.cancelReload();
+    if (job.type === 'refill') {
+      if (fort.refill(job.station, dt)) {
+        this.scores.award(PLAYER_ID, REFILL_POINTS);
+        this.audio.resupply();
+      }
+    } else {
+      const r = fort.work(job.slot, dt, this.cls, (s) => this.inTheWay(s));
+      this.scores.award(PLAYER_ID, r.points);
+      if (r.done) {
+        this.hud.notify(`${t(`fort.${job.slot.kind}` as MessageKey)} ${t('fort.built')}`, 'ally');
+        this.audio.resupply();
+      }
+    }
+    // A blow about twice a second, in time with the viewmodel's strike.
+    if (this.working >= this.nextBlow || prevWork < 0) {
+      if (prevWork < 0) this.nextBlow = 0.32;
+      else {
+        this.nextBlow += 1 / 2.1;
+        const kind = job.type === 'build' ? (job.slot.kind === 'sandbag' ? 'bag' : job.slot.kind === 'hedgehog' ? 'metal' : 'wood') : 'wood';
+        this.audio.hammer(kind);
       }
     }
   }
@@ -1176,7 +1258,9 @@ export class Game {
       hideForScope: (!!w.def.scope && w.adsBlend > 0.95) || this.playerDowned,
       meleeT: w.meleeProgress,
       inspectT: w.inspectProgress,
+      tool: this.working,
     });
+    this.fort?.render(this.renderer.camera.position);
   }
 
   private readonly assistEye = new THREE.Vector3();
@@ -1270,14 +1354,21 @@ export class Game {
         }
       : null;
     const act = onField ? this.interact : null;
-    const prompt = act
-      ? act.kind === 'revive'
-        ? { text: `${this.touch ? '' : `${t('act.holdE')} · `}${t('act.revive')} ${act.bot.name}`, progress: this.reviveProgress > 0 ? this.reviveProgress / CLASSES[this.cls].reviveTime : null }
-        : { text: `${this.touch ? '' : `${t('act.pressE')} · `}${t('act.giveMedkit')} → ${act.bot.name}`, progress: null }
-      : null;
+    const key = (hold: boolean) => (this.touch ? '' : `${t(hold ? 'act.holdE' : 'act.pressE')} · `);
+    let prompt: { text: string; progress: number | null } | null = null;
+    let touchLabel: string | null = null;
+    if (act?.kind === 'revive') {
+      prompt = { text: `${key(true)}${t('act.revive')} ${act.bot.name}`, progress: this.reviveProgress > 0 ? this.reviveProgress / CLASSES[this.cls].reviveTime : null };
+      touchLabel = t('act.revive');
+    } else if (act?.kind === 'medkit') {
+      prompt = { text: `${key(false)}${t('act.giveMedkit')} → ${act.bot.name}`, progress: null };
+      touchLabel = t('act.giveMedkit');
+    } else if (act?.kind === 'fort') {
+      ({ prompt, touchLabel } = this.fortPrompt(act.job, act.station, act.note, key));
+    }
     this.touch?.setContext({
       medkit: medkit ? (medkit.ready ? `${t('touch.medkit')} ${kitText}` : kitText) : null,
-      interact: act ? (act.kind === 'revive' ? t('act.revive') : t('act.giveMedkit')) : null,
+      interact: touchLabel,
       downed: this.playerDowned,
     });
     this.hud.update(
@@ -1360,6 +1451,60 @@ export class Game {
     };
     this.bus.on('zone:captured', (e) => this.scores.objective(inZone(e.zone, e.team), 'capture'));
     this.bus.on('zone:neutralized', (e) => this.scores.objective(inZone(e.zone, otherTeam(e.team)), 'neutralize'));
+  }
+
+  /** Someone (up or down) is standing where a build spot's structure would go. */
+  private inTheWay(slot: FortSlot): boolean {
+    const fort = this.fort;
+    if (!fort) return false;
+    if (this.player.alive && fort.occupies(slot, this.player.feet)) return true;
+    for (const b of this.bots?.bots ?? []) if ((b.alive || b.downed) && fort.occupies(slot, b.feet)) return true;
+    return false;
+  }
+
+  /** HUD prompt and touch button label at a station or build spot. */
+  private fortPrompt(job: FortJob | null, station: Station | null, note: string | null, key: (hold: boolean) => string): { prompt: { text: string; progress: number | null }; touchLabel: string | null } {
+    if (station) {
+      const name = `${t(station.kind === 'ammo' ? 'fort.ammo' : 'fort.medical')} ${station.uses}/${STATION.uses}`;
+      if (job?.type === 'use') return { prompt: { text: `${key(false)}${t(station.kind === 'ammo' ? 'act.takeAmmo' : 'act.takeMedkit')} · ${name}`, progress: null }, touchLabel: t('act.take') };
+      if (job?.type === 'refill') return { prompt: { text: `${key(true)}${t('act.refill')} · ${name}`, progress: this.working >= 0 ? station.refill / STATION.refillSec : null }, touchLabel: t('act.refill') };
+      return { prompt: { text: note ? `${name} · ${note}` : name, progress: null }, touchLabel: null };
+    }
+    if (job?.type === 'build') {
+      const s = job.slot;
+      const full = FORT[s.kind].build;
+      return { prompt: { text: `${key(true)}${t('act.build')} · ${t(`fort.${s.kind}` as MessageKey)}`, progress: s.work > 0 ? s.work / full : null }, touchLabel: t('act.build') };
+    }
+    return { prompt: { text: note ?? '', progress: null }, touchLabel: null };
+  }
+
+  /** Supply stations and build spots at every zone, found on the loaded world. */
+  private setupFortifications(map: MapDef, terrain: Terrain, water: WaterMap | null, built: BuiltMap): void {
+    const t0 = performance.now();
+    this.physics.step();
+    const probe = worldProbe(
+      this.physics,
+      (x, z) => terrain.heightAt(x, z),
+      (x, z) => terrain.boundary.contains(x, z) && terrain.boundary.edgeDistance(x, z) > 3,
+      (x, y, z) => !!water && water.depthAt(x, y, z) > 0.05,
+    );
+    const plan = planFortifications(map.zones ?? [], built.windows, built.footprints, probe);
+    const fort = new Fortifications(plan, new FortModels(this.surfaces), this.physics, this.impacts, this.nav);
+    fort.onChange = () => this.renderer.requestShadowUpdate();
+    fort.onPoints = (id, points) => this.scores.award(id, points);
+    this.renderer.scene.add(fort.group);
+    // Bake the stations into the navmesh now rather than over the first frames.
+    this.nav?.update(4096);
+    this.fort = fort;
+    if (this.bots) {
+      this.bots.fort = fort;
+      this.bots.fortBlocked = (s) => this.inTheWay(s);
+      this.bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;
+    }
+    if (import.meta.env.DEV) {
+      const n = (k: string) => plan.slots.filter((s) => s.kind === k).length;
+      console.info(`[strikegy] fortifications: ${plan.stations.length} stations, ${n('sandbag')} sandbag / ${n('barricade')} barricade / ${n('hedgehog')} hedgehog spots in ${Math.round(performance.now() - t0)} ms`);
+    }
   }
 
   /** Scoreboard: while Z is held (touch: toggled), refreshed a few times a second. */

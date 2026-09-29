@@ -83,6 +83,26 @@ export class PhysicsWorld {
     this.ground = { collider, blocks };
   }
 
+  /** True if a box (centre, half extents, yaw about Y) overlaps a collider in `mask`, not counting the heightfield ground. */
+  overlapsBox(center: V3, half: V3, yaw: number, mask: number): boolean {
+    const shape = new RAPIER.Cuboid(half.x, half.y, half.z);
+    const rot = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
+    let hit = false;
+    this.world.intersectionsWithShape(
+      center,
+      rot,
+      shape,
+      () => {
+        hit = true;
+        return false;
+      },
+      undefined,
+      groups(0xffff, mask),
+      this.ground?.collider,
+    );
+    return hit;
+  }
+
   /** True if something in `mask` lies between `from` and (just short of) `to`. No hit details. */
   blocked(from: V3, to: V3, mask: number): boolean {
     const dx = to.x - from.x;

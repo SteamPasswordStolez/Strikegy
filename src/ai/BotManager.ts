@@ -18,6 +18,7 @@ import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from './types';
 import { CLASSES, GIVE_RANGE, MEDKIT } from '@/data/classes';
 import type { WaterMap } from '@/world/water';
+import { REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Fortifications } from '@/modes/fortify';
 
 const DEG = Math.PI / 180;
 const RESPAWN_SEC = 5;
@@ -211,6 +212,12 @@ export class BotManager implements BotServices {
   private readonly kitGiven = new Map<number, number>();
   /** Set by the game mode (Zone): squad objectives and respawn points. */
   hooks: BotModeHooks | null = null;
+  /** Set by the game (zone mode): stations and build spots, who holds a zone, and whether someone stands where a build goes. */
+  fort: Fortifications | null = null;
+  zoneOwner: ((zone: string) => Team | null) | null = null;
+  fortBlocked: ((slot: FortSlot) => boolean) | null = null;
+  /** Job key -> the bot doing it. */
+  private readonly workers = new Map<string, Bot>();
   /** Set by the game: where bot grenades go. */
   grenades: Throwables | null = null;
   /** A team throws at most one grenade per this many seconds. */
@@ -325,6 +332,7 @@ export class BotManager implements BotServices {
         this.release(e);
         this.shareKill(b);
         this.releaseRevive(b);
+        this.releaseWork(b);
       }
       if (!e.simDead && b.dead) this.bus.emit('combatant:died', { team: b.team, id: b.id });
       if (b.dead && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
@@ -389,6 +397,82 @@ export class BotManager implements BotServices {
     if (c.id === PLAYER_ID) this.hooks?.revivePlayer?.(bot, health);
     else (c as Bot).revive(health, this.time);
     this.bus.emit('combatant:revived', { team: c.team, id: c.id, name: c.name, byId: bot.id, byName: bot.name, medic: bot.cls === 'medic' });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Zone jobs
+
+  claimWork(bot: Bot, radius: number): { job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null {
+    const fort = this.fort;
+    const owner = this.zoneOwner;
+    if (!fort || !owner) return null;
+    const goal = this.entryOf(bot).objective;
+    // Only a few per side at a time: the rest keep fighting.
+    let busy = 0;
+    for (const b of this.workers.values()) if (b.team === bot.team && b !== bot) busy++;
+    if (busy >= 4) return null;
+    let best: { key: string; job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null = null;
+    let bestScore = Infinity;
+    const consider = (key: string, job: FortJob, stand: THREE.Vector3, look: THREE.Vector3, weight: number) => {
+      const taken = this.workers.get(key);
+      if (taken && taken !== bot) return;
+      const d = stand.distanceTo(bot.feet);
+      if (d > radius || d * weight >= bestScore) return;
+      if (this.enemiesNear(bot.team, stand, 22) > 0) return;
+      best = { key, job, stand, look };
+      bestScore = d * weight;
+    };
+    for (const st of fort.stations) {
+      if (owner(st.zone) !== bot.team) continue;
+      const stand = fort.stationStand(st);
+      const look = st.pos.clone().setY(st.pos.y + 0.5);
+      const need = st.kind === 'ammo' ? bot.needsGrenades : bot.cls !== 'medic' && bot.medkits === 0;
+      if (need && st.uses > 0) consider(`use:${st.id}:${bot.id}`, { type: 'use', station: st }, stand, look, 0.6);
+      // Restocking is worth a detour only for a guard at that zone or someone passing close by.
+      const near = goal?.defend ? goal.pos.distanceTo(st.pos) < goal.radius + 12 : stand.distanceTo(bot.feet) < 15;
+      if (near && canRefill(st.kind, bot.cls) && st.uses < STATION.uses) consider(`refill:${st.id}`, { type: 'refill', station: st }, stand, look, 0.7);
+    }
+    // Building at zones their side holds: guards anywhere around their zone,
+    // anyone else only right by it (a bot that just helped take it, passing through).
+    for (const sl of fort.slots) {
+      if (sl.built || owner(sl.zone) !== bot.team) continue;
+      if (goal?.defend ? goal.pos.distanceTo(sl.pos) > goal.radius + 14 : sl.stand.distanceTo(bot.feet) > 18) continue;
+      const look = sl.kind === 'barricade' ? sl.pos : sl.pos.clone().setY(sl.pos.y + 0.3);
+      // Anti-tank hedgehogs matter little until there are vehicles.
+      consider(`build:${sl.id}`, { type: 'build', slot: sl }, sl.stand, look, sl.kind === 'hedgehog' ? 2.5 : bot.cls === 'support' ? 0.8 : 1);
+    }
+    const found = best as { key: string; job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null;
+    if (!found) return null;
+    this.releaseWork(bot);
+    this.workers.set(found.key, bot);
+    return { job: found.job, stand: found.stand, look: found.look };
+  }
+
+  releaseWork(bot: Bot): void {
+    for (const [key, b] of this.workers) if (b === bot) this.workers.delete(key);
+  }
+
+  doWork(bot: Bot, job: FortJob, dt: number): boolean {
+    const fort = this.fort;
+    if (!fort) return false;
+    if (job.type === 'build') {
+      if (job.slot.built) return false;
+      const r = fort.work(job.slot, dt, bot.cls, this.fortBlocked ?? (() => false));
+      fort.onPoints?.(bot.id, r.points);
+      return !r.done;
+    }
+    const st = job.station;
+    if (this.zoneOwner?.(st.zone) !== bot.team) return false;
+    if (job.type === 'use') {
+      if (fort.use(st)) {
+        if (st.kind === 'ammo') bot.restockGrenades();
+        else bot.medkits = MEDKIT.carried;
+      }
+      return false;
+    }
+    if (st.uses >= STATION.uses) return false;
+    if (fort.refill(st, dt)) fort.onPoints?.(bot.id, REFILL_POINTS);
+    return st.uses < STATION.uses;
   }
 
   /** The player revived a bot. */

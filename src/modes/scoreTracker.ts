@@ -53,6 +53,18 @@ export class ScoreTracker {
     if (r) r.score += POINTS.resupply;
   }
 
+  /** Points for building and refilling stations (fractions carry over). */
+  award(id: number, points: number): void {
+    const r = this.rows.get(id);
+    if (!r) return;
+    const carry = (this.carry.get(id) ?? 0) + points;
+    // A hair of slack so sums like 60 x 1/6 don't land just under a whole point.
+    const whole = Math.floor(carry + 1e-9);
+    this.carry.set(id, carry - whole);
+    r.score += whole;
+  }
+  private readonly carry = new Map<number, number>();
+
   /** Everyone who was in the zone when it was captured / neutralized. */
   objective(ids: Iterable<number>, kind: 'capture' | 'neutralize'): void {
     for (const id of ids) {
