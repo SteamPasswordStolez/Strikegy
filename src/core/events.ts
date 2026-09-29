@@ -62,8 +62,12 @@ export interface GameEvents {
   'player:flashed': { intensity: number; duration: number };
   'player:died': { cause: DamageCause };
   'player:respawned': Record<string, never>;
-  /** Anyone (player or bot) died; modes count tickets from this. */
+  /** Anyone (player or bot) died for good (bled out or gave up); modes count tickets from this. */
   'combatant:died': { team: Team; id: number };
+  /** A downed soldier was revived by `byId` (tickets and the death are spared). */
+  /** `byId` handed `id` a medkit or ammo (score). */
+  'combatant:resupplied': { byId: number; id: number };
+  'combatant:revived': { team: Team; id: number; name: string; byId: number; byName: string; medic: boolean };
   'zone:captured': { zone: string; team: Team };
   /** `team` lost the zone (it is neutral now). */
   'zone:neutralized': { zone: string; team: Team };

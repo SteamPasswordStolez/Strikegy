@@ -16,7 +16,7 @@ import { aimErrorDeg, noticeTime, offAxisDeg, turnToward, wrapAngle, yawPitchOf 
 import type { Combatant } from './types';
 import { rollPersonality, type Personality } from './personality';
 import { COMBAT_WINDOW } from '@/modes/squads';
-import type { ClassId } from '@/data/classes';
+import { CLASSES, DOWN as DOWN_RULES, MEDKIT, REVIVE_RANGE, type ClassId } from '@/data/classes';
 
 const DEG = Math.PI / 180;
 const DOWN = { x: 0, y: -1, z: 0 };
@@ -94,6 +94,13 @@ export interface BotServices {
   waterDepth(p: THREE.Vector3): number;
   /** Navmesh path for this bot to `to` (round by a bridge rather than wading when it isn't far). */
   route(bot: Bot, to: THREE.Vector3, out: THREE.Vector3[]): boolean;
+  /** Takes on the nearest downed teammate within `radius` nobody else is reviving, or null. */
+  claimRevive(bot: Bot, radius: number): Combatant | null;
+  releaseRevive(bot: Bot): void;
+  /** Who is reviving `c` (a bot on its way or at work), if anyone. */
+  reviverFor(c: Combatant): Bot | null;
+  /** Finished reviving `c`. */
+  revive(bot: Bot, c: Combatant): void;
 }
 
 let nextBotId = 1;
@@ -113,7 +120,22 @@ export class Bot implements Damageable, Combatant {
   crouchBlend = 0;
   grounded = false;
   firingUntil = -1;
+  /** Seconds since dying for good (respawn timer). */
   deadTime = 0;
+  /** Down: health gone, lying there until revived or bled out. */
+  downed = false;
+  /** Out of the fight for good (bled out or gave up): waiting to respawn. */
+  dead = false;
+  /** Seconds spent down. */
+  downTime = 0;
+  /** Medkits left (medics: endless, on a cooldown). */
+  medkits = 0;
+  private medkitReadyAt = 0;
+  /** Just revived: can't be hurt until this time. */
+  private shieldUntil = -Infinity;
+  /** Downed teammate this bot is going to revive, and how far along it is (s). */
+  reviveOf: Combatant | null = null;
+  reviveProgress = 0;
   /** Extra respawn wait (squad wiped out); cleared on spawn. */
   respawnPenalty = 0;
   action: BotAction = 'advance';
@@ -267,14 +289,22 @@ export class Bot implements Damageable, Combatant {
     this.dodgeUntil = -Infinity;
     this.deadTime = 0;
     this.respawnPenalty = 0;
+    this.downed = this.dead = false;
+    this.downTime = 0;
+    this.shieldUntil = -Infinity;
+    this.medkits = this.cls === 'medic' ? Infinity : MEDKIT.carried;
+    this.medkitReadyAt = 0;
+    this.reviveOf = null;
+    this.reviveProgress = 0;
   }
 
   inCombat(now: number): boolean {
     return !!this.target || now - this.lastHurt < COMBAT_WINDOW || this.firingUntil > now - COMBAT_WINDOW;
   }
 
+  /** Returns true when this hit took the bot down (the kill is credited then). */
   applyDamage(amount: number, part: HitPart, source?: DamageSource): boolean {
-    if (!this.alive) return false;
+    if (!this.alive || this.nowRef < this.shieldUntil) return false;
     const killed = this.health.damage(amount);
     this.lastHurt = this.nowRef;
     void part;
@@ -287,16 +317,44 @@ export class Bot implements Damageable, Combatant {
       this.suppression = Math.min(1, this.suppression + 0.35);
       if (!this.target) this.faceToward(source.pos, 0.6);
     }
-    if (killed) this.die();
+    if (killed) this.goDown();
     return killed;
   }
 
-  private die(): void {
+  /** Health gone: down on the ground, out of the fight, waiting for a revive. */
+  private goDown(): void {
     this.capsule.setEnabled(false);
     this.hitboxes.setEnabled(false);
     this.target = null;
-    this.deadTime = 0;
     this.velocity.set(0, 0, 0);
+    this.downed = true;
+    this.downTime = 0;
+    this.reviveOf = null;
+    this.reviveProgress = 0;
+    this.path.length = 0;
+    this.hasGoal = false;
+    this.setCrouch(false);
+  }
+
+  /** Bled out or gave up: dead for good until the respawn. */
+  finish(): void {
+    if (!this.downed) return;
+    this.downed = false;
+    this.dead = true;
+    this.deadTime = 0;
+  }
+
+  /** Back on their feet with `health`, briefly protected. */
+  revive(health: number, now: number): void {
+    if (!this.downed) return;
+    this.downed = false;
+    this.health.value = health;
+    this.capsule.setEnabled(true);
+    this.hitboxes.setEnabled(true);
+    this.hitboxes.place(this.feet, this.yaw);
+    this.body.setTranslation(this.center(), true);
+    this.shieldUntil = now + DOWN_RULES.reviveShield;
+    this.suppression = 0;
   }
 
   /** Last sim time seen by step() (damage callbacks arrive between steps). */
@@ -344,6 +402,13 @@ export class Bot implements Damageable, Combatant {
   step(dt: number, s: BotServices): void {
     this.nowRef = s.time;
     this.prevFeet.copy(this.feet);
+    if (this.downed) {
+      this.downTime += dt;
+      // Bleed out, or give up early when nobody is around to help.
+      const alone = this.downTime > 4 && !s.reviverFor(this) && s.alliesNear(this.team, this.feet, 25) === 0;
+      if (this.downTime >= DOWN_RULES.bleedOut || alone) this.finish();
+      return;
+    }
     if (!this.alive) {
       this.deadTime += dt;
       return;
@@ -363,6 +428,7 @@ export class Bot implements Damageable, Combatant {
       this.thinkTimer += THINK_EVERY;
       this.think(s);
     }
+    this.updateRevive(dt, s);
     this.updatePeek(s);
     this.updateAim(dt, s);
     this.updateMovement(dt, s);
@@ -437,6 +503,8 @@ export class Bot implements Damageable, Combatant {
     const w = this.weapon;
     // Running from a grenade: nothing else matters for a moment.
     if (s.time < this.dodgeUntil) return;
+    this.considerMedkit(s);
+    if (this.planRevive(s)) return;
     if (this.blinded) {
       this.reactBlind(s);
       return;
@@ -539,6 +607,68 @@ export class Bot implements Damageable, Combatant {
     // Reload opportunistically when nothing is visible.
     if (!this.target && w.ammo < this.def.magSize * 0.4 && w.canReload()) w.startReload();
     this.considerGrenade(s, inCover);
+  }
+
+  /** Hurt and out of the line of fire: patch up with a medkit. */
+  private considerMedkit(s: BotServices): void {
+    if (this.health.value > 45 || s.time < this.medkitReadyAt || this.medkits <= 0) return;
+    if (s.time - this.lastHurt < 0.8 || (this.target && !this.inCover)) return;
+    this.health.value = 100;
+    this.pauseUntil = s.time + MEDKIT.useTime;
+    if (this.cls === 'medic') this.medkitReadyAt = s.time + MEDKIT.medicCooldown;
+    else this.medkits--;
+  }
+
+  /**
+   * Go and revive a downed teammate when it's quiet enough (medics reach
+   * farther and don't wait as long). Returns true while busy with it.
+   */
+  private planRevive(s: BotServices): boolean {
+    const m = this.reviveOf;
+    if (m && (!m.downed || this.target || s.time - this.lastHurt < 1)) {
+      s.releaseRevive(this);
+      this.reviveOf = null;
+      this.reviveProgress = 0;
+      return false;
+    }
+    if (!m) {
+      const calm = this.cls === 'medic' ? 1.2 : 2.5;
+      if (this.target || this.suppression > 0.35 || s.time - this.lastHurt < calm) return false;
+      const found = s.claimRevive(this, this.cls === 'medic' ? 32 : 16);
+      if (!found) return false;
+      this.reviveOf = found;
+      this.reviveProgress = 0;
+    }
+    const to = this.reviveOf!;
+    if (this.feet.distanceTo(to.feet) > REVIVE_RANGE * 0.8) {
+      this.action = 'cover'; // sprint over, no strafing
+      this.setGoal(to.feet, s);
+    } else {
+      this.hasGoal = false;
+    }
+    return true;
+  }
+
+  /** Kneeling next to the downed mate: count up, then get them up. */
+  private updateRevive(dt: number, s: BotServices): void {
+    const m = this.reviveOf;
+    if (!m) return;
+    if (this.feet.distanceTo(m.feet) > REVIVE_RANGE) {
+      this.reviveProgress = 0;
+      return;
+    }
+    this.reviveProgress += dt;
+    if (this.reviveProgress >= CLASSES[this.cls].reviveTime) {
+      s.revive(this, m);
+      s.releaseRevive(this);
+      this.reviveOf = null;
+      this.reviveProgress = 0;
+    }
+  }
+
+  /** At a downed mate's side and working on them. */
+  get reviving(): boolean {
+    return !!this.reviveOf && this.reviveProgress > 0;
   }
 
   /** Enemies within `range` this bot has noticed. */
@@ -771,7 +901,10 @@ export class Bot implements Damageable, Combatant {
     let yaw = this.aimYaw;
     let pitch = 0;
     const t = this.target;
-    if (s.time < this.lookAwayUntil) {
+    if (this.reviveOf && this.feet.distanceTo(this.reviveOf.feet) < REVIVE_RANGE * 2) {
+      // Looking down at the mate being revived.
+      [yaw, pitch] = yawPitchOf(this.reviveOf.feet.x - this.feet.x, -1.2, this.reviveOf.feet.z - this.feet.z);
+    } else if (s.time < this.lookAwayUntil) {
       // Our own flash is about to pop: turn our back to it.
       [yaw] = yawPitchOf(this.feet.x - this.lookAwayFrom.x, 0, this.feet.z - this.lookAwayFrom.z);
     } else if (t) {
@@ -875,6 +1008,7 @@ export class Bot implements Damageable, Combatant {
     const inCover = this.inCover;
     const crouchRange = 22 - this.personality.caution * 12;
     const wantCrouch =
+      this.reviving ||
       speed === 0 &&
       (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)
         ? !this.peeking

@@ -11,6 +11,8 @@ export interface Combatant {
   readonly name: string;
   readonly team: Team;
   readonly alive: boolean;
+  /** Down (health gone, waiting for a revive): not a target, can be revived. */
+  readonly downed: boolean;
   /** Feet position (current sim state). */
   readonly feet: THREE.Vector3;
   readonly velocity: THREE.Vector3;

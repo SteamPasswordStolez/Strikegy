@@ -659,6 +659,34 @@ export class AudioSystem {
 
   // ---------- grenades ----------
 
+  /** Medkit: a zip, a tear and the syringe click. */
+  medkit(): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    this.noiseBurst(out, t, 0.16, 0.1, { type: 'bandpass', freq: 3400, q: 1.2, endFreq: 1900 });
+    this.noiseBurst(out, t + 0.2, 0.08, 0.08, { type: 'highpass', freq: 2200 });
+    this.mechClick(out, t + 0.42, 2600, 0.08);
+  }
+
+  /** Revived (or revived someone): a short rising pair of tones. */
+  revived(): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0.1);
+    this.tone(out, t, 660, 0.12, 0.05, 'triangle');
+    this.tone(out, t + 0.1, 990, 0.18, 0.05, 'triangle');
+  }
+
+  /** Handing a kit over / receiving one. */
+  resupply(): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    this.mechClick(out, t, 1800, 0.1);
+    this.noiseBurst(out, t + 0.03, 0.12, 0.08, { type: 'bandpass', freq: 900, q: 0.9, endFreq: 600 });
+  }
+
   pinAndThrow(): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;

@@ -1,7 +1,7 @@
 import type { Team } from '@/world/mapTypes';
 
 /** Points per action (BF-style score column). */
-export const POINTS = { kill: 100, headshot: 25, capture: 150, neutralize: 75 } as const;
+export const POINTS = { kill: 100, headshot: 25, capture: 150, neutralize: 75, revive: 100, reviveMedic: 150, resupply: 20 } as const;
 
 export interface ScoreRow {
   id: number;
@@ -39,6 +39,18 @@ export class ScoreTracker {
   death(id: number): void {
     const r = this.rows.get(id);
     if (r) r.deaths++;
+  }
+
+  /** Got a downed teammate back up (medics earn more for it). */
+  revive(id: number, medic: boolean): void {
+    const r = this.rows.get(id);
+    if (r) r.score += medic ? POINTS.reviveMedic : POINTS.revive;
+  }
+
+  /** Handed a teammate a medkit or ammo. */
+  resupply(id: number): void {
+    const r = this.rows.get(id);
+    if (r) r.score += POINTS.resupply;
   }
 
   /** Everyone who was in the zone when it was captured / neutralized. */

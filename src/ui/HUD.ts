@@ -26,6 +26,12 @@ export interface HudFrame {
   zone: ZoneHud | null;
   /** The player's squad (bot matches). */
   squad: SquadHud | null;
+  /** Medkit state beside the health bar ('1', '0', '12s'), or null when not in play. */
+  medkit: { text: string; ready: boolean } | null;
+  /** Down and waiting for a revive. */
+  down: { left: number; giveUp: number; reviver: string | null; revive: number } | null;
+  /** What E would do here, with progress while holding it. */
+  prompt: { text: string; progress: number | null } | null;
   fps: number | null;
   debug: string | null;
 }
@@ -41,7 +47,7 @@ export interface ZoneHud {
 
 export interface SquadHud {
   name: string;
-  members: { name: string; state: 'ok' | 'combat' | 'dead'; you: boolean }[];
+  members: { name: string; state: 'ok' | 'combat' | 'down' | 'dead'; you: boolean }[];
 }
 
 export interface KillEntry {
@@ -98,12 +104,20 @@ export class HUD {
   private zoneHereText: HTMLDivElement;
   private squadEl: HTMLDivElement;
   private notices: HTMLDivElement;
+  private medkit: HTMLDivElement;
+  private downEl: HTMLDivElement;
+  private downText: HTMLDivElement;
+  private downBar: HTMLDivElement;
+  private promptEl: HTMLDivElement;
+  private promptText: HTMLDivElement;
+  private promptFill: HTMLDivElement;
   private noticeItems: { el: HTMLDivElement; life: number }[] = [];
   private arcs: DamageArc[] = [];
   private feedItems: { el: HTMLDivElement; life: number }[] = [];
   private hitTimer = 0;
   private hurtPulse = 0;
   private last: Record<string, string> = {};
+  private readonly touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
@@ -127,6 +141,7 @@ export class HUD {
     this.health = el('div', 'hud-health', bottomLeft);
     const bar = el('div', 'hud-healthbar', bottomLeft);
     this.healthFill = el('div', 'hud-healthbar-fill', bar);
+    this.medkit = el('div', 'hud-medkit', bottomLeft);
     this.fps = el('div', 'hud-fps', this.root);
     this.death = el('div', 'hud-death', this.root);
     this.score = el('div', 'hud-score', this.root);
@@ -138,6 +153,12 @@ export class HUD {
     this.zoneHereText = el('div', 'zone-here-text', this.zoneHere);
     this.zoneHereFill = el('div', 'zone-here-fill', el('div', 'zone-here-track', this.zoneHere));
     this.notices = el('div', 'hud-notices', this.root);
+    this.downEl = el('div', 'hud-down', this.root);
+    this.downText = el('div', 'hud-down-text', this.downEl);
+    this.downBar = el('div', 'hud-down-fill', el('div', 'hud-down-track', this.downEl));
+    this.promptEl = el('div', 'hud-prompt', this.root);
+    this.promptText = el('div', 'hud-prompt-text', this.promptEl);
+    this.promptFill = el('div', 'hud-prompt-fill', el('div', 'hud-prompt-track', this.promptEl));
     this.flashEl = el('div', 'hud-flash', this.root);
   }
 
@@ -192,7 +213,7 @@ export class HUD {
 
     const gap = Math.round(f.crosshairGap);
     this.set('gap', String(gap), () => this.crosshair.style.setProperty('--gap', `${gap}px`));
-    const dead = f.respawnIn !== null;
+    const dead = f.respawnIn !== null || f.down !== null;
     const chOpacity = dead ? '0' : (1 - f.adsBlend).toFixed(2);
     this.set('chOp', chOpacity, () => (this.crosshair.style.opacity = chOpacity));
     const scoped = f.scoped && f.adsBlend > 0.95 && !dead;
@@ -252,10 +273,28 @@ export class HUD {
     }
 
     const killer = f.killedBy ? `\n${t('hud.killedBy')} ${f.killedBy}` : '';
-    const deathText = dead ? `${t('hud.dead')}${killer}\n${t('hud.respawnIn')} ${Math.ceil(f.respawnIn!)}` : '';
+    const gone = f.respawnIn !== null;
+    const deathText = gone ? `${t('hud.dead')}${killer}\n${t('hud.respawnIn')} ${Math.ceil(f.respawnIn!)}` : '';
     this.set('death', deathText, () => {
       this.deathText.textContent = deathText;
-      this.death.classList.toggle('on', dead);
+      this.death.classList.toggle('on', gone);
+    });
+    this.updateDown(f.down, killer);
+    const kitKey = f.medkit ? `${f.medkit.text}|${f.medkit.ready}` : '';
+    this.set('medkit', kitKey, () => {
+      this.medkit.style.display = f.medkit ? '' : 'none';
+      if (!f.medkit) return;
+      this.medkit.textContent = `✚ ${f.medkit.text}`;
+      this.medkit.classList.toggle('ready', f.medkit.ready);
+    });
+    const pr = f.prompt;
+    const prKey = pr ? `${pr.text}|${pr.progress === null ? '' : Math.round(pr.progress * 50)}` : '';
+    this.set('prompt', prKey, () => {
+      this.promptEl.classList.toggle('on', !!pr);
+      if (!pr) return;
+      this.promptText.textContent = pr.text;
+      this.promptEl.classList.toggle('holding', pr.progress !== null);
+      this.promptFill.style.width = `${Math.round((pr.progress ?? 0) * 100)}%`;
     });
     this.updateZone(f.zone, dead);
     this.updateSquad(f.squad);
@@ -277,6 +316,25 @@ export class HUD {
 
     const fpsText = f.fps === null ? '' : `${f.fps} FPS${f.debug ? ` · ${f.debug}` : ''}`;
     this.set('fps', fpsText, () => (this.fps.textContent = fpsText));
+  }
+
+  /** Down: grey screen, bleed-out countdown, who is coming to help, give-up progress. */
+  private updateDown(d: HudFrame['down'], killer: string): void {
+    const text = d
+      ? [
+          `${t('hud.down')}${killer}`,
+          d.reviver ? `${d.reviver} ${t('hud.beingRevived')}` : `${t('hud.bleedOut')} ${Math.ceil(d.left)}`,
+          this.touch ? t('hud.giveUpTouch') : t('hud.giveUp'),
+        ].join('\n')
+      : '';
+    const bar = d ? Math.round((d.reviver ? d.revive : d.giveUp) * 50) : 0;
+    this.set('down', `${text}|${bar}|${d?.reviver ? 1 : 0}`, () => {
+      this.downEl.classList.toggle('on', !!d);
+      this.root.classList.toggle('is-down', !!d);
+      this.downText.textContent = text;
+      this.downEl.classList.toggle('reviving', !!d?.reviver);
+      this.downBar.style.width = `${bar * 2}%`;
+    });
   }
 
   private updateZone(z: ZoneHud | null, dead: boolean): void {

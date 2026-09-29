@@ -15,7 +15,8 @@ import { SoldierModel } from './SoldierModel';
 import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
-import { PLAYER_TEAM, otherTeam, type Combatant } from './types';
+import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from './types';
+import { CLASSES, GIVE_RANGE, MEDKIT } from '@/data/classes';
 import type { WaterMap } from '@/world/water';
 
 const DEG = Math.PI / 180;
@@ -95,6 +96,8 @@ export interface BotModeHooks {
   objectives(team: Team): BotObjective[];
   /** Respawn position for a bot (given the squad objective it is assigned to). */
   spawnAt(bot: Bot, objective: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
+  /** A bot revived the downed player. */
+  revivePlayer?(by: Bot, health: number): void;
 }
 
 /** A squad as the bots see it: members and, for the player's squad, the leader to follow. */
@@ -146,8 +149,9 @@ interface BotEntry {
   role: 'assault' | 'flank';
   flankSide: number;
   wasAlive: boolean;
-  /** Alive at the end of the last sim step (for death events). */
+  /** Alive / dead for good at the end of the last sim step (for down and death events). */
   simAlive: boolean;
+  simDead: boolean;
   /** Mode objective this bot is assigned to, if any. */
   objective: BotObjective | null;
   /** Flank run in progress, and the contact (its start time) it was for. */
@@ -200,6 +204,11 @@ export class BotManager implements BotServices {
   private readonly blobs: THREE.InstancedMesh;
   private readonly blobMatrix = new THREE.Matrix4();
   private coverBudget = 0;
+  /** Downed soldier id -> the bot going to revive them. */
+  private readonly revivers = new Map<number, { bot: Bot; target: Combatant }>();
+  private downMaterial: THREE.SpriteMaterial | null = null;
+  /** Medic id * 4096 + receiver id -> time the medic may hand that soldier another kit. */
+  private readonly kitGiven = new Map<number, number>();
   /** Set by the game mode (Zone): squad objectives and respawn points. */
   hooks: BotModeHooks | null = null;
   /** Set by the game: where bot grenades go. */
@@ -253,6 +262,7 @@ export class BotManager implements BotServices {
           flankSide: i % 2 ? 1 : -1,
           wasAlive: true,
           simAlive: true,
+          simDead: false,
           objective: null,
           squad: -1,
           leader: null,
@@ -311,13 +321,82 @@ export class BotManager implements BotServices {
       b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
       b.step(dt, this);
       if (e.simAlive && !b.alive) {
-        this.bus.emit('combatant:died', { team: b.team, id: b.id });
+        // Down: out of the fight (the kill was reported when the shot landed).
         this.release(e);
         this.shareKill(b);
+        this.releaseRevive(b);
       }
-      if (!b.alive && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
+      if (!e.simDead && b.dead) this.bus.emit('combatant:died', { team: b.team, id: b.id });
+      if (b.dead && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
       e.simAlive = b.alive;
+      e.simDead = b.dead;
     }
+    for (const [id, r] of this.revivers) if (!r.target.downed || !r.bot.alive || r.bot.reviveOf !== r.target) this.revivers.delete(id);
+    this.shareMedkits();
+  }
+
+  /** Medics hand a medkit to teammates next to them who have used theirs (twice a second, per pair on a cooldown). */
+  private shareMedkits(): void {
+    if (Math.floor(this.time * 2) === Math.floor((this.time - 1 / 60) * 2)) return;
+    for (const m of this.entries) {
+      const medic = m.bot;
+      if (medic.cls !== 'medic' || !medic.alive || medic.target) continue;
+      for (const o of this.entries) {
+        const b = o.bot;
+        if (b === medic || b.team !== medic.team || !b.alive || b.medkits > 0 || b.feet.distanceTo(medic.feet) > GIVE_RANGE) continue;
+        const key = medic.id * 4096 + b.id;
+        if ((this.kitGiven.get(key) ?? -Infinity) > this.time) continue;
+        b.medkits = MEDKIT.carried;
+        this.kitGiven.set(key, this.time + MEDKIT.giveCooldown);
+        this.bus.emit('combatant:resupplied', { byId: medic.id, id: b.id });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reviving
+
+  claimRevive(bot: Bot, radius: number): Combatant | null {
+    let best: Combatant | null = null;
+    let bestD = radius;
+    const consider = (c: Combatant) => {
+      if (c === bot || c.team !== bot.team || !c.downed) return;
+      const taken = this.revivers.get(c.id);
+      if (taken && taken.bot !== bot) return;
+      const d = c.feet.distanceTo(bot.feet);
+      // Don't walk into a crossfire for it.
+      if (d >= bestD || this.enemiesNear(bot.team, c.feet, 12) > 0) return;
+      best = c;
+      bestD = d;
+    };
+    for (const e of this.entries) consider(e.bot);
+    consider(this.player);
+    if (best) this.revivers.set((best as Combatant).id, { bot, target: best });
+    return best;
+  }
+
+  releaseRevive(bot: Bot): void {
+    for (const [id, r] of this.revivers) if (r.bot === bot) this.revivers.delete(id);
+  }
+
+  reviverFor(c: Combatant): Bot | null {
+    return this.revivers.get(c.id)?.bot ?? null;
+  }
+
+  revive(bot: Bot, c: Combatant): void {
+    if (!c.downed) return;
+    const health = CLASSES[bot.cls].reviveHealth;
+    if (c.id === PLAYER_ID) this.hooks?.revivePlayer?.(bot, health);
+    else (c as Bot).revive(health, this.time);
+    this.bus.emit('combatant:revived', { team: c.team, id: c.id, name: c.name, byId: bot.id, byName: bot.name, medic: bot.cls === 'medic' });
+  }
+
+  /** The player revived a bot. */
+  revivedByPlayer(b: Bot, health: number, byName: string, medic: boolean): void {
+    if (!b.downed) return;
+    this.releaseRevive(b);
+    b.revive(health, this.time);
+    this.bus.emit('combatant:revived', { team: b.team, id: b.id, name: b.name, byId: PLAYER_ID, byName, medic });
   }
 
   /** Mates near a fallen bot learn where the fatal shot came from. */
@@ -1089,10 +1168,10 @@ export class BotManager implements BotServices {
         crouch: b.crouchAmount(dt),
         yaw: b.yaw,
         aimPitch: b.aimPitch,
-        deadFor: b.alive ? -1 : b.deadTime,
+        deadFor: b.alive ? -1 : b.downed ? b.downTime : 10,
         dt,
       });
-      e.model.root.visible = b.alive || b.deadTime < RESPAWN_SEC - 0.2;
+      e.model.root.visible = b.alive || b.downed || b.deadTime < RESPAWN_SEC - 0.2;
       if (e.model.root.visible) {
         // Wider under a body lying on the ground.
         const s = BLOB_SIZE * (b.alive ? 1 : 1.5);
@@ -1100,8 +1179,12 @@ export class BotManager implements BotServices {
         this.blobs.setMatrixAt(blobs++, this.blobMatrix);
       }
       if (e.marker) {
-        e.marker.visible = b.alive;
-        e.marker.position.set(pos.x, pos.y + b.eyeHeight + 0.55, pos.z);
+        // Downed allies get a revive cross over them instead of the chevron.
+        e.marker.visible = b.alive || b.downed;
+        const mat = b.downed ? this.reviveMarker() : this.markerMaterial('#4d8cff');
+        if (e.marker.material !== mat) e.marker.material = mat;
+        e.marker.scale.setScalar(b.downed ? 0.03 : 0.022);
+        e.marker.position.set(pos.x, pos.y + (b.downed ? 0.9 : b.eyeHeight + 0.55), pos.z);
       }
     }
     this.blobs.count = blobs;
@@ -1140,6 +1223,27 @@ export class BotManager implements BotServices {
     s.renderOrder = 10;
     s.layers.set(LAYER_FX);
     return s;
+  }
+
+  /** Green cross over downed allies (seen through walls). */
+  private reviveMarker(): THREE.SpriteMaterial {
+    if (!this.downMaterial) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#6bdc6b';
+      g.strokeStyle = 'rgba(0,0,0,0.65)';
+      g.lineWidth = 4;
+      g.beginPath();
+      for (const [x, y] of [[24, 8], [40, 8], [40, 24], [56, 24], [56, 40], [40, 40], [40, 56], [24, 56], [24, 40], [8, 40], [8, 24], [24, 24]]) g.lineTo(x!, y!);
+      g.closePath();
+      g.stroke();
+      g.fill();
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      this.downMaterial = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false, toneMapped: false });
+    }
+    return this.downMaterial;
   }
 
   private markerMaterial(color: string): THREE.SpriteMaterial {

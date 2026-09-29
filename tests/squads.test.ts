@@ -8,6 +8,7 @@ const member = (id: number, alive = true, combat = false): SquadMember => ({
   name: `M${id}`,
   team: 'blue',
   alive,
+  downed: false,
   feet: new THREE.Vector3(),
   yaw: 0,
   inCombat: () => combat,

@@ -20,6 +20,8 @@ export interface SquadMember {
   readonly name: string;
   readonly team: Team;
   readonly alive: boolean;
+  /** Down, waiting for a revive (not alive, not dead yet). */
+  readonly downed: boolean;
   readonly feet: THREE.Vector3;
   readonly yaw: number;
   inCombat(now: number): boolean;
@@ -56,11 +58,11 @@ export function formSquads(team: Team, members: readonly SquadMember[], size = S
   return out;
 }
 
-export type MateSpawnBlock = 'dead' | 'combat' | null;
+export type MateSpawnBlock = 'dead' | 'down' | 'combat' | null;
 
 /** Why a squadmate cannot be spawned on right now (null = allowed). */
 export function mateSpawnBlock(m: SquadMember, now: number): MateSpawnBlock {
-  if (!m.alive) return 'dead';
+  if (!m.alive) return m.downed ? 'down' : 'dead';
   if (m.inCombat(now)) return 'combat';
   return null;
 }

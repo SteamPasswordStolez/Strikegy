@@ -23,7 +23,7 @@ import { WaterMap } from '@/world/water';
 import { Snowfall } from '@/render/snowfall';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
-import { consumePulses, createInputState, resetFrameInput, type InputSource } from '@/input/InputState';
+import { consumePulses, createInputState, resetFrameInput, type InputSource, type InputState } from '@/input/InputState';
 import { KeyboardMouse } from '@/input/KeyboardMouse';
 import { TouchControls } from '@/input/Touch';
 import { Player } from '@/player/Player';
@@ -58,7 +58,20 @@ import type { Bot } from '@/ai/Bot';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { Scoreboard, type ScoreboardSide } from '@/ui/Scoreboard';
 import type { Team } from '@/world/mapTypes';
-import { ASSAULT_WADE_EASE, RECON_ZOOM, loadoutWeapons, moveBonus, zoomedFov, type ClassId } from '@/data/classes';
+import {
+  AMMO_GIVE_COOLDOWN,
+  ASSAULT_WADE_EASE,
+  CLASSES,
+  DOWN,
+  GIVE_RANGE,
+  MEDKIT,
+  RECON_ZOOM,
+  REVIVE_RANGE,
+  loadoutWeapons,
+  moveBonus,
+  zoomedFov,
+  type ClassId,
+} from '@/data/classes';
 import { LoadoutStore } from '@/data/loadoutStore';
 import { LoadoutPanel } from '@/ui/LoadoutPanel';
 
@@ -182,6 +195,28 @@ export class Game {
   private cls: ClassId = 'assault';
   /** Recon: scope zoomed the extra 1.5x (wheel while aiming). */
   private reconZoom = false;
+  /** Sim clock (s) for cooldowns, shields and the down timer. */
+  private simTime = 0;
+  /** Down: health gone, waiting for a revive; bleeds out or gives up into a real death. */
+  private playerDowned = false;
+  private downTime = 0;
+  private giveUpHold = 0;
+  private downCause: DamageCause = 'bullet';
+  private downSource: DamageSource | undefined;
+  private reviveShieldUntil = -Infinity;
+  /** Medkits carried (medics: endless on a cooldown until `medkitReadyAt`). */
+  private medkits: number = MEDKIT.carried;
+  private medkitReadyAt = 0;
+  /** Seconds left of using a medkit (weapon lowered) and of the heal after it. */
+  private medkitUse = 0;
+  private healLeft = 0;
+  /** Downed ally the player is reviving (holding E) and progress (s). */
+  private reviveOf: Bot | null = null;
+  private reviveProgress = 0;
+  /** What E does right now (HUD prompt, touch button). */
+  private interact: { kind: 'revive' | 'medkit'; bot: Bot } | null = null;
+  /** Next time a giver may hand the same receiver the same thing: 'giver>receiver:kind' -> sim time. */
+  private readonly giveReady = new Map<string, number>();
 
   private constructor(
     private readonly container: HTMLElement,
@@ -577,7 +612,7 @@ export class Game {
       const adsFov = this.aimFov() * (this.settings.fov / AUTHORED_FOV);
       const adsScale = this.settings.adsSensitivity * (adsFov / this.settings.fov);
       const sens = 1 + (adsScale - 1) * w.adsBlend;
-      if (p.alive) {
+      if (p.alive || this.playerDowned) {
         lookYaw = input.lookYaw * sens;
         lookPitch = input.lookPitch * sens;
         if (this.touch && this.deployed) {
@@ -642,6 +677,9 @@ export class Game {
       get alive() {
         return game.player.alive && game.deployed;
       },
+      get downed() {
+        return game.playerDowned && game.deployed;
+      },
       get feet() {
         return game.player.feet;
       },
@@ -701,6 +739,7 @@ export class Game {
   private simStep(dt: number): void {
     const input = this.input;
     const p = this.player;
+    this.simTime += dt;
     this.throwBlock = Math.max(0, this.throwBlock - dt);
     this.throwCooldown = Math.max(0, this.throwCooldown - dt);
 
@@ -715,6 +754,9 @@ export class Game {
       }
       p.speedBonus = moveBonus(this.cls, w.def);
       p.wadePenalty = this.cls === 'assault' ? ASSAULT_WADE_EASE : 1;
+      if (input.medkit) this.useMedkit();
+      this.stepMedkit(dt);
+      this.stepInteract(dt, input);
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
       const firing = input.fire;
       // Pulling the trigger, aiming or swinging ends a sprint immediately.
@@ -722,8 +764,12 @@ export class Game {
         input.sprint = false;
         p.sprinting = false;
       }
-      this.weapons.step(dt, input, p, this.throwBlock > 0);
+      // Hands busy (throwing, patching up, reviving): no shooting.
+      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0;
+      this.weapons.step(dt, input, p, busy);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
+    } else if (this.playerDowned) {
+      this.stepDowned(dt, input.jumpHeld);
     } else {
       this.respawnTimer -= dt;
       // With a deploy screen the player chooses when to go; otherwise respawn automatically.
@@ -731,6 +777,7 @@ export class Game {
     }
     this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
     this.bots?.step(dt);
+    this.botsResupplyPlayer();
     this.zoneMode?.step(dt, this.combatants());
     this.throwables.step(dt);
     this.physics.step();
@@ -850,7 +897,7 @@ export class Game {
   /** Returns true if this damage killed the player. */
   private damagePlayer(amount: number, from: THREE.Vector3 | null, cause: DamageCause, source?: DamageSource): boolean {
     const p = this.player;
-    if (!p.alive) return false;
+    if (!p.alive || this.simTime < this.reviveShieldUntil) return false;
     const killed = p.health.damage(amount);
     this.playerHurtAt = this.bots?.time ?? 0;
     this.bus.emit('player:damaged', { amount, from, cause });
@@ -863,25 +910,178 @@ export class Game {
     this.hud.showDamage(yaw, amount);
     this.audio.hurt(amount);
     this.shake = Math.min(0.05, this.shake + amount * 0.0004);
-    if (killed) this.die(cause, source);
+    if (killed) this.goDown(cause, source);
     return killed;
   }
 
-  private die(cause: DamageCause, source?: DamageSource): void {
-    this.respawnTimer = RESPAWN_SEC;
+  /** Health gone: down on the ground until revived, bled out or given up. */
+  private goDown(cause: DamageCause, source?: DamageSource): void {
+    this.playerDowned = true;
+    this.downTime = 0;
+    this.giveUpHold = 0;
+    this.downCause = cause;
+    this.downSource = source;
     this.weapons.adsBlend = 0;
-    if (this.deployFlow) {
-      this.deployed = false;
-      this.deployAt = this.elapsed + DEATH_CAM_SEC;
-    }
+    this.weapons.state.cancelReload();
+    this.medkitUse = this.healLeft = 0;
+    this.reviveOf = null;
+    this.reviveProgress = 0;
+    this.interact = null;
     this.playerBoxes.setEnabled(false);
-    this.bus.emit('player:died', { cause });
-    this.bus.emit('combatant:died', { team: PLAYER_TEAM, id: PLAYER_ID });
     this.killedBy = source && source.id !== PLAYER_ID ? source.name : null;
     // Kills by others are reported by whoever made them; self-inflicted ones here.
     if (!this.killedBy) {
       const weapon = cause === 'explosion' ? t('grenade.frag') : cause === 'fall' ? '↓' : '';
       this.hud.addKill({ attacker: 'You', victim: 'You', weapon, headshot: false });
+    }
+  }
+
+  private stepDowned(dt: number, holdingGiveUp: boolean): void {
+    this.downTime += dt;
+    this.giveUpHold = holdingGiveUp ? this.giveUpHold + dt : 0;
+    if (this.giveUpHold >= DOWN.giveUpHold || this.downTime >= DOWN.bleedOut) this.die(this.downCause, this.downSource);
+  }
+
+  /** A bot got the player back up. */
+  private revivePlayer(by: string, health: number): void {
+    if (!this.playerDowned) return;
+    this.playerDowned = false;
+    this.player.health.value = health;
+    this.playerBoxes.setEnabled(true);
+    this.reviveShieldUntil = this.simTime + DOWN.reviveShield;
+    this.killedBy = null;
+    this.weapons.drawTimer = DRAW_TIME;
+    this.hud.notify(`${t('notify.revived')} — ${by}`, 'ally');
+    this.audio.revived();
+  }
+
+  /** Dead for good (bled out or gave up): tickets, deploy screen. */
+  private die(cause: DamageCause, source?: DamageSource): void {
+    void source;
+    this.playerDowned = false;
+    // The time spent down already counts toward the respawn wait.
+    this.respawnTimer = Math.max(0, RESPAWN_SEC - this.downTime);
+    this.weapons.adsBlend = 0;
+    if (this.deployFlow) {
+      this.deployed = false;
+      this.deployAt = this.elapsed + DEATH_CAM_SEC * 0.5;
+    }
+    this.playerBoxes.setEnabled(false);
+    this.bus.emit('player:died', { cause });
+    this.bus.emit('combatant:died', { team: PLAYER_TEAM, id: PLAYER_ID });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Medkits, reviving and handing out kits
+
+  private get medkitReady(): boolean {
+    return this.cls === 'medic' ? this.simTime >= this.medkitReadyAt : this.medkits > 0;
+  }
+
+  /** Q: patch up to full health over a second (the weapon comes down meanwhile). */
+  private useMedkit(): void {
+    if (!this.medkitReady || this.medkitUse > 0 || this.player.health.value >= 100) return;
+    if (this.cls === 'medic') this.medkitReadyAt = this.simTime + MEDKIT.medicCooldown;
+    else this.medkits--;
+    this.medkitUse = MEDKIT.useTime;
+    this.healLeft = MEDKIT.healTime;
+    this.weapons.state.cancelReload();
+    this.audio.medkit();
+  }
+
+  private stepMedkit(dt: number): void {
+    if (this.medkitUse > 0) this.medkitUse = Math.max(0, this.medkitUse - dt);
+    if (this.healLeft > 0) {
+      const h = this.player.health;
+      h.value = Math.min(100, h.value + (100 / MEDKIT.healTime) * dt);
+      this.healLeft = Math.max(0, this.healLeft - dt);
+    }
+  }
+
+  private giveOk(key: string): boolean {
+    return (this.giveReady.get(key) ?? -Infinity) <= this.simTime;
+  }
+
+  /**
+   * E near a teammate: hold to revive a downed one, tap to hand a medic's kit
+   * to one who has none. Picks the nearest thing to do.
+   */
+  private stepInteract(dt: number, input: InputState): void {
+    this.interact = null;
+    const bots = this.bots;
+    if (!bots) return;
+    const feet = this.player.feet;
+    let revive: Bot | null = null;
+    let reviveD = REVIVE_RANGE;
+    let give: Bot | null = null;
+    let giveD = GIVE_RANGE;
+    for (const b of bots.bots) {
+      if (b.team !== PLAYER_TEAM) continue;
+      const d = b.feet.distanceTo(feet);
+      if (b.downed && d < reviveD) {
+        revive = b;
+        reviveD = d;
+      } else if (this.cls === 'medic' && b.alive && b.medkits === 0 && d < giveD && this.giveOk(`${PLAYER_ID}>${b.id}:kit`)) {
+        give = b;
+        giveD = d;
+      }
+    }
+    if (revive) {
+      this.interact = { kind: 'revive', bot: revive };
+      if (!input.interact || revive !== this.reviveOf) {
+        this.reviveOf = input.interact ? revive : null;
+        this.reviveProgress = 0;
+        if (!input.interact) return;
+      }
+      this.reviveProgress += dt;
+      if (this.reviveProgress >= CLASSES[this.cls].reviveTime) {
+        bots.revivedByPlayer(revive, CLASSES[this.cls].reviveHealth, this.playerCombatant.name, this.cls === 'medic');
+        this.hud.notify(`${t('notify.revivedMate')} — ${revive.name}`, 'ally');
+        this.audio.revived();
+        this.reviveOf = null;
+        this.reviveProgress = 0;
+      }
+      return;
+    }
+    this.reviveOf = null;
+    this.reviveProgress = 0;
+    if (give) {
+      this.interact = { kind: 'medkit', bot: give };
+      if (input.interactPressed) {
+        give.medkits = MEDKIT.carried;
+        this.giveReady.set(`${PLAYER_ID}>${give.id}:kit`, this.simTime + MEDKIT.giveCooldown);
+        this.scores.resupply(PLAYER_ID);
+        this.audio.resupply();
+      }
+    }
+  }
+
+  /** Medic and support bots next to the player hand over a medkit or ammo when it's needed. */
+  private botsResupplyPlayer(): void {
+    const bots = this.bots;
+    if (!bots || !this.player.alive || !this.deployed) return;
+    const feet = this.player.feet;
+    const needKit = this.cls !== 'medic' && this.medkits === 0;
+    const needAmmo = this.weapons.needsAmmo;
+    if (!needKit && !needAmmo) return;
+    for (const b of bots.bots) {
+      if (b.team !== PLAYER_TEAM || !b.alive || b.target || b.feet.distanceTo(feet) > GIVE_RANGE) continue;
+      if (needKit && b.cls === 'medic' && this.giveOk(`${b.id}>${PLAYER_ID}:kit`)) {
+        this.medkits = MEDKIT.carried;
+        this.giveReady.set(`${b.id}>${PLAYER_ID}:kit`, this.simTime + MEDKIT.giveCooldown);
+        this.scores.resupply(b.id);
+        this.hud.notify(`${t('notify.gotMedkit')} — ${b.name}`, 'ally');
+        this.audio.resupply();
+        return;
+      }
+      if (needAmmo && b.cls === 'support' && this.giveOk(`${b.id}>${PLAYER_ID}:ammo`)) {
+        this.weapons.refillReserve();
+        this.giveReady.set(`${b.id}>${PLAYER_ID}:ammo`, this.simTime + AMMO_GIVE_COOLDOWN);
+        this.scores.resupply(b.id);
+        this.hud.notify(`${t('notify.gotAmmo')} — ${b.name}`, 'ally');
+        this.audio.resupply();
+        return;
+      }
     }
   }
 
@@ -904,6 +1104,13 @@ export class Game {
     if (this.options.sandbox) this.weapons.resetAmmo();
     else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support');
     this.grenades.reset(kit.grenade);
+    this.playerDowned = false;
+    this.downTime = 0;
+    this.medkits = MEDKIT.carried;
+    this.medkitReadyAt = 0;
+    this.medkitUse = this.healLeft = 0;
+    this.reviveOf = null;
+    this.reviveProgress = 0;
     this.hud.clearDamage();
     this.touch?.reset();
     this.flashLeft = 0;
@@ -915,8 +1122,9 @@ export class Game {
     const p = this.player;
     const w = this.weapons;
     p.eyePosition(alpha, dt, this.tmpEye);
-    // Death cam: slump to the ground and roll.
-    this.deathBlend += ((p.alive ? 0 : 1) - this.deathBlend) * (1 - Math.exp(-4 * dt));
+    // Death cam: slump to the ground and roll; down: on the ground, head up a little.
+    const gone = !p.alive && !this.playerDowned;
+    this.deathBlend += ((p.alive ? 0 : gone ? 1 : 0.7) - this.deathBlend) * (1 - Math.exp(-4 * dt));
     this.tmpEye.y -= this.deathBlend * (p.eyeHeight - 0.35);
     cam.position.copy(this.tmpEye);
 
@@ -927,7 +1135,7 @@ export class Game {
     const breathe = w.def.scope ? w.adsBlend : 0;
     const bx = Math.sin(this.elapsed * 1.1) * 0.0022 * breathe;
     const by = Math.cos(this.elapsed * 0.7) * 0.0016 * breathe;
-    cam.rotation.set(p.pitch + w.recoil.pitch + sx + bx, p.yaw + w.recoil.yaw + sy + by, this.deathBlend * 0.7, 'YXZ');
+    cam.rotation.set(p.pitch + w.recoil.pitch + sx + bx, p.yaw + w.recoil.yaw + sy + by, this.deathBlend * (gone ? 0.7 : 0.25), 'YXZ');
     const fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend;
     if (Math.abs(cam.fov - fov) > 0.01) {
       cam.fov = fov;
@@ -964,7 +1172,8 @@ export class Game {
       reloadProgress: w.state.reloadProgress,
       magReload: w.def.reloadStyle === 'mag',
       drawProgress: p.alive && this.deployed ? 1 - w.drawTimer / DRAW_TIME : 0,
-      hideForScope: !!w.def.scope && w.adsBlend > 0.95,
+      // Scoped in, or down on the ground: no gun on screen.
+      hideForScope: (!!w.def.scope && w.adsBlend > 0.95) || this.playerDowned,
       meleeT: w.meleeProgress,
       inspectT: w.inspectProgress,
     });
@@ -1048,6 +1257,29 @@ export class Game {
     const sel = this.grenades.selected;
     this.touch?.setGrenade(t(`grenade.${sel}` as MessageKey), this.grenades.count);
     this.touch?.setAmmo(s.ammo, w.def.magSize, s.reloading);
+    const onField = this.player.alive && this.deployed;
+    const kitText = this.cls === 'medic' ? (this.medkitReady ? '∞' : `${Math.ceil(this.medkitReadyAt - this.simTime)}s`) : String(this.medkits);
+    const medkit = onField ? { text: kitText, ready: this.medkitReady } : null;
+    const reviver = this.playerDowned ? (this.bots?.reviverFor(this.playerCombatant) ?? null) : null;
+    const down = this.playerDowned
+      ? {
+          left: Math.max(0, DOWN.bleedOut - this.downTime),
+          giveUp: Math.min(1, this.giveUpHold / DOWN.giveUpHold),
+          reviver: reviver?.reviving ? reviver.name : null,
+          revive: reviver ? Math.min(1, reviver.reviveProgress / CLASSES[reviver.cls].reviveTime) : 0,
+        }
+      : null;
+    const act = onField ? this.interact : null;
+    const prompt = act
+      ? act.kind === 'revive'
+        ? { text: `${this.touch ? '' : `${t('act.holdE')} · `}${t('act.revive')} ${act.bot.name}`, progress: this.reviveProgress > 0 ? this.reviveProgress / CLASSES[this.cls].reviveTime : null }
+        : { text: `${this.touch ? '' : `${t('act.pressE')} · `}${t('act.giveMedkit')} → ${act.bot.name}`, progress: null }
+      : null;
+    this.touch?.setContext({
+      medkit: medkit ? (medkit.ready ? `${t('touch.medkit')} ${kitText}` : kitText) : null,
+      interact: act ? (act.kind === 'revive' ? t('act.revive') : t('act.giveMedkit')) : null,
+      downed: this.playerDowned,
+    });
     this.hud.update(
       {
         weaponName: w.def.name,
@@ -1063,7 +1295,10 @@ export class Game {
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
         grenadeCount: this.grenades.count,
         flash,
-        respawnIn: this.player.alive ? null : Math.max(0, this.respawnTimer),
+        respawnIn: this.player.alive || this.playerDowned ? null : Math.max(0, this.respawnTimer),
+        medkit,
+        down,
+        prompt,
         killedBy: this.killedBy,
         score: this.bots ? { allies: this.bots.score(PLAYER_TEAM), enemies: this.bots.score(otherTeam(PLAYER_TEAM)) } : null,
         zone: this.zoneHud(),
@@ -1195,7 +1430,16 @@ export class Game {
     bots.hooks = {
       objectives: (team) => zm?.objectives(team) ?? [],
       spawnAt: (bot, objective) => this.spawnFor(bot.team, this.botSpawnKey(bot, objective), bot.id),
+      revivePlayer: (by, health) => this.revivePlayer(by.name, health),
     };
+    this.bus.on('combatant:resupplied', (e) => this.scores.resupply(e.byId));
+    // Revives: points to the reviver, a line in the feed for the player's side.
+    this.bus.on('combatant:revived', (e) => {
+      this.scores.revive(e.byId, e.medic);
+      if (e.team === PLAYER_TEAM && e.byId !== PLAYER_ID && e.id !== PLAYER_ID) {
+        this.hud.addKill({ attacker: e.byName, victim: e.name, weapon: `✚ ${t('feed.revived')}`, headshot: false, attackerTeam: e.team, victimTeam: e.team });
+      }
+    });
     // Squads already penalized for their current wipe (cleared once someone is back).
     const penalized = new Set<Squad>();
     this.bus.on('combatant:died', (e) => {
@@ -1328,7 +1572,7 @@ export class Game {
         label: m.name,
         x: m.feet.x,
         z: m.feet.z,
-        blocked: block === 'dead' ? t('deploy.dead') : block === 'combat' ? t('deploy.combat') : null,
+        blocked: block === 'dead' ? t('deploy.dead') : block === 'down' ? t('deploy.down') : block === 'combat' ? t('deploy.combat') : null,
         warn: null,
       });
     }
@@ -1344,7 +1588,22 @@ export class Game {
       members: sq.members.map((m) => ({
         name: m.id === PLAYER_ID ? t('feed.you') : m.name,
         // Before the first deploy the player is waiting, not dead.
-        state: m.id === PLAYER_ID ? (this.player.alive ? (this.deployed && m.inCombat(now) ? 'combat' : 'ok') : 'dead') : !m.alive ? 'dead' : m.inCombat(now) ? 'combat' : 'ok',
+        state:
+          m.id === PLAYER_ID
+            ? this.player.alive
+              ? this.deployed && m.inCombat(now)
+                ? 'combat'
+                : 'ok'
+              : this.playerDowned
+                ? 'down'
+                : 'dead'
+            : !m.alive
+              ? m.downed
+                ? 'down'
+                : 'dead'
+              : m.inCombat(now)
+                ? 'combat'
+                : 'ok',
         you: m.id === PLAYER_ID,
       })),
     };

@@ -28,7 +28,7 @@ export interface DeployState {
   zones: { id: string; x: number; z: number; r: number; owner: Tone; pushing: boolean }[];
   /** Enemy base marker (not a spawn option). */
   enemyBase: { x: number; z: number } | null;
-  squad: { name: string; members: { name: string; state: 'ok' | 'combat' | 'dead'; you: boolean }[] } | null;
+  squad: { name: string; members: { name: string; state: 'ok' | 'combat' | 'down' | 'dead'; you: boolean }[] } | null;
 }
 
 const COLOR: Record<Tone, string> = { ally: '#4d8cff', enemy: '#e0473a', neutral: '#d8d8d0' };
