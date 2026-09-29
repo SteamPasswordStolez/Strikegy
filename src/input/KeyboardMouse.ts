@@ -16,6 +16,7 @@ export class KeyboardMouse implements InputSource {
   private grenadeQueued = false;
   private medkitQueued = false;
   private interactQueued = false;
+  private buildQueued = false;
   private meleeQueued = false;
   private inspectQueued = false;
   private disposers: (() => void)[] = [];
@@ -32,6 +33,7 @@ export class KeyboardMouse implements InputSource {
       if (e.code === 'KeyR') this.reloadQueued = true;
       if (e.code === 'KeyQ') this.medkitQueued = true;
       if (e.code === 'KeyE') this.interactQueued = true;
+      if (e.code === 'KeyT') this.buildQueued = true;
       if (e.code === 'KeyG') this.grenadeQueued = true;
       if (e.code === 'KeyV') this.meleeQueued = true;
       if (e.code === 'Backquote') this.inspectQueued = true;
@@ -114,10 +116,12 @@ export class KeyboardMouse implements InputSource {
     s.throwGrenade ||= this.grenadeQueued;
     s.medkit ||= this.medkitQueued;
     s.interactPressed ||= this.interactQueued;
+    s.buildMode ||= this.buildQueued;
     s.interact ||= k.has('KeyE');
     s.jumpHeld ||= k.has('Space');
     this.medkitQueued = false;
     this.interactQueued = false;
+    this.buildQueued = false;
     this.cycleQueued = 0;
     this.slotQueued = -1;
     this.grenadeQueued = false;

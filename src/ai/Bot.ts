@@ -65,6 +65,8 @@ export interface BotServices {
   /** Takes on a job at a zone (build, restock or resupply at a station) within `radius`: the job and where to stand. */
   claimWork(bot: Bot, radius: number): { job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null;
   releaseWork(bot: Bot): void;
+  /** Speed factor where a soldier stands (barbed wire slows, 1 elsewhere). */
+  slowAt(p: THREE.Vector3): number;
   /** One step of work at the job; false when it is over. */
   doWork(bot: Bot, job: FortJob, dt: number): boolean;
   /** Lobs a grenade onto `at`; false if it can't (out of reach, team just threw one). */
@@ -1084,6 +1086,7 @@ export class Bot implements Damageable, Combatant {
         speed = (engaged ? MOVE.adsSpeed : sprint ? MOVE.sprintSpeed : MOVE.walkSpeed) * this.personality.pace;
         if (s.waterDepth(this.feet) > WADE_DEPTH) speed *= WADE_SPEED;
         if (this.blinded) speed *= 0.6;
+        speed *= s.slowAt(this.feet);
       } else {
         this.hasGoal = false;
       }

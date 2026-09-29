@@ -222,6 +222,9 @@ export class Game {
   private fort: Fortifications | null = null;
   /** Holding E at a build spot or station (hands busy, hammer out) and for how long. */
   private working = -1;
+  /** Build mode (T): the hammer is out, build spots show clearly, the trigger builds the one aimed at. */
+  private buildMode = false;
+  private buildTarget: FortSlot | null = null;
   private nextBlow = 0;
   /** Next time a giver may hand the same receiver the same thing: 'giver>receiver:kind' -> sim time. */
   private readonly giveReady = new Map<string, number>();
@@ -761,7 +764,15 @@ export class Game {
         this.reconZoom = !this.reconZoom;
         input.weaponCycle = 0;
       }
-      p.speedBonus = moveBonus(this.cls, w.def);
+      // Barbed wire slows everyone wading through it.
+      p.speedBonus = moveBonus(this.cls, w.def) * (this.fort?.slowAt(p.feet) ?? 1);
+      if (input.buildMode && this.fort) this.buildMode = !this.buildMode;
+      // Reaching for a weapon or a grenade puts the hammer away.
+      if (this.buildMode && (input.weaponSlot >= 0 || input.weaponCycle !== 0 || input.throwGrenade || input.melee)) this.buildMode = false;
+      if (this.buildMode) {
+        input.ads = false;
+        input.reload = false;
+      }
       p.wadePenalty = this.cls === 'assault' ? ASSAULT_WADE_EASE : 1;
       if (input.medkit) this.useMedkit();
       this.stepMedkit(dt);
@@ -774,7 +785,7 @@ export class Game {
         p.sprinting = false;
       }
       // Hands busy (throwing, patching up, reviving): no shooting.
-      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0;
+      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode;
       this.weapons.step(dt, input, p, busy);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
     } else if (this.playerDowned) {
@@ -930,6 +941,7 @@ export class Game {
 
   /** Health gone: down on the ground until revived, bled out or given up. */
   private goDown(cause: DamageCause, source?: DamageSource): void {
+    this.buildMode = false;
     this.playerDowned = true;
     this.downTime = 0;
     this.giveUpHold = 0;
@@ -1076,12 +1088,23 @@ export class Game {
 
   /**
    * At a zone station: tap E to take ammo / a medkit (zone owners only, uses
-   * run out), or hold it to refill (supports: ammo, medics: medical). At a build
-   * spot: hold E to build (hammer out, progress stays when you let go).
+   * run out), or hold it to refill (supports: ammo, medics: medical). Building
+   * is done in build mode (T): aim at a spot and hold the trigger (hammer out,
+   * progress stays when you let go).
    */
   private stepFort(dt: number, input: InputState, prevWork: number): void {
     const fort = this.fort;
+    this.buildTarget = null;
     if (!fort) return;
+    if (this.buildMode) {
+      const { eye, fwd } = this.weapons.aimBasis(this.player);
+      const target = fort.aimAt(eye, fwd);
+      this.buildTarget = target;
+      if (target && input.fire) {
+        this.hammerAt({ type: 'build', slot: target }, dt, prevWork);
+        return;
+      }
+    }
     const feet = this.player.feet;
     const station = fort.stationAt(feet);
     let job: FortJob | null = null;
@@ -1093,11 +1116,8 @@ export class Game {
       else if (need && station.uses > 0) job = { type: 'use', station };
       else if (canRefill(station.kind, this.cls) && station.uses < STATION.uses) job = { type: 'refill', station };
       else if (need) note = t(station.kind === 'ammo' ? 'fort.emptyAmmo' : 'fort.emptyMedical');
-    } else {
-      const slot = fort.slotAt(feet);
-      if (slot) job = { type: 'build', slot };
     }
-    if (!station && !job) return;
+    if (!station) return;
     this.interact = { kind: 'fort', job, station, note };
     if (!job) return;
     if (job.type === 'use') {
@@ -1112,8 +1132,15 @@ export class Game {
       return;
     }
     if (!input.interact) return;
+    this.hammerAt(job, dt, prevWork);
+  }
+
+  /** One step of hands-on work: building a spot or restocking a station. */
+  private hammerAt(job: FortJob, dt: number, prevWork: number): void {
+    const fort = this.fort!;
     this.working = Math.max(0, prevWork) + dt;
     this.weapons.state.cancelReload();
+    if (job.type === 'use') return;
     if (job.type === 'refill') {
       if (fort.refill(job.station, dt)) {
         this.scores.award(PLAYER_ID, REFILL_POINTS);
@@ -1132,7 +1159,8 @@ export class Game {
       if (prevWork < 0) this.nextBlow = 0.32;
       else {
         this.nextBlow += 1 / 2.1;
-        const kind = job.type === 'build' ? (job.slot.kind === 'sandbag' ? 'bag' : job.slot.kind === 'hedgehog' ? 'metal' : 'wood') : 'wood';
+        const k = job.type === 'build' ? job.slot.kind : null;
+        const kind = k === 'hedgehog' || k === 'wire' ? 'metal' : k === 'timber' || k === 'barricade' || !k ? 'wood' : 'bag';
         this.audio.hammer(kind);
       }
     }
@@ -1168,6 +1196,8 @@ export class Game {
   }
 
   private respawn(key = 'base'): void {
+    this.buildMode = false;
+
     const p = this.player;
     p.health.reset();
     if (this.bots) {
@@ -1259,8 +1289,10 @@ export class Game {
       meleeT: w.meleeProgress,
       inspectT: w.inspectProgress,
       tool: this.working,
+      toolIdle: this.buildMode && p.alive && this.deployed,
     });
-    this.fort?.render(this.renderer.camera.position);
+    this.fort?.render(this.renderer.camera.position, this.buildMode, this.buildTarget);
+
   }
 
   private readonly assistEye = new THREE.Vector3();
@@ -1366,10 +1398,22 @@ export class Game {
     } else if (act?.kind === 'fort') {
       ({ prompt, touchLabel } = this.fortPrompt(act.job, act.station, act.note, key));
     }
+    const nearSpot = onField && !!this.fort?.anyNear(this.player.feet, 12);
+    if (onField && this.buildMode) {
+      const tgt = this.buildTarget;
+      const exit = t(this.touch ? 'build.exitTouch' : 'build.exit');
+      prompt = tgt
+        ? { text: `${t('build.mode')} · ${t(`fort.${tgt.kind}` as MessageKey)} — ${t(this.touch ? 'build.holdTouch' : 'build.hold')} · ${exit}`, progress: tgt.work > 0 ? tgt.work / FORT[tgt.kind].build : null }
+        : { text: `${t('build.mode')} — ${t('build.aim')} · ${exit}`, progress: null };
+    } else if (!prompt && nearSpot && !this.touch && this.fort!.anyNear(this.player.feet, 6)) {
+      prompt = { text: t('build.enter'), progress: null };
+    }
     this.touch?.setContext({
       medkit: medkit ? (medkit.ready ? `${t('touch.medkit')} ${kitText}` : kitText) : null,
       interact: touchLabel,
       downed: this.playerDowned,
+      build: onField && this.buildMode ? 'on' : nearSpot ? 'near' : null,
+
     });
     this.hud.update(
       {
@@ -1502,8 +1546,11 @@ export class Game {
       this.bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;
     }
     if (import.meta.env.DEV) {
-      const n = (k: string) => plan.slots.filter((s) => s.kind === k).length;
-      console.info(`[strikegy] fortifications: ${plan.stations.length} stations, ${n('sandbag')} sandbag / ${n('barricade')} barricade / ${n('hedgehog')} hedgehog spots in ${Math.round(performance.now() - t0)} ms`);
+      const kinds = new Map<string, number>();
+      for (const s of plan.slots) kinds.set(s.kind, (kinds.get(s.kind) ?? 0) + 1);
+      const list = [...kinds].map(([k, v]) => `${k} ${v}`).join(', ');
+      console.info(`[strikegy] fortifications: ${plan.stations.length} stations, ${plan.slots.length} build spots (${list}) in ${Math.round(performance.now() - t0)} ms`);
+
     }
   }
 

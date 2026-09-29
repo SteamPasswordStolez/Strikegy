@@ -439,13 +439,17 @@ export class BotManager implements BotServices {
       if (goal?.defend ? goal.pos.distanceTo(sl.pos) > goal.radius + 14 : sl.stand.distanceTo(bot.feet) > 18) continue;
       const look = sl.kind === 'barricade' ? sl.pos : sl.pos.clone().setY(sl.pos.y + 0.3);
       // Anti-tank hedgehogs matter little until there are vehicles.
-      consider(`build:${sl.id}`, { type: 'build', slot: sl }, sl.stand, look, sl.kind === 'hedgehog' ? 2.5 : bot.cls === 'support' ? 0.8 : 1);
+      consider(`build:${sl.id}`, { type: 'build', slot: sl }, sl.stand, look, sl.kind === 'hedgehog' ? 2.5 : sl.kind === 'wire' ? 1.8 : bot.cls === 'support' ? 0.8 : 1);
     }
     const found = best as { key: string; job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null;
     if (!found) return null;
     this.releaseWork(bot);
     this.workers.set(found.key, bot);
     return { job: found.job, stand: found.stand, look: found.look };
+  }
+
+  slowAt(p: THREE.Vector3): number {
+    return this.fort?.slowAt(p) ?? 1;
   }
 
   releaseWork(bot: Bot): void {

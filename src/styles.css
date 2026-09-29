@@ -503,6 +503,19 @@ body {
   bottom: var(--bt);
   border-color: rgba(120, 220, 140, 0.7);
 }
+.touch-build {
+  display: none;
+  left: calc(50% + var(--B) * 0.45);
+  bottom: var(--bt);
+  border-color: rgba(120, 190, 255, 0.75);
+}
+.touch-build.show {
+  display: flex;
+}
+.touch-build.on {
+  background: rgba(40, 90, 150, 0.6);
+  border-color: rgba(160, 220, 255, 1);
+}
 .touch-interact {
   left: 50%;
   margin-left: calc(var(--B) * -0.6);

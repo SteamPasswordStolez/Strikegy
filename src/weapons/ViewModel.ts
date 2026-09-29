@@ -60,6 +60,8 @@ export interface ViewModelFrame {
   inspectT: number;
   /** Seconds of hammering (building), or -1: the gun goes down and a hammer comes up. */
   tool?: number;
+  /** Build mode: the hammer stays in hand between blows. */
+  toolIdle?: boolean;
 }
 
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
@@ -486,7 +488,8 @@ export class ViewModel {
     }
     this.throwT = Math.min(1, this.throwT + dt / 0.65);
     const throwDip = Math.sin(this.throwT * Math.PI);
-    this.toolBlend += ((f.tool !== undefined && f.tool >= 0 ? 1 : 0) - this.toolBlend) * ease(9);
+    this.toolBlend += ((f.toolIdle || (f.tool !== undefined && f.tool >= 0) ? 1 : 0) - this.toolBlend) * ease(9);
+
     this.updateHammer(f.tool ?? -1, bobX, bobY);
 
     // Whole-gun motions: seating jolts, inspection, melee.

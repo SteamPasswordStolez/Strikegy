@@ -5,12 +5,14 @@ import { buildKit, kitMaterials, type KitMaterial } from './modelKits';
 
 /**
  * Procedural models for things built or used at zones during a match:
- * fortifications (sandbag wall, window barricade, anti-tank hedgehog) and the
- * supply stations (ammo, medical). Local space: y = 0 on the ground (the
+ * fortifications (sandbag walls high and low, an L-shaped corner, a U-shaped
+ * nest, a timber wall with a firing slit, window barricades, barbed wire,
+ * anti-tank hedgehogs) and the supply stations (ammo, medical). Geometry is
+ * shared between copies of a model and its blueprint ghost. Local space: y = 0 on the ground (the
  * barricade is centred on its window opening), long side along x, the front
  * (toward the enemy / out of the window) toward -z.
  */
-export type FortModelKind = 'sandbag' | 'barricade' | 'hedgehog' | 'ammo' | 'medical';
+export type FortModelKind = 'sandbag' | 'sandbagLow' | 'sandbagCorner' | 'nest' | 'timber' | 'wire' | 'barricade' | 'hedgehog' | 'ammo' | 'medical';
 
 type Mat = KitMaterial | 'olive' | 'white' | 'green' | 'yellow' | 'planks' | 'burlap';
 
@@ -22,18 +24,32 @@ interface Piece {
 /** Full sizes (w, h, d) of the fixed-size models. */
 export const FORT_SIZE = {
   sandbag: [2.6, 1.05, 0.75],
+  sandbagLow: [2.2, 0.62, 0.7],
+  sandbagCorner: [2.1, 1.05, 2.1],
+  nest: [2.9, 0.95, 2.4],
+  timber: [2.4, 1.9, 0.3],
+  wire: [3.2, 0.8, 0.9],
   hedgehog: [1.5, 1.1, 1.5],
   ammo: [1.9, 1.15, 1.2],
   medical: [2.0, 1.0, 1.3],
 } as const;
 
 const SANDBAG_COLOR = '#9c8f76';
+/** Timber wall firing slit, bottom and top above the ground (standing eye height). */
+export const TIMBER_SLIT = [1.32, 1.58] as const;
 
 export class FortModels {
   private readonly shared = kitMaterials();
   private readonly own: Record<'olive' | 'white' | 'green' | 'yellow' | 'planks' | 'burlap', THREE.Material>;
-  /** Translucent "blueprint" look for empty build spots. */
-  readonly ghostMaterial = new THREE.MeshBasicMaterial({ color: 0xbcd6ea, transparent: true, opacity: 0.18, depthWrite: false, toneMapped: false });
+  /** Translucent "blueprint" looks for empty build spots: faint, in build mode, and the one aimed at. */
+  readonly ghostMaterial = new THREE.MeshBasicMaterial({ color: 0xbcd6ea, transparent: true, opacity: 0.16, depthWrite: false, toneMapped: false });
+  readonly ghostBuild = new THREE.MeshBasicMaterial({ color: 0x8fd0ff, transparent: true, opacity: 0.34, depthWrite: false, toneMapped: false });
+  readonly ghostTarget = new THREE.MeshBasicMaterial({ color: 0x7dffa0, transparent: true, opacity: 0.55, depthWrite: false, toneMapped: false });
+  /** Box outlines round build spots in build mode (the aimed one drawn through walls). */
+  readonly outlineBuild = new THREE.LineBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.8, toneMapped: false });
+  readonly outlineTarget = new THREE.LineBasicMaterial({ color: 0x8dffab, depthTest: false, transparent: true, toneMapped: false });
+  readonly outlineGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+  private readonly cache = new Map<string, { geo: THREE.BufferGeometry; mat: Mat }[]>();
 
   constructor(private readonly surfaces: SurfaceLibrary | null) {
     const tint = (kind: 'wood' | 'metal', color: string, fallback: number) =>
@@ -49,27 +65,37 @@ export class FortModels {
     };
   }
 
-  /** The model as merged meshes (one per material); `ghost` draws it all in the blueprint look. */
+  /** The model as meshes (one per material); `ghost` draws it all in the blueprint look. */
   build(kind: FortModelKind, size?: readonly [number, number, number], ghost = false): THREE.Group {
-    const pieces = PIECES[kind](size);
     const group = new THREE.Group();
-    const byMat = new Map<Mat, THREE.BufferGeometry[]>();
-    for (const p of pieces) {
-      const key: Mat = ghost ? 'body' : p.mat;
-      let list = byMat.get(key);
-      if (!list) byMat.set(key, (list = []));
-      list.push(p.geo.index ? p.geo.toNonIndexed() : p.geo);
-    }
-    for (const [mat, geos] of byMat) {
-      const merged = mergeGeometries(geos);
-      for (const g of geos) g.dispose();
-      if (!merged) continue;
-      const mesh = new THREE.Mesh(merged, ghost ? this.ghostMaterial : this.material(mat));
+    for (const part of this.parts(kind, size)) {
+      const mesh = new THREE.Mesh(part.geo, ghost ? this.ghostMaterial : this.material(part.mat));
       mesh.castShadow = !ghost;
       mesh.receiveShadow = !ghost;
       group.add(mesh);
     }
     return group;
+  }
+
+  /** Merged geometry per material, built once per model and size. */
+  private parts(kind: FortModelKind, size?: readonly [number, number, number]): { geo: THREE.BufferGeometry; mat: Mat }[] {
+    const key = `${kind}|${size ? size.map((v) => v.toFixed(2)).join(',') : ''}`;
+    const hit = this.cache.get(key);
+    if (hit) return hit;
+    const byMat = new Map<Mat, THREE.BufferGeometry[]>();
+    for (const p of PIECES[kind](size)) {
+      let list = byMat.get(p.mat);
+      if (!list) byMat.set(p.mat, (list = []));
+      list.push(p.geo.index ? p.geo.toNonIndexed() : p.geo);
+    }
+    const out: { geo: THREE.BufferGeometry; mat: Mat }[] = [];
+    for (const [mat, geos] of byMat) {
+      const merged = mergeGeometries(geos);
+      for (const g of geos) g.dispose();
+      if (merged) out.push({ geo: merged, mat });
+    }
+    this.cache.set(key, out);
+    return out;
   }
 
   private material(m: Mat): THREE.Material {
@@ -134,14 +160,88 @@ function cross(out: Piece[], x: number, y: number, z: number, yaw: number): void
   }
 }
 
+/** A run of sandbags (w along x) standing at (x, z), turned by yaw. */
+function bags(out: Piece[], w: number, h: number, d: number, x = 0, z = 0, yaw = 0, seed = 7): void {
+  let state = seed;
+  const rand = () => ((state = (state * 16807) % 2147483647) - 1) / 2147483646;
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)), new THREE.Vector3(1, 1, 1));
+  // The kit's own surface ('body') becomes plain burlap here.
+  for (const p of buildKit('sandbags', w, h, d, rand).pieces) {
+    p.geo.applyMatrix4(m);
+    out.push({ geo: p.geo, mat: p.mat === 'body' ? 'burlap' : p.mat });
+  }
+}
+
 const PIECES: Record<FortModelKind, (size?: readonly [number, number, number]) => Piece[]> = {
   sandbag() {
-    const [w, h, d] = FORT_SIZE.sandbag;
-    let state = 7;
-    const rand = () => ((state = (state * 16807) % 2147483647) - 1) / 2147483646;
-    // The kit's own surface ('body') becomes plain burlap here.
-    return buildKit('sandbags', w, h, d, rand).pieces.map((p) => ({ geo: p.geo, mat: p.mat === 'body' ? 'burlap' : p.mat }));
+    const out: Piece[] = [];
+    bags(out, ...FORT_SIZE.sandbag);
+    return out;
   },
+
+  sandbagLow() {
+    const out: Piece[] = [];
+    bags(out, ...FORT_SIZE.sandbagLow, 0, 0, 0, 11);
+    return out;
+  },
+
+  sandbagCorner() {
+    // An L: a wall across the front (-z) and one down the left side.
+    const [W, h, D] = FORT_SIZE.sandbagCorner;
+    const t = 0.7;
+    const out: Piece[] = [];
+    bags(out, W, h, t, 0, -D / 2 + t / 2, 0, 13);
+    bags(out, D - t, h, t, -W / 2 + t / 2, t / 2, Math.PI / 2, 17);
+    return out;
+  },
+
+  nest() {
+    // A U of sandbags open at the back: front wall and two side walls.
+    const [W, h, D] = FORT_SIZE.nest;
+    const t = 0.7;
+    const out: Piece[] = [];
+    bags(out, W, h, t, 0, -D / 2 + t / 2, 0, 19);
+    for (const sx of [-1, 1]) bags(out, D - t, h, t, sx * (W / 2 - t / 2), t / 2, Math.PI / 2, 23 + sx);
+    return out;
+  },
+
+  timber() {
+    // Posts with horizontal planks, a slit at standing eye height and braces at the back.
+    const [w, h] = FORT_SIZE.timber;
+    const out: Piece[] = [];
+    for (let i = 0; i < 4; i++) out.push(cyl('wood', 0.07, h + 0.15, [-w / 2 + 0.1 + (i * (w - 0.2)) / 3, (h + 0.15) / 2 - 0.1, 0.08], [0, 0, 0], 8));
+    let y = 0.02;
+    let i = 0;
+    while (y < h - 0.02) {
+      const top = Math.min(h, y + 0.2);
+      if (!(top > TIMBER_SLIT[0] && y < TIMBER_SLIT[1])) {
+        out.push(box('planks', [w, top - y - 0.02, 0.06], [((i * 7) % 3) * 0.03 - 0.03, (y + top) / 2, 0], [0, 0, ((i * 5) % 3) * 0.01 - 0.01]));
+        y = top;
+      } else y = TIMBER_SLIT[1];
+      i++;
+    }
+    for (const sx of [-1, 1]) out.push(box('wood', [0.08, 1.5, 0.08], [sx * (w / 2 - 0.3), 0.7, 0.45], [0.55, 0, 0]));
+    return out;
+  },
+
+  wire() {
+    // Coiled barbed wire on crossed stakes.
+    const [w, h] = FORT_SIZE.wire;
+    const out: Piece[] = [];
+    for (const x of [-w / 2 + 0.15, 0, w / 2 - 0.15]) {
+      for (const lean of [-0.45, 0.45]) out.push(box('wood', [0.05, h * 1.25, 0.05], [x, h * 0.55, 0], [lean, 0, 0]));
+    }
+    const coil = new THREE.TorusGeometry(h * 0.42, 0.01, 3, 12);
+    for (let x = -w / 2 + 0.05; x <= w / 2 - 0.05; x += 0.13) {
+      const g = coil.clone();
+      g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, h * 0.44, Math.sin(x * 9) * 0.04), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2 + 0.25, 0)), new THREE.Vector3(1, 1, 1)));
+      out.push({ geo: g, mat: 'dark' });
+    }
+    coil.dispose();
+    for (const [y, z] of [[h * 0.86, 0], [h * 0.2, 0.3], [h * 0.2, -0.3]] as const) out.push(box('dark', [w, 0.012, 0.012], [0, y, z]));
+    return out;
+  },
+
 
   barricade(size) {
     // Planks nailed across a window, leaving a slit to shoot through (size = [w, h, slit centre above the sill]).

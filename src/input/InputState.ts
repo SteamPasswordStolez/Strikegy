@@ -26,7 +26,7 @@ export interface InputState {
   throwGrenade: boolean;
   /** Pulse: use a medkit (Q). */
   medkit: boolean;
-  /** Held: interact (E): revive, hand out kits, build. */
+  /** Held: interact (E): revive, hand out kits, restock stations. */
   interact: boolean;
   /** Pulse: interact pressed this step. */
   interactPressed: boolean;
@@ -38,6 +38,8 @@ export interface InputState {
   inspect: boolean;
   /** Held: show the scoreboard. */
   scoreboard: boolean;
+  /** Pulse: toggle build mode (T). */
+  buildMode: boolean;
 }
 
 export function createInputState(): InputState {
@@ -63,6 +65,7 @@ export function createInputState(): InputState {
     melee: false,
     inspect: false,
     scoreboard: false,
+    buildMode: false,
   };
 }
 
@@ -78,6 +81,7 @@ export function consumePulses(s: InputState): void {
   s.interactPressed = false;
   s.melee = false;
   s.inspect = false;
+  s.buildMode = false;
 }
 
 export function resetFrameInput(s: InputState): void {

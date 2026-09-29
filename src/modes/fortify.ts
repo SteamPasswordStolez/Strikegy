@@ -6,26 +6,81 @@ import type { NavWorld } from '@/ai/NavWorld';
 import type { ClassId } from '@/data/classes';
 import type { WindowSpot } from '@/world/buildings';
 import type { ZoneDef } from '@/world/mapTypes';
-import { FORT_SIZE, type FortModels, stationIcon } from '@/world/fortModels';
+import { FORT_SIZE, TIMBER_SLIT, type FortModels, stationIcon } from '@/world/fortModels';
 
 /*
  * Zone fortifications and supply stations (design doc section 5).
  * Every zone gets an ammo station and a medical station (5 uses each, refilled
- * by supports / medics working at them) and a few build spots: sandbag walls
- * around it, barricades for the windows of nearby buildings and anti-tank
- * hedgehogs on the approaches. Anyone can build; built things can be blown up
- * and built again. Spots are found when the map loads (no map data needed).
+ * by supports / medics working at them) and some two dozen build spots: sandbag
+ * walls (high, low, L-shaped corners, a U-shaped nest), timber walls with a
+ * firing slit, barricades for the windows of nearby buildings, and barbed wire
+ * and anti-tank hedgehogs on the approaches. Anyone can build (build mode, T);
+ * built things can be blown up and built again. Spots are found when the map
+ * loads (no map data needed).
  */
 
-export type FortKind = 'sandbag' | 'barricade' | 'hedgehog';
+export type FortKind = 'sandbag' | 'sandbagLow' | 'sandbagCorner' | 'nest' | 'timber' | 'wire' | 'barricade' | 'hedgehog';
 export type StationKind = 'ammo' | 'medical';
 
 /** Seconds of work to build (supports work twice as fast) and health once built. */
 export const FORT: Record<FortKind, { build: number; health: number }> = {
   sandbag: { build: 6, health: 260 },
+  sandbagLow: { build: 4, health: 200 },
+  sandbagCorner: { build: 8, health: 320 },
+  nest: { build: 11, health: 420 },
+  timber: { build: 7, health: 200 },
+  wire: { build: 5, health: 120 },
   barricade: { build: 4, health: 140 },
   hedgehog: { build: 8, health: 390 },
 };
+
+/** Walking speed factor inside built barbed wire. */
+export const WIRE_SLOW = 0.45;
+/** How far away a build spot can be worked on in build mode (m, eye to spot). */
+export const BUILD_REACH = 4.5;
+
+/** A solid piece of a built structure: local centre (y from the ground; barricades from the window centre) and full size. */
+export interface FortPart {
+  c: [number, number, number];
+  s: [number, number, number];
+}
+
+/**
+ * What stops soldiers and bullets once a spot is built. Hedgehogs (vehicles
+ * only, none yet) and wire (slows, doesn't stop) have no solid parts.
+ */
+export function fortParts(kind: FortKind, [w, h, d]: readonly [number, number, number]): FortPart[] {
+  const t = 0.7;
+  switch (kind) {
+    case 'sandbag':
+    case 'sandbagLow':
+      return [{ c: [0, h / 2, 0], s: [w, h, d] }];
+    case 'sandbagCorner':
+    case 'nest': {
+      const side = (sx: number): FortPart => ({ c: [sx * (w / 2 - t / 2), h / 2, t / 2], s: [t, h, d - t] });
+      const front: FortPart = { c: [0, h / 2, -d / 2 + t / 2], s: [w, h, t] };
+      return kind === 'nest' ? [front, side(-1), side(1)] : [front, side(-1)];
+    }
+    case 'timber':
+      return [
+        { c: [0, TIMBER_SLIT[0] / 2, 0], s: [w, TIMBER_SLIT[0], 0.2] },
+        { c: [0, (TIMBER_SLIT[1] + h) / 2, 0], s: [w, h - TIMBER_SLIT[1], 0.2] },
+      ];
+    case 'barricade': {
+      // Boards below and above the slit (d = slit centre above the sill).
+      const bottom = -h / 2;
+      const lo = bottom + d - 0.13;
+      const hi = lo + 0.26;
+      const parts: FortPart[] = [
+        { c: [0, (bottom + lo) / 2, 0], s: [w + 0.2, lo - bottom, 0.08] },
+        { c: [0, (hi + h / 2) / 2, 0], s: [w + 0.2, h / 2 - hi, 0.08] },
+      ];
+      return parts.filter((p) => p.s[1] > 0.02);
+    }
+    default:
+      return [];
+  }
+}
 
 export const STATION = {
   /** Uses when full; the zone's owners take one each time. */
@@ -99,9 +154,23 @@ export interface Footprint {
   hd: number;
 }
 
-const SANDBAGS_PER_ZONE = 3;
-const HEDGEHOGS_PER_ZONE = 2;
-const BARRICADES_PER_ZONE = 3;
+/**
+ * Build spots per zone: how many of each, on which rings (fractions of the
+ * zone radius, tried in order), how much room each keeps round itself and how
+ * far from buildings (doors) it stays.
+ */
+const RECIPE: { kind: Exclude<FortKind, 'barricade'>; count: number; rings: number[]; room: number; pad: number }[] = [
+  { kind: 'nest', count: 1, rings: [0.6, 0.75, 0.45], room: 3.2, pad: 2.4 },
+  { kind: 'sandbagCorner', count: 3, rings: [0.65, 0.8, 0.5], room: 2.8, pad: 2.2 },
+  { kind: 'sandbag', count: 5, rings: [0.75, 0.6, 0.9, 0.45], room: 2.6, pad: 2.2 },
+  { kind: 'timber', count: 3, rings: [0.85, 0.7, 1.0], room: 2.6, pad: 2.2 },
+  { kind: 'sandbagLow', count: 4, rings: [0.5, 0.65, 0.35, 0.8], room: 2.3, pad: 2 },
+  { kind: 'wire', count: 3, rings: [1.2, 1.35, 1.05], room: 3, pad: 2 },
+  { kind: 'hedgehog', count: 3, rings: [1.25, 1.45, 1.1], room: 2.4, pad: 2 },
+];
+const BARRICADES_PER_ZONE = 6;
+/** 0..31 in bit-reversed order: consecutive picks land far apart round a circle. */
+const SPREAD = Array.from({ length: 32 }, (_, i) => parseInt(i.toString(2).padStart(5, '0').split('').reverse().join(''), 2));
 /** Standing eye height a barricade's slit is cut at, above the floor. */
 const SLIT_EYE = 1.52;
 
@@ -138,14 +207,13 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
     const R = zone.radius;
     const taken: { x: number; z: number; r: number }[] = [];
     const free = (x: number, z: number, r: number) => taken.every((t) => Math.hypot(t.x - x, t.z - z) >= t.r + r);
-    const start = (hashId(zone.id) % 16) / 16;
+    const start = (hashId(zone.id) % 32) / 32;
     /** Candidate points on rings around the zone centre, spread round the circle. */
-    function* ring(radii: number[], steps = 16): Generator<{ x: number; z: number; a: number }> {
+    function* ring(radii: number[], steps = 32): Generator<{ x: number; z: number; a: number }> {
       for (const f of radii) {
         for (let i = 0; i < steps; i++) {
-          // Interleave (0, 8, 4, 12, ...) so early picks spread out.
-          const k = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15][i % 16]!;
-          const a = ((start + k / 16) % 1) * Math.PI * 2;
+          const k = SPREAD[i % 32]! / 32;
+          const a = ((start + k) % 1) * Math.PI * 2;
           yield { x: cx + Math.cos(a) * R * f, z: cz + Math.sin(a) * R * f, a };
         }
       }
@@ -171,45 +239,34 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
     const ammo = plan.stations.at(-1);
     if (!stationAt('medical', ammo && ammo.zone === zone.id ? { x: ammo.pos[0], z: ammo.pos[2] } : null)) stationAt('medical', null);
 
-    // Sandbag walls near the edge, long side across the way in, front facing out.
-    let bags = 0;
-    for (const p of ring([0.72, 0.6, 0.85], 16)) {
-      if (bags >= SANDBAGS_PER_ZONE) break;
-      const g = probe.ground(p.x, p.z);
-      if (!g || nearBuilding(footprints, p.x, p.z, 2.2) || !free(p.x, p.z, 3)) continue;
-      const ox = Math.cos(p.a);
-      const oz = Math.sin(p.a);
-      const yaw = Math.atan2(-ox, -oz);
-      if (!probe.clear(p.x, g.y, p.z, [FORT_SIZE.sandbag[0] + 0.4, FORT_SIZE.sandbag[1], FORT_SIZE.sandbag[2] + 0.4], yaw)) continue;
-      // Room behind it to stand and build.
-      const sx = p.x - ox * 1.1;
-      const sz = p.z - oz * 1.1;
-      const sg = probe.ground(sx, sz);
-      if (!sg || Math.abs(sg.y - g.y) > 0.6) continue;
-      plan.slots.push({ kind: 'sandbag', zone: zone.id, pos: [p.x, g.y, p.z], yaw, stand: [sx, sg.y, sz] });
-      taken.push({ x: p.x, z: p.z, r: 3 });
-      bags++;
-    }
-
-    // Hedgehogs out on the approaches.
-    let hogs = 0;
-    for (const p of ring([1.1, 1.25, 0.95], 16)) {
-      if (hogs >= HEDGEHOGS_PER_ZONE) break;
-      const g = probe.ground(p.x, p.z);
-      if (!g || nearBuilding(footprints, p.x, p.z, 2) || !free(p.x, p.z, 4)) continue;
-      if (!probe.clear(p.x, g.y, p.z, FORT_SIZE.hedgehog, 0)) continue;
-      const sx = p.x - Math.cos(p.a) * 1.4;
-      const sz = p.z - Math.sin(p.a) * 1.4;
-      const sg = probe.ground(sx, sz);
-      if (!sg) continue;
-      plan.slots.push({ kind: 'hedgehog', zone: zone.id, pos: [p.x, g.y, p.z], yaw: p.a, stand: [sx, sg.y, sz] });
-      taken.push({ x: p.x, z: p.z, r: 4 });
-      hogs++;
+    // Build spots round the zone: front (-z) facing out, long side across the way in.
+    for (const r of RECIPE) {
+      const size = FORT_SIZE[r.kind];
+      let n = 0;
+      for (const p of ring(r.rings)) {
+        if (n >= r.count) break;
+        const g = probe.ground(p.x, p.z);
+        if (!g || nearBuilding(footprints, p.x, p.z, r.pad) || !free(p.x, p.z, r.room)) continue;
+        const ox = Math.cos(p.a);
+        const oz = Math.sin(p.a);
+        const yaw = Math.atan2(-ox, -oz);
+        if (!probe.clear(p.x, g.y, p.z, [size[0] + 0.4, size[1], size[2] + 0.4], yaw)) continue;
+        // Room behind it to stand and build.
+        const back = size[2] / 2 + 0.75;
+        const sx = p.x - ox * back;
+        const sz = p.z - oz * back;
+        const sg = probe.ground(sx, sz);
+        if (!sg || Math.abs(sg.y - g.y) > 0.6) continue;
+        plan.slots.push({ kind: r.kind, zone: zone.id, pos: [p.x, g.y, p.z], yaw, stand: [sx, sg.y, sz] });
+        taken.push({ x: p.x, z: p.z, r: r.room });
+        n++;
+      }
     }
 
     // Barricades for the nearest windows of buildings in / at the zone.
     const near = windows
-      .filter((w) => !used.has(w) && Math.hypot(w.opening.center[0] - cx, w.opening.center[2] - cz) < R + 4)
+      .filter((w) => !used.has(w) && Math.hypot(w.opening.center[0] - cx, w.opening.center[2] - cz) < R + 6)
+
       .sort((a, b) => Math.hypot(a.pos[0] - cx, a.pos[2] - cz) - Math.hypot(b.pos[0] - cx, b.pos[2] - cz));
     let boards = 0;
     for (const w of near) {
@@ -273,9 +330,16 @@ export interface FortSlot {
   built: boolean;
   health: number;
   colliders: RAPIER.Collider[];
-  obstacle: Obstacle | null;
+  /** Navmesh holes cut while built (one per solid part). */
+  obstacles: Obstacle[];
+  /** Solid parts once built (local). */
+  parts: FortPart[];
   model: THREE.Group;
   ghost: THREE.Group;
+  /** Box outline shown in build mode. */
+  outline: THREE.LineSegments;
+  /** Centre of the structure (for aiming at it and blasts). */
+  center: THREE.Vector3;
 }
 
 export interface Station {
@@ -305,7 +369,7 @@ export class Fortifications {
 
   constructor(
     plan: FortPlan,
-    models: FortModels,
+    private readonly models: FortModels,
     private readonly physics: PhysicsWorld,
     private readonly impacts: SurfaceRegistry,
     private readonly nav: NavWorld | null,
@@ -325,6 +389,18 @@ export class Fortifications {
         this.group.add(g);
       }
       model.visible = false;
+      // Barricades sit centred on their window; everything else stands on the ground.
+      const [w, h, d] = size;
+      const center = new THREE.Vector3(p.pos[0], p.pos[1] + (p.kind === 'barricade' ? 0 : h / 2), p.pos[2]);
+      const outline = new THREE.LineSegments(models.outlineGeometry, models.outlineBuild);
+      outline.position.copy(center);
+      outline.rotation.y = p.yaw;
+      outline.scale.set(w + 0.12, h + 0.12, p.kind === 'barricade' ? 0.3 : d + 0.12);
+      outline.renderOrder = 6;
+      outline.visible = false;
+      outline.matrixAutoUpdate = false;
+      outline.updateMatrix();
+      this.group.add(outline);
       this.slots.push({
         id: id++,
         kind: p.kind,
@@ -337,9 +413,12 @@ export class Fortifications {
         built: false,
         health: 0,
         colliders: [],
-        obstacle: null,
+        obstacles: [],
+        parts: fortParts(p.kind, size),
         model,
         ghost,
+        outline,
+        center,
       });
     }
     for (const p of plan.stations) {
@@ -369,10 +448,72 @@ export class Fortifications {
     this.nav?.update();
   }
 
-  /** Per frame: station icons and empty build spots show up close by. */
-  render(camera: THREE.Vector3): void {
+  /**
+   * Per frame: station icons and empty build spots show up close by. In build
+   * mode the spots show from further off, brighter and outlined, and the one
+   * aimed at stands out (green, outline through walls).
+   */
+  render(camera: THREE.Vector3, building = false, target: FortSlot | null = null): void {
     for (const s of this.stations) s.icon.visible = s.pos.distanceToSquared(camera) < 45 * 45;
-    for (const s of this.slots) s.ghost.visible = !s.built && s.pos.distanceToSquared(camera) < 28 * 28;
+    const m = this.models;
+    const far = (building ? 60 : 28) ** 2;
+    for (const s of this.slots) {
+      const show = !s.built && s.pos.distanceToSquared(camera) < far;
+      s.ghost.visible = show;
+      s.outline.visible = show && building;
+      if (!show) continue;
+      const mat = s === target ? m.ghostTarget : building ? m.ghostBuild : m.ghostMaterial;
+      const first = s.ghost.children[0] as THREE.Mesh | undefined;
+      if (first && first.material !== mat) for (const c of s.ghost.children) (c as THREE.Mesh).material = mat;
+      s.outline.material = s === target ? m.outlineTarget : m.outlineBuild;
+    }
+  }
+
+  /**
+   * The unbuilt spot the view ray (eye, unit dir) points at within reach, or
+   * null: the nearest one whose rough bounding sphere the ray passes through.
+   */
+  aimAt(eye: THREE.Vector3, dir: THREE.Vector3, reach = BUILD_REACH): FortSlot | null {
+    let best: FortSlot | null = null;
+    let bestT = Infinity;
+    const v = this.tmp;
+    for (const s of this.slots) {
+      if (s.built) continue;
+      const [w, h, d] = s.size;
+      const radius = 0.5 * (s.kind === 'barricade' ? Math.hypot(w, h) : Math.hypot(w, Math.min(h, 1.2), d)) + 0.15;
+      v.copy(s.center).sub(eye);
+      const t = v.dot(dir);
+      if (t < 0.2 || t - radius > reach || t >= bestT) continue;
+      if (v.addScaledVector(dir, -t).length() > radius) continue;
+      best = s;
+      bestT = t;
+    }
+    return best;
+  }
+
+  /** Any unbuilt spot within `range` (horizontal) of `p`, on about the same level. */
+  anyNear(p: THREE.Vector3, range: number): boolean {
+    for (const s of this.slots) if (!s.built && Math.abs(s.stand.y - p.y) < 2 && Math.hypot(s.pos.x - p.x, s.pos.z - p.z) < range) return true;
+    return false;
+  }
+
+  /** Speed factor at `p`: slow inside built barbed wire. */
+  slowAt(p: THREE.Vector3): number {
+    for (const s of this.slots) {
+      if (s.kind !== 'wire' || !s.built) continue;
+      const [lx, lz] = this.toLocal(s, p);
+      if (Math.abs(lx) < s.size[0] / 2 + 0.1 && Math.abs(lz) < s.size[2] / 2 + 0.15 && Math.abs(p.y - s.pos.y) < 1.2) return WIRE_SLOW;
+    }
+    return 1;
+  }
+
+  private toLocal(s: FortSlot, p: THREE.Vector3): [number, number] {
+    const dx = p.x - s.pos.x;
+    const dz = p.z - s.pos.z;
+    const c = Math.cos(s.yaw);
+    const sn = Math.sin(s.yaw);
+    // Inverse of the slot's turn about Y.
+    return [dx * c - dz * sn, dx * sn + dz * c];
   }
 
   /**
@@ -394,17 +535,11 @@ export class Fortifications {
     return { points, done: false };
   }
 
-  /** Ground rectangle a slot takes up once built (for "someone is in the way"). */
+  /** True if `p` (someone's feet) is inside where a ground structure's solid parts go once built. */
   occupies(slot: FortSlot, p: THREE.Vector3, pad = 0.35): boolean {
-    if (slot.kind !== 'sandbag') return false;
-    const dx = p.x - slot.pos.x;
-    const dz = p.z - slot.pos.z;
-    const c = Math.cos(slot.yaw);
-    const s = Math.sin(slot.yaw);
-    const lx = dx * c - dz * s;
-    const lz = dx * s + dz * c;
-    const [w, h, d] = slot.size;
-    return Math.abs(lx) < w / 2 + pad && Math.abs(lz) < d / 2 + pad && p.y > slot.pos.y - 1 && p.y < slot.pos.y + h;
+    if (slot.kind === 'barricade' || p.y < slot.pos.y - 1 || p.y > slot.pos.y + slot.size[1]) return false;
+    const [lx, lz] = this.toLocal(slot, p);
+    return slot.parts.some((q) => Math.abs(lx - q.c[0]) < q.s[0] / 2 + pad && Math.abs(lz - q.c[2]) < q.s[2] / 2 + pad);
   }
 
   private showProgress(slot: FortSlot): void {
@@ -424,32 +559,26 @@ export class Fortifications {
     slot.ghost.visible = false;
     this.showProgress(slot);
     const q = yawQuat(slot.yaw);
-    const [w, h, d] = slot.size;
-    if (slot.kind === 'sandbag') {
-      const center = { x: slot.pos.x, y: slot.pos.y + h / 2 - 0.05, z: slot.pos.z };
-      const c = this.physics.addStaticBox(center, { x: w / 2, y: h / 2 - 0.05, z: d / 2 - 0.05 }, q);
-      this.impacts.set(c.handle, 'dirt');
-      slot.colliders.push(c);
-      slot.obstacle = this.nav?.addBox(center, { x: w / 2, y: h / 2 + 0.4, z: d / 2 }, slot.yaw) ?? null;
-    } else if (slot.kind === 'barricade') {
-      // Boards below and above the slit; the slit stays open to shoot through.
-      const slit = 0.26;
-      const bottom = slot.pos.y - h / 2;
-      const slitLo = bottom + d - slit / 2;
-      const slitHi = slitLo + slit;
-      const top = slot.pos.y + h / 2;
-      const half = { x: w / 2 + 0.1, z: 0.04 };
-      for (const [lo, hi] of [
-        [bottom, slitLo],
-        [slitHi, top],
-      ] as const) {
-        if (hi - lo < 0.02) continue;
-        const c = this.physics.addStaticBox({ x: slot.pos.x, y: (lo + hi) / 2, z: slot.pos.z }, { x: half.x, y: (hi - lo) / 2, z: half.z }, q);
-        this.impacts.set(c.handle, 'wood');
-        slot.colliders.push(c);
-      }
+    const c = Math.cos(slot.yaw);
+    const sn = Math.sin(slot.yaw);
+    const surface = slot.kind === 'barricade' || slot.kind === 'timber' ? 'wood' : 'dirt';
+    // Window boards are up in a wall: the navmesh never ran through windows anyway.
+    const blocksNav = slot.kind !== 'barricade';
+    for (const part of slot.parts) {
+      const [lx, ly, lz] = part.c;
+      const center = { x: slot.pos.x + lx * c + lz * sn, y: slot.pos.y + ly, z: slot.pos.z - lx * sn + lz * c };
+      const [sx, sy, sz] = part.s;
+      const col = this.physics.addStaticBox(center, { x: sx / 2, y: sy / 2, z: sz / 2 }, q);
+      this.impacts.set(col.handle, surface);
+      slot.colliders.push(col);
+      if (!blocksNav || !this.nav) continue;
+      // Tall enough to cover the ground under it, whatever the part's own height (timber's upper boards).
+      const ground = slot.pos.y;
+      const top = Math.max(center.y + sy / 2, ground + 0.6);
+      const ob = this.nav.addBox({ x: center.x, y: (ground - 0.4 + top) / 2, z: center.z }, { x: sx / 2, y: (top - ground + 0.4) / 2, z: sz / 2 }, slot.yaw);
+      if (ob) slot.obstacles.push(ob);
     }
-    // Hedgehogs only stop vehicles (none yet): soldiers walk and shoot through the gaps.
+    // Hedgehogs only stop vehicles (none yet) and wire only slows: nothing solid.
     this.onChange?.();
   }
 
@@ -458,8 +587,7 @@ export class Fortifications {
     const broken: FortSlot[] = [];
     for (const s of this.slots) {
       if (!s.built) continue;
-      const center = s.kind === 'barricade' ? s.pos : this.tmp.copy(s.pos).setY(s.pos.y + s.size[1] / 2);
-      const d = Math.max(0, center.distanceTo(point) - 0.4);
+      const d = Math.max(0, s.center.distanceTo(point) - 0.4);
       if (d > radius) continue;
       s.health -= dmg(d);
       if (s.health <= 0) {
@@ -479,8 +607,9 @@ export class Fortifications {
     slot.health = 0;
     for (const c of slot.colliders) this.physics.world.removeCollider(c, false);
     slot.colliders.length = 0;
-    if (slot.obstacle !== null) this.nav?.remove(slot.obstacle);
-    slot.obstacle = null;
+    for (const ob of slot.obstacles) this.nav?.remove(ob);
+    slot.obstacles.length = 0;
+
     slot.ghost.visible = true;
     this.showProgress(slot);
     this.onChange?.();

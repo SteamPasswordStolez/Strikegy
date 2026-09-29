@@ -21,7 +21,8 @@ type ButtonAction =
   | 'pause'
   | 'medkit'
   | 'interact'
-  | 'giveup';
+  | 'giveup'
+  | 'build';
 
 /** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
 const ICONS: Partial<Record<ButtonAction, string>> = {
@@ -38,6 +39,7 @@ const ICONS: Partial<Record<ButtonAction, string>> = {
   medkit: '<rect x="3.5" y="6.5" width="17" height="13" rx="2"/><path d="M9 6.5V4.5h6v2M12 10v6M9 13h6"/>',
   interact: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3"/>',
   giveup: '<path d="M6 6l12 12M18 6L6 18"/>',
+  build: '<path d="M14.5 4.5l5 5-3 3-5-5zM13 9l-8.5 8.5 2 2L15 11"/>',
 };
 
 const svg = (paths: string) =>
@@ -104,6 +106,8 @@ export class TouchControls implements InputSource {
       ['interact', null],
       // Shown while down: hold to give up.
       ['giveup', 'touch.giveUp'],
+      // Build mode on / off: shown near build spots and while building (fire builds then).
+      ['build', 'touch.build'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
       // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
@@ -274,6 +278,7 @@ export class TouchControls implements InputSource {
     if (this.pulses.has('switch')) s.weaponCycle = 1;
     s.melee ||= this.pulses.has('melee');
     s.inspect ||= this.pulses.has('inspect');
+    s.buildMode ||= this.pulses.has('build');
     this.pulses.clear();
   }
 
@@ -291,7 +296,10 @@ export class TouchControls implements InputSource {
    * interact button with what it would do (hidden when nothing is in reach)
    * and, while down, the give-up button instead of the fighting controls.
    */
-  setContext(c: { medkit: string | null; interact: string | null; downed: boolean }): void {
+  setContext(c: { medkit: string | null; interact: string | null; downed: boolean; build?: 'near' | 'on' | null }): void {
+    const build = this.buttons.get('build')!;
+    build.classList.toggle('show', !!c.build);
+    build.classList.toggle('on', c.build === 'on');
     const kit = this.buttons.get('medkit')!;
     kit.classList.toggle('empty', c.medkit === null);
     const kl = kit.querySelector('.tb-label')!;

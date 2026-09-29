@@ -27,8 +27,8 @@ describe('fortification planning', () => {
     const plan = planFortifications(zones, [], [], flatProbe());
     for (const z of ['A', 'B']) {
       expect(plan.stations.filter((s) => s.zone === z).map((s) => s.kind).sort()).toEqual(['ammo', 'medical']);
-      expect(plan.slots.filter((s) => s.zone === z && s.kind === 'sandbag')).toHaveLength(3);
-      expect(plan.slots.filter((s) => s.zone === z && s.kind === 'hedgehog')).toHaveLength(2);
+      const count = (k: string) => plan.slots.filter((s) => s.zone === z && s.kind === k).length;
+      expect([count('nest'), count('sandbagCorner'), count('sandbag'), count('timber'), count('sandbagLow'), count('wire'), count('hedgehog')]).toEqual([1, 3, 5, 3, 4, 3, 3]);
     }
     // Stations sit inside the zone, a few metres apart.
     const a = plan.stations.filter((s) => s.zone === 'A');
@@ -38,7 +38,7 @@ describe('fortification planning', () => {
     expect(gap).toBeLessThanOrEqual(11);
     // Build spots don't crowd each other.
     const bags = plan.slots.filter((s) => s.zone === 'A');
-    for (let i = 0; i < bags.length; i++) for (let j = i + 1; j < bags.length; j++) expect(Math.hypot(bags[i]!.pos[0] - bags[j]!.pos[0], bags[i]!.pos[2] - bags[j]!.pos[2])).toBeGreaterThan(4);
+    for (let i = 0; i < bags.length; i++) for (let j = i + 1; j < bags.length; j++) expect(Math.hypot(bags[i]!.pos[0] - bags[j]!.pos[0], bags[i]!.pos[2] - bags[j]!.pos[2])).toBeGreaterThan(4.5);
     expect(planFortifications(zones, [], [], flatProbe())).toEqual(plan);
   });
 
@@ -114,7 +114,34 @@ describe('fortifications at runtime', () => {
     physics.dispose();
   });
 
+  it('nests block on three sides, wire only slows, and build mode aims at the spot in view', async () => {
+    const { physics, nav, fort } = await world();
+    const nest = fort.slots.find((s) => s.kind === 'nest')!;
+    const wire = fort.slots.find((s) => s.kind === 'wire')!;
+    // Looking straight at the nest from its open back picks it; looking away picks nothing near.
+    const eye = nest.stand.clone().setY(nest.stand.y + 1.6);
+    const dir = nest.center.clone().sub(eye).normalize();
+    expect(fort.aimAt(eye, dir)).toBe(nest);
+    expect(fort.aimAt(eye, dir.clone().negate())?.id ?? -1).not.toBe(nest.id);
+    fort.complete(nest);
+    fort.complete(wire);
+    nav.update(4096);
+    physics.step();
+    expect(nest.colliders).toHaveLength(3);
+    expect(nest.obstacles).toHaveLength(3);
+    // Inside the U (the open back) is still free; the front wall is not.
+    expect(fort.occupies(nest, nest.pos)).toBe(false);
+    const front = new THREE.Vector3(-Math.sin(nest.yaw), 0, -Math.cos(nest.yaw));
+    expect(fort.occupies(nest, nest.pos.clone().addScaledVector(front, nest.size[2] / 2 - 0.3))).toBe(true);
+    expect(wire.colliders).toHaveLength(0);
+    expect(fort.slowAt(wire.pos)).toBeLessThan(1);
+    expect(fort.slowAt(wire.stand)).toBe(1);
+    nav.dispose();
+    physics.dispose();
+  });
+
   it("waits while someone stands where it goes", async () => {
+
     const { physics, nav, fort } = await world();
     const bag = fort.slots.find((s) => s.kind === 'sandbag')!;
     const r = fort.work(bag, 99, 'assault', () => true);
