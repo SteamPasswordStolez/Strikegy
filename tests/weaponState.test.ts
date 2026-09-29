@@ -65,7 +65,7 @@ describe('WeaponState', () => {
     run(w, 0.2, false);
     expect(w.reloading).toBe(false);
     expect(w.ammo).toBe(30);
-    expect(w.reserve).toBe(90 - fired);
+    expect(w.reserve).toBe(WEAPONS.ar1.reserve - fired);
   });
 
   it('per-shell reload inserts one round at a time and can be interrupted', () => {

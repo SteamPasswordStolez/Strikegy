@@ -18,7 +18,7 @@ const tickets = Number(params.get('tickets')) || undefined;
 Game.create(container, {
   mapUrl,
   // Sandbox loadout: every weapon class for feel testing (1-9 / Q / mouse wheel).
-  loadout: ['ar1', 'smg1', 'lmg1', 'sg1', 'dmr1', 'sr1', 'pistol1', 'ar3', 'dmr2'],
+  loadout: ['ar1', 'smg1', 'lmg1', 'sg1', 'dmr1', 'sr1', 'pistol1', 'ar4', 'sg3'],
   viewModels: ['bolt_action_rifle_7_62', 'service_pistol'],
   bots,
   mode,

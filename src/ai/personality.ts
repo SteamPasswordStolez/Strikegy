@@ -43,8 +43,10 @@ const STYLES: Record<Archetype, Style> = {
     weapons: [
       ['smg1', 3],
       ['smg2', 2],
+      ['smg4', 1],
       ['sg1', 2],
-      ['ar1', 1],
+      ['sg3', 1],
+      ['ar4', 2],
     ],
     aggression: [0.7, 1],
     caution: [0, 0.3],
@@ -58,7 +60,8 @@ const STYLES: Record<Archetype, Style> = {
       ['ar1', 3],
       ['ar2', 2],
       ['ar3', 1],
-      ['smg1', 1],
+      ['ar4', 1],
+      ['smg2', 1],
     ],
     aggression: [0.35, 0.65],
     caution: [0.3, 0.6],
@@ -69,9 +72,10 @@ const STYLES: Record<Archetype, Style> = {
   anchor: {
     weight: 20,
     weapons: [
-      ['lmg1', 3],
+      ['lmg1', 2],
+      ['lmg2', 1],
+      ['lmg3', 2],
       ['ar2', 1],
-      ['ar1', 1],
     ],
     aggression: [0.1, 0.4],
     caution: [0.6, 0.9],
@@ -84,6 +88,7 @@ const STYLES: Record<Archetype, Style> = {
     weapons: [
       ['dmr1', 3],
       ['dmr2', 1],
+      ['dmr3', 1],
     ],
     aggression: [0.05, 0.3],
     caution: [0.6, 1],

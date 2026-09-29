@@ -29,20 +29,31 @@ interface Look {
   muzzle?: 'flash' | 'brake' | 'suppressor';
   /** Folded bipod under the handguard (precision rifles). */
   bipod?: boolean;
+  /** Rifle frame: where the handguard and barrel end (m forward of the receiver). */
+  handguard?: number;
+  barrel?: number;
+  mag?: 'curved' | 'straight';
+  /** Build on the rifle frame whatever the class (a magazine-fed LMG). */
+  frame?: 'rifle';
 }
 
 const LOOKS: Record<string, Look> = {
   ar1: { color: 0x1c1d1f, optic: 'reddot', grip: 'angled', light: true },
-  ar2: { color: 0x8a7658, optic: 'holo', grip: 'vertical', muzzle: 'brake' },
+  ar2: { color: 0x8a7658, optic: 'holo', grip: 'vertical', muzzle: 'brake', handguard: 0.37, barrel: 0.45 },
   ar3: { color: 0x3f4632, optic: 'reddot', light: true },
+  ar4: { color: 0x2b2e33, optic: 'holo', grip: 'angled', handguard: 0.27, barrel: 0.32 },
   smg1: { color: 0x1c1d1f, optic: 'holo', grip: 'vertical' },
   smg2: { color: 0x7d6c52, optic: 'reddot', light: true },
   smg3: { color: 0x2b2e33, optic: 'holo', muzzle: 'suppressor' },
   smg4: { color: 0x3f4632, optic: 'reddot', grip: 'angled' },
   lmg1: { color: 0x4a4f3a },
   lmg2: { color: 0x1c1d1f },
+  lmg3: { color: 0x5b5a44, optic: 'holo', frame: 'rifle', handguard: 0.42, barrel: 0.52, mag: 'straight', bipod: true, muzzle: 'brake' },
+  sg2: { color: 0x1c1d1f },
+  sg3: { color: 0x3f4632 },
   dmr1: { color: 0x8a7658, optic: 'holo', muzzle: 'brake' },
   dmr2: { color: 0x3f4632, muzzle: 'brake', bipod: true },
+  dmr3: { color: 0x6b5a40, muzzle: 'flash', handguard: 0.42, barrel: 0.58 },
   sr1: { bipod: true },
   sr2: { muzzle: 'suppressor' },
 };
@@ -677,15 +688,25 @@ function pistol(): GunBuild {
 export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): GunBuild {
   const look = LOOKS[def.id] ?? {};
   const fine = opts.detail !== 'low';
+  if (look.frame === 'rifle' || def.class === 'ar') {
+    return rifle({
+      handguardEnd: look.handguard ?? 0.33,
+      barrelEnd: look.barrel ?? 0.4,
+      mag: look.mag ?? 'curved',
+      optic: look.optic ?? 'reddot',
+      color: look.color ?? 0x1c1d1f,
+      precision: false,
+      look,
+      fine,
+    });
+  }
   switch (def.class) {
-    case 'ar':
-      return rifle({ handguardEnd: 0.33, barrelEnd: 0.4, mag: 'curved', optic: look.optic ?? 'reddot', color: look.color ?? 0x1c1d1f, precision: false, look, fine });
     case 'dmr':
     case 'sr':
       return rifle({
-        handguardEnd: 0.38,
-        barrelEnd: 0.52,
-        mag: 'straight',
+        handguardEnd: look.handguard ?? 0.38,
+        barrelEnd: look.barrel ?? 0.52,
+        mag: look.mag ?? 'straight',
         optic: def.scope ? 'scope' : (look.optic ?? 'reddot'),
         color: look.color ?? 0x8a7658,
         precision: true,
@@ -697,8 +718,10 @@ export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): Gun
     case 'lmg':
       return lmg(look.color ?? 0x4a4f3a, fine);
     case 'sg':
-      return shotgun(def.id === 'sg2' ? 0x1c1d1f : null, def.id === 'sg2', fine);
+      // SG-2 / SG-3: the tactical build (heat shield, ghost ring, side saddle).
+      return shotgun(look.color ?? null, def.id !== 'sg1', fine);
     case 'pistol':
       return pistol();
   }
+  throw new Error(`no gun model for ${def.id}`);
 }

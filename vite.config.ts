@@ -46,6 +46,8 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts'],
+    // Navmesh, terrain and gun-building tests take seconds each; the default 5 s is too tight when they run in parallel.
+    testTimeout: 30000,
     environment: 'node',
   },
 });

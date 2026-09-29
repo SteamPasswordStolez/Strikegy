@@ -426,11 +426,13 @@ export class Game {
     const bus = this.bus;
     const cls = (id: string) => WEAPONS[id as WeaponId].class;
     bus.on('weapon:fired', (e) => {
+      const quiet = !!WEAPONS[e.weaponId as WeaponId].suppressed;
       if (this.bots) {
         this.playerFiringUntil = this.bots.time + 0.6;
-        this.bots.alert(this.player.feet, 70, this.playerCombatant);
+        // A suppressed gun is only heard close by.
+        this.bots.alert(this.player.feet, quiet ? 22 : 70, this.playerCombatant);
       }
-      this.audio.gunshot(cls(e.weaponId), e.ads);
+      this.audio.gunshot(cls(e.weaponId), e.ads, quiet);
       this.viewModel.onFire(e.ads);
       this.muzzleEffects(e.weaponId, true);
     });

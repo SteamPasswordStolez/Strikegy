@@ -24,7 +24,7 @@ describe('procedural guns', () => {
       // Bots bake these into their soldier models: keep them near the old budget.
       expect(low).toBeLessThan(3200);
     }
-  });
+  }, 30000);
 
   it('muzzle devices move the muzzle forward and every mesh has valid bounds', () => {
     const plain = buildGun(WEAPONS.smg1);
@@ -35,5 +35,5 @@ describe('procedural guns', () => {
         if (c instanceof THREE.Mesh) expect(Number.isFinite(c.geometry.boundingSphere?.radius ?? 0)).toBe(true);
       });
     }
-  });
+  }, 30000);
 });

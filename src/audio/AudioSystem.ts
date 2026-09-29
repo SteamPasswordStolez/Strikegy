@@ -412,15 +412,20 @@ export class AudioSystem {
 
   // ---------- weapons ----------
 
-  gunshot(cls: WeaponClass, ads: boolean): void {
+  gunshot(cls: WeaponClass, ads: boolean, suppressed = false): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const v = VOICES[cls];
     const pitch = rand(0.94, 1.06);
-    const out = this.out(null, v.tail);
-    this.excite(0.08);
+    const out = this.out(null, suppressed ? v.tail * 0.3 : v.tail);
+    this.excite(suppressed ? 0.02 : 0.08);
     const g = v.gain * (ads ? 0.92 : 1);
-    if (this.sample(`gun_${cls}`, out, t, 0.95, rand(0.97, 1.03))) {
+    if (suppressed) {
+      // A muffled cough and the action cycling: most of the report stays in the can.
+      this.noiseBurst(out, t, 0.06, g * 0.45, { type: 'lowpass', freq: 1500 * pitch, endFreq: 260 }, pitch);
+      this.tone(out, t, v.thump * 1.6 * pitch, 0.07, g * 0.3, 'sine', v.thump * 0.5);
+      this.tone(out, t + 0.01, 2600 * pitch, 0.02, g * 0.1, 'square');
+    } else if (this.sample(`gun_${cls}`, out, t, 0.95, rand(0.97, 1.03))) {
       // Recordings are taken beside the shooter; a little sub thump restores first-person weight.
       this.tone(out, t, v.thump * 2 * pitch, 0.1, g * 0.35, 'sine', v.thump * 0.5);
     } else {
