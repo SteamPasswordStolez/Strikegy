@@ -3,6 +3,7 @@ import type { ModelLibrary } from '@/render/models';
 import type { WeaponDef } from './weaponData';
 import { gunMaterials, type P } from './gunKit';
 import { buildGun, buildOptic } from './gunModels';
+import type { GadgetId } from '@/data/gadgets';
 import {
   INSPECT_HAND,
   INSPECT_MAG_HELD,
@@ -63,6 +64,9 @@ export interface ViewModelFrame {
   tool?: number;
   /** Build mode: the hammer stays in hand between blows. */
   toolIdle?: boolean;
+  /** Class gadget in hand (key 4), and seconds since it was last used. */
+  gadget?: GadgetId | null;
+  gadgetUsed?: number;
 }
 
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
@@ -497,9 +501,12 @@ export class ViewModel {
     }
     this.throwT = Math.min(1, this.throwT + dt / 0.65);
     const throwDip = Math.sin(this.throwT * Math.PI);
-    this.toolBlend += ((f.toolIdle || (f.tool !== undefined && f.tool >= 0) ? 1 : 0) - this.toolBlend) * ease(9);
+    // Hammer or a held gadget: the gun goes down (the rifle grenade rides on the gun instead).
+    const held = !!f.gadget && f.gadget !== 'riflesmoke';
+    this.toolBlend += ((f.toolIdle || (f.tool !== undefined && f.tool >= 0) || held ? 1 : 0) - this.toolBlend) * ease(9);
 
-    this.updateHammer(f.tool ?? -1, bobX, bobY);
+    this.updateHammer(held ? -2 : (f.tool ?? -1), bobX, bobY);
+    this.updateGadget(f.gadget ?? null, f.gadgetUsed ?? 10, bobX, bobY);
 
     // Whole-gun motions: seating jolts, inspection, melee.
     const extraPos = this.extraPos.set(0, 0, 0);
@@ -518,6 +525,10 @@ export class ViewModel {
       extraRot.add(sampleTrack(mv.rot, f.meleeT, this.tq));
     }
     this.meleeActive = f.meleeT >= 0;
+    // Rifle smoke loaded: the muzzle comes up for the lob, so the grenade on it shows.
+    this.lobBlend += ((f.gadget === 'riflesmoke' ? 1 : 0) - this.lobBlend) * ease(8);
+    extraRot.x += this.lobBlend * 0.32;
+    extraPos.y += this.lobBlend * 0.035;
     this.meleeJolt *= Math.exp(-14 * dt);
     extraPos.z += this.meleeJolt * 0.04;
     extraRot.x += this.meleeJolt * 0.08;
@@ -554,7 +565,8 @@ export class ViewModel {
    * into view from below as the gun goes down.
    */
   private updateHammer(t: number, bobX: number, bobY: number): void {
-    if (this.toolBlend < 0.02) {
+    // -2: a gadget is in hand instead.
+    if (this.toolBlend < 0.02 || t === -2) {
       if (this.hammer) this.hammer.visible = false;
       return;
     }
@@ -569,6 +581,120 @@ export class ViewModel {
     const lift = (1 - this.toolBlend) * 0.45;
     h.position.set(0.17 + bobX, -0.2 - lift + bobY, -0.44);
     h.rotation.set(a, -0.25, -0.2);
+  }
+
+  /** Held gadget models (built on first use) and the rifle grenade that sits on the muzzle. */
+  private readonly gadgetModels = new Map<GadgetId, THREE.Group>();
+  private rifleNade: THREE.Group | null = null;
+  private lobBlend = 0;
+
+  /**
+   * Gadget in hand. Panzerfaust: on the shoulder; firing kicks it back, the
+   * spent tube drops away and the next comes up. Beacon / mine: held low, set
+   * down forward on use. Rifle smoke: a grenade on the gun's muzzle until fired.
+   */
+  private updateGadget(id: GadgetId | null, used: number, bobX: number, bobY: number): void {
+    for (const [gid, g] of this.gadgetModels) if (gid !== id || this.toolBlend < 0.02) g.visible = false;
+    // Rifle grenade on the muzzle (re-attached when the gun model is rebuilt).
+    if (id === 'riflesmoke') {
+      const nade = (this.rifleNade ??= this.buildRifleNade());
+      if (nade.parent !== this.gun) this.gun.add(nade);
+      nade.position.copy(this.muzzle.position).add(new THREE.Vector3(0, 0, -0.05));
+      nade.visible = used > 0.7;
+    } else if (this.rifleNade) this.rifleNade.visible = false;
+    if (!id || id === 'riflesmoke' || this.toolBlend < 0.02) return;
+    let g = this.gadgetModels.get(id);
+    if (!g) {
+      g = this.buildGadget(id);
+      this.gadgetModels.set(id, g);
+    }
+    g.visible = true;
+    const lift = (1 - this.toolBlend) * 0.45;
+    if (id === 'panzerfaust') {
+      // Kick (0..0.15 s), spent tube away and the next one up (0.25..1.1 s).
+      const kick = used < 0.15 ? Math.sin((used / 0.15) * Math.PI) : 0;
+      const swap = used < 0.25 || used > 1.1 ? 0 : Math.sin(((used - 0.25) / 0.85) * Math.PI);
+      // On the right shoulder, the warhead right of the aim point (the sight is the aim).
+      g.position.set(0.2 + bobX, -0.17 - lift - swap * 0.35 + bobY, -0.16 + kick * 0.09);
+      g.rotation.set(kick * 0.12 - swap * 0.5 + 0.03, -0.05, 0);
+    } else {
+      const down = used < 0.7 ? Math.sin((used / 0.7) * Math.PI) : 0;
+      g.position.set(0.2 + bobX, -0.22 - lift - down * 0.12 + bobY, -0.42 - down * 0.15);
+      g.rotation.set(-0.3 - down * 0.6, -0.4, 0);
+      const item = g.getObjectByName('item');
+      if (item) item.visible = used > 0.5;
+    }
+  }
+
+  private buildRifleNade(): THREE.Group {
+    const g = new THREE.Group();
+    const body = new THREE.MeshStandardMaterial({ color: 0x8c9186, roughness: 0.6, metalness: 0.2 });
+    const tail = new THREE.MeshStandardMaterial({ color: 0x2a2b2d, roughness: 0.5, metalness: 0.6 });
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, z: number): void => {
+      const m = new THREE.Mesh(geo.rotateX(Math.PI / 2), mat);
+      m.position.z = z;
+      g.add(m);
+    };
+    add(new THREE.CylinderGeometry(0.022, 0.022, 0.1, 14), body, -0.1);
+    add(new THREE.SphereGeometry(0.022, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(-Math.PI), body, -0.15);
+    add(new THREE.CylinderGeometry(0.0105, 0.0105, 0.1, 10), tail, -0.01);
+    for (let i = 0; i < 4; i++) {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.026, 0.035), tail);
+      fin.position.set(Math.cos((i * Math.PI) / 2) * 0.014, Math.sin((i * Math.PI) / 2) * 0.014, 0.01);
+      fin.rotation.z = (i * Math.PI) / 2;
+      g.add(fin);
+    }
+    g.visible = false;
+    return g;
+  }
+
+  /** Held gadget with the gloved hands holding it. */
+  private buildGadget(id: GadgetId): THREE.Group {
+    const m = gunMaterials();
+    const g = new THREE.Group();
+    const olive = new THREE.MeshStandardMaterial({ color: 0x4d5538, roughness: 0.8, metalness: 0.15 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1f2022, roughness: 0.55, metalness: 0.5 });
+    const add = (parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0): THREE.Mesh => {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z);
+      mesh.rotation.set(rx, ry, rz);
+      parent.add(mesh);
+      return mesh;
+    };
+    const fist = (x: number, y: number, z: number, rx: number): void => {
+      add(g, new THREE.CapsuleGeometry(0.03, 0.035, 4, 10), m.glove, x, y, z, rx);
+      const sleeve = add(g, new THREE.CylinderGeometry(0.05, 0.042, 0.45, 10), m.sleeve, x + 0.05, y - 0.16, z + 0.22);
+      sleeve.rotation.set(1.0, 0, -0.3);
+    };
+    if (id === 'panzerfaust') {
+      // Launch tube along the view, warhead in front, folding sight and trigger lever on top.
+      const tube = new THREE.Group();
+      tube.name = 'item';
+      add(tube, new THREE.CylinderGeometry(0.024, 0.024, 0.85, 14).rotateX(Math.PI / 2), olive, 0, 0, -0.1);
+      add(tube, new THREE.SphereGeometry(0.075, 16, 12).scale(1, 1, 1.9), olive, 0, 0, -0.64);
+      add(tube, new THREE.ConeGeometry(0.03, 0.07, 12).rotateX(-Math.PI / 2), dark, 0, 0, -0.81);
+      add(tube, new THREE.BoxGeometry(0.004, 0.05, 0.03), dark, 0, 0.045, -0.3);
+      add(tube, new THREE.BoxGeometry(0.02, 0.012, 0.09), dark, 0, 0.028, -0.18);
+      g.add(tube);
+      fist(-0.02, -0.035, -0.42, 0.4);
+      fist(0.01, -0.04, 0.05, 0.2);
+    } else {
+      const item = new THREE.Group();
+      item.name = 'item';
+      if (id === 'beacon') {
+        add(item, new THREE.BoxGeometry(0.11, 0.14, 0.08), olive, 0, 0.05, 0);
+        add(item, new THREE.CylinderGeometry(0.003, 0.003, 0.26, 6), dark, 0.03, 0.25, 0);
+        add(item, new THREE.SphereGeometry(0.012, 8, 6), new THREE.MeshBasicMaterial({ color: 0x5aff7a, toneMapped: false }), -0.03, 0.13, 0.041);
+      } else {
+        add(item, new THREE.CylinderGeometry(0.075, 0.08, 0.045, 18), olive, 0, 0.05, 0);
+        add(item, new THREE.CylinderGeometry(0.035, 0.035, 0.015, 12), dark, 0, 0.078, 0);
+      }
+      g.add(item);
+      fist(0, 0, 0.02, 0.9);
+    }
+    g.visible = false;
+    this.fpScene.add(g);
+    return g;
   }
 
   /** A claw hammer in a gloved fist, with the sleeve running off screen. */

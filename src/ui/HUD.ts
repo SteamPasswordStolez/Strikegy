@@ -19,6 +19,8 @@ export interface HudFrame {
   scope: { reticle: Reticle; color: number; shiftX: number; shiftY: number } | null;
   grenadeLabel: string;
   grenadeCount: number;
+  /** Class gadget: key hint ('4 · ' on PC), name, count left, in hand. Null: none (support, range). */
+  gadget: { key: string; label: string; count: number; out: boolean } | null;
   /** 0..1 white-out from flashbangs. */
   flash: number;
   /** Seconds until respawn, or null while alive. */
@@ -90,6 +92,7 @@ export class HUD {
   private ammo: HTMLDivElement;
   private weapon: HTMLDivElement;
   private grenade: HTMLDivElement;
+  private gadgetEl: HTMLDivElement;
   private reloadBar: HTMLDivElement;
   private reloadFill: HTMLDivElement;
   private health: HTMLDivElement;
@@ -148,6 +151,7 @@ export class HUD {
     this.reloadBar = el('div', 'hud-reload', bottomRight);
     this.reloadFill = el('div', 'hud-reload-fill', this.reloadBar);
     this.grenade = el('div', 'hud-grenade', bottomRight);
+    this.gadgetEl = el('div', 'hud-grenade hud-gadget', bottomRight);
 
     const bottomLeft = el('div', 'hud-bl', this.root);
     this.health = el('div', 'hud-health', bottomLeft);
@@ -256,6 +260,14 @@ export class HUD {
     this.set('grenade', gText, () => {
       this.grenade.textContent = gText;
       this.grenade.classList.toggle('empty', f.grenadeCount === 0);
+    });
+    const gd = f.gadget;
+    const gdText = gd ? `${gd.key}${gd.label} ×${gd.count}` : '';
+    this.set('gadget', `${gdText}:${gd?.out}`, () => {
+      this.gadgetEl.textContent = gdText;
+      this.gadgetEl.style.display = gd ? '' : 'none';
+      this.gadgetEl.classList.toggle('empty', !!gd && gd.count === 0);
+      this.gadgetEl.classList.toggle('on', !!gd?.out);
     });
 
     const hp = Math.ceil(f.health);

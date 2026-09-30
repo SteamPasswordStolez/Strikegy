@@ -19,6 +19,8 @@ import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from './types';
 import { CLASSES, GIVE_RANGE, MEDKIT } from '@/data/classes';
 import type { WaterMap } from '@/world/water';
 import { REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Fortifications } from '@/modes/fortify';
+import type { GadgetWorld } from '@/modes/gadgetWorld';
+import { RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
 
 const DEG = Math.PI / 180;
 const RESPAWN_SEC = 5;
@@ -228,6 +230,9 @@ export class BotManager implements BotServices {
   fort: Fortifications | null = null;
   zoneOwner: ((zone: string) => Team | null) | null = null;
   fortBlocked: ((slot: FortSlot) => boolean) | null = null;
+  /** Class gadgets in the world, and each bot's squad key (for beacons); set by the game. */
+  gadgets: GadgetWorld | null = null;
+  squadKey: ((bot: Bot) => string | null) | null = null;
   /** Job key -> the bot doing it. */
   private readonly workers = new Map<string, Bot>();
   /** Set by the game: where bot grenades go. */
@@ -305,13 +310,17 @@ export class BotManager implements BotServices {
     });
     // Explosions nearby rattle everyone (either side), frags more than the rest.
     bus.on('grenade:detonate', (e) => {
-      if (e.type !== 'frag') return;
-      for (const en of this.entries) {
-        const b = en.bot;
-        const d = b.feet.distanceTo(e.point);
-        if (b.alive && d < BLAST_SUPPRESS) b.suppress(0.9 * (1 - d / BLAST_SUPPRESS), e.point, this.time);
-      }
+      if (e.type === 'frag') this.explosionAt(e.point);
     });
+  }
+
+  /** A blast (frag, rocket, mine): everyone nearby is rattled. */
+  explosionAt(point: THREE.Vector3): void {
+    for (const en of this.entries) {
+      const b = en.bot;
+      const d = b.feet.distanceTo(point);
+      if (b.alive && d < BLAST_SUPPRESS) b.suppress(0.9 * (1 - d / BLAST_SUPPRESS), point, this.time);
+    }
   }
 
   private entryOf(bot: Bot): BotEntry {
@@ -1264,6 +1273,78 @@ export class BotManager implements BotServices {
     const headOn = oMoving && (o.velocity.x * wx + o.velocity.z * wz) < -0.3 * oSpeed;
     const side = headOn || Math.abs(lat) < 0.05 ? 1 : -Math.sign(lat);
     this.steer += side * (1 - ahead / AVOID_AHEAD) * (1 - Math.abs(lat) / (AVOID_WIDTH * scale) * 0.5);
+  }
+
+  useGadget(bot: Bot, kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3): boolean {
+    const g = this.gadgets;
+    if (!g) return false;
+    const owner = { id: bot.id, name: bot.name, team: bot.team, squad: this.squadKey?.(bot) ?? null };
+    const eye = bot.eyePos(new THREE.Vector3());
+    if (kind === 'rocket') {
+      // Aim a little high for the drop, with the bot's shakiness.
+      const dist = eye.distanceTo(at);
+      const t = dist / ROCKET.speed;
+      const dir = at.clone().setY(at.y + 0.5 * ROCKET.gravity * t * t).sub(eye).normalize();
+      const err = (this.skill.aimErrorMin * 1.5 * Math.PI) / 180;
+      dir.x += (Math.random() - 0.5) * err;
+      dir.y += (Math.random() - 0.5) * err;
+      dir.z += (Math.random() - 0.5) * err;
+      dir.normalize();
+      g.fire('rocket', eye.clone().addScaledVector(dir, 0.8), dir, owner);
+      this.audio.gadget('rocket', eye);
+      return true;
+    }
+    if (kind === 'riflesmoke') {
+      // Low arc onto the spot (flat-ground range formula; the loft is ~20-40°).
+      const flat = new THREE.Vector3(at.x - eye.x, 0, at.z - eye.z);
+      const range = flat.length();
+      const v = RIFLE_SMOKE.speed;
+      const s2 = (range * RIFLE_SMOKE.gravity) / (v * v);
+      if (range < 5 || s2 >= 1) return false;
+      const phi = 0.5 * Math.asin(s2);
+      flat.normalize().multiplyScalar(Math.cos(phi)).setY(Math.sin(phi));
+      g.fire('riflesmoke', eye.clone().addScaledVector(flat, 0.8), flat, owner, true);
+      this.audio.gadget('rifle', eye);
+      return true;
+    }
+    const spot = this.nav.closest(at) ?? at.clone();
+    if (spot.distanceTo(bot.feet) > 3) return false;
+    if (kind === 'beacon') g.placeBeacon(spot, bot.yaw, owner);
+    else g.placeMine(spot, bot.yaw, owner);
+    this.audio.gadget('place', spot);
+    return true;
+  }
+
+  mineAhead(bot: Bot): boolean {
+    const g = this.gadgets;
+    if (!g || !g.mines.length) return false;
+    const eye = bot.eyePos(new THREE.Vector3());
+    for (const m of g.minesNear(bot.feet, 8, bot.team)) {
+      if (m.seenBy.has(bot.team)) continue;
+      // Close by it's hard to miss; farther it needs a look and some luck.
+      const d = m.pos.distanceTo(bot.feet);
+      if (d < 3.5 || (Math.random() < 0.3 && this.lineOfSight(eye, m.pos.clone().setY(m.pos.y + 0.1)))) m.seenBy.add(bot.team);
+    }
+    return g.knownMinesNear(bot.feet, 3, bot.team).length > 0;
+  }
+
+  ownMinesNear(bot: Bot, p: THREE.Vector3, r: number): number {
+    return this.gadgets?.mines.filter((m) => m.owner.id === bot.id && m.pos.distanceTo(p) < r).length ?? 0;
+  }
+
+  nearOwnedZone(bot: Bot, r: number): boolean {
+    // Stations stand at the zones: close to one of a zone we hold.
+    for (const st of this.fort?.stations ?? []) {
+      if (this.zoneOwner?.(st.zone) === bot.team && st.pos.distanceTo(bot.feet) < r) return true;
+    }
+    return false;
+  }
+
+  fortifiedAt(p: THREE.Vector3): boolean {
+    for (const s of this.fort?.slots ?? []) {
+      if (s.built && s.kind !== 'wire' && s.kind !== 'hedgehog' && s.pos.distanceToSquared(p) < 9) return true;
+    }
+    return false;
   }
 
   spotTaken(bot: Bot, p: THREE.Vector3): boolean {

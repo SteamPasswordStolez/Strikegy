@@ -12,6 +12,7 @@ import {
   type Loadout,
 } from '@/data/classes';
 import type { LoadoutStore } from '@/data/loadoutStore';
+import { GADGETS, classGadget } from '@/data/gadgets';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 
 const ICON: Record<ClassId, string> = {
@@ -110,8 +111,9 @@ export class LoadoutPanel {
     row('primary1', t('loadout.primary2'), WEAPONS[l.primary[1]].name);
     row('pistol', t('loadout.pistol'), WEAPONS[l.pistol].name);
     row('grenade', t('loadout.grenade'), `${t(`grenade.${l.grenade}` as MessageKey)} ×${GRENADE_COUNT[l.grenade]}`);
+    const gid = classGadget(l.cls, l.reconGadget);
     const gadget = l.cls === 'recon' ? t(`gadget.${l.reconGadget}`) : t(`gadget.${l.cls}` as MessageKey);
-    row('gadget', t('loadout.gadget'), gadget, t('gadget.soon'));
+    row('gadget', t('loadout.gadget'), gid ? `${gadget} ×${GADGETS[gid].count}` : gadget, gid ? undefined : t('gadget.supportNote'));
     this.renderPicker();
   }
 
@@ -142,14 +144,15 @@ export class LoadoutPanel {
       const options = l.cls === 'recon' ? (['beacon', 'mine'] as const) : null;
       if (!options) {
         const b = el('div', 'lp-item simple sel', list);
-        el('span', 'lp-name', b).textContent = t(`gadget.${l.cls}` as MessageKey);
-        el('span', 'lp-note', b).textContent = t('gadget.soon');
+        const gid = classGadget(l.cls, l.reconGadget);
+        el('span', 'lp-name', b).textContent = `${t(`gadget.${l.cls}` as MessageKey)}${gid ? ` ×${GADGETS[gid].count}` : ''}`;
+        el('span', 'lp-note', b).textContent = t(`gadgetInfo.${l.cls}` as MessageKey);
         return;
       }
       for (const g of options) {
         const b = el('button', `lp-item simple${g === l.reconGadget ? ' sel' : ''}`, list);
-        el('span', 'lp-name', b).textContent = t(`gadget.${g}`);
-        el('span', 'lp-note', b).textContent = t('gadget.soon');
+        el('span', 'lp-name', b).textContent = `${t(`gadget.${g}`)} ×${GADGETS[g].count}`;
+        el('span', 'lp-note', b).textContent = t(`gadgetInfo.${g}`);
         b.addEventListener('click', () => this.update({ ...l, reconGadget: g }));
       }
       return;

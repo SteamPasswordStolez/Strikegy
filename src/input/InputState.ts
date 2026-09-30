@@ -40,6 +40,8 @@ export interface InputState {
   scoreboard: boolean;
   /** Pulse: toggle build mode (T). */
   buildMode: boolean;
+  /** Pulse: take out / put away the class gadget (4; touch: gadget button). */
+  gadget: boolean;
 }
 
 export function createInputState(): InputState {
@@ -66,6 +68,7 @@ export function createInputState(): InputState {
     inspect: false,
     scoreboard: false,
     buildMode: false,
+    gadget: false,
   };
 }
 
@@ -82,6 +85,7 @@ export function consumePulses(s: InputState): void {
   s.melee = false;
   s.inspect = false;
   s.buildMode = false;
+  s.gadget = false;
 }
 
 export function resetFrameInput(s: InputState): void {

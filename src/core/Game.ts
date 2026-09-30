@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { EventBus } from './EventBus';
-import type { DamageCause, GameEvents, GrenadeOwner } from './events';
+import type { DamageCause, GameEvents, GrenadeOwner, HitPart } from './events';
 import { FixedStepLoop } from './FixedStepLoop';
 import { QUALITY_ORDER, gpuName, isTouchDevice, loadSettings, resolveQuality, saveSettings, type Settings } from './Settings';
 import { setLocale, t, type MessageKey } from '@/i18n';
@@ -34,7 +34,9 @@ import { NavWorld } from '@/ai/NavWorld';
 import { BotManager, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
-import { GRENADES, flashDuration, flashIntensity, fragDamage, type GrenadeType } from '@/combat/explosions';
+import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
+import { GADGETS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
+import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { ViewModel } from '@/weapons/ViewModel';
@@ -227,6 +229,16 @@ export class Game {
   private working = -1;
   /** Build mode (T): the hammer is out, build spots show clearly, the trigger builds the one aimed at. */
   private buildMode = false;
+  /** Rockets, rifle grenades, beacons and mines in the world. */
+  private gadgets!: GadgetWorld;
+  /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
+  private gadget: GadgetId | null = null;
+  private gadgetCount = 0;
+  private gadgetOut = false;
+  /** Seconds before the gadget can be used again (the next tube coming up, placing). */
+  private gadgetBusy = 0;
+  /** Sim time of the last use (view model: recoil / placing motion). */
+  private gadgetUsedAt = -10;
   private buildTarget: FortSlot | null = null;
   private nextBlow = 0;
   /** Next time a giver may hand the same receiver the same thing: 'giver>receiver:kind' -> sim time. */
@@ -347,7 +359,17 @@ export class Game {
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
     this.throwables = new Throwables(r.scene, this.physics, this.bus);
-    this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
+    this.gadgets = new GadgetWorld(this.physics, this.registry, {
+      explode: (kind, point, owner) => this.blast(kind, point, owner, t(kind === 'rocket' ? 'gadget.assault' : 'gadget.mine')),
+      directHit: (target, part, point, owner) => this.rocketHit(target, part, point, owner),
+      smoke: (point) => {
+        this.effects.smoke(point, GRENADES.smoke.duration ?? 20, GRENADES.smoke.radius);
+        this.audio.smokePop(point, GRENADES.smoke.duration ?? 20);
+      },
+      destroyed: (_kind, point) => this.audio.grenadeBounce(point, 12),
+    });
+    r.scene.add(this.gadgets.group);
+    this.spawn =map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
     this.player.water = water;
     this.playerSpawns = map.spawns.filter((s) => s.team === 'player' || s.team === PLAYER_TEAM);
@@ -380,6 +402,8 @@ export class Game {
       if (this.nav) {
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
         this.bots.grenades = this.throwables;
+        this.bots.gadgets = this.gadgets;
+        this.bots.squadKey = (b) => this.squadKeyOf(b.team, b.id);
         this.bots.setTactical(built.windows, built.footprints);
         if (map.trees) this.bots.setForest(map.trees, map.world.size);
         if (water) this.bots.setWater(water);
@@ -785,10 +809,26 @@ export class Game {
       }
       // Barbed wire slows everyone wading through it.
       p.speedBonus = moveBonus(this.cls, w.def) * (this.fort?.slowAt(p.feet) ?? 1);
-      if (input.buildMode && this.fort) this.buildMode = !this.buildMode;
-      // Reaching for a weapon or a grenade puts the hammer away.
-      if (this.buildMode && (input.weaponSlot >= 0 || input.weaponCycle !== 0 || input.throwGrenade || input.melee)) this.buildMode = false;
-      if (this.buildMode) {
+      // 4 (a match has three weapon slots) or the touch button: the class gadget.
+      const gadgetKey = input.gadget || (!this.options.sandbox && input.weaponSlot === 3);
+      if (gadgetKey) {
+        input.weaponSlot = -1;
+        if (this.gadgetOut) this.gadgetOut = false;
+        else if (this.gadget && this.gadgetCount > 0) {
+          this.gadgetOut = true;
+          this.buildMode = false;
+        }
+      }
+      if (input.buildMode && this.fort) {
+        this.buildMode = !this.buildMode;
+        if (this.buildMode) this.gadgetOut = false;
+      }
+      // Reaching for a weapon or a grenade puts the hammer (or the gadget) away.
+      const reach = input.weaponSlot >= 0 || input.weaponCycle !== 0 || input.throwGrenade || input.melee;
+      if (this.buildMode && reach) this.buildMode = false;
+      if (this.gadgetOut && reach) this.gadgetOut = false;
+      this.stepGadget(dt, input);
+      if (this.buildMode || this.gadgetOut) {
         input.ads = false;
         input.reload = false;
       }
@@ -804,7 +844,7 @@ export class Game {
         p.sprinting = false;
       }
       // Hands busy (throwing, patching up, reviving): no shooting.
-      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode;
+      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut;
       this.weapons.step(dt, input, p, busy);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
     } else if (this.playerDowned) {
@@ -820,8 +860,69 @@ export class Game {
     this.botsResupplyPlayer();
     this.zoneMode?.step(dt, this.combatants());
     this.throwables.step(dt);
+    this.gadgets.step(dt, this.mineWalkers());
     this.physics.step();
     consumePulses(input);
+  }
+
+  /** Everyone who can set off a mine: the player (when on the field) and the bots. */
+  private *mineWalkers(): Iterable<MineWalker> {
+    if (this.player.alive && this.deployed) yield this.playerCombatant;
+    if (this.bots) yield* this.bots.bots;
+  }
+
+  /** Squad key of a combatant ('blue:Alpha'), for spawn beacons. */
+  private squadKeyOf(team: Team, id: number): string | null {
+    const sq = this.squads.find((s) => s.team === team && s.has(id));
+    return sq ? `${sq.team}:${sq.name}` : null;
+  }
+
+  /**
+   * Gadget in hand: the trigger fires the panzerfaust / rifle grenade, or puts
+   * down a beacon / mine where the player looks (within reach, on the ground).
+   * Out of charges, it goes away once the last use is done.
+   */
+  private stepGadget(dt: number, input: InputState): void {
+    this.gadgetBusy = Math.max(0, this.gadgetBusy - dt);
+    if (!this.gadgetOut || !this.gadget) return;
+    if (this.gadgetCount <= 0) {
+      if (this.gadgetBusy <= 0) this.gadgetOut = false;
+      return;
+    }
+    if (!input.firePressed || this.gadgetBusy > 0) return;
+    const p = this.player;
+    const owner: GadgetOwner = { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM, squad: this.squadKeyOf(PLAYER_TEAM, PLAYER_ID) };
+    const { eye, fwd, right, up } = this.weapons.aimBasis(p);
+    const g = this.gadget;
+    if (g === 'panzerfaust' || g === 'riflesmoke') {
+      const origin = eye.clone().addScaledVector(fwd, 0.8).addScaledVector(right, g === 'panzerfaust' ? 0.1 : 0.05).addScaledVector(up, -0.06);
+      this.gadgets.fire(g === 'panzerfaust' ? 'rocket' : 'riflesmoke', origin, fwd.clone(), owner);
+      this.audio.gadget(g === 'panzerfaust' ? 'rocket' : 'rifle', null);
+      if (g === 'panzerfaust') this.shake = Math.min(0.05, this.shake + 0.03);
+    } else {
+      const at = this.placeSpot(eye, fwd);
+      if (!at) return;
+      const yaw = p.yaw;
+      if (g === 'beacon') this.gadgets.placeBeacon(at, yaw, owner);
+      else this.gadgets.placeMine(at, yaw, owner);
+      this.audio.gadget('place', null);
+      this.renderer.requestShadowUpdate();
+    }
+    this.gadgetCount--;
+    this.gadgetBusy = GADGETS[g].cycle;
+    this.gadgetUsedAt = this.simTime;
+  }
+
+  /** Where a beacon or mine goes: the ground the player looks at within reach, else just ahead of their feet. */
+  private placeSpot(eye: THREE.Vector3, fwd: THREE.Vector3): THREE.Vector3 | null {
+    const hit = this.physics.raycast(eye, fwd, PLACE_REACH, Layer.WORLD);
+    if (hit && hit.normal.y > 0.7) return new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
+    const flat = new THREE.Vector3(fwd.x, 0, fwd.z);
+    if (flat.lengthSq() < 1e-4) return null;
+    flat.normalize();
+    const probe = this.player.feet.clone().addScaledVector(flat, 1).setY(this.player.feet.y + 1);
+    const down = this.physics.raycast(probe, new THREE.Vector3(0, -1, 0), 2.2, Layer.WORLD);
+    return down && down.normal.y > 0.7 ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : null;
   }
 
   private throwGrenade(): void {
@@ -844,73 +945,85 @@ export class Game {
     return !!hit;
   }
 
+  /**
+   * A damaging blast (frag, panzerfaust rocket, AP mine): fortifications, beacons
+   * and mines in it, practice targets, bots and the player. No friendly fire.
+   */
+  private blast(kind: BlastKind, point: THREE.Vector3, owner: GrenadeOwner, weapon: string): void {
+    const spec = BLASTS[kind];
+    const byPlayer = owner.id === PLAYER_ID;
+    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
+    const listenerDist = this.renderer.camera.position.distanceTo(point);
+    const probe = point.clone().setY(point.y + 0.25);
+    this.effects.explosion(point);
+    this.audio.explosion(point, listenerDist);
+    this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003));
+    if (kind !== 'frag') this.bots?.explosionAt(point);
+    // Fortifications in the blast take damage (colliders go at the next physics step).
+    for (const s of this.fort?.blast(point, spec.radius, (d) => fragDamage(spec, d, false) * spec.fortMult) ?? []) {
+      this.effects.explosion(s.kind === 'barricade' ? s.pos : s.pos.clone().setY(s.pos.y + 0.5));
+    }
+    if (kind === 'frag') this.gadgets.blast(point, spec.radius * 0.6);
+    for (const tg of this.targets) {
+      if (!tg.alive || !byPlayer) continue;
+      const c = tg.center;
+      const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
+      if (dmg <= 0) continue;
+      const killed = tg.applyDamage(dmg, 'body');
+      this.bus.emit('combat:hit', { targetId: tg.id, part: 'body', damage: dmg, killed, point: c, byPlayer: true });
+      if (killed) this.bus.emit('combat:kill', { attacker: 'You', victim: tg.name, weapon, headshot: false, byPlayer: true });
+    }
+    for (const b of this.bots?.bots ?? []) {
+      if (!b.alive || b.team === owner.team) continue;
+      const c = b.feet.clone().setY(b.feet.y + b.eyeHeight * 0.65);
+      const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
+      if (dmg <= 0) continue;
+      const killed = b.applyDamage(dmg, 'body', source);
+      this.bus.emit('combat:hit', { targetId: b.id, part: 'body', damage: dmg, killed, point: c, byPlayer });
+      if (killed) this.reportKill(owner, b.id, b.name, b.team, weapon);
+    }
+    // Your own blast hurts you; teammates' don't.
+    if (byPlayer || owner.team !== PLAYER_TEAM) {
+      const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
+      const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
+      const killed = dmg > 0 && this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
+      // An enemy's blast: report the kill like a bullet kill (feed, scoreboard).
+      if (killed && !byPlayer) this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
+    }
+  }
+
+  /** A panzerfaust rocket striking someone: a kill (or down) for anyone but a teammate. */
+  private rocketHit(target: Damageable, part: HitPart, point: THREE.Vector3, owner: GadgetOwner): void {
+    if (target.team === owner.team || target.id < 0) return;
+    const weapon = t('gadget.assault');
+    const byPlayer = owner.id === PLAYER_ID;
+    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
+    const killed = target.applyDamage(ROCKET.directDamage, part, source);
+    this.bus.emit('combat:hit', { targetId: target.id, part, damage: ROCKET.directDamage, killed, point: point.clone(), byPlayer });
+    if (killed) this.reportKill(owner, target.id, target.id === PLAYER_ID ? this.playerCombatant.name : target.name, target.team ?? null, weapon);
+  }
+
+  private reportKill(owner: GrenadeOwner, victimId: number, victim: string, victimTeam: Team | null, weapon: string): void {
+    const byPlayer = owner.id === PLAYER_ID;
+    this.bus.emit('combat:kill', {
+      attacker: byPlayer ? 'You' : owner.name,
+      victim,
+      weapon,
+      headshot: false,
+      byPlayer,
+      attackerTeam: owner.team,
+      victimTeam: victimTeam ?? undefined,
+      attackerId: owner.id,
+      victimId,
+    });
+  }
+
   private detonate(type: GrenadeType, point: THREE.Vector3, owner: GrenadeOwner): void {
     const spec = GRENADES[type];
-    const byPlayer = owner.id === PLAYER_ID;
-    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon: t('grenade.frag'), id: owner.id };
     const cam = this.renderer.camera;
-    const listenerDist = cam.position.distanceTo(point);
     const probe = point.clone().setY(point.y + 0.25);
     if (type === 'frag') {
-      this.effects.explosion(point);
-      this.audio.explosion(point, listenerDist);
-      this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003));
-      // Fortifications in the blast take damage (colliders go at the next physics step).
-      for (const s of this.fort?.blast(point, spec.radius, (d) => fragDamage(spec, d, false)) ?? []) {
-        this.effects.explosion(s.kind === 'barricade' ? s.pos : s.pos.clone().setY(s.pos.y + 0.5));
-      }
-      for (const tg of this.targets) {
-        if (!tg.alive || !byPlayer) continue;
-        const c = tg.center;
-        const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
-        if (dmg <= 0) continue;
-        const killed = tg.applyDamage(dmg, 'body');
-        this.bus.emit('combat:hit', { targetId: tg.id, part: 'body', damage: dmg, killed, point: c, byPlayer: true });
-        if (killed) this.bus.emit('combat:kill', { attacker: 'You', victim: tg.name, weapon: t('grenade.frag'), headshot: false, byPlayer: true });
-      }
-      for (const b of this.bots?.bots ?? []) {
-        if (!b.alive) continue;
-        const c = b.feet.clone().setY(b.feet.y + b.eyeHeight * 0.65);
-        const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
-        if (dmg <= 0) continue;
-        // No friendly fire from grenades either.
-        if (b.team === owner.team) continue;
-        const killed = b.applyDamage(dmg, 'body', source);
-        this.bus.emit('combat:hit', { targetId: b.id, part: 'body', damage: dmg, killed, point: c, byPlayer });
-        if (killed) {
-          this.bus.emit('combat:kill', {
-            attacker: byPlayer ? 'You' : owner.name,
-            victim: b.name,
-            weapon: t('grenade.frag'),
-            headshot: false,
-            byPlayer,
-            attackerTeam: owner.team,
-            victimTeam: b.team,
-            attackerId: owner.id,
-            victimId: b.id,
-          });
-        }
-      }
-      // Your own grenade hurts you; teammates' don't.
-      if (byPlayer || owner.team !== PLAYER_TEAM) {
-        const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
-        const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
-        const killed = dmg > 0 && this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
-        // An enemy's grenade: report the kill like a bullet kill (feed, scoreboard).
-        if (killed && !byPlayer) {
-          this.bus.emit('combat:kill', {
-            attacker: owner.name,
-            victim: this.playerCombatant.name,
-            weapon: t('grenade.frag'),
-            headshot: false,
-            byPlayer: false,
-            attackerTeam: owner.team,
-            victimTeam: PLAYER_TEAM,
-            attackerId: owner.id,
-            victimId: PLAYER_ID,
-          });
-        }
-      }
+      this.blast('frag', point, owner, t('grenade.frag'));
     } else if (type === 'flash') {
       this.effects.flashbang(point);
       this.audio.flashbang(point);
@@ -1130,7 +1243,10 @@ export class Game {
     let note: string | null = null;
     if (station) {
       const owned = this.zoneMode?.zone(station.zone)?.owner === PLAYER_TEAM;
-      const need = station.kind === 'ammo' ? this.weapons.needsAmmo || this.grenades.count < GRENADE_COUNT[this.grenades.selected] : this.cls !== 'medic' && this.medkits === 0;
+      const need =
+        station.kind === 'ammo'
+          ? this.weapons.needsAmmo || this.grenades.count < GRENADE_COUNT[this.grenades.selected] || (!!this.gadget && this.gadgetCount < GADGETS[this.gadget].count)
+          : this.cls !== 'medic' && this.medkits === 0;
       if (!owned) note = t('fort.notOwned');
       else if (need && station.uses > 0) job = { type: 'use', station };
       else if (canRefill(station.kind, this.cls) && station.uses < STATION.uses) job = { type: 'refill', station };
@@ -1144,6 +1260,7 @@ export class Game {
       if (job.station.kind === 'ammo') {
         this.weapons.refillReserve();
         this.grenades.reset(this.grenades.selected);
+        if (this.gadget) this.gadgetCount = GADGETS[this.gadget].count;
       } else {
         this.medkits = MEDKIT.carried;
       }
@@ -1235,6 +1352,10 @@ export class Game {
     if (this.options.sandbox) this.weapons.resetAmmo();
     else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support');
     this.grenades.reset(kit.grenade);
+    this.gadget = classGadget(kit.cls, kit.reconGadget);
+    this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
+    this.gadgetOut = false;
+    this.gadgetBusy = 0;
     this.playerDowned = false;
     this.downTime = 0;
     this.medkits = MEDKIT.carried;
@@ -1316,6 +1437,8 @@ export class Game {
       inspectT: w.inspectProgress,
       tool: this.working,
       toolIdle: this.buildMode && p.alive && this.deployed,
+      gadget: this.gadgetOut && p.alive && this.deployed ? this.gadget : null,
+      gadgetUsed: this.simTime - this.gadgetUsedAt,
     });
     this.fort?.render(this.renderer.camera.position, this.buildMode, this.buildTarget);
 
@@ -1431,6 +1554,12 @@ export class Game {
       prompt = tgt
         ? { text: `${t('build.mode')} · ${t(`fort.${tgt.kind}` as MessageKey)} — ${t(this.touch ? 'build.holdTouch' : 'build.hold')} · ${exit}`, progress: tgt.work > 0 ? tgt.work / FORT[tgt.kind].build : null }
         : { text: `${t('build.mode')} — ${t('build.aim')} · ${exit}`, progress: null };
+    } else if (onField && this.gadgetOut && this.gadget) {
+      const g = this.gadget;
+      prompt = {
+        text: `${t(`gadgetName.${g}`)} — ${t(this.touch ? 'gadget.fireTouch' : 'gadget.fire')}: ${t(`gadgetUse.${g}`)} · ${t(this.touch ? 'gadget.exitTouch' : 'gadget.exit')}`,
+        progress: null,
+      };
     } else if (!prompt && nearSpot && !this.touch && this.fort!.anyNear(this.player.feet, 6)) {
       prompt = { text: t('build.enter'), progress: null };
     }
@@ -1439,6 +1568,7 @@ export class Game {
       interact: touchLabel,
       downed: this.playerDowned,
       build: onField && this.buildMode ? 'on' : nearSpot ? 'near' : null,
+      gadget: onField && this.gadget ? { label: `${t(`gadgetShort.${this.gadget}`)} ${this.gadgetCount}`, out: this.gadgetOut, empty: this.gadgetCount === 0 } : null,
 
     });
     this.hud.update(
@@ -1460,6 +1590,10 @@ export class Game {
           : null,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
         grenadeCount: this.grenades.count,
+        gadget:
+          this.gadget && this.deployed
+            ? { key: this.touch ? '' : '4 · ', label: t(`gadgetName.${this.gadget}`), count: this.gadgetCount, out: this.gadgetOut }
+            : null,
         flash,
         respawnIn: this.player.alive || this.playerDowned ? null : Math.max(0, this.respawnTimer),
         medkit,
@@ -1722,6 +1856,14 @@ export class Game {
   /** Spawn position for a deploy key ('base' | 'zone:<id>' | 'mate:<id>'); invalid keys fall back to the base. */
   private spawnFor(team: Team, key: string, selfId: number): { pos: THREE.Vector3; yaw: number } {
     const [kind, id] = key.split(':');
+    if (kind === 'beacon') {
+      const b = this.gadgets.beaconsFor(team, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
+      if (b) {
+        this.gadgets.useBeacon(b);
+        const pos = this.nav?.randomAround(b.pos, 1.5) ?? b.pos.clone();
+        return { pos, yaw: b.mesh.rotation.y };
+      }
+    }
     if (kind === 'mate') {
       const sq = this.squads.find((s) => s.team === team && s.has(selfId));
       const mate = sq?.members.find((m) => String(m.id) === id);
@@ -1764,6 +1906,7 @@ export class Game {
       cands.push({ key: `zone:${o.id}`, x: z.x, z: z.z });
     }
     for (const m of mates) cands.push({ key: `mate:${m.id}`, x: m.feet.x, z: m.feet.z });
+    for (const b of this.gadgets.beaconsFor(bot.team, this.squadKeyOf(bot.team, bot.id))) cands.push({ key: `beacon:${b.id}`, x: b.pos.x, z: b.pos.z });
     let best = cands[0]!;
     let bestD = Infinity;
     for (const c of cands) {
@@ -1785,6 +1928,11 @@ export class Game {
       if (o.id === 'base') continue;
       const z = zm!.zone(o.id)!;
       out.push({ key: `zone:${o.id}`, kind: 'zone', label: `${t('spawn.zone')} ${o.id}`, x: z.x, z: z.z, blocked: null, warn: o.underAttack ? t('deploy.underAttack') : null });
+    }
+    // Spawn beacons the squad's recons put down.
+    for (const b of this.gadgets.beaconsFor(PLAYER_TEAM, this.squadKeyOf(PLAYER_TEAM, PLAYER_ID))) {
+      const who = b.owner.id === PLAYER_ID ? t('feed.you') : b.owner.name;
+      out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${who}) ×${b.uses}`, x: b.pos.x, z: b.pos.z, blocked: null, warn: null });
     }
     const now = this.bots?.time ?? 0;
     for (const m of this.playerSquad?.mates(PLAYER_ID) ?? []) {

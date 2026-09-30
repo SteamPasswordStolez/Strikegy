@@ -18,6 +18,7 @@ import { rollPersonality, type Personality } from './personality';
 import { COMBAT_WINDOW } from '@/modes/squads';
 import { CLASSES, DOWN as DOWN_RULES, MEDKIT, REVIVE_RANGE, type ClassId } from '@/data/classes';
 import type { FortJob } from '@/modes/fortify';
+import { GADGETS, classGadget, type GadgetId } from '@/data/gadgets';
 
 const DEG = Math.PI / 180;
 const DOWN = { x: 0, y: -1, z: 0 };
@@ -101,6 +102,16 @@ export interface BotServices {
   separation(bot: Bot, out: THREE.Vector3, wx?: number, wz?: number, speed?: number): THREE.Vector3;
   /** Someone else already stands at `p` (a bot heading there stops beside them). */
   spotTaken(bot: Bot, p: THREE.Vector3): boolean;
+  /** Class gadget: fire a rocket / rifle grenade at `at`, or put a beacon / mine down there. False if it can't. */
+  useGadget(bot: Bot, kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3): boolean;
+  /** Spots enemy mines in view nearby; true if one the team knows of is within a few steps. */
+  mineAhead(bot: Bot): boolean;
+  /** This bot's own mines within `r` of `p`. */
+  ownMinesNear(bot: Bot, p: THREE.Vector3, r: number): number;
+  /** Within `r` of a zone the bot's side holds. */
+  nearOwnedZone(bot: Bot, r: number): boolean;
+  /** A built fortification (sandbags, timber wall, barricade) right by `p`. */
+  fortifiedAt(p: THREE.Vector3): boolean;
   /** How much foliage (tree crowns) lies between two points: 0 = none, ~1 = a few thick trees. */
   foliage(from: THREE.Vector3, to: THREE.Vector3): number;
   /** Depth of water over a point (0 when dry). */
@@ -208,6 +219,16 @@ export class Bot implements Damageable, Combatant {
   private suppressUntil = -Infinity;
   // Grenades
   private frags = 0;
+  /** Class gadget this life and how many are left (see `considerGadget`). */
+  gadget: GadgetId | null = null;
+  gadgetCount = 0;
+  private gadgetReadyAt = 0;
+  /** Sim time this life started (-1 until the first think). */
+  private spawnedAt = -1;
+  private readonly spawnPos = new THREE.Vector3();
+  /** An enemy mine the team knows about is close: creep (crouched) until then. */
+  private creepUntil = -Infinity;
+  private nextMineLook = 0;
   private smokes = 0;
   private flashes = 0;
   /** After throwing a flashbang: face away from where it will pop until this time. */
@@ -310,6 +331,11 @@ export class Bot implements Damageable, Combatant {
     this.smokes = type === 'smoke' ? 2 : 0;
     this.flashes = type === 'flash' ? 2 : 0;
     this.kit = [this.frags, this.smokes, this.flashes];
+    // Class gadget: half the recons carry a beacon, half mines.
+    this.gadget = classGadget(this.cls, this.id % 2 === 0 ? 'beacon' : 'mine');
+    this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
+    this.gadgetReadyAt = 0;
+    this.spawnedAt = -1;
     this.job = null;
     this.atWork = false;
     this.lookAwayUntil = -Infinity;
@@ -463,6 +489,7 @@ export class Bot implements Damageable, Combatant {
     this.updateWork(dt, s);
     this.updatePeek(s);
     this.updateAim(dt, s);
+    this.watchForMines(s);
     this.updateMovement(dt, s);
     this.updateWeapon(dt, s);
     this.hitboxes.sync(this.feet, this.yaw, this.height);
@@ -640,6 +667,7 @@ export class Bot implements Damageable, Combatant {
     // Reload opportunistically when nothing is visible.
     if (!this.target && w.ammo < this.def.magSize * 0.4 && w.canReload()) w.startReload();
     this.considerGrenade(s, inCover);
+    this.considerGadget(s, inCover);
   }
 
   /** Hurt and out of the line of fire: patch up with a medkit. */
@@ -750,12 +778,88 @@ export class Bot implements Damageable, Combatant {
 
   /** Threw some of this life's grenades. */
   get needsGrenades(): boolean {
-    return this.frags < this.kit[0] || this.smokes < this.kit[1] || this.flashes < this.kit[2];
+    return this.frags < this.kit[0] || this.smokes < this.kit[1] || this.flashes < this.kit[2] || (!!this.gadget && this.gadgetCount < GADGETS[this.gadget].count);
   }
 
-  /** Ammo station: grenades back to what this life started with. */
+  /** Ammo station: grenades and the class gadget back to what this life started with. */
   restockGrenades(): void {
     [this.frags, this.smokes, this.flashes] = this.kit;
+    if (this.gadget) this.gadgetCount = GADGETS[this.gadget].count;
+  }
+
+  /**
+   * Class gadgets. Assault: a panzerfaust at an enemy dug in behind
+   * sandbags or in a building (now and then at anyone out in the open).
+   * Medic: rifle smoke over a mate it's going to revive, or as a screen when
+   * shot at in the open. Recon: a beacon on the way to the squad's objective,
+   * mines at a zone its side holds.
+   */
+  private considerGadget(s: BotServices, inCover: boolean): void {
+    if (this.spawnedAt < 0) {
+      this.spawnedAt = s.time;
+      this.spawnPos.copy(this.feet);
+    }
+    if (!this.gadget || this.gadgetCount <= 0 || s.time < this.gadgetReadyAt || this.weapon.reloading) return;
+    const p = this.personality;
+    const calm = !this.target && s.time - this.lastSeen.time > 8 && s.time - this.lastHurt > 6;
+    const use = (kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3, cooldown: number): void => {
+      if (!s.useGadget(this, kind, at)) {
+        this.gadgetReadyAt = s.time + 2;
+        return;
+      }
+      this.gadgetCount--;
+      this.gadgetReadyAt = s.time + cooldown;
+      this.pauseUntil = s.time + 0.9;
+      if (kind === 'rocket' || kind === 'riflesmoke') this.faceToward(at, 1);
+    };
+    switch (this.gadget) {
+      case 'panzerfaust': {
+        const t = this.target;
+        if (!t) return;
+        const d = this.feet.distanceTo(t.feet);
+        if (d < 10 || d > 70 || s.alliesNear(this.team, t.feet, 5) > 0) return;
+        const dug = s.insideBuilding(t.feet) || s.fortifiedAt(t.feet);
+        if (!dug && Math.random() > 0.06 * (0.5 + p.aggression)) return;
+        use('rocket', this.tmp2.copy(t.feet).setY(t.feet.y + (dug ? 0.9 : 0.6)), 7 + Math.random() * 5);
+        return;
+      }
+      case 'riflesmoke': {
+        const threat = this.target?.feet ?? (s.time - this.lastSeen.time < 5 ? this.lastSeen.pos : null);
+        if (!threat) return;
+        const mate = this.reviveOf;
+        let at: THREE.Vector3 | null = null;
+        if (mate?.downed) {
+          // A screen just past the downed mate, toward whoever shot them.
+          at = this.tmp2.copy(mate.feet).lerp(threat, Math.min(0.5, 5 / Math.max(1, mate.feet.distanceTo(threat))));
+        } else if (!inCover && s.time - this.lastHurt < 1.5 && Math.random() < 0.3 + p.caution * 0.4) {
+          const d = this.feet.distanceTo(threat);
+          if (d > 22) at = this.tmp2.lerpVectors(this.feet, threat, 16 / d);
+        }
+        const d = at ? this.feet.distanceTo(at) : 0;
+        if (at && d > 10 && d < 44) use('riflesmoke', at, 14 + Math.random() * 6);
+        return;
+      }
+      case 'beacon': {
+        // On the way to the objective, well clear of where this life started.
+        if (!calm || this.feet.distanceTo(this.spawnPos) < 50) return;
+        const d = this.feet.distanceTo(s.squadGoal(this));
+        if (d > 20 && d < 90 && s.enemiesNear(this.team, this.feet, 30) === 0) use('beacon', this.feet, 60);
+        return;
+      }
+      case 'mine': {
+        if (!calm || !s.nearOwnedZone(this, 22)) return;
+        if (s.ownMinesNear(this, this.feet, 10) > 0) return;
+        use('mine', this.feet, 20 + Math.random() * 20);
+        return;
+      }
+    }
+  }
+
+  /** Looks for enemy mines around (a few times a second) and creeps past known ones. */
+  private watchForMines(s: BotServices): void {
+    if (s.time < this.nextMineLook) return;
+    this.nextMineLook = s.time + 0.3;
+    if (s.mineAhead(this)) this.creepUntil = s.time + 0.6;
   }
 
   /** At a downed mate's side and working on them. */
@@ -1112,6 +1216,7 @@ export class Bot implements Damageable, Combatant {
     const crouchRange = 22 - this.personality.caution * 12;
     const wantCrouch =
       this.reviving ||
+      s.time < this.creepUntil ||
       (this.atWork && this.job?.type === 'build' && this.job.slot.kind !== 'barricade') ||
       speed === 0 &&
       (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)

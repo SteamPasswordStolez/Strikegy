@@ -5,7 +5,7 @@
  */
 
 /** Buttons the player can move and resize. */
-export const LAYOUT_BUTTONS = ['fire', 'fire2', 'ads', 'jump', 'reload', 'crouch', 'grenade', 'switch', 'melee', 'medkit', 'build', 'interact'] as const;
+export const LAYOUT_BUTTONS = ['fire', 'fire2', 'ads', 'jump', 'reload', 'crouch', 'grenade', 'switch', 'melee', 'medkit', 'build', 'gadget', 'interact'] as const;
 export type LayoutButton = (typeof LAYOUT_BUTTONS)[number];
 
 export interface ButtonPlace {

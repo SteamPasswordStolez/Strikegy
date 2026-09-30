@@ -706,6 +706,29 @@ export class AudioSystem {
     this.noiseBurst(out, t + 0.03, 0.12, 0.08, { type: 'bandpass', freq: 900, q: 0.9, endFreq: 600 });
   }
 
+  /**
+   * Class gadgets: a panzerfaust going off (bang and a roaring back-blast), a
+   * rifle grenade popping off the muzzle, a beacon or mine set down. `pos`
+   * null = the player's own.
+   */
+  gadget(kind: 'rocket' | 'rifle' | 'place', pos: THREE.Vector3 | null): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = pos ? this.out(pos, 0.5, kind === 'rocket' ? 3 : 1, 1.5) : this.out(null, 0.3);
+    if (!out) return;
+    if (kind === 'rocket') {
+      this.noiseBurst(out, t, 0.05, 1.1, { type: 'lowpass', freq: 5000 });
+      this.noiseBurst(out, t, 0.9, 0.7, { type: 'bandpass', freq: 900, q: 0.6, endFreq: 260 });
+      this.tone(out, t, 70, 0.5, 0.6, 'sine', 35);
+    } else if (kind === 'rifle') {
+      this.noiseBurst(out, t, 0.06, 0.6, { type: 'bandpass', freq: 1400, q: 0.8 });
+      this.tone(out, t, 180, 0.15, 0.25, 'triangle', 90);
+    } else {
+      this.mechClick(out, t, 1300, 0.12);
+      this.noiseBurst(out, t + 0.05, 0.12, 0.08, { type: 'lowpass', freq: 600 });
+    }
+  }
+
   pinAndThrow(): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;

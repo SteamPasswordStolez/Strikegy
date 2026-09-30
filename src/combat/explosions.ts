@@ -20,11 +20,29 @@ export const GRENADES: Record<GrenadeType, GrenadeSpec> = {
   smoke: { type: 'smoke', fuse: 1.8, throwSpeed: 15, innerRadius: 1, radius: 5.5, maxDamage: 0, duration: 20 },
 };
 
+/** A blast that hurts: frag grenades, panzerfaust rockets, AP mines. */
+export interface BlastSpec {
+  innerRadius: number;
+  radius: number;
+  maxDamage: number;
+  /** Damage to fortifications, relative to damage to people (rockets are made for them). */
+  fortMult: number;
+}
+
+export const BLASTS = {
+  frag: { innerRadius: GRENADES.frag.innerRadius, radius: GRENADES.frag.radius, maxDamage: GRENADES.frag.maxDamage, fortMult: 1 },
+  // Direct hits are handled separately (they kill); the blast is tight.
+  rocket: { innerRadius: 1.2, radius: 4, maxDamage: 150, fortMult: 2.4 },
+  mine: { innerRadius: 1.6, radius: 4.5, maxDamage: 140, fortMult: 0.6 },
+} satisfies Record<string, BlastSpec>;
+
+export type BlastKind = keyof typeof BLASTS;
+
 /**
  * Frag damage at a distance: full damage inside the core, quadratic falloff to
  * zero at the edge. Occluded targets only take damage inside the core, halved.
  */
-export function fragDamage(spec: GrenadeSpec, distance: number, occluded: boolean): number {
+export function fragDamage(spec: Pick<GrenadeSpec, 'innerRadius' | 'radius' | 'maxDamage'>, distance: number, occluded: boolean): number {
   if (distance >= spec.radius) return 0;
   if (occluded) return distance <= spec.innerRadius ? spec.maxDamage * 0.5 : 0;
   if (distance <= spec.innerRadius) return spec.maxDamage;

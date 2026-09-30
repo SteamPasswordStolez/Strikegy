@@ -431,7 +431,8 @@ body {
 .touch-reload,
 .touch-grenade,
 .touch-switch,
-.touch-melee {
+.touch-melee,
+.touch-gadget {
   --rad: var(--r1);
   right: calc(var(--cx) - cos(var(--a)) * var(--rad) - var(--B) / 2);
   bottom: calc(var(--cy) + sin(var(--a)) * var(--rad) - var(--B) / 2);
@@ -459,6 +460,17 @@ body {
 .touch-melee {
   --a: 172deg;
   --rad: var(--r2);
+}
+/* Class gadget: outer arc above the grenade, only for classes that carry one. */
+.touch-gadget {
+  --a: 82deg;
+  --rad: var(--r2);
+  display: none;
+  border-color: rgba(255, 140, 100, 0.75);
+}
+.touch-gadget.show,
+.touch-layer.editing .touch-gadget {
+  display: flex;
 }
 .touch-fire {
   right: var(--r);
@@ -830,6 +842,12 @@ body {
 }
 .hud-grenade.empty {
   opacity: 0.4;
+}
+.hud-gadget {
+  margin-top: 2px;
+}
+.hud-gadget.on {
+  color: #ffb070;
 }
 .hud-healthbar {
   width: 180px;

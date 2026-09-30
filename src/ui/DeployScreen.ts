@@ -5,7 +5,7 @@ export type Tone = 'ally' | 'enemy' | 'neutral';
 
 export interface DeployOption {
   key: string;
-  kind: 'base' | 'zone' | 'mate';
+  kind: 'base' | 'zone' | 'mate' | 'beacon';
   label: string;
   /** Map position of the marker (world x, z). */
   x: number;
@@ -227,7 +227,7 @@ export class DeployScreen {
       const [u, v] = this.map.project(o.x, o.z);
       const sel = o.key === s.selected;
       const hot = o.key === this.hover;
-      const color = o.blocked ? '#777' : o.kind === 'mate' ? '#6bdc6b' : o.kind === 'zone' ? COLOR.ally : '#9cc2ff';
+      const color = o.blocked ? '#777' : o.kind === 'mate' ? '#6bdc6b' : o.kind === 'zone' ? COLOR.ally : o.kind === 'beacon' ? '#ffb070' : '#9cc2ff';
       if (sel || hot) {
         g.beginPath();
         g.arc(u, v, 17 * px, 0, Math.PI * 2);
@@ -248,7 +248,7 @@ export class DeployScreen {
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       if (o.kind === 'mate') g.fillText(o.label.slice(0, 1), u, v + 0.5);
-      else g.fillText(o.kind === 'base' ? '⌂' : o.key.replace('zone:', ''), u, v + 0.5);
+      else g.fillText(o.kind === 'base' ? '⌂' : o.kind === 'beacon' ? '▲' : o.key.replace('zone:', ''), u, v + 0.5);
     }
     // Enemy-held and neutral zone letters (not spawnable) for orientation.
     for (const z of s.zones) {
