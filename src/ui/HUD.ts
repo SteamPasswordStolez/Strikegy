@@ -1,4 +1,5 @@
 import { t } from '@/i18n';
+import { reticleSvg, type Reticle } from '@/weapons/optics';
 
 export interface HudFrame {
   weaponName: string;
@@ -11,7 +12,11 @@ export interface HudFrame {
   /** Crosshair gap in CSS pixels. */
   crosshairGap: number;
   adsBlend: number;
-  scoped: boolean;
+  /**
+   * Magnified scope of the current weapon: its reticle and how far the eye box
+   * sits off centre (fractions of the lens radius, from sway and movement).
+   */
+  scope: { reticle: Reticle; color: number; shiftX: number; shiftY: number } | null;
   grenadeLabel: string;
   grenadeCount: number;
   /** 0..1 white-out from flashbangs. */
@@ -91,6 +96,7 @@ export class HUD {
   private healthFill: HTMLDivElement;
   private fps: HTMLDivElement;
   private scope: HTMLDivElement;
+  private scopeReticle: SVGSVGElement;
   private hurt: HTMLDivElement;
   private flashEl: HTMLDivElement;
   private damageRing: HTMLDivElement;
@@ -123,6 +129,12 @@ export class HUD {
     this.root = el('div', 'hud', parent);
     this.hurt = el('div', 'hud-hurt', this.root);
     this.scope = el('div', 'scope', this.root);
+    const lens = el('div', 'scope-lens', this.scope);
+    this.scopeReticle = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.scopeReticle.setAttribute('viewBox', '-100 -100 200 200');
+    lens.appendChild(this.scopeReticle);
+    el('div', 'scope-glare', lens);
+    el('div', 'scope-mask', this.scope);
     this.crosshair = el('div', 'crosshair', this.root);
     for (const side of ['t', 'b', 'l', 'r']) el('div', `ch ch-${side}`, this.crosshair);
     el('div', 'ch-dot', this.crosshair);
@@ -216,8 +228,21 @@ export class HUD {
     const dead = f.respawnIn !== null || f.down !== null;
     const chOpacity = dead ? '0' : (1 - f.adsBlend).toFixed(2);
     this.set('chOp', chOpacity, () => (this.crosshair.style.opacity = chOpacity));
-    const scoped = f.scoped && f.adsBlend > 0.95 && !dead;
-    this.set('scope', String(scoped), () => this.scope.classList.toggle('on', scoped));
+    // Scope: fades in over the last part of aiming, the eye box shadow drifts with sway.
+    const sc = f.scope && !dead ? f.scope : null;
+    const scopeIn = sc ? Math.min(1, Math.max(0, (f.adsBlend - 0.82) / 0.14)) : 0;
+    this.set('scope', scopeIn.toFixed(2), () => {
+      this.scope.style.opacity = scopeIn.toFixed(2);
+      this.scope.style.setProperty('--zoom', (1.12 - scopeIn * 0.12).toFixed(3));
+    });
+    if (sc) {
+      this.set('reticle', `${sc.reticle}:${sc.color}`, () => (this.scopeReticle.innerHTML = reticleSvg(sc.reticle, sc.color)));
+      const shift = `${sc.shiftX.toFixed(3)},${sc.shiftY.toFixed(3)}`;
+      this.set('scopeShift', shift, () => {
+        this.scope.style.setProperty('--kx', sc.shiftX.toFixed(3));
+        this.scope.style.setProperty('--ky', sc.shiftY.toFixed(3));
+      });
+    }
 
     this.set('weapon', f.weaponName, () => (this.weapon.textContent = f.weaponName));
     const ammoText = f.ammo === 0 && f.reserve === 0 ? t('hud.noAmmo') : `${f.ammo} / ${Number.isFinite(f.reserve) ? f.reserve : '∞'}`;

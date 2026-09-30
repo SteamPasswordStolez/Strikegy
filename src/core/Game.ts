@@ -38,6 +38,7 @@ import { GRENADES, flashDuration, flashIntensity, fragDamage, type GrenadeType }
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { ViewModel } from '@/weapons/ViewModel';
+import { opticFor } from '@/weapons/optics';
 import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { ambienceFor } from '@/audio/ambienceDirector';
@@ -198,6 +199,8 @@ export class Game {
   private cls: ClassId = 'assault';
   /** Recon: scope zoomed the extra 1.5x (wheel while aiming). */
   private reconZoom = false;
+  /** Scope eye box off centre (fractions of the lens radius): lags behind turning, bobs when walking. */
+  private readonly scopeShift = new THREE.Vector2();
   /** Sim clock (s) for cooldowns, shields and the down timer. */
   private simTime = 0;
   /** Down: health gone, waiting for a revive; bleeds out or gives up into a real death. */
@@ -1271,6 +1274,13 @@ export class Game {
   private updateViewModel(dt: number, lookYaw: number, lookPitch: number): void {
     const w = this.weapons;
     const p = this.player;
+    const k = 1 - Math.exp(-9 * dt);
+    const rate = 1 / Math.max(dt, 1e-3);
+    const walk = p.horizontalSpeed() * (p.grounded ? 1 : 0.3);
+    const tx = THREE.MathUtils.clamp(lookYaw * rate * 0.06, -0.28, 0.28) + Math.sin(this.elapsed * 7.5) * walk * 0.012;
+    const ty = THREE.MathUtils.clamp(-lookPitch * rate * 0.06, -0.28, 0.28) + Math.abs(Math.cos(this.elapsed * 7.5)) * walk * 0.014 + Math.cos(this.elapsed * 0.7) * 0.02;
+    this.scopeShift.x += (tx - this.scopeShift.x) * k;
+    this.scopeShift.y += (ty - this.scopeShift.y) * k;
     this.viewModel.setWeapon(w.def);
     this.viewModel.update({
       dt,
@@ -1426,7 +1436,12 @@ export class Game {
         health: this.player.health.value,
         crosshairGap: Math.max(4, gap),
         adsBlend: w.adsBlend,
-        scoped: !!w.def.scope,
+        scope: w.def.scope
+          ? (() => {
+              const o = opticFor(w.def);
+              return { reticle: o.reticle, color: o.color, shiftX: this.scopeShift.x, shiftY: this.scopeShift.y };
+            })()
+          : null,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
         grenadeCount: this.grenades.count,
         flash,

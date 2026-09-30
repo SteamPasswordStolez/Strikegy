@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { WeaponDef } from './weaponData';
+import { opticFor, type Optic, type Reticle, type ScopeShape } from './optics';
 import { DISCARD, PartBuilder, block, furniture, gunMaterials, lathe, loop, rail, railUnder, roundRect, slab, tube, vcyl, xcyl, type P } from './gunKit';
 
 /** A built first-person gun plus the anchors the view model animates and aims with. */
@@ -17,12 +18,9 @@ export interface GunBuild {
   slide: THREE.Object3D | null;
 }
 
-type Optic = 'reddot' | 'holo' | 'scope' | 'irons' | 'bead';
-
-/** Per-weapon look: furniture color, optic and accessories. Unlisted ids use their class default. */
+/** Per-weapon look: furniture color and accessories (the sight is in `optics.ts`). Unlisted ids use their class default. */
 interface Look {
   color?: number;
-  optic?: Optic;
   grip?: 'vertical' | 'angled';
   /** Weapon light on the right of the handguard. */
   light?: boolean;
@@ -38,20 +36,20 @@ interface Look {
 }
 
 const LOOKS: Record<string, Look> = {
-  ar1: { color: 0x1c1d1f, optic: 'reddot', grip: 'angled', light: true },
-  ar2: { color: 0x8a7658, optic: 'holo', grip: 'vertical', muzzle: 'brake', handguard: 0.37, barrel: 0.45 },
-  ar3: { color: 0x3f4632, optic: 'reddot', light: true },
-  ar4: { color: 0x2b2e33, optic: 'holo', grip: 'angled', handguard: 0.27, barrel: 0.32 },
-  smg1: { color: 0x1c1d1f, optic: 'holo', grip: 'vertical' },
-  smg2: { color: 0x7d6c52, optic: 'reddot', light: true },
-  smg3: { color: 0x2b2e33, optic: 'holo', muzzle: 'suppressor' },
-  smg4: { color: 0x3f4632, optic: 'reddot', grip: 'angled' },
+  ar1: { color: 0x1c1d1f, grip: 'angled', light: true },
+  ar2: { color: 0x8a7658, grip: 'vertical', muzzle: 'brake', handguard: 0.37, barrel: 0.45 },
+  ar3: { color: 0x3f4632, light: true },
+  ar4: { color: 0x2b2e33, grip: 'angled', handguard: 0.27, barrel: 0.32 },
+  smg1: { color: 0x1c1d1f, grip: 'vertical' },
+  smg2: { color: 0x7d6c52, light: true },
+  smg3: { color: 0x2b2e33, muzzle: 'suppressor' },
+  smg4: { color: 0x3f4632, grip: 'angled' },
   lmg1: { color: 0x4a4f3a },
   lmg2: { color: 0x1c1d1f },
-  lmg3: { color: 0x5b5a44, optic: 'holo', frame: 'rifle', handguard: 0.42, barrel: 0.52, mag: 'straight', bipod: true, muzzle: 'brake' },
+  lmg3: { color: 0x5b5a44, frame: 'rifle', handguard: 0.42, barrel: 0.52, mag: 'straight', bipod: true, muzzle: 'brake' },
   sg2: { color: 0x1c1d1f },
   sg3: { color: 0x3f4632 },
-  dmr1: { color: 0x8a7658, optic: 'holo', muzzle: 'brake' },
+  dmr1: { color: 0x8a7658, muzzle: 'brake' },
   dmr2: { color: 0x3f4632, muzzle: 'brake', bipod: true },
   dmr3: { color: 0x6b5a40, muzzle: 'flash', handguard: 0.42, barrel: 0.58 },
   sr1: { bipod: true },
@@ -61,9 +59,58 @@ const LOOKS: Record<string, Look> = {
 // ---------------------------------------------------------------------------
 // Optics. Each adds its parts and returns the sight-line height.
 
-function addOptic(b: PartBuilder, optic: Optic, railTop: number, uc: number): number {
+const reticleMats = new Map<number, THREE.MeshBasicMaterial>();
+/** Lit reticle material per colour (drawn unlit, never tone mapped). */
+function reticleMat(color: number): THREE.MeshBasicMaterial {
+  let m = reticleMats.get(color);
+  if (!m) reticleMats.set(color, (m = new THREE.MeshBasicMaterial({ color, toneMapped: false, side: THREE.DoubleSide })));
+  return m;
+}
+
+/** A thin line in the plane facing the shooter, from (x0, v0) to (x1, v1) at depth u. */
+function reticleLine(x0: number, v0: number, x1: number, v1: number, w: number, u: number): THREE.BufferGeometry {
+  const len = Math.hypot(x1 - x0, v1 - v0);
+  const g = new THREE.PlaneGeometry(len, w);
+  g.rotateZ(Math.atan2(v1 - v0, x1 - x0));
+  g.translate((x0 + x1) / 2, (v0 + v1) / 2, -u);
+  return g;
+}
+
+/** 1x reticle geometry centred on the sight line (vc) at depth u (just behind the glass). */
+function reticleParts(kind: Reticle, vc: number, u: number): THREE.BufferGeometry[] {
+  const disc = (r: number): THREE.BufferGeometry => new THREE.CircleGeometry(r, 12).translate(0, vc, -u);
+  switch (kind) {
+    case 'circleDot':
+      return [new THREE.RingGeometry(0.0055, 0.0063, 32).translate(0, vc, -u), disc(0.0008)];
+    case 'kobra':
+      // Posts left, right and below with a chevron on top.
+      return [
+        reticleLine(-0.0085, vc, -0.003, vc, 0.0007, u),
+        reticleLine(0.003, vc, 0.0085, vc, 0.0007, u),
+        reticleLine(0, vc - 0.0032, 0, vc - 0.009, 0.0007, u),
+        reticleLine(-0.0022, vc - 0.0019, 0, vc, 0.0006, u),
+        reticleLine(0, vc, 0.0022, vc - 0.0019, 0.0006, u),
+      ];
+    case 'chevron':
+      // Prism chevron with a drop stem and two hold marks.
+      return [
+        reticleLine(-0.0026, vc - 0.0024, 0, vc, 0.0006, u),
+        reticleLine(0, vc, 0.0026, vc - 0.0024, 0.0006, u),
+        reticleLine(0, vc - 0.0012, 0, vc - 0.0085, 0.00028, u),
+        reticleLine(-0.001, vc - 0.0045, 0.001, vc - 0.0045, 0.00028, u),
+        reticleLine(-0.0008, vc - 0.0068, 0.0008, vc - 0.0068, 0.00028, u),
+      ];
+    case 'dot':
+    default:
+      return [disc(0.0009)];
+  }
+}
+
+function addOptic(b: PartBuilder, optic: Optic, railTop: number, uc: number, f: PartBuilder = b): number {
   const m = gunMaterials();
-  switch (optic) {
+  const seg = f === b ? 28 : 14;
+  const lit = reticleMat(optic.color);
+  switch (optic.model) {
     case 'reddot': {
       // Tube red dot on a riser mount.
       const vc = railTop + 0.03;
@@ -71,11 +118,34 @@ function addOptic(b: PartBuilder, optic: Optic, railTop: number, uc: number): nu
       b.add(m.alloy, slab([[uc - 0.012, railTop + 0.01], [uc + 0.012, railTop + 0.01], [uc + 0.008, vc - 0.012], [uc - 0.008, vc - 0.012]], 0.012));
       b.add(m.alloy, lathe([[0.0145, 0], [0.0175, 0.002], [0.0175, 0.06], [0.0145, 0.062]], uc - 0.03, vc, 0, 24));
       b.add(m.darkInner, tube(0.0146, uc - 0.029, uc + 0.031, vc, 0, 24, true));
-      // Elevation and windage turrets.
-      b.add(m.alloy, new THREE.CylinderGeometry(0.007, 0.007, 0.01, 12).translate(0, vc + 0.021, -uc));
-      b.add(m.alloy, new THREE.CylinderGeometry(0.0075, 0.0075, 0.012, 12).rotateZ(Math.PI / 2).translate(0.022, vc, -uc));
+      // Elevation and windage turrets, flip cap folded up at the front.
+      f.add(m.alloy, new THREE.CylinderGeometry(0.007, 0.007, 0.01, 12).translate(0, vc + 0.021, -uc));
+      f.add(m.alloy, new THREE.CylinderGeometry(0.0075, 0.0075, 0.012, 12).rotateZ(Math.PI / 2).translate(0.022, vc, -uc));
+      f.add(m.polymer, block(uc + 0.031, uc + 0.034, vc + 0.012, vc + 0.03, 0.03));
       b.add(m.glass, new THREE.CircleGeometry(0.0146, 24).translate(0, vc, -(uc + 0.03)));
-      b.add(m.reticle, new THREE.CircleGeometry(0.0009, 10).translate(0, vc, -(uc + 0.0305)));
+      b.add(lit, reticleParts(optic.reticle, vc, uc + 0.0305));
+      return vc;
+    }
+    case 'reflex': {
+      // Open mini reflex: a low body and a single tilted window in a thin hood.
+      const vc = railTop + 0.019;
+      const u0 = uc - 0.022;
+      const u1 = uc + 0.022;
+      b.add(m.alloy, block(u0 - 0.004, u1 + 0.004, railTop, railTop + 0.005, 0.024));
+      b.add(m.alloy, slab([[u0, railTop + 0.005], [u1, railTop + 0.005], [u1, railTop + 0.01], [u0 + 0.008, railTop + 0.011], [u0, railTop + 0.009]], 0.024, 0, 0.001));
+      const top = vc + 0.012;
+      for (const x of [-0.0112, 0.0112]) {
+        b.add(m.alloy, slab([[uc - 0.004, railTop + 0.009], [u1, railTop + 0.009], [u1 - 0.002, top], [uc + 0.006, top]], 0.0026, x, 0.0006));
+      }
+      b.add(m.alloy, block(uc + 0.006, u1 - 0.002, top - 0.0026, top, 0.025));
+      // Window glass tilted back; the emitter sits in the body behind it.
+      const glass = new THREE.PlaneGeometry(0.02, top - railTop - 0.011);
+      glass.rotateX(-0.12);
+      glass.translate(0, (top + railTop + 0.009) / 2, -(u1 - 0.004));
+      b.add(m.glass, glass);
+      f.add(m.dark, block(u0 + 0.004, u0 + 0.012, railTop + 0.009, railTop + 0.012, 0.008));
+      f.add(m.steel, xcyl(0.0035, 0.004, u0 + 0.014, railTop + 0.007, 0.013, 10));
+      b.add(lit, reticleParts(optic.reticle, vc, u1 - 0.0045));
       return vc;
     }
     case 'holo': {
@@ -90,49 +160,150 @@ function addOptic(b: PartBuilder, optic: Optic, railTop: number, uc: number): nu
       b.add(m.alloy, block(u0 + 0.02, u1, top - 0.003, top, halfW * 2 + 0.006)); // hood
       b.add(m.alloy, block(u0 + 0.02, u1, railTop + 0.012, top, 0.003, halfW + 0.0015));
       b.add(m.alloy, block(u0 + 0.02, u1, railTop + 0.012, top, 0.003, -halfW - 0.0015));
+      // Brightness buttons on the back of the base.
+      for (const x of [-0.008, 0.008]) f.add(m.rubber, block(u0 - 0.002, u0, railTop + 0.004, railTop + 0.01, 0.007, x));
       b.add(m.glass, new THREE.PlaneGeometry(halfW * 2, top - railTop - 0.014).translate(0, (top + railTop + 0.011) / 2, -(u1 - 0.004)));
-      const ring = new THREE.RingGeometry(0.0055, 0.0063, 32).translate(0, vc, -(u1 - 0.0045));
-      b.add(m.reticle, ring, new THREE.CircleGeometry(0.0008, 10).translate(0, vc, -(u1 - 0.0045)));
+      b.add(lit, reticleParts(optic.reticle, vc, u1 - 0.0045));
       return vc;
     }
-    case 'scope': {
-      const vc = railTop + 0.03;
-      const u0 = uc - 0.1;
-      // Body tube with objective bell and eyepiece, rings and turrets.
-      b.add(
-        m.alloy,
-        lathe(
-          [
-            [0.0, 0],
-            [0.018, 0],
-            [0.019, 0.004],
-            [0.018, 0.045],
-            [0.0125, 0.075],
-            [0.0125, 0.16],
-            [0.019, 0.19],
-            [0.021, 0.22],
-            [0.0, 0.22],
-          ],
-          u0,
-          vc,
-          0,
-          28,
-        ),
-      );
-      for (const du of [0.08, 0.15]) {
-        b.add(m.alloy, lathe([[0.0125, -0.006], [0.016, -0.006], [0.016, 0.006], [0.0125, 0.006]], u0 + du, vc, 0, 20));
-        b.add(m.alloy, block(u0 + du - 0.007, u0 + du + 0.007, railTop, vc - 0.012, 0.014));
-      }
-      b.add(m.alloy, new THREE.CylinderGeometry(0.009, 0.009, 0.014, 16).translate(0, vc + 0.018, -(u0 + 0.115)));
-      b.add(m.alloy, new THREE.CylinderGeometry(0.009, 0.009, 0.014, 16).rotateZ(Math.PI / 2).translate(0.018, vc, -(u0 + 0.115)));
-      b.add(m.lens, new THREE.CircleGeometry(0.019, 24).rotateY(Math.PI).translate(0, vc, -(u0 + 0.2201)));
-      b.add(m.lens, new THREE.CircleGeometry(0.016, 24).translate(0, vc, -(u0 - 0.0001)));
+    case 'kobra': {
+      // Russian collimator: squat body, a tall window with a slanted front
+      // pane, brightness dial on the right, dovetail clamp on the left.
+      const vc = railTop + 0.025;
+      const u0 = uc - 0.035;
+      const u1 = uc + 0.035;
+      b.add(m.steel, block(u0, u1, railTop, railTop + 0.01, 0.03));
+      b.add(m.steel, slab([[u0, railTop + 0.01], [u0 + 0.03, railTop + 0.01], [u0 + 0.026, railTop + 0.016], [u0 + 0.004, railTop + 0.016]], 0.026, 0, 0.002));
+      const top = vc + 0.017;
+      for (const x of [-0.0165, 0.0165]) b.add(m.steel, slab([[u0 + 0.03, railTop + 0.012], [u1, railTop + 0.012], [u1 - 0.006, top], [u0 + 0.034, top]], 0.004, x, 0.001));
+      b.add(m.steel, block(u0 + 0.034, u1 - 0.006, top - 0.004, top, 0.037));
+      const glass = new THREE.PlaneGeometry(0.029, top - railTop - 0.016);
+      glass.rotateX(0.22);
+      glass.translate(0, (top + railTop + 0.012) / 2, -(u1 - 0.008));
+      b.add(m.glass, glass);
+      b.add(m.polymer, new THREE.CylinderGeometry(0.0095, 0.0095, 0.008, 16).rotateZ(Math.PI / 2).translate(0.019, railTop + 0.018, -(u0 + 0.016)));
+      b.add(m.steel, block(u0 + 0.005, u1 - 0.01, railTop - 0.006, railTop + 0.01, 0.006, -0.018));
+      f.add(m.steel, xcyl(0.004, 0.012, u0 + 0.02, railTop + 0.002, -0.024, 10));
+      b.add(lit, reticleParts(optic.reticle, vc, u1 - 0.009));
       return vc;
     }
+    case 'prism': {
+      // Compact fixed prism scope: housing on an integral base, objective bell,
+      // rubber-armoured eyepiece and a fibre-optic tube on top.
+      const vc = railTop + 0.032;
+      const u0 = uc - 0.055;
+      b.add(m.alloy, block(u0 + 0.02, u0 + 0.09, railTop, railTop + 0.01, 0.026));
+      for (const u of [u0 + 0.03, u0 + 0.078]) f.add(m.steel, xcyl(0.0045, 0.006, u, railTop + 0.005, 0.016, 10));
+      // Housing: side walls and a roof around a see-through tunnel.
+      for (const x of [-0.0135, 0.0135]) b.add(m.alloy, slab([[u0 + 0.018, railTop + 0.008], [u0 + 0.092, railTop + 0.008], [u0 + 0.088, vc + 0.014], [u0 + 0.022, vc + 0.014]], 0.004, x, 0.001));
+      b.add(m.alloy, block(u0 + 0.022, u0 + 0.088, vc + 0.0125, vc + 0.016, 0.031));
+      b.add(m.alloy, block(u0 + 0.018, u0 + 0.092, railTop + 0.008, vc - 0.0125, 0.031));
+      b.add(m.darkInner, tube(0.0125, u0 + 0.018, u0 + 0.092, vc, 0, seg, true));
+      b.add(m.alloy, lathe([[0.014, 0], [0.0165, 0.004], [0.0165, 0.02], [0.012, 0.024]], u0 + 0.088, vc, 0, 24));
+      b.add(m.rubber, lathe([[0.012, 0], [0.0145, 0.002], [0.015, 0.022], [0.013, 0.026]], u0 - 0.006, vc, 0, 24));
+      b.add(m.darkInner, tube(0.0125, u0 - 0.006, u0 + 0.02, vc, 0, 20, true));
+      b.add(lit, tube(0.0024, u0 + 0.03, u0 + 0.082, vc + 0.0155, 0, 8));
+      f.add(m.alloy, block(u0 + 0.03, u0 + 0.034, vc + 0.012, vc + 0.019, 0.008));
+      f.add(m.alloy, block(u0 + 0.078, u0 + 0.082, vc + 0.012, vc + 0.019, 0.008));
+      b.add(m.lens, new THREE.CircleGeometry(0.015, 24).rotateY(Math.PI).translate(0, vc, -(u0 + 0.1121)));
+      b.add(m.glass, new THREE.CircleGeometry(0.0125, 24).translate(0, vc, -(u0 + 0.02)));
+      b.add(lit, reticleParts(optic.reticle, vc, u0 + 0.0205));
+      return vc;
+    }
+    case 'scope':
+      return addScope(b, f, optic.scope!, railTop, uc, seg);
     case 'irons':
     case 'bead':
       return railTop;
   }
+}
+
+/** Magnified scope of the given shape, centred at uc over the rail; returns the scope axis height. */
+function addScope(b: PartBuilder, f: PartBuilder, s: ScopeShape, railTop: number, uc: number, seg: number): number {
+  const m = gunMaterials();
+  const body = s.finish === 'black' ? m.alloy : furniture(s.finish === 'tan' ? 0x5e5646 : 0x464a36);
+  const vc = railTop + Math.max(s.objective + 0.008, s.tube + 0.017);
+  const L = s.length;
+  const u0 = uc - L / 2; // back of the eyepiece
+  const u1 = uc + L / 2; // front of the objective bell
+  // Body: eyepiece, power ring, tube, objective bell (turned along the bore).
+  b.add(
+    body,
+    lathe(
+      [
+        [0, 0],
+        [s.eyepiece - 0.001, 0],
+        [s.eyepiece, 0.004],
+        [s.eyepiece, L * 0.16],
+        [s.tube + 0.002, L * 0.26],
+        [s.tube + 0.002, L * 0.3],
+        [s.tube, L * 0.31],
+        [s.tube, L * 0.66],
+        [s.objective, L * 0.86],
+        [s.objective + 0.0012, L * 0.9],
+        [s.objective + 0.0012, L],
+        [0, L],
+      ],
+      u0,
+      vc,
+      0,
+      seg,
+    ),
+  );
+  // Knurled power ring and eyepiece lock ring.
+  for (let k = 0; k < 4; k++) f.add(m.dark, lathe([[s.tube + 0.0022, 0], [s.tube + 0.0026, 0.0015], [s.tube + 0.0022, 0.003]], u0 + L * 0.262 + k * 0.0045, vc, 0, 20));
+  f.add(m.dark, lathe([[s.eyepiece + 0.0004, 0], [s.eyepiece + 0.0004, 0.004]], u0 + L * 0.14, vc, 0, 20));
+  if (s.lever) b.add(body, block(u0 + L * 0.27, u0 + L * 0.29, vc - 0.002, vc + 0.002, 0.014, s.tube + 0.007));
+  if (s.eyecup) b.add(m.rubber, lathe([[s.eyepiece - 0.002, 0], [s.eyepiece + 0.001, 0.004], [s.eyepiece + 0.004, 0.045], [s.eyepiece + 0.002, 0.05]], u0 - 0.05, vc, 0, 24));
+  if (s.shade > 0) {
+    b.add(body, tube(s.objective + 0.0012, u1, u1 + s.shade, vc, 0, seg, true));
+    b.add(m.darkInner, tube(s.objective + 0.0008, u1, u1 + s.shade, vc, 0, seg, true));
+  }
+  // Turrets on the saddle: elevation on top, windage on the right, parallax / lit knob on the left.
+  const tu = u0 + L * 0.48;
+  const [tr, th] = s.turrets === 'tall' ? [0.011, 0.022] : s.turrets === 'capped' ? [0.0095, 0.016] : [0.0075, 0.009];
+  b.add(body, block(tu - 0.017, tu + 0.017, vc - s.tube - 0.001, vc + s.tube + 0.004, s.tube * 2 + 0.006));
+  b.add(body, new THREE.CylinderGeometry(tr, tr, th, seg > 14 ? 20 : 10).translate(0, vc + s.tube + 0.004 + th / 2, -tu));
+  b.add(body, new THREE.CylinderGeometry(tr, tr, th, seg > 14 ? 20 : 10).rotateZ(Math.PI / 2).translate(s.tube + 0.004 + th / 2, vc, -tu));
+  if (s.turrets === 'tall') {
+    // Target turrets: ribbed grip bands.
+    for (let k = 0; k < 3; k++) {
+      f.add(m.dark, new THREE.CylinderGeometry(tr + 0.0006, tr + 0.0006, 0.0014, 20).translate(0, vc + s.tube + 0.008 + k * 0.005, -tu));
+      f.add(m.dark, new THREE.CylinderGeometry(tr + 0.0006, tr + 0.0006, 0.0014, 20).rotateZ(Math.PI / 2).translate(s.tube + 0.008 + k * 0.005, vc, -tu));
+    }
+  }
+  f.add(m.brass, block(tu - 0.0006, tu + 0.0006, vc + s.tube + 0.004 + th, vc + s.tube + 0.0046 + th, tr * 1.6));
+  b.add(body, new THREE.CylinderGeometry(tr * 0.85, tr * 0.85, th * 0.7, 18).rotateZ(Math.PI / 2).translate(-(s.tube + 0.004 + th * 0.35), vc, -tu));
+  if (s.illum) b.add(reticleMat(0xff2a1a), new THREE.CircleGeometry(0.0016, 10).rotateY(-Math.PI / 2).translate(-(s.tube + 0.0045 + th * 0.7), vc, -tu));
+  // Mounting: two rings, or a side bracket from the left.
+  if (s.sideMount) {
+    b.add(m.steel, block(u0 + L * 0.2, u0 + L * 0.75, vc - s.tube - 0.003, vc - s.tube + 0.004, 0.02, -0.004));
+    b.add(m.steel, block(u0 + L * 0.3, u0 + L * 0.68, railTop - 0.014, vc - s.tube, 0.006, -0.019));
+    b.add(m.steel, xcyl(0.005, 0.012, u0 + L * 0.5, railTop - 0.006, -0.026, 12));
+    b.add(m.steel, block(u0 + L * 0.46, u0 + L * 0.54, railTop - 0.009, railTop - 0.003, 0.018, -0.03));
+  } else {
+    for (const du of [L * 0.34, L * 0.64]) {
+      b.add(m.alloy, lathe([[s.tube, -0.006], [s.tube + 0.0035, -0.006], [s.tube + 0.0035, 0.006], [s.tube, 0.006]], u0 + du, vc, 0, seg > 14 ? 20 : 10));
+      b.add(m.alloy, block(u0 + du - 0.007, u0 + du + 0.007, railTop, vc - s.tube, 0.016));
+      f.add(m.steel, xcyl(0.0028, 0.006, u0 + du, railTop + 0.004, 0.011, 8));
+    }
+  }
+  // Lenses seen from outside (front and back).
+  b.add(m.lens, new THREE.CircleGeometry(s.objective, seg).rotateY(Math.PI).translate(0, vc, -(u1 - 0.004)));
+  b.add(m.lens, new THREE.CircleGeometry(s.eyepiece - 0.002, seg).translate(0, vc, -(u0 + 0.0005 - (s.eyecup ? 0.05 : 0))));
+  return vc;
+}
+
+/**
+ * The sight for a weapon, built on its own (the scanned bolt-action rifle gets
+ * each sniper rifle's scope this way). Returns the parts and the sight-line height.
+ */
+export function buildOptic(def: WeaponDef, railTop: number, uc: number): { group: THREE.Group; sightHeight: number } {
+  const b = new PartBuilder();
+  const [railGeos, top] = rail(uc - 0.075, uc + 0.075, railTop);
+  b.add(gunMaterials().alloy, railGeos);
+  const sightHeight = addOptic(b, opticFor(def), top, uc);
+  return { group: b.build('optic'), sightHeight };
 }
 
 /** Rear aperture on a small tower; returns the sight-line height. */
@@ -390,7 +561,7 @@ function rifle(o: RifleOpts): GunBuild {
   f.add(m.steel, xcyl(0.0048, 0.046, o.handguardEnd - 0.025, 0.004, 0, 12)); // front QD sockets
   const [railGeos, railTop] = rail(-0.075, o.handguardEnd - 0.005, 0.026);
   b.add(m.alloy, railGeos);
-  if (o.optic === 'reddot' || o.optic === 'holo') foldedIrons(f, -0.074, o.handguardEnd - 0.04, railTop);
+  if (o.optic.model !== 'scope' && o.optic.model !== 'irons') foldedIrons(f, -0.074, o.handguardEnd - 0.04, railTop);
 
   // Accessories: foregrip, light, bipod (precision).
   if (o.look.grip) foregrip(b, f, o.look.grip, o.handguardEnd - 0.075, -0.015, o.look.grip === 'vertical' ? m.polymer : furn);
@@ -409,7 +580,7 @@ function rifle(o: RifleOpts): GunBuild {
   f.add(m.steel, tube(0.0028, o.handguardEnd - 0.006, o.handguardEnd + 0.004, 0.012, 0, 8));
   const muzzleU = muzzleDevice(b, f, o.look.muzzle ?? 'flash', o.barrelEnd, 0.006);
 
-  const sightHeight = addOptic(b, o.optic, railTop, 0.02);
+  const sightHeight = addOptic(b, o.optic, railTop, 0.02, f);
   const group = b.build('rifle');
   const mag = magazine(o.mag, o.fine);
   group.add(mag);
@@ -484,7 +655,7 @@ function smg(color: number, optic: Optic, look: Look, fine: boolean): GunBuild {
   for (const u of [-0.05, 0.075]) f.add(m.steel, xcyl(0.0035, 0.028, u, 0.029, 0, 10));
   const [railGeos, railTop] = rail(-0.06, 0.09, 0.032);
   b.add(m.alloy, railGeos);
-  const sightHeight = addOptic(b, optic, railTop, 0.01);
+  const sightHeight = addOptic(b, optic, railTop, 0.01, f);
   if (look.grip) foregrip(b, f, look.grip, 0.195, -0.045, look.grip === 'vertical' ? m.polymer : furn);
   if (look.light && fine) weaponLight(b, f, 0.25, -0.016, 0.04);
 
@@ -693,7 +864,7 @@ export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): Gun
       handguardEnd: look.handguard ?? 0.33,
       barrelEnd: look.barrel ?? 0.4,
       mag: look.mag ?? 'curved',
-      optic: look.optic ?? 'reddot',
+      optic: opticFor(def),
       color: look.color ?? 0x1c1d1f,
       precision: false,
       look,
@@ -707,14 +878,14 @@ export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): Gun
         handguardEnd: look.handguard ?? 0.38,
         barrelEnd: look.barrel ?? 0.52,
         mag: look.mag ?? 'straight',
-        optic: def.scope ? 'scope' : (look.optic ?? 'reddot'),
+        optic: opticFor(def),
         color: look.color ?? 0x8a7658,
         precision: true,
         look,
         fine,
       });
     case 'smg':
-      return smg(look.color ?? 0x1c1d1f, look.optic ?? 'holo', look, fine);
+      return smg(look.color ?? 0x1c1d1f, opticFor(def), look, fine);
     case 'lmg':
       return lmg(look.color ?? 0x4a4f3a, fine);
     case 'sg':

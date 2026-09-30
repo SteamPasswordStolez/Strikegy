@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ModelLibrary } from '@/render/models';
 import type { WeaponDef } from './weaponData';
 import { gunMaterials, type P } from './gunKit';
-import { buildGun } from './gunModels';
+import { buildGun, buildOptic } from './gunModels';
 import {
   INSPECT_HAND,
   INSPECT_MAG_HELD,
@@ -24,6 +24,7 @@ import {
 
 /** Scanned models used when available: bolt-action rifles and pistols. */
 const SCANNED_RIFLE = 'bolt_action_rifle_7_62';
+const SCANNED_SCOPE = 'bolt_action_rifle_7_62_scope';
 const SCANNED_PISTOL = 'service_pistol';
 /** Parts of the scanned pistol file (it also holds a second, disassembled copy). */
 const PISTOL_PARTS = {
@@ -154,7 +155,7 @@ export class ViewModel {
     this.gun.add(this.support);
     this.pistol = def.class === 'pistol';
     if (def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) {
-      this.buildScannedRifle();
+      this.buildScannedRifle(def);
     } else if (def.class === 'pistol' && this.models?.has(SCANNED_PISTOL)) {
       this.buildScannedPistol();
     } else {
@@ -247,7 +248,7 @@ export class ViewModel {
    * its muzzle along +X with the trigger near x = -0.29; it is turned to face -Z and
    * shifted so the trigger sits where the procedural guns keep their grip.
    */
-  private buildScannedRifle(): void {
+  private buildScannedRifle(def: WeaponDef): void {
     const rifle = this.models!.instantiate(SCANNED_RIFLE)!;
     rifle.traverse((o) => {
       if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = false;
@@ -255,8 +256,16 @@ export class ViewModel {
     rifle.rotation.y = Math.PI / 2;
     rifle.position.set(0.007, -0.06, -0.29);
     this.gun.add(rifle);
-    // Scope axis is at model y ~0.071 -> 0.011 after the offset above.
-    this.sightHeight = 0.011;
+    // Each rifle carries its own scope: the file's scope comes off and a
+    // procedural one goes on a rail over the receiver (top at y ~0.008 here).
+    const own = rifle.getObjectByName(SCANNED_SCOPE);
+    if (own) own.visible = false;
+    const optic = buildOptic(def, 0.008, 0.085);
+    optic.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.userData.owned = true;
+    });
+    this.gun.add(optic.group);
+    this.sightHeight = optic.sightHeight;
     this.adsZ = -ADS_EYE.scanned;
     this.buildArms(false, [0.4, -0.07]);
     this.placeMuzzle(new THREE.Vector3(0, -0.025, -0.9));
