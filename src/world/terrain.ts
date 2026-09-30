@@ -285,6 +285,115 @@ export function polylineDistance(pts: readonly (readonly [number, number])[], x:
   return best;
 }
 
+/** Terrain render chunks: cells per side, and the distances (m) at which a chunk drops to 1/2 and 1/4 detail. */
+const CHUNK_CELLS = 64;
+const LOD_DISTANCES = [0, 150, 300];
+/** Skirts hang this far below chunk edges to hide cracks between detail levels (m). */
+const SKIRT = 1.5;
+
+/**
+ * Render mesh for the sampled ground: square chunks (culled on their own),
+ * each a `THREE.LOD` with full, half and quarter detail by distance. Normals
+ * come from the full grid so the levels light the same; skirts cover the
+ * cracks where a finer chunk meets a coarser one.
+ */
+export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: readonly [number, number], material: THREE.Material, renderStep = 1): THREE.Group {
+  const { cols, rows, heights } = grid;
+  const [sx, sz] = size;
+  const at = (c: number, r: number): number => heights[r * (cols + 1) + c]!;
+  const px = (c: number): number => -sx / 2 + (c / cols) * sx;
+  const pz = (r: number): number => -sz / 2 + (r / rows) * sz;
+  const dx = sx / cols;
+  const dz = sz / rows;
+  const n = new THREE.Vector3();
+  const normal = (c: number, r: number): THREE.Vector3 => {
+    const hx = at(Math.min(cols, c + 1), r) - at(Math.max(0, c - 1), r);
+    const hz = at(c, Math.min(rows, r + 1)) - at(c, Math.max(0, r - 1));
+    const wx = (Math.min(cols, c + 1) - Math.max(0, c - 1)) * dx;
+    const wz = (Math.min(rows, r + 1) - Math.max(0, r - 1)) * dz;
+    return n.set(-hx / wx, 1, -hz / wz).normalize();
+  };
+
+  const chunk = (c0: number, c1: number, r0: number, r1: number, step: number): THREE.BufferGeometry => {
+    const cs: number[] = [];
+    for (let c = c0; c < c1; c += step) cs.push(c);
+    cs.push(c1);
+    const rs: number[] = [];
+    for (let r = r0; r < r1; r += step) rs.push(r);
+    rs.push(r1);
+    const pos: number[] = [];
+    const nor: number[] = [];
+    const uv: number[] = [];
+    const idx: number[] = [];
+    const vert = (c: number, r: number, drop = 0): number => {
+      const x = px(c);
+      const z = pz(r);
+      pos.push(x, at(c, r) - drop, z);
+      const v = normal(c, r);
+      nor.push(v.x, v.y, v.z);
+      // World-scale UVs (meters), like the blockout boxes.
+      uv.push(x, -z);
+      return pos.length / 3 - 1;
+    };
+    const w = cs.length;
+    for (const r of rs) for (const c of cs) vert(c, r);
+    for (let j = 0; j < rs.length - 1; j++) {
+      for (let i = 0; i < w - 1; i++) {
+        const a = j * w + i;
+        const b = a + w;
+        idx.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    // Skirts along the four edges, both windings (the ground material is single-sided).
+    const edge = (list: [number, number][]): void => {
+      for (let k = 0; k < list.length - 1; k++) {
+        const [ca, ra] = list[k]!;
+        const [cb, rb] = list[k + 1]!;
+        const p0 = vert(ca, ra);
+        const p1 = vert(cb, rb);
+        const q0 = vert(ca, ra, SKIRT);
+        const q1 = vert(cb, rb, SKIRT);
+        idx.push(p0, q0, p1, p1, q0, q1, p0, p1, q0, p1, q1, q0);
+      }
+    };
+    edge(cs.map((c) => [c, r0]));
+    edge(cs.map((c) => [c, r1]));
+    edge(rs.map((r) => [c0, r]));
+    edge(rs.map((r) => [c1, r]));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeBoundingSphere();
+    return geo;
+  };
+
+  const group = new THREE.Group();
+  group.name = 'terrain';
+  const base = Math.max(1, Math.floor(renderStep));
+  for (let r0 = 0; r0 < rows; r0 += CHUNK_CELLS) {
+    for (let c0 = 0; c0 < cols; c0 += CHUNK_CELLS) {
+      const c1 = Math.min(cols, c0 + CHUNK_CELLS);
+      const r1 = Math.min(rows, r0 + CHUNK_CELLS);
+      const lod = new THREE.LOD();
+      lod.position.set(px((c0 + c1) / 2), 0, pz((r0 + r1) / 2));
+      lod.updateMatrix();
+      LOD_DISTANCES.forEach((d, level) => {
+        const step = Math.min(CHUNK_CELLS / 2, base << level);
+        const geo = chunk(c0, c1, r0, r1, step);
+        geo.translate(-lod.position.x, 0, -lod.position.z);
+        const mesh = new THREE.Mesh(geo, material);
+        mesh.receiveShadow = true;
+        mesh.matrixAutoUpdate = false;
+        lod.addLevel(mesh, d);
+      });
+      group.add(lod);
+    }
+  }
+  return group;
+}
+
 /**
  * Terrain mesh + Rapier heightfield collider. Returns the collider so its
  * handle can be registered as a ground surface.
@@ -293,36 +402,13 @@ export function buildTerrain(
   terrain: Terrain,
   material: THREE.Material,
   physics: PhysicsWorld,
-  /** Render mesh uses every `renderStep`-th grid line (the collider always uses all). */
+  /** Render mesh uses every `renderStep`-th grid line at full detail (the collider always uses all). */
   renderStep = 1,
-): { mesh: THREE.Mesh; collider: RAPIER.Collider; grid: ReturnType<Terrain['sample']> } {
+): { mesh: THREE.Group; collider: RAPIER.Collider; grid: ReturnType<Terrain['sample']> } {
   const grid = terrain.sample();
   const { cols, rows, heights } = grid;
   const [sx, sz] = terrain.size;
-
-  const step = Math.max(1, Math.floor(renderStep));
-  const rc = Math.ceil(cols / step);
-  const rr = Math.ceil(rows / step);
-  const geo = new THREE.PlaneGeometry(sx, sz, rc, rr);
-  geo.rotateX(-Math.PI / 2);
-  // PlaneGeometry rows run from -z to +z after the rotation, matching the grid order.
-  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
-  const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
-  for (let i = 0; i < pos.count; i++) {
-    const c = Math.min(cols, (i % (rc + 1)) * step);
-    const r = Math.min(rows, Math.floor(i / (rc + 1)) * step);
-    // Snap to the exact grid lines so the coarse mesh shares vertices with the collider.
-    pos.setX(i, -sx / 2 + (c / cols) * sx);
-    pos.setZ(i, -sz / 2 + (r / rows) * sz);
-    pos.setY(i, heights[r * (cols + 1) + c]!);
-    // World-scale UVs (meters), like the blockout boxes.
-    uv.setXY(i, pos.getX(i), -pos.getZ(i));
-  }
-  geo.computeVertexNormals();
-  geo.computeBoundingSphere();
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.receiveShadow = true;
-  mesh.name = 'terrain';
+  const mesh = buildTerrainMesh(grid, terrain.size, material, renderStep);
 
   // Rapier wants column-major (rows + 1) x (cols + 1) with rows along local z... its
   // "rows" index the x axis in the JS API, so transpose: index = c * (rows + 1) + r.

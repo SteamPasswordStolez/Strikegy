@@ -46,11 +46,27 @@ describe('terrain render detail', () => {
     const physics = await PhysicsWorld.create();
     const fine = buildTerrain(t, new THREE.MeshBasicMaterial(), physics, 1);
     const coarse = buildTerrain(t, new THREE.MeshBasicMaterial(), physics, 2);
-    const nf = fine.mesh.geometry.getAttribute('position').count;
-    const nc = coarse.mesh.geometry.getAttribute('position').count;
-    expect(nc).toBeLessThan(nf / 3);
-    const pos = coarse.mesh.geometry.getAttribute('position');
-    for (let i = 0; i < pos.count; i += 37) expect(pos.getY(i)).toBeCloseTo(t.surfaceAt(pos.getX(i), pos.getZ(i)), 4);
+    // Full-detail level of every chunk, in world space.
+    const level0 = (m: THREE.Group): THREE.Vector3[] => {
+      const out: THREE.Vector3[] = [];
+      for (const lod of m.children as THREE.LOD[]) {
+        const pos = (lod.levels[0]!.object as THREE.Mesh).geometry.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) out.push(new THREE.Vector3(pos.getX(i) + lod.position.x, pos.getY(i), pos.getZ(i) + lod.position.z));
+      }
+      return out;
+    };
+    const nf = level0(fine.mesh).length;
+    const pts = level0(coarse.mesh);
+    expect(pts.length).toBeLessThan(nf / 2.5);
+    // Surface vertices sit on the ground (skirt vertices hang 1.5 m below it).
+    let onGround = 0;
+    for (let i = 0; i < pts.length; i += 7) {
+      const p = pts[i]!;
+      const d = t.surfaceAt(p.x, p.z) - p.y;
+      if (Math.abs(d) < 1e-3) onGround++;
+      else expect(d).toBeCloseTo(1.5, 3);
+    }
+    expect(onGround).toBeGreaterThan(pts.length / 7 / 2);
     expect(coarse.grid.cols).toBe(fine.grid.cols);
   });
 });

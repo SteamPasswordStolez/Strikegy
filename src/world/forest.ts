@@ -17,7 +17,9 @@ const TRUNK_HEIGHT = 0.55;
 interface Chunk {
   box: THREE.Box3;
   near: THREE.Group;
-  far: THREE.InstancedMesh;
+  /** This chunk's trees in the shared impostor mesh: first instance and count. */
+  start: number;
+  count: number;
   isNear: boolean;
 }
 
@@ -30,6 +32,12 @@ interface Chunk {
 export class Forest {
   readonly group = new THREE.Group();
   private readonly chunks: Chunk[] = [];
+  /**
+   * Impostors of every tree in one instanced mesh (one draw call instead of one
+   * per chunk); a chunk drawing 3D trees has its impostors scaled to nothing.
+   */
+  private readonly far: THREE.InstancedMesh | null = null;
+  private readonly farMatrices: Float32Array | null = null;
 
   constructor(
     trees: readonly (readonly [number, number, number])[],
@@ -59,7 +67,10 @@ export class Forest {
       const c = physics.addStaticBox({ x, y: y + h / 2 - 0.5, z }, { x: r, y: h / 2 + 0.5, z: r }, undefined, Layer.WORLD);
       impacts.set(c.handle, 'wood');
     }
+    const all: Spot[] = [];
     for (const list of cells.values()) {
+      const start = all.length;
+      all.push(...list);
       const near = buildNearTrees(kit, list);
       near.traverse((o) => {
         if (o instanceof THREE.Mesh) {
@@ -69,13 +80,18 @@ export class Forest {
           if (o.material === kit.foliageMaterial) o.layers.set(LAYER_BACKDROP);
         }
       });
-      const far = buildImpostors(gl, kit, scene.environment, scene.environmentIntensity, list);
-      far.layers.set(LAYER_BACKDROP);
       const box = new THREE.Box3();
       for (const t of list) box.expandByPoint(t.pos);
       near.visible = false;
-      this.group.add(near, far);
-      this.chunks.push({ box, near, far, isNear: false });
+      this.group.add(near);
+      this.chunks.push({ box, near, start, count: list.length, isNear: false });
+    }
+    if (all.length) {
+      const far = buildImpostors(gl, kit, scene.environment, scene.environmentIntensity, all);
+      far.layers.set(LAYER_BACKDROP);
+      this.group.add(far);
+      this.far = far;
+      this.farMatrices = new Float32Array(far.instanceMatrix.array);
     }
   }
 
@@ -87,7 +103,15 @@ export class Forest {
       if (near === c.isNear) continue;
       c.isNear = near;
       c.near.visible = near;
-      c.far.visible = !near;
+      const far = this.far;
+      if (!far) continue;
+      const arr = far.instanceMatrix.array as Float32Array;
+      const a = c.start * 16;
+      const b = (c.start + c.count) * 16;
+      if (near) arr.fill(0, a, b);
+      else arr.set(this.farMatrices!.subarray(a, b), a);
+      far.instanceMatrix.addUpdateRange(a, b - a);
+      far.instanceMatrix.needsUpdate = true;
     }
   }
 
