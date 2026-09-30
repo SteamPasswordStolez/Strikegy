@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { sanitizeLayout, SIZE_MAX } from '@/input/touchLayout';
 import * as THREE from 'three';
 import { applyAimAssist } from '@/input/aimAssist';
 import { Boundary, Terrain, buildTerrain } from '@/world/terrain';
@@ -51,5 +52,24 @@ describe('terrain render detail', () => {
     const pos = coarse.mesh.geometry.getAttribute('position');
     for (let i = 0; i < pos.count; i += 37) expect(pos.getY(i)).toBeCloseTo(t.surfaceAt(pos.getX(i), pos.getZ(i)), 4);
     expect(coarse.grid.cols).toBe(fine.grid.cols);
+  });
+});
+
+describe('touch layout', () => {
+  it('keeps known buttons on screen with sizes in range and drops junk', () => {
+    const l = sanitizeLayout({
+      fire: { x: 0.9, y: 0.8, s: 1.2 },
+      jump: { x: -3, y: 2, s: 9 },
+      ads: { x: 'a', y: 0.5 },
+      nope: { x: 0.5, y: 0.5, s: 1 },
+      reload: { x: 0.5, y: 0.5 },
+    });
+    expect(l.fire).toEqual({ x: 0.9, y: 0.8, s: 1.2 });
+    expect(l.jump).toEqual({ x: 0.02, y: 0.98, s: SIZE_MAX });
+    expect(l.ads).toBeUndefined();
+    expect((l as Record<string, unknown>).nope).toBeUndefined();
+    expect(l.reload!.s).toBe(1);
+    expect(sanitizeLayout(null)).toEqual({});
+    expect(sanitizeLayout('x')).toEqual({});
   });
 });

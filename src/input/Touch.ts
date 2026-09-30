@@ -1,5 +1,6 @@
 import { t, type MessageKey } from '@/i18n';
 import type { InputSource, InputState } from './InputState';
+import { LAYOUT_BUTTONS, SIZE_MAX, SIZE_MIN, loadLayout, saveLayout, type LayoutButton, type TouchLayout } from './touchLayout';
 
 const LOOK_RAD_PER_PX = 0.006;
 const STICK_RADIUS = 56;
@@ -73,6 +74,10 @@ export class TouchControls implements InputSource {
   private knobEl: HTMLDivElement;
   private restEl: HTMLDivElement;
   private readonly buttons = new Map<ButtonAction, HTMLDivElement>();
+  /** Player-arranged button places (see `editLayout`). */
+  private layout: TouchLayout = loadLayout();
+  /** Layout editing: the toolbar, the picked button and the drag in progress. */
+  private editor: { bar: HTMLDivElement; done: () => void; picked: LayoutButton | null; drag: number | null; offX: number; offY: number } | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -135,6 +140,8 @@ export class TouchControls implements InputSource {
       this.buttons.set(action, b);
     }
 
+    for (const id of LAYOUT_BUTTONS) this.place(id);
+
     this.root.addEventListener('touchstart', (e) => this.onStart(e), { passive: false });
     this.root.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
     this.root.addEventListener('touchend', (e) => this.onEnd(e), { passive: false });
@@ -145,6 +152,10 @@ export class TouchControls implements InputSource {
   private onButton(e: TouchEvent, action: ButtonAction, down: boolean): void {
     e.preventDefault();
     e.stopPropagation();
+    if (this.editor) {
+      this.editTouch(e, down ? 'start' : 'end', action);
+      return;
+    }
     const touches = Array.from(e.changedTouches);
     const btn = this.buttons.get(action)!;
     if (action === 'fire' || action === 'fire2') {
@@ -188,6 +199,10 @@ export class TouchControls implements InputSource {
 
   private onStart(e: TouchEvent): void {
     e.preventDefault();
+    if (this.editor) {
+      this.editTouch(e, 'start', null);
+      return;
+    }
     for (const tch of Array.from(e.changedTouches)) {
       if (tch.clientX < window.innerWidth * 0.42 && this.stickId === null) {
         this.stickId = tch.identifier;
@@ -207,6 +222,10 @@ export class TouchControls implements InputSource {
   private onMove(e: TouchEvent): void {
     e.preventDefault();
     e.stopPropagation();
+    if (this.editor) {
+      this.editTouch(e, 'move', null);
+      return;
+    }
     for (const tch of Array.from(e.changedTouches)) {
       if (tch.identifier === this.stickId) {
         let dx = tch.clientX - this.stickOrigin.x;
@@ -238,6 +257,10 @@ export class TouchControls implements InputSource {
   }
 
   private onEnd(e: TouchEvent): void {
+    if (this.editor) {
+      this.editTouch(e, 'end', null);
+      return;
+    }
     for (const tch of Array.from(e.changedTouches)) {
       if (tch.identifier === this.stickId) {
         this.stickId = null;
@@ -337,6 +360,115 @@ export class TouchControls implements InputSource {
     this.scoreOpen = false;
     this.buttons.get('ads')!.classList.remove('on');
     this.buttons.get('crouch')!.classList.remove('on');
+  }
+
+  /**
+   * Button layout editor (from the pause screen): drag buttons anywhere, make
+   * the picked one smaller or bigger, reset to the defaults. Saved per device.
+   */
+  editLayout(done: () => void): void {
+    if (this.editor) return;
+    const bar = document.createElement('div');
+    bar.className = 'touch-edit-bar';
+    const hint = document.createElement('span');
+    hint.textContent = t('layout.hint');
+    bar.appendChild(hint);
+    const tool = (label: string, fn: () => void, cls = ''): void => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `teb-btn ${cls}`;
+      b.textContent = label;
+      b.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+      b.addEventListener('touchend', (e) => e.stopPropagation(), { passive: true });
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fn();
+      });
+      bar.appendChild(b);
+    };
+    tool('−', () => this.resize(-0.1));
+    tool('+', () => this.resize(0.1));
+    tool(t('layout.reset'), () => {
+      this.layout = {};
+      for (const id of LAYOUT_BUTTONS) this.place(id);
+      saveLayout(this.layout);
+    });
+    tool(t('layout.done'), () => this.closeEditor(), 'teb-done');
+    bar.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+    this.root.appendChild(bar);
+    this.editor = { bar, done, picked: null, drag: null, offX: 0, offY: 0 };
+    this.root.classList.add('editing');
+    this.setVisible(true);
+  }
+
+  private closeEditor(): void {
+    const ed = this.editor;
+    if (!ed) return;
+    ed.bar.remove();
+    if (ed.picked) this.buttons.get(ed.picked)?.classList.remove('picked');
+    this.editor = null;
+    this.root.classList.remove('editing');
+    saveLayout(this.layout);
+    ed.done();
+  }
+
+  private editTouch(e: TouchEvent, phase: 'start' | 'move' | 'end', action: ButtonAction | null): void {
+    const ed = this.editor!;
+    for (const tch of Array.from(e.changedTouches)) {
+      if (phase === 'start') {
+        if (ed.drag !== null) continue;
+        const id = action && (LAYOUT_BUTTONS as readonly string[]).includes(action) ? (action as LayoutButton) : null;
+        if (ed.picked) this.buttons.get(ed.picked)?.classList.remove('picked');
+        ed.picked = id;
+        if (!id) continue;
+        const b = this.buttons.get(id)!;
+        b.classList.add('picked');
+        const r = b.getBoundingClientRect();
+        ed.drag = tch.identifier;
+        ed.offX = tch.clientX - (r.left + r.width / 2);
+        ed.offY = tch.clientY - (r.top + r.height / 2);
+      } else if (tch.identifier === ed.drag && ed.picked) {
+        if (phase === 'end') {
+          ed.drag = null;
+          saveLayout(this.layout);
+          continue;
+        }
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        this.layout[ed.picked] = {
+          x: Math.min(0.98, Math.max(0.02, (tch.clientX - ed.offX) / w)),
+          y: Math.min(0.98, Math.max(0.02, (tch.clientY - ed.offY) / h)),
+          s: this.layout[ed.picked]?.s ?? 1,
+        };
+        this.place(ed.picked);
+      }
+    }
+  }
+
+  /** Changes the picked button's size (placing it where it is now if it had no custom place yet). */
+  private resize(step: number): void {
+    const id = this.editor?.picked;
+    if (!id) return;
+    let p = this.layout[id];
+    if (!p) {
+      const r = this.buttons.get(id)!.getBoundingClientRect();
+      p = { x: (r.left + r.width / 2) / window.innerWidth, y: (r.top + r.height / 2) / window.innerHeight, s: 1 };
+    }
+    this.layout[id] = { ...p, s: Math.min(SIZE_MAX, Math.max(SIZE_MIN, Math.round((p.s + step) * 10) / 10)) };
+    this.place(id);
+    saveLayout(this.layout);
+  }
+
+  /** Puts a button at its custom place, or back in its CSS default. */
+  private place(id: LayoutButton): void {
+    const b = this.buttons.get(id);
+    if (!b) return;
+    const p = this.layout[id];
+    b.classList.toggle('custom', !!p);
+    b.style.left = p ? `${(p.x * 100).toFixed(2)}%` : '';
+    b.style.top = p ? `${(p.y * 100).toFixed(2)}%` : '';
+    if (p) b.style.setProperty('--s', String(p.s));
+    else b.style.removeProperty('--s');
   }
 
   setVisible(v: boolean): void {

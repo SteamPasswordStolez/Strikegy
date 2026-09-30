@@ -602,6 +602,22 @@ export class Game {
     this.running = false;
     this.touch?.setVisible(false);
     this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? t('start.hintTouch') : t('start.hint'));
+    if (this.touch) this.overlay.setExtra(this.layoutButton());
+  }
+
+  /** Pause screen (touch): opens the button layout editor instead of resuming. */
+  private layoutButton(): HTMLElement {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'overlay-layout-btn';
+    b.textContent = t('layout.edit');
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.overlay.setExtra(null);
+      this.overlay.hide();
+      this.touch?.editLayout(() => this.pause());
+    });
+    return b;
   }
 
   private frame = (now: number): void => {
