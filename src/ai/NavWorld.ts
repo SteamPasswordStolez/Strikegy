@@ -23,6 +23,22 @@ const TILE = 32;
 const OBSTACLE_PAD = MOVE.radius;
 
 /**
+ * Upright boxes at least this tall (m) with a top smaller than this (m²) get no
+ * walkable top in the navmesh (see `collectStaticBoxes`). Floors and ramps are
+ * thin slabs, roofs and platforms are bigger.
+ */
+const ISLAND_MIN_HEIGHT = 0.6;
+const ISLAND_MAX_AREA = 30;
+/** Index range of the +Y face in a `BoxGeometry` (faces go +x, -x, +y, -y, +z, -z). */
+const TOP_FACE = [12, 18] as const;
+
+/** Detour's "no more links" value. */
+const NULL_LINK = 0xffffffff;
+
+/** Search box (half extents, m) for putting a bot back on the mesh right where it stands. */
+const SNAP_NEAR = { x: 0.6, y: 1.2, z: 0.6 };
+
+/**
  * Navigation mesh for bots, built from the static world colliders (every map
  * block and prop is a box). Wraps the Detour queries the AI needs: paths,
  * nearest walkable points and random points in an area. It is a tile cache,
@@ -35,12 +51,138 @@ export class NavWorld {
   private pending = false;
   /** Bumped whenever tiles are rebuilt (paths planned before may cross new obstacles). */
   version = 0;
+  /** Polygons cut off from the main walkable area (see `markIslands`). */
+  private readonly islands = new Set<number>();
 
   private constructor(
     readonly navMesh: NavMesh,
     private readonly tileCache: TileCache,
   ) {
     this.query = new NavMeshQuery(navMesh);
+    this.markIslands();
+  }
+
+  /**
+   * Flags off every polygon not linked to the biggest connected area: roofs,
+   * the top of a wall, a yard closed in by buildings, ground outside the map.
+   * The default query filter then skips them, so no spawn, cover spot, zone
+   * goal or path snaps onto a patch no one can walk to (bots sent there all
+   * stopped at the same nearest point and piled up). ~15 ms on Iron Gate;
+   * redone after obstacle changes, whose rebuilt tiles come back unflagged.
+   */
+  private markIslands(): void {
+    const nm = this.navMesh;
+    const refs: number[] = [];
+    for (let i = 0, n = nm.getMaxTiles(); i < n; i++) {
+      const tile = nm.getTile(i);
+      const count = tile.header()?.polyCount() ?? 0;
+      if (count === 0) continue;
+      const base = nm.getPolyRefBase(tile);
+      for (let p = 0; p < count; p++) refs.push(base + p);
+    }
+    // Connected components over the polygon links (whatever their flags).
+    const comp = new Map<number, number>();
+    const sizes: number[] = [];
+    const stack: number[] = [];
+    for (const start of refs) {
+      if (comp.has(start)) continue;
+      const id = sizes.length;
+      let size = 0;
+      comp.set(start, id);
+      stack.push(start);
+      while (stack.length) {
+        const ref = stack.pop()!;
+        size++;
+        this.forLinks(ref, (next) => {
+          if (comp.has(next)) return;
+          comp.set(next, id);
+          stack.push(next);
+        });
+      }
+      sizes.push(size);
+    }
+    let main = 0;
+    for (let i = 1; i < sizes.length; i++) if (sizes[i]! > sizes[main]!) main = i;
+    const was = [...this.islands];
+    this.islands.clear();
+    for (const ref of refs) {
+      if (comp.get(ref) === main) continue;
+      this.islands.add(ref);
+      nm.setPolyFlags(ref, 0);
+    }
+    // Joined up again (an obstacle removed): walkable once more.
+    for (const ref of was) if (!this.islands.has(ref) && nm.isValidPolyRef(ref) && comp.get(ref) === main) nm.setPolyFlags(ref, 1);
+  }
+
+  /**
+   * `markIslands` for just the rebuilt tiles (a full pass is ~30 ms on
+   * Ardennes, a hitch whenever something is built): a group of their polygons
+   * linked to a walkable polygon outside them is walkable, otherwise an island.
+   * (A new wall that closes off a bigger area is not caught; bots re-plan there.)
+   */
+  private markRebuiltIslands(): void {
+    const nm = this.navMesh;
+    const refs: number[] = [];
+    const rebuilt = new Set<number>();
+    for (const key of this.dirty) {
+      const at = nm.getTilesAt(Math.floor(key / 65536), key % 65536, 16);
+      for (let i = 0, n = at.tileCount(); i < n; i++) {
+        const tile = at.tiles(i);
+        const count = tile.header()?.polyCount() ?? 0;
+        const base = nm.getPolyRefBase(tile);
+        for (let p = 0; p < count; p++) {
+          refs.push(base + p);
+          rebuilt.add(base + p);
+        }
+      }
+    }
+    // Polygons of rebuilt tiles got new refs; drop the old ones.
+    for (const ref of this.islands) if (!nm.isValidPolyRef(ref)) this.islands.delete(ref);
+    const seen = new Set<number>();
+    const group: number[] = [];
+    for (const start of refs) {
+      if (seen.has(start)) continue;
+      let walkable = false;
+      group.length = 0;
+      seen.add(start);
+      group.push(start);
+      for (let i = 0; i < group.length; i++) {
+        this.forLinks(group[i]!, (next) => {
+          if (!rebuilt.has(next)) {
+            if (!this.islands.has(next)) walkable = true;
+          } else if (!seen.has(next)) {
+            seen.add(next);
+            group.push(next);
+          }
+        });
+      }
+      for (const ref of group) {
+        if (walkable) {
+          if (this.islands.delete(ref)) nm.setPolyFlags(ref, 1);
+        } else if (!this.islands.has(ref)) {
+          this.islands.add(ref);
+          nm.setPolyFlags(ref, 0);
+        }
+      }
+    }
+  }
+
+  /** Calls `fn` with each polygon linked to `ref`. */
+  private forLinks(ref: number, fn: (next: number) => void): void {
+    const { success, tile, poly } = this.navMesh.getTileAndPolyByRef(ref);
+    if (!success) return;
+    // The binding hands DT_NULL_LINK back as -1.
+    for (let l = poly.firstLink(), guard = 0; l >= 0 && l !== NULL_LINK && guard < 64; guard++) {
+      const link = tile.links(l);
+      const next = link.ref();
+      if (next) fn(next);
+      l = link.next();
+    }
+  }
+
+  /** Polygons flagged off as islands (tests / debugging). */
+  get islandCount(): number {
+    return this.islands.size;
   }
 
   /** Blocks a box on the ground (centre, half extents, yaw in radians); returns a handle, or null. */
@@ -48,6 +190,7 @@ export class NavWorld {
     const res = this.tileCache.addBoxObstacle(center, { x: half.x + OBSTACLE_PAD, y: half.y, z: half.z + OBSTACLE_PAD }, yaw);
     if (!res.success || !res.obstacle) return null;
     this.pending = true;
+    this.touch(center, Math.hypot(half.x, half.z) + OBSTACLE_PAD);
     return res.obstacle;
   }
 
@@ -55,6 +198,24 @@ export class NavWorld {
   remove(obstacle: Obstacle): void {
     this.tileCache.removeObstacle(obstacle);
     this.pending = true;
+    const reach = obstacle.type === 'box' ? Math.hypot(obstacle.halfExtents.x, obstacle.halfExtents.z) : obstacle.radius;
+    this.touch(obstacle.position, reach);
+  }
+
+  /** Tiles (grid x, y) an obstacle change will rebuild: their islands are checked again afterwards. */
+  private readonly dirty = new Set<number>();
+
+  private touch(center: V3, reach: number): void {
+    // Detour rebuilds every tile whose border (walkable radius + 3 cells) the obstacle touches.
+    const radius = reach + (Math.ceil(MOVE.radius / CS) + 3) * CS + 0.2;
+    // Read each result right away: the binding reuses the result object.
+    const a = this.navMesh.calcTileLoc({ x: center.x - radius, y: center.y, z: center.z - radius });
+    const x0 = a.tileX();
+    const y0 = a.tileY();
+    const b = this.navMesh.calcTileLoc({ x: center.x + radius, y: center.y, z: center.z + radius });
+    const x1 = b.tileX();
+    const y1 = b.tileY();
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) this.dirty.add(x * 65536 + y);
   }
 
   /**
@@ -72,6 +233,9 @@ export class NavWorld {
       }
     }
     this.version++;
+    if (this.pending) return;
+    if (this.dirty.size) this.markRebuiltIslands();
+    this.dirty.clear();
   }
 
   /** Builds from the physics world; returns null if generation fails. */
@@ -155,19 +319,29 @@ export class NavWorld {
   /**
    * Walks from `from` toward `to` along the mesh surface (sliding along its
    * edges) and writes the reached point, with the mesh height there, to `out`.
-   * `ref` is the polygon `from` is on (0 = unknown, looked up). Returns the
-   * polygon reached, or 0 if `from` is not near the mesh.
+   * `ref` is the polygon `from` is on (0 = unknown, looked up; a polygon of a
+   * rebuilt tile is looked up again). Returns the polygon reached, or 0 if
+   * `from` is not near the mesh (then `out` is `from`: never step off the mesh,
+   * or a bot walks through walls and onto islands it can't leave).
    */
   move(ref: number, from: V3, to: V3, out: THREE.Vector3): number {
     let start: V3 = from;
-    if (!ref) {
-      const c = this.query.findClosestPoint(from, { halfExtents: this.halfExtents });
-      if (!c.success || !c.polyRef) return 0;
+    if (!ref || this.islands.has(ref) || !this.navMesh.isValidPolyRef(ref)) {
+      // Look close around the feet first so a crate top or the floor above isn't picked.
+      let c = this.query.findClosestPoint(from, { halfExtents: SNAP_NEAR });
+      if (!c.success || !c.polyRef) c = this.query.findClosestPoint(from, { halfExtents: this.halfExtents });
+      if (!c.success || !c.polyRef) {
+        out.set(from.x, from.y, from.z);
+        return 0;
+      }
       ref = c.polyRef;
       start = c.point;
     }
     const res = this.query.moveAlongSurface(ref, start, to, { maxVisitedSize: 16 });
-    if (!res.success) return 0;
+    if (!res.success) {
+      out.set(from.x, from.y, from.z);
+      return 0;
+    }
     const last = res.visited[res.visited.length - 1] ?? ref;
     const p = res.resultPosition;
     out.set(p.x, p.y, p.z);
@@ -231,7 +405,14 @@ function collectStaticBoxes(physics: PhysicsWorld): { positions: number[]; indic
       v.fromBufferAttribute(pos, i).applyMatrix4(m);
       positions.push(v.x, v.y, v.z);
     }
-    for (let i = 0; i < idx.count; i++) indices.push(base + idx.getX(i));
+    // The top of a small upright block (fountain, crate, car) is an island no
+    // one can climb onto: leave it out so nothing (spawns, cover, paths) snaps there.
+    const upright = v.set(0, 1, 0).applyQuaternion(q).y > 0.98;
+    const island = upright && he.y * 2 > ISLAND_MIN_HEIGHT && 4 * he.x * he.z < ISLAND_MAX_AREA;
+    for (let i = 0; i < idx.count; i++) {
+      if (island && i >= TOP_FACE[0] && i < TOP_FACE[1]) continue;
+      indices.push(base + idx.getX(i));
+    }
   });
   box.dispose();
   return { positions, indices };

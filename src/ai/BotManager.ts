@@ -27,9 +27,21 @@ const DAMAGE_SCALE: Record<Difficulty, number> = { easy: 0.55, normal: 0.75, har
 /** How far gunfire and footsteps carry for bots (meters). */
 const HEAR_SHOT = 70;
 const HEAR_STEP = 13;
-/** Bots closer than this push apart (meters), at up to SEPARATION_SPEED m/s. */
-const SEPARATION_RADIUS = 1.1;
+/**
+ * Bots closer than this push apart (meters), at up to SEPARATION_SPEED m/s.
+ * Two bots standing still only once they overlap (capsules touch at 0.7 m):
+ * shoving each other off their spots made groups jostle forever.
+ */
+const SEPARATION_RADIUS = 0.95;
+const SEPARATION_STANDING = 0.7;
 const SEPARATION_SPEED = 2.2;
+/** A walking bot steps around someone up to this far ahead (m) and this far off its line (m). */
+const AVOID_AHEAD = 2;
+const AVOID_WIDTH = 0.85;
+/** Moving faster than this (m/s) counts as walking for giving way. */
+const MOVING = 0.3;
+/** Someone standing this close to a bot's destination has it taken (m): stop beside them. */
+const SPOT_TAKEN = 0.75;
 const BLOB_SIZE = 1.1;
 /** Cover searches allowed per sim step across all bots (each is ~0.1-0.3 ms). */
 const squadKey = (team: Team, squad: number): string => `${team}:${squad}`;
@@ -1194,30 +1206,46 @@ export class BotManager implements BotServices {
     this.alert(bot.feet, sprinting ? HEAR_STEP * 1.4 : HEAR_STEP, bot);
   }
 
-  separation(bot: Bot, out: THREE.Vector3): THREE.Vector3 {
+  separation(bot: Bot, out: THREE.Vector3, wx = 0, wz = 0, speed = 0): THREE.Vector3 {
     out.set(0, 0, 0);
+    this.steer = 0;
     const cx = Math.floor(bot.feet.x / CELL);
     const cz = Math.floor(bot.feet.z / CELL);
     for (let i = -1; i <= 1; i++) {
       for (let j = -1; j <= 1; j++) {
         const cell = this.grid.get((cx + i + 32768) * 65536 + (cz + j + 32768));
         if (!cell) continue;
-        for (const o of cell) if (o !== bot) this.repel(bot, o, SEPARATION_RADIUS, out);
+        for (const o of cell) if (o !== bot) this.repel(bot, o, 1, out, wx, wz, speed);
       }
     }
     // Bots walk on the navmesh without colliding: keep them off the player too.
-    this.repel(bot, this.player, SEPARATION_RADIUS * 1.2, out);
+    this.repel(bot, this.player, 1.2, out, wx, wz, speed);
+    if (this.steer !== 0) {
+      // Step around whoever is in the way (to the right of the walking direction is (-wz, wx)).
+      const k = THREE.MathUtils.clamp(this.steer, -1, 1) * speed * 0.9;
+      out.x += -wz * k;
+      out.z += wx * k;
+    }
     return out;
   }
 
-  private repel(bot: Bot, o: Combatant, radius: number, out: THREE.Vector3): void {
-    {
-      if (!o.alive || Math.abs(o.feet.y - bot.feet.y) > 1.5) return;
-      const dx = bot.feet.x - o.feet.x;
-      const dz = bot.feet.z - o.feet.z;
-      const d = Math.hypot(dx, dz);
-      if (d >= radius) return;
-      const k = (1 - d / radius) * SEPARATION_SPEED;
+  /** Sideways steer summed over neighbours by `repel` (-1 left .. +1 right). */
+  private steer = 0;
+
+  private repel(bot: Bot, o: Combatant, scale: number, out: THREE.Vector3, wx: number, wz: number, speed: number): void {
+    if (!o.alive || Math.abs(o.feet.y - bot.feet.y) > 1.5) return;
+    const dx = bot.feet.x - o.feet.x;
+    const dz = bot.feet.z - o.feet.z;
+    const d = Math.hypot(dx, dz);
+    const moving = speed > 0.1;
+    const oSpeed = Math.hypot(o.velocity.x, o.velocity.z);
+    const oMoving = !o.downed && oSpeed > MOVING;
+    const radius = (moving || oMoving ? SEPARATION_RADIUS : SEPARATION_STANDING) * scale;
+    if (d < radius) {
+      // Whoever walks gives way: someone standing (on a post, in cover, down) is
+      // only nudged by a walker, who goes around instead of shoving.
+      const share = moving ? (oMoving ? 1 : 1.4) : oMoving ? 0.35 : 1;
+      const k = (1 - d / radius) * SEPARATION_SPEED * share;
       if (d < 1e-3) {
         // Exactly on top of each other: split by id.
         out.x += (bot.id > o.id ? 1 : -1) * k;
@@ -1226,6 +1254,32 @@ export class BotManager implements BotServices {
         out.z += (dz / d) * k;
       }
     }
+    if (!moving) return;
+    // Someone ahead on this bot's line: veer before bumping into them.
+    const ahead = -dx * wx - dz * wz;
+    if (ahead < 0.05 || ahead > AVOID_AHEAD) return;
+    const lat = dx * wz - dz * wx; // their offset to this bot's right
+    if (Math.abs(lat) > AVOID_WIDTH * scale) return;
+    // Walking toward each other: both keep right. Otherwise pass on the side away from them.
+    const headOn = oMoving && (o.velocity.x * wx + o.velocity.z * wz) < -0.3 * oSpeed;
+    const side = headOn || Math.abs(lat) < 0.05 ? 1 : -Math.sign(lat);
+    this.steer += side * (1 - ahead / AVOID_AHEAD) * (1 - Math.abs(lat) / (AVOID_WIDTH * scale) * 0.5);
+  }
+
+  spotTaken(bot: Bot, p: THREE.Vector3): boolean {
+    const cell = this.grid.get(cellKey(p.x, p.z));
+    const check = (o: Bot): boolean =>
+      o !== bot && o.alive && !o.hasGoal && Math.abs(o.feet.y - p.y) < 1.5 && Math.hypot(o.feet.x - p.x, o.feet.z - p.z) < SPOT_TAKEN;
+    if (cell?.some(check)) return true;
+    // The spot may sit on a cell edge: look around it too.
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        if (i === 0 && j === 0) continue;
+        const c = this.grid.get(cellKey(p.x + i * SPOT_TAKEN, p.z + j * SPOT_TAKEN));
+        if (c && c !== cell && c.some(check)) return true;
+      }
+    }
+    return false;
   }
 
   /** Something audible happened at `pos`; enemies of `source` within `radius` hear it. */

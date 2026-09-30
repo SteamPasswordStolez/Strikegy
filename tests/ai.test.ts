@@ -131,4 +131,37 @@ describe('NavWorld', () => {
     nav!.dispose();
     physics.dispose();
   });
+
+  it('never snaps onto patches no one can walk to, even after tiles are rebuilt', async () => {
+    const physics = await PhysicsWorld.create();
+    physics.addStaticBox({ x: 0, y: -0.5, z: 0 }, { x: 20, y: 0.5, z: 20 });
+    // A crate (its top is left out of the mesh) and a closed pen (a walkable island).
+    physics.addStaticBox({ x: 8, y: 0.6, z: 8 }, { x: 1, y: 0.6, z: 1 });
+    physics.addStaticBox({ x: -10, y: 1.5, z: -13.5 }, { x: 4, y: 1.5, z: 0.5 });
+    physics.addStaticBox({ x: -10, y: 1.5, z: -6.5 }, { x: 4, y: 1.5, z: 0.5 });
+    physics.addStaticBox({ x: -13.5, y: 1.5, z: -10 }, { x: 0.5, y: 1.5, z: 3 });
+    physics.addStaticBox({ x: -6.5, y: 1.5, z: -10 }, { x: 0.5, y: 1.5, z: 3 });
+    physics.step();
+    const nav = (await NavWorld.build(physics))!;
+    const check = (): void => {
+      expect(nav.closest({ x: 8, y: 1.5, z: 8 })!.y).toBeLessThan(0.3);
+      for (const p of [{ x: -10, y: 0, z: -10 }, { x: -10, y: 0, z: -8 }]) {
+        const at = nav.closest(p);
+        if (at) expect(Math.max(Math.abs(at.x + 10), Math.abs(at.z + 10))).toBeGreaterThan(3);
+      }
+      expect(nav.randomAround({ x: -10, y: 0, z: -10 }, 2.5)).toBeNull();
+      expect(nav.path({ x: 5, y: 0, z: 5 }, { x: -2, y: 0, z: -2 }, [])).toBe(true);
+    };
+    expect(nav.islandCount).toBeGreaterThan(0);
+    check();
+    // Something built against the pen rebuilds its tiles: the pen stays off.
+    const o = nav.addBox({ x: -6, y: 0.5, z: -10 }, { x: 0.3, y: 0.5, z: 1 }, 0)!;
+    nav.update(4096);
+    check();
+    nav.remove(o);
+    nav.update(4096);
+    check();
+    nav.dispose();
+    physics.dispose();
+  });
 });

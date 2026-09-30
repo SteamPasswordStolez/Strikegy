@@ -94,8 +94,13 @@ export interface BotServices {
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean;
   /** Far from the squad leader: prefer catching up. */
   mustRegroup(bot: Bot): boolean;
-  /** Push away from nearby bots (m/s, horizontal) so they don't stack up. */
-  separation(bot: Bot, out: THREE.Vector3): THREE.Vector3;
+  /**
+   * Push away from nearby bots (m/s, horizontal) so they don't stack up; a bot
+   * walking along (wx, wz) at `speed` also steps around whoever is ahead.
+   */
+  separation(bot: Bot, out: THREE.Vector3, wx?: number, wz?: number, speed?: number): THREE.Vector3;
+  /** Someone else already stands at `p` (a bot heading there stops beside them). */
+  spotTaken(bot: Bot, p: THREE.Vector3): boolean;
   /** How much foliage (tree crowns) lies between two points: 0 = none, ~1 = a few thick trees. */
   foliage(from: THREE.Vector3, to: THREE.Vector3): number;
   /** Depth of water over a point (0 when dry). */
@@ -186,7 +191,10 @@ export class Bot implements Damageable, Combatant {
   private readonly path: THREE.Vector3[] = [];
   private pathIndex = 0;
   private readonly goal = new THREE.Vector3();
-  private hasGoal = false;
+  /** Stuck recoveries tried since the bot last made progress (0: re-plan first). */
+  private stuckTries = 0;
+  /** Walking somewhere (false: standing at its spot). */
+  hasGoal = false;
   private repathAt = 0;
   private cover: THREE.Vector3 | null = null;
   private coverUntil = 0;
@@ -1052,13 +1060,20 @@ export class Bot implements Damageable, Combatant {
     let speed = 0;
     if (this.hasGoal && this.path.length > 0) {
       let corner = this.path[this.pathIndex]!;
-      while (Math.hypot(corner.x - this.feet.x, corner.z - this.feet.z) < 0.45 && this.pathIndex < this.path.length - 1) {
+      // Close to a corner: on to the next one, unless (right by it, past a
+      // fence end or a door jamb) the straight line there would cut the edge.
+      while (this.pathIndex < this.path.length - 1) {
+        const dc = Math.hypot(corner.x - this.feet.x, corner.z - this.feet.z);
+        if (dc >= 0.45 || (dc > 0.12 && !s.nav.walkable(this.feet, this.path[this.pathIndex + 1]!))) break;
         corner = this.path[++this.pathIndex]!;
       }
       let dx = corner.x - this.feet.x;
       let dz = corner.z - this.feet.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.3 || this.pathIndex < this.path.length - 1) {
+      const last = this.pathIndex >= this.path.length - 1;
+      // Someone already stands on the spot: stop here beside them instead of pushing in.
+      if (last && d < 1.6 && s.spotTaken(this, corner)) this.hasGoal = false;
+      else if (d > 0.3 || !last) {
         // Keep to this bot's side of the path on long legs (fading out near
         // corners, where the path hugs walls) so groups don't walk single file.
         const lane = this.personality.lane * LANE_WIDTH * THREE.MathUtils.clamp((d - 2) / 5, 0, 1);
@@ -1109,7 +1124,7 @@ export class Bot implements Damageable, Combatant {
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 
-    const push = s.separation(this, this.tmp);
+    const push = s.separation(this, this.tmp, wx, wz, speed);
     const tx = wx * speed + push.x;
     const tz = wz * speed + push.z;
     const accel = speed > 0 || push.lengthSq() > 0 ? MOVE.groundAccel : MOVE.groundDecel;
@@ -1148,15 +1163,21 @@ export class Bot implements Damageable, Combatant {
       if (!this.crouching) s.footstep(this, sprinting);
     }
 
-    // Stuck: wanted to move but barely did for a while -> repath or hop sideways.
+    // Stuck: wanted to move but barely did for a while. Pushed off the path's
+    // line (lanes, stepping around mates) it can end up against a wall short of
+    // the next corner: plan again from here first, then hop sideways.
     if (speed > 0) {
       if (this.feet.distanceTo(this.progressPos) > 0.6) {
         this.progressPos.copy(this.feet);
         this.progressAt = s.time;
-      } else if (s.time - this.progressAt > 1.5) {
+        this.stuckTries = 0;
+      } else if (s.time - this.progressAt > (this.stuckTries === 0 ? 0.7 : 1.5)) {
         this.progressAt = s.time;
-        const escape = s.nav.randomAround(this.feet, 3);
-        if (escape) this.setGoalForce(escape, s);
+        if (this.stuckTries++ === 0) this.setGoalForce(this.tmp3.copy(this.goal), s);
+        else {
+          const escape = s.nav.randomAround(this.feet, 3);
+          if (escape) this.setGoalForce(escape, s);
+        }
       }
     } else {
       this.progressPos.copy(this.feet);
