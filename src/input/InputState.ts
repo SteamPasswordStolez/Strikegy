@@ -42,6 +42,8 @@ export interface InputState {
   buildMode: boolean;
   /** Pulse: take out / put away the class gadget (4; touch: gadget button). */
   gadget: boolean;
+  /** Held: hold your breath while scoped (X; touch: breath button). */
+  holdBreath: boolean;
 }
 
 export function createInputState(): InputState {
@@ -69,6 +71,7 @@ export function createInputState(): InputState {
     scoreboard: false,
     buildMode: false,
     gadget: false,
+    holdBreath: false,
   };
 }
 
@@ -98,6 +101,7 @@ export function resetFrameInput(s: InputState): void {
   s.scoreboard = false;
   s.interact = false;
   s.jumpHeld = false;
+  s.holdBreath = false;
 }
 
 export interface InputSource {

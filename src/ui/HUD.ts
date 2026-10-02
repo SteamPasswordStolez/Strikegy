@@ -17,6 +17,13 @@ export interface HudFrame {
    * sits off centre (fractions of the lens radius, from sway and movement).
    */
   scope: { reticle: Reticle; color: number; shiftX: number; shiftY: number } | null;
+  /**
+   * Holding your breath: air left (0..1) and whether it is held, shown under
+   * the scope with the key hint; null when not scoped.
+   */
+  breath: { air: number; holding: boolean; locked: boolean; hint: string } | null;
+  /** 0..1 blackout from holding the breath too long. */
+  dark: number;
   grenadeLabel: string;
   grenadeCount: number;
   /** Class gadget: key hint ('4 · ' on PC), name, count left, in hand. Null: none (support, range). */
@@ -100,6 +107,10 @@ export class HUD {
   private fps: HTMLDivElement;
   private scope: HTMLDivElement;
   private scopeReticle: SVGSVGElement;
+  private breathEl: HTMLDivElement;
+  private breathFill: HTMLDivElement;
+  private breathText: HTMLDivElement;
+  private blackEl: HTMLDivElement;
   private hurt: HTMLDivElement;
   private flashEl: HTMLDivElement;
   private damageRing: HTMLDivElement;
@@ -138,6 +149,9 @@ export class HUD {
     lens.appendChild(this.scopeReticle);
     el('div', 'scope-glare', lens);
     el('div', 'scope-mask', this.scope);
+    this.breathEl = el('div', 'scope-breath', this.scope);
+    this.breathFill = el('div', 'scope-breath-fill', el('div', 'scope-breath-track', this.breathEl));
+    this.breathText = el('div', 'scope-breath-text', this.breathEl);
     this.crosshair = el('div', 'crosshair', this.root);
     for (const side of ['t', 'b', 'l', 'r']) el('div', `ch ch-${side}`, this.crosshair);
     el('div', 'ch-dot', this.crosshair);
@@ -175,6 +189,7 @@ export class HUD {
     this.promptEl = el('div', 'hud-prompt', this.root);
     this.promptText = el('div', 'hud-prompt-text', this.promptEl);
     this.promptFill = el('div', 'hud-prompt-fill', el('div', 'hud-prompt-track', this.promptEl));
+    this.blackEl = el('div', 'hud-black', this.root);
     this.flashEl = el('div', 'hud-flash', this.root);
   }
 
@@ -247,6 +262,25 @@ export class HUD {
         this.scope.style.setProperty('--ky', sc.shiftY.toFixed(3));
       });
     }
+    const br = f.breath;
+    this.set('breathOn', String(!!br), () => (this.breathEl.style.display = br ? '' : 'none'));
+    if (br) {
+      const air = Math.round(br.air * 100);
+      this.set('breath', `${air}:${br.holding}:${br.locked}`, () => {
+        this.breathFill.style.width = `${air}%`;
+        this.breathEl.classList.toggle('holding', br.holding);
+        this.breathEl.classList.toggle('low', br.locked || br.air < 0.45);
+      });
+      this.set('breathHint', br.hint, () => (this.breathText.textContent = br.hint));
+    }
+    // Blackout: closes in from the edges, then the middle goes too.
+    const dk = f.dark.toFixed(2);
+    this.set('dark', dk, () => {
+      const d = f.dark;
+      this.blackEl.style.opacity = Math.min(1, d * 2.5).toFixed(2);
+      this.blackEl.style.setProperty('--hole', `${((1 - d) * 40).toFixed(1)}vmin`);
+      this.blackEl.style.setProperty('--fill', Math.max(0, (d - 0.7) / 0.3).toFixed(2));
+    });
 
     this.set('weapon', f.weaponName, () => (this.weapon.textContent = f.weaponName));
     const ammoText = f.ammo === 0 && f.reserve === 0 ? t('hud.noAmmo') : `${f.ammo} / ${Number.isFinite(f.reserve) ? f.reserve : '∞'}`;

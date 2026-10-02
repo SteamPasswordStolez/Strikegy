@@ -16,12 +16,12 @@ export interface GadgetSpec {
   id: GadgetId;
   /** Carried per life (and restocked to at an ammo station). */
   count: number;
-  /** Seconds before the next use (raising the next tube, placing). */
+  /** Seconds before the next use (panzerfaust: the full reload, see `PANZERFAUST_TOSS`; placing). */
   cycle: number;
 }
 
 export const GADGETS: Record<GadgetId, GadgetSpec> = {
-  panzerfaust: { id: 'panzerfaust', count: 2, cycle: 1.1 },
+  panzerfaust: { id: 'panzerfaust', count: 2, cycle: 3.0 },
   riflesmoke: { id: 'riflesmoke', count: 2, cycle: 0.9 },
   beacon: { id: 'beacon', count: 1, cycle: 0.8 },
   mine: { id: 'mine', count: 2, cycle: 0.7 },
@@ -35,6 +35,12 @@ export function classGadget(cls: ClassId, reconGadget: ReconGadget): GadgetId | 
   return null;
 }
 
+/**
+ * Panzerfaust reload (3 s, `cycle`): spent tube dropped by 0.9 s, the next
+ * one shouldered by 1.9 s, sight up by 2.2 s, lever cocked by 2.7 s. After
+ * the last shot only the drop happens.
+ */
+export const PANZERFAUST_TOSS = 0.9;
 /** Panzerfaust rocket: muzzle speed (m/s) and a light drop (m/s²). */
 export const ROCKET = { speed: 60, gravity: 3, life: 4, directDamage: 250 };
 /** Rifle smoke grenade: lobbed at ~45° to land ~40 m out. */

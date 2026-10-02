@@ -67,6 +67,8 @@ export interface ViewModelFrame {
   /** Class gadget in hand (key 4), and seconds since it was last used. */
   gadget?: GadgetId | null;
   gadgetUsed?: number;
+  /** Gadget uses left (the panzerfaust brings up no new tube after the last). */
+  gadgetLeft?: number;
 }
 
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
@@ -506,7 +508,7 @@ export class ViewModel {
     this.toolBlend += ((f.toolIdle || (f.tool !== undefined && f.tool >= 0) || held ? 1 : 0) - this.toolBlend) * ease(9);
 
     this.updateHammer(held ? -2 : (f.tool ?? -1), bobX, bobY);
-    this.updateGadget(f.gadget ?? null, f.gadgetUsed ?? 10, bobX, bobY);
+    this.updateGadget(f.gadget ?? null, f.gadgetUsed ?? 10, f.gadgetLeft ?? 1, bobX, bobY);
 
     // Whole-gun motions: seating jolts, inspection, melee.
     const extraPos = this.extraPos.set(0, 0, 0);
@@ -589,11 +591,11 @@ export class ViewModel {
   private lobBlend = 0;
 
   /**
-   * Gadget in hand. Panzerfaust: on the shoulder; firing kicks it back, the
-   * spent tube drops away and the next comes up. Beacon / mine: held low, set
+   * Gadget in hand. Panzerfaust: on the shoulder; firing kicks it back, then
+   * the reload (see `posePanzerfaust`). Beacon / mine: held low, set
    * down forward on use. Rifle smoke: a grenade on the gun's muzzle until fired.
    */
-  private updateGadget(id: GadgetId | null, used: number, bobX: number, bobY: number): void {
+  private updateGadget(id: GadgetId | null, used: number, left: number, bobX: number, bobY: number): void {
     for (const [gid, g] of this.gadgetModels) if (gid !== id || this.toolBlend < 0.02) g.visible = false;
     // Rifle grenade on the muzzle (re-attached when the gun model is rebuilt).
     if (id === 'riflesmoke') {
@@ -611,12 +613,7 @@ export class ViewModel {
     g.visible = true;
     const lift = (1 - this.toolBlend) * 0.45;
     if (id === 'panzerfaust') {
-      // Kick (0..0.15 s), spent tube away and the next one up (0.25..1.1 s).
-      const kick = used < 0.15 ? Math.sin((used / 0.15) * Math.PI) : 0;
-      const swap = used < 0.25 || used > 1.1 ? 0 : Math.sin(((used - 0.25) / 0.85) * Math.PI);
-      // On the right shoulder, the warhead right of the aim point (the sight is the aim).
-      g.position.set(0.2 + bobX, -0.17 - lift - swap * 0.35 + bobY, -0.16 + kick * 0.09);
-      g.rotation.set(kick * 0.12 - swap * 0.5 + 0.03, -0.05, 0);
+      this.posePanzerfaust(g, used, left, lift, bobX, bobY);
     } else {
       const down = used < 0.7 ? Math.sin((used / 0.7) * Math.PI) : 0;
       g.position.set(0.2 + bobX, -0.22 - lift - down * 0.12 + bobY, -0.42 - down * 0.15);
@@ -624,6 +621,46 @@ export class ViewModel {
       const item = g.getObjectByName('item');
       if (item) item.visible = used > 0.5;
     }
+  }
+
+  /**
+   * Panzerfaust firing and reloading (`used` = seconds since the shot, 3 s in
+   * all, see `PANZERFAUST_TOSS`): kick, the spent tube lowered and tossed down
+   * to the left, the next one pulled up from the lower right onto the right
+   * shoulder (the warhead right of the aim point; the sight is the aim), the
+   * leaf sight flipped up and the lever cocked. With none left, only the toss.
+   */
+  private posePanzerfaust(g: THREE.Group, used: number, left: number, lift: number, bobX: number, bobY: number): void {
+    const warhead = g.getObjectByName('warhead');
+    const sight = g.getObjectByName('sight');
+    const lever = g.getObjectByName('lever');
+    const seg = (a: number, b: number): number => THREE.MathUtils.smoothstep(used, a, b);
+    const kick = used < 0.15 ? Math.sin((used / 0.15) * Math.PI) : 0;
+    // Spent tube: lowered (0.2..0.55), then thrown down and away (0.55..0.9).
+    const lower = seg(0.2, 0.55);
+    const toss = seg(0.55, 0.9);
+    // Next tube: up from the lower right (0.9..1.6), onto the shoulder (1.5..1.95).
+    const off = 1 - seg(0.9, 1.6);
+    const unsettled = 1 - seg(1.5, 1.95);
+    const spent = used < 0.9;
+    const x = 0.2 + bobX;
+    const y = -0.17 - lift + bobY;
+    const z = -0.16;
+    if (spent) {
+      // Off the shoulder towards the middle, then flung out to the lower left, rolling.
+      g.position.set(x - lower * 0.1 - toss * 0.45, y - lower * 0.02 - toss * toss * 0.4, z + kick * 0.09 - lower * 0.05);
+      g.rotation.set(kick * 0.12 + 0.03 - lower * 0.05 - toss * 0.4, -0.05 + lower * 0.35 + toss * 0.4, lower * 0.3 + toss * 1.3);
+    } else if (left <= 0) {
+      g.visible = false;
+    } else {
+      g.position.set(x + off * 0.25 - unsettled * 0.03, y - off * 0.5 - unsettled * 0.07, z + unsettled * 0.08);
+      g.rotation.set(0.03 - off * 0.9 - unsettled * 0.25, -0.05 - off * 0.4, -off * 0.5 - unsettled * 0.15);
+    }
+    // The fired tube has no warhead; the new tube's sight lies flat until flipped
+    // up (1.8..2.15), its lever comes back and snaps home (2.4..2.7).
+    if (warhead) warhead.visible = !spent || used < 0.02;
+    if (sight) sight.rotation.x = spent ? 0 : (-Math.PI / 2) * (1 - seg(1.8, 2.15));
+    if (lever) lever.position.z = -0.18 + (spent ? 0 : Math.sin(seg(2.4, 2.7) * Math.PI) * 0.035);
   }
 
   private buildRifleNade(): THREE.Group {
@@ -671,10 +708,21 @@ export class ViewModel {
       const tube = new THREE.Group();
       tube.name = 'item';
       add(tube, new THREE.CylinderGeometry(0.024, 0.024, 0.85, 14).rotateX(Math.PI / 2), olive, 0, 0, -0.1);
-      add(tube, new THREE.SphereGeometry(0.075, 16, 12).scale(1, 1, 1.9), olive, 0, 0, -0.64);
-      add(tube, new THREE.ConeGeometry(0.03, 0.07, 12).rotateX(-Math.PI / 2), dark, 0, 0, -0.81);
-      add(tube, new THREE.BoxGeometry(0.004, 0.05, 0.03), dark, 0, 0.045, -0.3);
-      add(tube, new THREE.BoxGeometry(0.02, 0.012, 0.09), dark, 0, 0.028, -0.18);
+      // Warhead (gone once fired, so the spent tube is dropped empty).
+      const warhead = new THREE.Group();
+      warhead.name = 'warhead';
+      add(warhead, new THREE.SphereGeometry(0.075, 16, 12).scale(1, 1, 1.9), olive, 0, 0, -0.64);
+      add(warhead, new THREE.ConeGeometry(0.03, 0.07, 12).rotateX(-Math.PI / 2), dark, 0, 0, -0.81);
+      tube.add(warhead);
+      // Folding leaf sight, hinged at its foot (flat while stowed).
+      const sight = new THREE.Group();
+      sight.name = 'sight';
+      sight.position.set(0, 0.022, -0.3);
+      add(sight, new THREE.BoxGeometry(0.004, 0.05, 0.03), dark, 0, 0.025, 0);
+      tube.add(sight);
+      // Firing lever: cocked by pulling it back.
+      const lever = add(tube, new THREE.BoxGeometry(0.02, 0.012, 0.09), dark, 0, 0.028, -0.18);
+      lever.name = 'lever';
       g.add(tube);
       fist(-0.02, -0.035, -0.42, 0.4);
       fist(0.01, -0.04, 0.05, 0.2);

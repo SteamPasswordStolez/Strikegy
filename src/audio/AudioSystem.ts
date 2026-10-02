@@ -729,6 +729,41 @@ export class AudioSystem {
     }
   }
 
+  /** Holding the breath behind a scope: a short intake, a slow exhale, or a gasp after too long. */
+  breath(kind: 'in' | 'out' | 'gasp'): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    if (kind === 'in') {
+      this.noiseBurst(out, t, 0.32, 0.05, { type: 'bandpass', freq: 700, q: 0.7, endFreq: 1500 });
+    } else if (kind === 'out') {
+      this.noiseBurst(out, t, 0.6, 0.045, { type: 'bandpass', freq: 900, q: 0.6, endFreq: 450 });
+    } else {
+      // Air let go all at once, then two quick pulls.
+      this.noiseBurst(out, t, 0.35, 0.09, { type: 'bandpass', freq: 1000, q: 0.6, endFreq: 500 });
+      this.noiseBurst(out, t + 0.45, 0.22, 0.08, { type: 'bandpass', freq: 650, q: 0.7, endFreq: 1500 });
+      this.noiseBurst(out, t + 0.85, 0.22, 0.07, { type: 'bandpass', freq: 650, q: 0.7, endFreq: 1400 });
+    }
+  }
+
+  /**
+   * Panzerfaust reload, timed to the first-person motion: the spent tube hits
+   * the ground, the next one is pulled off the back and shouldered, the sight
+   * flips up and the firing lever is cocked.
+   */
+  launcherReload(): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0);
+    this.noiseBurst(out, t + 0.7, 0.12, 0.12, { type: 'lowpass', freq: 500 });
+    this.tone(out, t + 0.7, 210, 0.12, 0.05, 'triangle', 150);
+    this.noiseBurst(out, t + 1.05, 0.3, 0.06, { type: 'bandpass', freq: 800, q: 0.8, endFreq: 500 });
+    this.mechClick(out, t + 1.75, 900, 0.12);
+    this.mechClick(out, t + 2.2, 2600, 0.1);
+    this.mechClick(out, t + 2.55, 1500, 0.14);
+    this.mechClick(out, t + 2.62, 2200, 0.08);
+  }
+
   pinAndThrow(): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;

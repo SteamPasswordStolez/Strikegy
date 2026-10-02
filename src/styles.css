@@ -190,6 +190,50 @@ body {
   );
 }
 
+.scope-breath {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--r) + 10px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font: 600 11px/1 system-ui, sans-serif;
+  color: rgba(220, 235, 245, 0.75);
+  text-shadow: 0 1px 2px #000;
+}
+.scope-breath-track {
+  width: 96px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.scope-breath-fill {
+  height: 100%;
+  background: rgba(170, 215, 245, 0.7);
+}
+.scope-breath.holding .scope-breath-fill {
+  background: #bfe6ff;
+}
+.scope-breath.low .scope-breath-fill {
+  background: #ff9c6b;
+}
+/* Holding the breath too long: black closes in from the edges (--hole, sized to the
+   scope lens), then fills (--fill). */
+.hud-black {
+  --hole: 40vmin;
+  --fill: 0;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgb(0 0 0 / var(--fill)), rgb(0 0 0 / var(--fill))),
+    radial-gradient(circle closest-side, transparent var(--hole), #000 calc(var(--hole) + 18vmin));
+}
+
 .hud-br {
   position: absolute;
   right: max(24px, env(safe-area-inset-right));
@@ -470,6 +514,19 @@ body {
 }
 .touch-gadget.show,
 .touch-layer.editing .touch-gadget {
+  display: flex;
+}
+/* Hold breath: outer arc left of melee, only while scoped. */
+.touch-breath {
+  --a: 204deg;
+  --rad: var(--r2);
+  right: calc(var(--cx) - cos(var(--a)) * var(--rad) - var(--B) / 2);
+  bottom: calc(var(--cy) + sin(var(--a)) * var(--rad) - var(--B) / 2);
+  display: none;
+  border-color: rgba(170, 220, 255, 0.75);
+}
+.touch-breath.show,
+.touch-layer.editing .touch-breath {
   display: flex;
 }
 .touch-fire {

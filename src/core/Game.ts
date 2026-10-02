@@ -35,12 +35,13 @@ import { BotManager, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
 import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
-import { GADGETS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
+import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { ViewModel } from '@/weapons/ViewModel';
 import { opticFor } from '@/weapons/optics';
+import { BREATH, SWAY_AMP, createBreath, scopeSway, stepBreath } from '@/weapons/breath';
 import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { ambienceFor } from '@/audio/ambienceDirector';
@@ -189,6 +190,8 @@ export class Game {
   private throwBlock = 0;
   private throwCooldown = 0;
   private flashLeft = 0;
+  /** Holding the breath behind a scope (X), and the sway it steadies. */
+  private breath = createBreath();
   private flashTotal = 0;
   private flashPeak = 0;
   /** Camera shake amplitude in radians. */
@@ -847,6 +850,7 @@ export class Game {
       const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut;
       this.weapons.step(dt, input, p, busy);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
+      this.stepSway(dt, input.holdBreath);
     } else if (this.playerDowned) {
       this.stepDowned(dt, input.jumpHeld);
     } else {
@@ -863,6 +867,22 @@ export class Game {
     this.gadgets.step(dt, this.mineWalkers());
     this.physics.step();
     consumePulses(input);
+  }
+
+  /**
+   * Scoped rifles sway (snipers most); X holds the breath to steady it for a
+   * few seconds, too long and the view goes black. The shot follows the sway.
+   */
+  private stepSway(dt: number, hold: boolean): void {
+    const w = this.weapons;
+    const p = this.player;
+    const scoped = !!w.def.scope && w.adsBlend > 0.9;
+    const ev = stepBreath(this.breath, dt, hold, scoped);
+    if (ev) this.audio.breath(ev);
+    const amp = w.def.scope ? (SWAY_AMP[w.def.class] ?? 0.004) : 0;
+    const moving = Math.min(1.5, p.horizontalSpeed() / 4);
+    const stance = (p.crouching && p.grounded ? 0.6 : 1) * (1 + moving * 0.7) * (p.grounded ? 1 : 2);
+    scopeSway(this.breath, this.simTime, amp, w.adsBlend, stance, w.sway);
   }
 
   /** Everyone who can set off a mine: the player (when on the field) and the bots. */
@@ -909,8 +929,10 @@ export class Game {
       this.renderer.requestShadowUpdate();
     }
     this.gadgetCount--;
-    this.gadgetBusy = GADGETS[g].cycle;
+    // The panzerfaust reloads (next tube) unless that was the last; then only the spent tube goes.
+    this.gadgetBusy = g === 'panzerfaust' && this.gadgetCount === 0 ? PANZERFAUST_TOSS : GADGETS[g].cycle;
     this.gadgetUsedAt = this.simTime;
+    if (g === 'panzerfaust' && this.gadgetCount > 0) this.audio.launcherReload();
   }
 
   /** Where a beacon or mine goes: the ground the player looks at within reach, else just ahead of their feet. */
@@ -1366,6 +1388,8 @@ export class Game {
     this.hud.clearDamage();
     this.touch?.reset();
     this.flashLeft = 0;
+    this.breath = createBreath();
+    this.weapons.sway.pitch = this.weapons.sway.yaw = 0;
     this.bus.emit('player:respawned', {});
   }
 
@@ -1383,11 +1407,8 @@ export class Game {
     this.shake *= Math.exp(-7 * dt);
     const sx = (Math.random() - 0.5) * this.shake;
     const sy = (Math.random() - 0.5) * this.shake;
-    // Scoped rifles sway slightly with breathing.
-    const breathe = w.def.scope ? w.adsBlend : 0;
-    const bx = Math.sin(this.elapsed * 1.1) * 0.0022 * breathe;
-    const by = Math.cos(this.elapsed * 0.7) * 0.0016 * breathe;
-    cam.rotation.set(p.pitch + w.recoil.pitch + sx + bx, p.yaw + w.recoil.yaw + sy + by, this.deathBlend * (gone ? 0.7 : 0.25), 'YXZ');
+    // Scope sway (breath.ts) is part of the aim, so the view follows it too.
+    cam.rotation.set(p.pitch + w.recoil.pitch + w.sway.pitch + sx, p.yaw + w.recoil.yaw + w.sway.yaw + sy, this.deathBlend * (gone ? 0.7 : 0.25), 'YXZ');
     const fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend;
     if (Math.abs(cam.fov - fov) > 0.01) {
       cam.fov = fov;
@@ -1439,6 +1460,7 @@ export class Game {
       toolIdle: this.buildMode && p.alive && this.deployed,
       gadget: this.gadgetOut && p.alive && this.deployed ? this.gadget : null,
       gadgetUsed: this.simTime - this.gadgetUsedAt,
+      gadgetLeft: this.gadgetCount,
     });
     this.fort?.render(this.renderer.camera.position, this.buildMode, this.buildTarget);
 
@@ -1556,10 +1578,13 @@ export class Game {
         : { text: `${t('build.mode')} — ${t('build.aim')} · ${exit}`, progress: null };
     } else if (onField && this.gadgetOut && this.gadget) {
       const g = this.gadget;
-      prompt = {
-        text: `${t(`gadgetName.${g}`)} — ${t(this.touch ? 'gadget.fireTouch' : 'gadget.fire')}: ${t(`gadgetUse.${g}`)} · ${t(this.touch ? 'gadget.exitTouch' : 'gadget.exit')}`,
-        progress: null,
-      };
+      prompt =
+        g === 'panzerfaust' && this.gadgetBusy > 0 && this.gadgetCount > 0
+          ? { text: `${t(`gadgetName.${g}`)} — ${t('gadget.reloading')}`, progress: 1 - this.gadgetBusy / GADGETS[g].cycle }
+          : {
+              text: `${t(`gadgetName.${g}`)} — ${t(this.touch ? 'gadget.fireTouch' : 'gadget.fire')}: ${t(`gadgetUse.${g}`)} · ${t(this.touch ? 'gadget.exitTouch' : 'gadget.exit')}`,
+              progress: null,
+            };
     } else if (!prompt && nearSpot && !this.touch && this.fort!.anyNear(this.player.feet, 6)) {
       prompt = { text: t('build.enter'), progress: null };
     }
@@ -1569,6 +1594,7 @@ export class Game {
       downed: this.playerDowned,
       build: onField && this.buildMode ? 'on' : nearSpot ? 'near' : null,
       gadget: onField && this.gadget ? { label: `${t(`gadgetShort.${this.gadget}`)} ${this.gadgetCount}`, out: this.gadgetOut, empty: this.gadgetCount === 0 } : null,
+      scoped: onField && !!w.def.scope && w.adsBlend > 0.5,
 
     });
     this.hud.update(
@@ -1588,6 +1614,11 @@ export class Game {
               return { reticle: o.reticle, color: o.color, shiftX: this.scopeShift.x, shiftY: this.scopeShift.y };
             })()
           : null,
+        breath:
+          w.def.scope && w.adsBlend > 0.9 && this.player.alive && !this.playerDowned
+            ? { air: this.breath.air / BREATH.air, holding: this.breath.holding, locked: this.breath.locked, hint: t(this.touch ? 'breath.hintTouch' : 'breath.hint') }
+            : null,
+        dark: this.player.alive ? this.breath.dark : 0,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
         grenadeCount: this.grenades.count,
         gadget:

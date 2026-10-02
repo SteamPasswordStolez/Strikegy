@@ -69,6 +69,8 @@ export class WeaponController {
   bloom = 0;
   /** View offset from recoil in radians; added to the camera look. */
   readonly recoil = { pitch: 0, yaw: 0 };
+  /** Scope sway in radians (set by the game each step, see `breath.ts`); the shot follows it. */
+  readonly sway = { pitch: 0, yaw: 0 };
   drawTimer = DRAW_TIME;
   sinceShot = 10;
   /** Shots resolved since the render side last drained them (tracers). */
@@ -333,7 +335,7 @@ export class WeaponController {
   aimBasis(player: Player): { eye: THREE.Vector3; fwd: THREE.Vector3; right: THREE.Vector3; up: THREE.Vector3 } {
     this.eye.copy(player.feet);
     this.eye.y += player.eyeHeight;
-    this.euler.set(player.pitch + this.recoil.pitch, player.yaw + this.recoil.yaw, 0);
+    this.euler.set(player.pitch + this.recoil.pitch + this.sway.pitch, player.yaw + this.recoil.yaw + this.sway.yaw, 0);
     this.fwd.set(0, 0, -1).applyEuler(this.euler);
     this.right.set(1, 0, 0).applyEuler(this.euler);
     this.up.set(0, 1, 0).applyEuler(this.euler);

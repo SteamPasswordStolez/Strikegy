@@ -119,6 +119,7 @@ export class KeyboardMouse implements InputSource {
     s.buildMode ||= this.buildQueued;
     s.interact ||= k.has('KeyE');
     s.jumpHeld ||= k.has('Space');
+    s.holdBreath ||= k.has('KeyX');
     this.medkitQueued = false;
     this.interactQueued = false;
     this.buildQueued = false;

@@ -24,7 +24,8 @@ type ButtonAction =
   | 'interact'
   | 'giveup'
   | 'build'
-  | 'gadget';
+  | 'gadget'
+  | 'breath';
 
 /** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
 const ICONS: Partial<Record<ButtonAction, string>> = {
@@ -43,6 +44,7 @@ const ICONS: Partial<Record<ButtonAction, string>> = {
   giveup: '<path d="M6 6l12 12M18 6L6 18"/>',
   build: '<path d="M14.5 4.5l5 5-3 3-5-5zM13 9l-8.5 8.5 2 2L15 11"/>',
   gadget: '<path d="M3 15l12-6M15 9l3-1.5 2.5 1.5-2.5 2L15 11zM6 13.5l2 4"/>',
+  breath: '<path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"/>',
 };
 
 const svg = (paths: string) =>
@@ -69,6 +71,7 @@ export class TouchControls implements InputSource {
   /** Touches holding the interact / give-up buttons. */
   private interactHeld = 0;
   private giveUpHeld = 0;
+  private breathHeld = 0;
   private adsToggled = false;
   private crouchToggled = false;
   private scoreOpen = false;
@@ -117,6 +120,8 @@ export class TouchControls implements InputSource {
       ['build', 'touch.build'],
       // Class gadget (panzerfaust, rifle smoke, beacon, mines): shown when the class has one.
       ['gadget', 'touch.gadget'],
+      // Hold your breath: shown while looking down a scope.
+      ['breath', 'touch.breath'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
       // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
@@ -173,6 +178,11 @@ export class TouchControls implements InputSource {
           this.lookTouches.delete(tch.identifier);
         }
       }
+      btn.classList.toggle('held', down);
+      return;
+    }
+    if (action === 'breath') {
+      this.breathHeld = Math.max(0, this.breathHeld + (down ? 1 : -1) * touches.length);
       btn.classList.toggle('held', down);
       return;
     }
@@ -302,6 +312,7 @@ export class TouchControls implements InputSource {
     s.interactPressed ||= this.pulses.has('interact');
     s.interact ||= this.interactHeld > 0;
     s.jumpHeld ||= this.giveUpHeld > 0;
+    s.holdBreath ||= this.breathHeld > 0;
     if (this.pulses.has('switch')) s.weaponCycle = 1;
     s.melee ||= this.pulses.has('melee');
     s.inspect ||= this.pulses.has('inspect');
@@ -331,7 +342,12 @@ export class TouchControls implements InputSource {
     build?: 'near' | 'on' | null;
     /** Class gadget: label with the count left, whether it is in hand; null hides the button. */
     gadget?: { label: string; out: boolean; empty: boolean } | null;
+    /** Looking down a scope: show the hold-breath button. */
+    scoped?: boolean;
   }): void {
+    const br = this.buttons.get('breath')!;
+    br.classList.toggle('show', !!c.scoped);
+    if (!c.scoped) this.breathHeld = 0;
     const build = this.buttons.get('build')!;
     build.classList.toggle('show', !!c.build);
     build.classList.toggle('on', c.build === 'on');
