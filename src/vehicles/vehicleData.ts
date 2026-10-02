@@ -6,6 +6,10 @@
  * - APC: 4 seats (driver, autocannon gunner, 2 passengers), from a pad at
  *   each base, at most 6 on the map (3 a side).
  * - Motorbike: 1 seat, a few around each zone.
+ * - Jets (picked on the deploy screen, ceil(bots / 8) a side): fighter (1
+ *   seat: cannon, heat-seeking missiles), close air support (2: cannon and
+ *   rockets, rear gunner), tactical bomber (2: bombs, rear gunner). They
+ *   start in the air off their side of the map.
  * - Tanks (picked on the deploy screen, ceil(bots / 8) a side, all kinds
  *   together): medium tank, self-propelled gun, tank destroyer. Four seats:
  *   the driver also works the main gun, a roof MG, a hull MG, one inside.
@@ -16,11 +20,13 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'bomber';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'bombs';
 /** Tank kinds (one limit for all of them). */
 export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
+/** Jet kinds (one limit for all of them). */
+export const JET_KINDS: readonly VehicleKind[] = ['fighter', 'cas', 'bomber'];
 
 export type { DamageKind };
 
@@ -30,8 +36,9 @@ export interface SeatSpec {
   eye: readonly [number, number, number];
   /** Sitting out in the open (can be shot); armoured seats can't. */
   exposed: boolean;
-  /** Mounted gun this seat works. */
+  /** Mounted gun this seat works (trigger), and a second one (aim button: missiles, rockets). */
   gun?: VehicleGunId;
+  alt?: VehicleGunId;
   /** How far the gun turns either way from straight ahead (rad; default all round), and its pitch range. */
   traverse?: number;
   pitch?: readonly [number, number];
@@ -68,7 +75,24 @@ export interface VehicleSpec {
   mult: Record<DamageKind, number>;
   /** Tracks: steers by turning on the spot (rad/s) instead of steering wheels. */
   turnRate?: number;
+  /** Aircraft: flies itself toward where the pilot looks (no wheels). */
+  flight?: FlightSpec;
 }
+
+export interface FlightSpec {
+  /** Stall and top speed (m/s), turn rate (rad/s), acceleration (m/s²). */
+  minSpeed: number;
+  maxSpeed: number;
+  turn: number;
+  accel: number;
+}
+
+/**
+ * Air space around the map: jets turn back `margin` metres past the edge of
+ * the playable area, stay `outsideAlt` up while outside it (clear of the
+ * scenery hills, which have no collision), and start at `startAlt`.
+ */
+export const AIRSPACE = { margin: 450, outsideAlt: 230, startAlt: 230 };
 
 export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   jeep: {
@@ -255,6 +279,69 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     health: 700,
     mult: { bullet: 0.08, explosive: 0.6, at: 1.4 },
   },
+  fighter: {
+    kind: 'fighter',
+    seats: [{ role: 'driver', eye: [0, 0.75, -3.0], exposed: false, gun: 'jetcannon', alt: 'aam', traverse: 0.02, pitch: [-0.02, 0.02] }],
+    half: [1.3, 0.8, 7],
+    mass: 12000,
+    wheels: [],
+    wheelRadius: 0.3,
+    suspension: { rest: 0.2, travel: 0.1, stiffness: 20, damping: 2 },
+    engine: 0,
+    brake: 0,
+    steer: 0,
+    reverse: 0,
+    grip: 1,
+    friction: 1,
+    top: 125,
+    health: 320,
+    mult: { bullet: 0.35, explosive: 1, at: 1.5 },
+    flight: { minSpeed: 55, maxSpeed: 125, turn: 1.05, accel: 14 },
+  },
+  cas: {
+    kind: 'cas',
+    seats: [
+      { role: 'driver', eye: [0, 1.0, -3.2], exposed: false, gun: 'gau', alt: 'jetrockets', traverse: 0.02, pitch: [-0.02, 0.02] },
+      { role: 'gunner', eye: [0, 1.25, -1.6], exposed: false, gun: 'mg', pitch: [-0.8, 0.5] },
+    ],
+    half: [1.5, 1.0, 7.5],
+    mass: 16000,
+    wheels: [],
+    wheelRadius: 0.3,
+    suspension: { rest: 0.2, travel: 0.1, stiffness: 20, damping: 2 },
+    engine: 0,
+    brake: 0,
+    steer: 0,
+    reverse: 0,
+    grip: 1,
+    friction: 1,
+    top: 100,
+    health: 480,
+    mult: { bullet: 0.3, explosive: 1, at: 1.4 },
+    flight: { minSpeed: 45, maxSpeed: 100, turn: 0.85, accel: 10 },
+  },
+  bomber: {
+    kind: 'bomber',
+    seats: [
+      { role: 'driver', eye: [0, 1.15, -5.5], exposed: false, gun: 'bombs' },
+      { role: 'gunner', eye: [0, 1.5, 5.6], exposed: false, gun: 'mg', pitch: [-0.6, 0.6] },
+    ],
+    half: [2.0, 1.2, 9.5],
+    mass: 26000,
+    wheels: [],
+    wheelRadius: 0.3,
+    suspension: { rest: 0.2, travel: 0.1, stiffness: 20, damping: 2 },
+    engine: 0,
+    brake: 0,
+    steer: 0,
+    reverse: 0,
+    grip: 1,
+    friction: 1,
+    top: 90,
+    health: 560,
+    mult: { bullet: 0.3, explosive: 1, at: 1.3 },
+    flight: { minSpeed: 45, maxSpeed: 90, turn: 0.6, accel: 8 },
+  },
   bike: {
     kind: 'bike',
     seats: [{ role: 'driver', eye: [0, 1.6, 0.25], exposed: true }],
@@ -304,6 +391,10 @@ export interface VehicleGunSpec {
   cool: number;
   /** Shell guns: how it flies; a direct hit kills people outright. */
   shell?: ShellSpec;
+  /** Missiles: home on a locked enemy aircraft. */
+  homing?: boolean;
+  /** Bombs: dropped with the plane's own speed. */
+  drop?: boolean;
 }
 
 export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
@@ -319,6 +410,12 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   atgun: { rpm: 17, damage: 999, spread: 0.08, range: 800, vsVehicle: 520, blast: 3, burst: 1, cool: 3.5, shell: { speed: 480, gravity: 3 } },
   // Rocket tank launcher: a salvo of 12 lobbed onto the aim point, then 20 s to reload.
   rockets: { rpm: 400, damage: 999, spread: 1.6, range: 900, vsVehicle: 200, blast: 7, burst: 12, cool: 20, shell: { speed: 90, gravity: 9.8, lob: true } },
+  // Jets. Fighter cannon, CAS 30 mm, air-to-air missiles, rocket pods, bombs.
+  jetcannon: { rpm: 1100, damage: 45, spread: 0.6, range: 1000, vsVehicle: 22, blast: 0, burst: 120, cool: 4 },
+  gau: { rpm: 900, damage: 80, spread: 0.7, range: 900, vsVehicle: 45, blast: 1.8, burst: 90, cool: 5 },
+  aam: { rpm: 60, damage: 999, spread: 0, range: 1500, vsVehicle: 320, blast: 4, burst: 2, cool: 14, shell: { speed: 260, gravity: 0 }, homing: true },
+  jetrockets: { rpm: 600, damage: 999, spread: 0.9, range: 1000, vsVehicle: 220, blast: 5, burst: 14, cool: 12, shell: { speed: 230, gravity: 2 } },
+  bombs: { rpm: 300, damage: 999, spread: 0, range: 2000, vsVehicle: 600, blast: 12, burst: 4, cool: 18, shell: { speed: 0, gravity: 9.8 }, drop: true },
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */
@@ -332,7 +429,7 @@ export const PADS = { afterLeave: 10, cooldown: 60, leaveDistance: 12 };
 export function vehicleLimit(kind: VehicleKind, bots: number): number {
   if (kind === 'apc') return Math.ceil(bots / 4);
   if (kind === 'jeep') return 4;
-  if (TANK_KINDS.includes(kind)) return Math.ceil(bots / 8);
+  if (TANK_KINDS.includes(kind) || JET_KINDS.includes(kind)) return Math.ceil(bots / 8);
   return 0;
 }
 /** Motorbikes: per zone, seconds to bring a lost one back, and how long one can sit unused away from its zone. */

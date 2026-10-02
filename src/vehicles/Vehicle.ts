@@ -3,7 +3,7 @@ import type { HitPart } from '@/core/events';
 import type { Damageable, DamageKind, DamageSource } from '@/combat/Hitboxes';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
-import { VEHICLES, VEHICLE_GUNS, engineForce, vehicleDamage, type VehicleGunId, type VehicleGunSpec, type VehicleKind, type VehicleSpec } from './vehicleData';
+import { AIRSPACE, VEHICLES, VEHICLE_GUNS, engineForce, vehicleDamage, type VehicleGunId, type VehicleGunSpec, type VehicleKind, type VehicleSpec } from './vehicleData';
 import { buildVehicleModel, type VehicleModel } from './vehicleModels';
 
 /** Driving input for one step: throttle and steering -1..1, handbrake. */
@@ -11,6 +11,20 @@ export interface DriveInput {
   throttle: number;
   steer: number;
   brake: boolean;
+  /** Aircraft: where the pilot looks (the plane turns toward it). */
+  aimYaw?: number;
+  aimPitch?: number;
+}
+
+/** Aircraft state: heading, pitch, roll (rad), airspeed (m/s), throttle 0..1. */
+export interface Flight {
+  yaw: number;
+  pitch: number;
+  roll: number;
+  speed: number;
+  throttle: number;
+  /** Turned back at the edge of the air space this step. */
+  turningBack: boolean;
 }
 
 /** A gun on a seat: where it points (relative to the hull), heat and the next shot. */
@@ -44,7 +58,12 @@ export class Vehicle implements Damageable {
   readonly model: VehicleModel;
   readonly body: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
-  private readonly controller: RAPIER.DynamicRayCastVehicleController;
+  private readonly controller: RAPIER.DynamicRayCastVehicleController | null = null;
+  /** Aircraft only. */
+  readonly flight: Flight | null = null;
+  /** Centre of the air space (the map centre) and the playable radius, set by the game. */
+  static airCenter = new THREE.Vector3();
+  static airRadius = 300;
   readonly seats: (Occupant | null)[];
   health: number;
   /** Destroyed: a burning wreck until `removeAt`. */
@@ -54,8 +73,9 @@ export class Vehicle implements Damageable {
   usedAt = 0;
   /** Only this combatant may take the driver's seat (a called-in rocket tank: its squad leader), or null. */
   driverOnly: number | null = null;
-  /** Guns by seat (null for seats without one). */
+  /** Guns by seat (null for seats without one), and second weapons (missiles, rocket pods). */
   readonly mounts: (Mount | null)[];
+  readonly altMounts: (Mount | null)[];
   /** Interpolation: transforms before and after the last sim step. */
   private readonly prevPos = new THREE.Vector3();
   private readonly prevQuat = new THREE.Quaternion();
@@ -78,10 +98,24 @@ export class Vehicle implements Damageable {
     const spec = (this.spec = VEHICLES[kind]);
     this.health = spec.health;
     this.seats = spec.seats.map(() => null);
-    this.mounts = spec.seats.map((s, seat) => (s.gun ? { seat, id: s.gun, gun: VEHICLE_GUNS[s.gun], yaw: 0, pitch: 0, heat: 0, overheated: false, nextShot: 0 } : null));
+    const mount = (seat: number, id: VehicleGunId | undefined): Mount | null => (id ? { seat, id, gun: VEHICLE_GUNS[id], yaw: 0, pitch: 0, heat: 0, overheated: false, nextShot: 0 } : null);
+    this.mounts = spec.seats.map((s, seat) => mount(seat, s.gun));
+    this.altMounts = spec.seats.map((s, seat) => mount(seat, s.alt));
     this.wheelSpin = spec.wheels.map(() => 0);
     const world = physics.world;
     const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
+    if (spec.flight) {
+      // Aircraft: a kinematic body flown by `fly`; its box is a hitbox only.
+      this.flight = { yaw, pitch: 0, roll: 0, speed: (spec.flight.minSpeed + spec.flight.maxSpeed) / 2, throttle: 0.6, turningBack: false };
+      this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(pos.x, pos.y, pos.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
+      this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(...spec.half).setCollisionGroups(groups(Layer.HITBOX, 0)), this.body);
+      this.model = buildVehicleModel(kind, home);
+      this.readBody();
+      this.prevPos.copy(this.pos);
+      this.prevQuat.copy(this.quat);
+      this.syncModel(1);
+      return;
+    }
     const start = pos.clone().setY(pos.y + spec.half[1] + spec.wheelRadius + spec.suspension.rest + 0.15);
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -171,9 +205,13 @@ export class Vehicle implements Damageable {
     return false;
   }
 
-  /** Before the physics step: wheels, engine, brakes, a hand keeping it upright. */
+  /** Before the physics step: wheels, engine, brakes, a hand keeping it upright (aircraft: `fly`). */
   drive(dt: number, input: DriveInput | null): void {
-    const c = this.controller;
+    if (this.flight) {
+      this.fly(dt, input);
+      return;
+    }
+    const c = this.controller!;
     const spec = this.spec;
     // A resting body sleeps; wheel forces alone don't wake it.
     if (input && (input.throttle !== 0 || input.steer !== 0) && this.body.isSleeping()) this.body.wakeUp();
@@ -221,6 +259,68 @@ export class Vehicle implements Damageable {
     if (up.y > 0.2) this.body.applyTorqueImpulse({ x: fwd.x * torque, y: fwd.y * torque, z: fwd.z * torque }, true);
   }
 
+  /**
+   * Aircraft: turns toward where the pilot looks (A/D add yaw), W/S set the
+   * throttle; climbing costs speed, diving gains it, too slow and the nose
+   * drops. Hitting anything solid wrecks it; a wreck falls. Past the edge of
+   * the air space it turns back to the centre by itself.
+   */
+  private fly(dt: number, input: DriveInput | null): void {
+    const f = this.flight!;
+    const spec = this.spec.flight!;
+    const piloted = !!input && !this.wrecked;
+    let wantYaw = input?.aimYaw ?? f.yaw;
+    let wantPitch = THREE.MathUtils.clamp(input?.aimPitch ?? (piloted ? 0 : -0.25), -1.2, 1.2);
+    if (!piloted) wantPitch = this.wrecked ? -0.9 : -0.25;
+    // Air space edge: head for the centre. Outside the playable area, stay above the scenery hills.
+    const c = Vehicle.airCenter;
+    const out = Math.hypot(this.pos.x - c.x, this.pos.z - c.z);
+    f.turningBack = out > Vehicle.airRadius + AIRSPACE.margin;
+    if (f.turningBack) wantYaw = Math.atan2(-(c.x - this.pos.x), -(c.z - this.pos.z));
+    // The floor rises from just inside the edge, so a plane leaving low is already climbing.
+    const floorY = c.y + AIRSPACE.outsideAlt * THREE.MathUtils.clamp((out - Vehicle.airRadius + 80) / 160, 0, 1);
+    if (this.pos.y < floorY && !this.wrecked) wantPitch = Math.max(wantPitch, THREE.MathUtils.clamp((floorY - this.pos.y) * 0.015, 0.15, 0.7));
+    if (piloted) f.throttle = THREE.MathUtils.clamp(f.throttle + input.throttle * dt * 0.7, 0, 1);
+    // Turn toward the wanted heading and pitch at the turn rate (less when slow).
+    const authority = spec.turn * THREE.MathUtils.clamp(f.speed / spec.minSpeed, 0.3, 1);
+    const dYaw = Math.atan2(Math.sin(wantYaw - f.yaw), Math.cos(wantYaw - f.yaw));
+    const yawRate = THREE.MathUtils.clamp(dYaw * 2, -authority, authority) + (piloted ? input.steer * -0.5 * authority : 0);
+    f.yaw += yawRate * dt;
+    f.pitch += THREE.MathUtils.clamp((wantPitch - f.pitch) * 2, -authority, authority) * dt;
+    // Too slow: the nose drops.
+    if (f.speed < spec.minSpeed * 0.85) f.pitch -= dt * 0.6;
+    f.pitch = THREE.MathUtils.clamp(f.pitch, -1.35, 1.35);
+    f.roll += (THREE.MathUtils.clamp(-yawRate / Math.max(0.1, spec.turn), -1, 1) * 1.1 - f.roll) * Math.min(1, dt * 3);
+    // Speed: throttle, plus gravity along the flight path.
+    const target = spec.minSpeed + (spec.maxSpeed - spec.minSpeed) * f.throttle;
+    f.speed += THREE.MathUtils.clamp(target - f.speed, -spec.accel, spec.accel) * dt * 0.6 - Math.sin(f.pitch) * 9.8 * dt * 0.7;
+    f.speed = THREE.MathUtils.clamp(f.speed, spec.minSpeed * 0.5, spec.maxSpeed * 1.3);
+    const dir = new THREE.Vector3(-Math.sin(f.yaw) * Math.cos(f.pitch), Math.sin(f.pitch), -Math.cos(f.yaw) * Math.cos(f.pitch));
+    this.velocity.copy(dir).multiplyScalar(f.speed);
+    if (this.wrecked) this.velocity.y -= 12;
+    const step = this.velocity.clone().multiplyScalar(dt);
+    const len = step.length();
+    const next = this.pos.clone().add(step);
+    // Crash: anything solid along the way (with a little reach for the nose).
+    if (!this.crashed && len > 0) {
+      const hit = this.physics.raycast(this.pos, step.clone().divideScalar(len), len + this.spec.half[2] * 0.6, Layer.WORLD);
+      if (hit) {
+        this.health = 0;
+        this.crashed = true;
+        next.set(hit.point.x, hit.point.y + this.spec.half[1], hit.point.z);
+      }
+    }
+    if (this.crashed) {
+      next.copy(this.pos);
+      this.velocity.set(0, 0, 0);
+    }
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(f.pitch, f.yaw, f.roll, 'YXZ'));
+    this.body.setNextKinematicTranslation(next);
+    this.body.setNextKinematicRotation(q);
+  }
+  /** Came down on something (stays put as a wreck). */
+  crashed = false;
+
   /** After the physics step. */
   afterStep(): void {
     this.prevPos.copy(this.pos);
@@ -231,9 +331,11 @@ export class Vehicle implements Damageable {
   private readBody(): void {
     const t = this.body.translation();
     const r = this.body.rotation();
-    const v = this.body.linvel();
     this.pos.set(t.x, t.y, t.z);
     this.quat.set(r.x, r.y, r.z, r.w);
+    // Aircraft keep the velocity they flew with (a kinematic body reports none).
+    if (this.flight) return;
+    const v = this.body.linvel();
     this.velocity.set(v.x, v.y, v.z);
   }
 
@@ -260,7 +362,7 @@ export class Vehicle implements Damageable {
     root.quaternion.slerpQuaternions(this.prevQuat, this.quat, alpha);
     const c = this.controller;
     const spec = this.spec;
-    this.model.wheels.forEach((w, i) => {
+    if (c) this.model.wheels.forEach((w, i) => {
       if (this.kind === 'bike' && i % 2 === 1) return;
       const sus = c.wheelSuspensionLength(i) ?? spec.suspension.rest;
       w.position.y = spec.wheels[i]!.pos[1] - sus;
@@ -306,6 +408,7 @@ export class Vehicle implements Damageable {
    */
   aimMount(seat: number, worldYaw: number, worldPitch: number): void {
     const m = this.mounts[seat];
+    const am = this.altMounts[seat];
     if (!m) return;
     const s = this.spec.seats[seat]!;
     const rel = Math.atan2(Math.sin(worldYaw - this.yaw), Math.cos(worldYaw - this.yaw));
@@ -313,6 +416,10 @@ export class Vehicle implements Damageable {
     m.yaw = THREE.MathUtils.clamp(rel, -tr, tr);
     const [lo, hi] = s.pitch ?? [-0.2, 0.6];
     m.pitch = THREE.MathUtils.clamp(worldPitch, lo, hi);
+    if (am) {
+      am.yaw = m.yaw;
+      am.pitch = m.pitch;
+    }
   }
 
   /** World position of a seat's muzzle (after the last render), or its eye. */
@@ -325,8 +432,8 @@ export class Vehicle implements Damageable {
    * Trigger on a seat's gun this step: true when a round goes now (rate of
    * fire, heat for the MGs, reload for the shell guns).
    */
-  pullTrigger(seat: number, firing: boolean, time: number, dt: number): boolean {
-    const m = this.mounts[seat];
+  pullTrigger(seat: number, firing: boolean, time: number, dt: number, alt = false): boolean {
+    const m = (alt ? this.altMounts : this.mounts)[seat];
     if (!m) return false;
     const g = m.gun;
     if (m.overheated || !firing) m.heat = Math.max(0, m.heat - dt / g.cool);
@@ -341,15 +448,17 @@ export class Vehicle implements Damageable {
   }
 
   /** 0..1 of a shell gun's reload left (0 = ready). */
-  reloadLeft(seat: number, time: number): number {
-    const m = this.mounts[seat];
-    if (!m || !m.gun.shell) return 0;
+  reloadLeft(seat: number, time: number, alt = false): number {
+    const m = (alt ? this.altMounts : this.mounts)[seat];
+    if (!m) return 0;
+    if (m.overheated && m.gun.burst > 1 && m.gun.shell) return m.heat;
+    if (!m.gun.shell) return 0;
     return Math.max(0, (m.nextShot - time) / (60 / m.gun.rpm));
   }
 
   dispose(): void {
     const world = this.physics.world;
-    world.removeVehicleController(this.controller);
+    if (this.controller) world.removeVehicleController(this.controller);
     world.removeRigidBody(this.body);
   }
 }

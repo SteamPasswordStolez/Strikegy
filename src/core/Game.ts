@@ -41,7 +41,8 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
-import { TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
+import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
+import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
@@ -938,6 +939,7 @@ export class Game {
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
     this.botTanks();
+    this.botJets();
     this.vehicles?.step(dt, this.driveInputs, this.vehicleWalkers());
     this.physics.step();
     this.vehicles?.afterStep();
@@ -974,6 +976,8 @@ export class Game {
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
     const { pads, bikes, tankSpots } = planVehicleSpots(this.physics, bases, zones);
+    if (zones.length) VehicleClass.airCenter.copy(zones.reduce((a, z) => a.add(z.pos), new THREE.Vector3()).divideScalar(zones.length));
+    VehicleClass.airRadius = Math.max(map.world.size[0], map.world.size[1]) / 2;
     this.vehicles = new VehicleWorld(
       this.physics,
       this.registry,
@@ -1050,6 +1054,55 @@ export class Game {
     return false;
   }
 
+  /** Missile lock: the nearest enemy aircraft within 25° of the nose and in range. */
+  private lockTarget(v: Vehicle, team: Team): Vehicle | null {
+    const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
+    let best: Vehicle | null = null;
+    let bestD = 1500;
+    for (const o of this.vehicles?.vehicles ?? []) {
+      if (o === v || !o.flight || o.wrecked || o.home === team) continue;
+      const to = o.pos.clone().sub(v.pos);
+      const d = to.length();
+      if (d < bestD && to.normalize().dot(nose) > Math.cos(0.44)) {
+        best = o;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  /** A jet for `team` in the air off its side of the map, heading in. */
+  private spawnJet(kind: VehicleKind, team: Team): Vehicle | null {
+    const vw = this.vehicles;
+    if (!vw) return null;
+    const c = VehicleClass.airCenter;
+    const base = this.baseCenter(team);
+    const out = base.clone().sub(c).setY(0);
+    if (out.lengthSq() < 1) out.set(0, 0, 1);
+    out.normalize();
+    const at = c.clone().addScaledVector(out, VehicleClass.airRadius + 200).setY(c.y + AIRSPACE.startAlt + Math.random() * 40);
+    at.addScaledVector(new THREE.Vector3(-out.z, 0, out.x), (Math.random() - 0.5) * 200);
+    const yaw = Math.atan2(out.x, out.z);
+    return vw.spawnJet(kind, team, at, yaw);
+  }
+
+  /** Bots fly jets as well: a side under its jet limit now and then sends a bot from its base up. */
+  private botJets(): void {
+    const vw = this.vehicles;
+    const bots = this.bots;
+    if (!vw || !bots || this.simTime < this.botJetAt) return;
+    this.botJetAt = this.simTime + 8;
+    for (const team of ['blue', 'red'] as const) {
+      if (vw.jets(team) >= vw.jetLimit() || Math.random() < 0.5) continue;
+      const base = this.baseCenter(team);
+      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && b.feet.distanceTo(base) < 50 && !b.inCombat(bots.time));
+      if (!bot) continue;
+      const v = this.spawnJet(JET_KINDS[Math.floor(Math.random() * JET_KINDS.length)]!, team);
+      if (v) bots.seatBot(bot, v, 0);
+    }
+  }
+  private botJetAt = 30;
+
   /** People vehicles can run over: the player on foot and the bots. */
   private *vehicleWalkers(): Iterable<Walker> {
     if (this.player.alive && this.deployed && !this.ride) yield this.playerCombatant;
@@ -1075,6 +1128,11 @@ export class Game {
     this.supportAim = null;
     this.weapons.adsBlend = 0;
     this.playerBoxes.setEnabled(v.spec.seats[seat]!.exposed);
+    // In a plane the view starts along the nose (the plane turns toward the view).
+    if (v.flight && seat === 0) {
+      this.player.yaw = v.flight.yaw;
+      this.player.pitch = v.flight.pitch;
+    }
     this.audio.gadget('place', null);
   }
 
@@ -1084,7 +1142,12 @@ export class Game {
     if (!r) return;
     this.ride = null;
     r.v.seats[r.seat] = null;
-    const spot = r.v.exitSpot(r.seat, this.physics);
+    let spot = r.v.exitSpot(r.seat, this.physics);
+    if (r.v.flight) {
+      // Bailing out of a plane: down to the ground below.
+      const down = this.physics.raycast(r.v.pos, new THREE.Vector3(0, -1, 0), 600, Layer.WORLD);
+      spot = down ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : this.baseCenter(PLAYER_TEAM);
+    }
     this.player.dismount(spot);
     this.playerBoxes.setEnabled(this.player.alive);
     this.weapons.drawTimer = DRAW_TIME;
@@ -1110,8 +1173,10 @@ export class Game {
     const want = input.weaponSlot;
     if (want >= 0 && want < v.seats.length && !v.seats[want] && (want > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID)) this.enterSeat(v, want);
     const seat = v.spec.seats[r.seat]!;
-    if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld });
+    const p = this.player;
+    if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
     if (seat.gun) this.stepVehicleGun(v, r.seat, input.fire, dt);
+    if (v.altMounts[r.seat] && v.pullTrigger(r.seat, input.ads, this.simTime, dt, true)) this.fireMount(v, r.seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null, true);
     const eye = v.seatEye(r.seat, this.tmpEye);
     this.player.ride(eye, v.velocity);
   }
@@ -1121,6 +1186,11 @@ export class Game {
     const p = this.player;
     v.aimMount(seat, p.yaw, p.pitch);
     if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
+    // Aircraft guns and bombs point along the plane (the pilot's seat).
+    if (v.flight && v.spec.seats[seat]!.role === 'driver') {
+      this.fireMount(v, seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null);
+      return;
+    }
     // Aim: what the view centre points at.
     const cam = this.renderer.camera;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
@@ -1135,12 +1205,28 @@ export class Game {
    * autocannon, a flying shell for tank guns (lobbed for the howitzer).
    * Shared by the player and the bots.
    */
-  private fireMount(v: Vehicle, seat: number, shooter: GrenadeOwner, aim: THREE.Vector3): void {
-    const m = v.mounts[seat];
+  private fireMount(v: Vehicle, seat: number, shooter: GrenadeOwner, aimAt: THREE.Vector3 | null, alt = false): void {
+    const m = (alt ? v.altMounts : v.mounts)[seat];
     if (!m) return;
     const gun = m.gun;
     const byPlayer = shooter.id === PLAYER_ID;
     const muzzle = v.muzzleOf(seat, new THREE.Vector3());
+    // No aim point: straight ahead along the plane's flight path.
+    const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
+    const aim = aimAt ?? muzzle.clone().addScaledVector(nose, gun.range);
+    if (gun.drop) {
+      // Bombs fall with the plane's speed.
+      this.gadgets.fireShell(muzzle.clone(), v.velocity.clone(), gun.shell!.gravity, { ...shooter, squad: null }, m.id);
+      this.audio.gadget('place', byPlayer ? null : muzzle);
+      return;
+    }
+    if (gun.homing) {
+      const lock = this.lockTarget(v, shooter.team);
+      const vel = nose.clone().multiplyScalar(gun.shell!.speed).add(v.velocity);
+      this.gadgets.fireShell(muzzle.clone().addScaledVector(nose, 4), vel, 0, { ...shooter, squad: null }, m.id, lock ? () => (lock.wrecked ? null : lock.pos) : undefined);
+      this.audio.gadget('rocket', byPlayer ? null : muzzle);
+      return;
+    }
     const dir = aim.clone().sub(muzzle).normalize();
     const s = gun.spread * DEG * Math.sqrt(Math.random());
     const a = Math.random() * Math.PI * 2;
@@ -1160,7 +1246,7 @@ export class Game {
         const time = THREE.MathUtils.clamp(2 + flat / 120, 2.5, 7);
         vel = new THREE.Vector3(d.x / time, d.y / time + 0.5 * sh.gravity * time, d.z / time);
         vel.addScaledVector(right, (Math.random() - 0.5) * flat * gun.spread * DEG);
-      } else vel = dir.clone().multiplyScalar(sh.speed);
+      } else vel = dir.clone().multiplyScalar(sh.speed).add(v.flight ? v.velocity : new THREE.Vector3());
       this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id);
       if (m.id === 'rockets') this.audio.gadget('rocket', byPlayer ? null : muzzle);
       else this.audio.explosion(muzzle, Math.max(30, listenerDist));
@@ -1212,7 +1298,8 @@ export class Game {
         }
       }
     }
-    this.blast(gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : 'shell', point, owner, name);
+    const kind = gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : gun === 'aam' ? 'missile' : gun === 'bombs' ? 'bomb' : 'shell';
+    this.blast(kind, point, owner, name);
   }
 
   /** A vehicle blew up: everyone aboard dies outright (no going down). */
@@ -1906,6 +1993,10 @@ export class Game {
       const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, PLAYER_TEAM);
       if (v) this.enterSeat(v, 0);
     }
+    if (key.startsWith('jet:') && this.vehicles) {
+      const v = this.spawnJet(key.slice(4) as VehicleKind, PLAYER_TEAM);
+      if (v) this.enterSeat(v, 0);
+    }
   }
 
   private updateCamera(alpha: number, dt: number, adsFov: number): void {
@@ -1952,7 +2043,7 @@ export class Game {
     const fwd = this.tmpFwd.set(0, 0, -1).applyEuler(new THREE.Euler(p.pitch, p.yaw, 0, 'YXZ'));
     if (this.rideThird) {
       const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + 1.1, 0), new THREE.Vector3(), alpha);
-      const want = v.kind === 'apc' ? 10 : v.kind === 'bike' ? 4.5 : 6.5;
+      const want = v.flight ? 20 : v.kind === 'apc' || v.kind === 'rocket' ? 10 : v.kind === 'bike' ? 4.5 : TANK_KINDS.includes(v.kind) ? 11 : 6.5;
       const hit = this.physics.raycast(target, fwd.clone().negate(), want, Layer.WORLD, v.collider);
       const dist = hit ? Math.max(1.2, hit.distance - 0.3) : want;
       // Pull in at once, ease back out.
@@ -2142,6 +2233,14 @@ export class Game {
       parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
       if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{n}', String(n)));
       if (!this.touch) parts.push(t('vehicle.view'));
+      const f = v.flight;
+      if (f) {
+        const below = this.physics.raycast(v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
+        parts.splice(1, 0, t('jet.hud').replace('{alt}', String(Math.round(below ? below.distance : v.pos.y))).replace('{spd}', String(Math.round(f.speed * 3.6))).replace('{thr}', String(Math.round(f.throttle * 100))));
+        if (v.altMounts[seat]?.gun.homing && this.lockTarget(v, PLAYER_TEAM)) parts.splice(2, 0, t('jet.locked'));
+        if (f.turningBack) parts.splice(2, 0, t('jet.airspace'));
+        if (!this.touch) parts.push(t('jet.controls'));
+      }
       prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
       touchLabel = t('touch.exitVehicle');
     } else if (onField && !prompt && !this.buildMode) {
@@ -2567,6 +2666,20 @@ export class Game {
           x: spot?.pos.x ?? base.x,
           z: spot?.pos.z ?? base.z,
           blocked: full ? t('deploy.tankLimit').replace('{n}', String(vw.tankLimit())) : !spot ? t('deploy.noRoom') : null,
+          warn: null,
+        });
+      }
+    }
+    if (vw) {
+      const full = vw.jets(PLAYER_TEAM) >= vw.jetLimit();
+      for (const kind of JET_KINDS) {
+        out.push({
+          key: `jet:${kind}`,
+          kind: 'vehicle',
+          label: `${t('spawn.jet')}: ${t(`vehicle.${kind}`)} (${vw.jets(PLAYER_TEAM)}/${vw.jetLimit()})`,
+          x: base.x,
+          z: base.z,
+          blocked: full ? t('deploy.tankLimit').replace('{n}', String(vw.jetLimit())) : null,
           warn: null,
         });
       }

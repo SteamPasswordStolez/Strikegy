@@ -227,5 +227,18 @@
   "vehicle.rocket": "로켓 전차",
   "vehicleGun.rockets": "다연장 로켓",
   "support.rocketArrived": "로켓 전차가 {zone} 거점에 도착 ({who})",
-  "vehicle.reserved": "분대장 전용"
+  "vehicle.reserved": "분대장 전용",
+  "vehicle.fighter": "일반 전투기",
+  "vehicle.cas": "근접항공지원기",
+  "vehicle.bomber": "전술폭격기",
+  "vehicleGun.jetcannon": "기관포",
+  "vehicleGun.gau": "30mm 기관포",
+  "vehicleGun.aam": "공대공 미사일",
+  "vehicleGun.jetrockets": "로켓 포드",
+  "vehicleGun.bombs": "폭탄",
+  "spawn.jet": "전투기로 배치",
+  "jet.hud": "고도 {alt} m · 속도 {spd} km/h · 추력 {thr}%",
+  "jet.locked": "목표 고정",
+  "jet.airspace": "작전 공역을 벗어남 — 돌아갑니다",
+  "jet.controls": "W/S 추력 · 마우스 조종 · 우클릭 보조무기 · E 탈출"
 }

@@ -51,6 +51,8 @@ interface Shot {
   mesh: THREE.Object3D;
   /** Shells: the gun that fired it. */
   gun?: string;
+  /** Missiles: where the target is now (null: lost it, flies straight). */
+  homing?: () => THREE.Vector3 | null;
 }
 
 export interface Beacon {
@@ -118,11 +120,12 @@ export class GadgetWorld {
   }
 
   /** A vehicle gun shell with its own velocity and drop (`gun`: which gun, for the hooks). */
-  fireShell(origin: THREE.Vector3, vel: THREE.Vector3, gravity: number, owner: GadgetOwner, gun: string): void {
-    const mesh = this.models.shell.clone();
+  fireShell(origin: THREE.Vector3, vel: THREE.Vector3, gravity: number, owner: GadgetOwner, gun: string, homing?: () => THREE.Vector3 | null): void {
+    const mesh = (homing ? this.models.rocket : this.models.shell).clone();
+    if (homing) mesh.scale.setScalar(2.2);
     mesh.position.copy(origin);
     this.group.add(mesh);
-    this.shots.push({ kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: 12, mesh, gun });
+    this.shots.push({ kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: homing ? 8 : 14, mesh, gun, homing });
   }
 
   /** Puts a beacon down (replacing the owner's earlier one). */
@@ -186,6 +189,16 @@ export class GadgetWorld {
       const s = this.shots[i]!;
       s.life -= dt;
       s.vel.y -= s.gravity * dt;
+      // Missiles turn toward their target (up to 2.4 rad/s).
+      const goal = s.homing?.();
+      if (goal) {
+        const speed = s.vel.length();
+        const want = goal.clone().sub(s.pos).normalize();
+        const cur = s.vel.clone().normalize();
+        const angle = cur.angleTo(want);
+        const t = angle > 1e-4 ? Math.min(1, (2.4 * dt) / angle) : 1;
+        s.vel.copy(cur.lerp(want, t).normalize().multiplyScalar(speed));
+      }
       const d = this.seg.copy(s.vel).multiplyScalar(dt);
       const len = d.length();
       const hit = len > 0 ? this.physics.raycast(s.pos, d.divideScalar(len), len, SHOT_MASK) : null;

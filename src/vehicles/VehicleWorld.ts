@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
-import { BIKES, ENTER_REACH, PADS, ROADKILL, TANK_KINDS, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
+import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
 
 /** A base pad: where it is and what it brings out. */
@@ -81,6 +81,21 @@ export class VehicleWorld {
     return vehicleLimit('tank', this.botCount);
   }
 
+  /** Jets (all kinds) one side has up, and how many it may. */
+  jets(team: Team): number {
+    return this.vehicles.filter((v) => JET_KINDS.includes(v.kind) && v.home === team && !v.wrecked).length;
+  }
+
+  jetLimit(): number {
+    return vehicleLimit('fighter', this.botCount);
+  }
+
+  /** A jet in the air off `team`'s side of the map (under the limit); null if it can't. */
+  spawnJet(kind: VehicleKind, team: Team, at: THREE.Vector3, yaw: number): Vehicle | null {
+    if (this.jets(team) >= this.jetLimit()) return null;
+    return this.spawn(kind, at, yaw, team);
+  }
+
   /** A clear tank spot at `team`'s base, or null. */
   freeTankSpot(team: Team): TankSpot | null {
     return this.tankSpots.find((s) => s.team === team && !this.vehicles.some((v) => v.pos.distanceTo(s.pos) < 7)) ?? null;
@@ -156,7 +171,9 @@ export class VehicleWorld {
     for (let i = this.vehicles.length - 1; i >= 0; i--) {
       const v = this.vehicles[i]!;
       const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v);
+      // Aircraft nobody flies: they come down; wrecks in the air fall and are cleared on landing.
       if (this.time > v.removeAt || unused || v.pos.y < -50) this.remove(v);
+      else if (v.flight && v.crashed && !v.wrecked) v.health = 0;
     }
   }
 

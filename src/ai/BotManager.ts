@@ -24,12 +24,13 @@ import { RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
 import { SUPPORT, type SupportId } from '@/data/support';
 import type { Danger } from '@/modes/supportWorld';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
-import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
+import { Vehicle as VehicleAir, type Vehicle, type DriveInput } from '@/vehicles/Vehicle';
 
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
 const VEHICLE_DROP = 30;
 const STEP = 1 / 60;
+const DOWN = new THREE.Vector3(0, -1, 0);
 
 /** Call-ins as the bots see them (squad RP, team cooldowns, calling one in, shells on their way). */
 export interface BotSupport {
@@ -195,6 +196,8 @@ interface BotEntry {
   drive: { path: THREE.Vector3[]; at: number; repathAt: number; waitUntil: number; stuckFor: number; backUntil: number; tries: number } | null;
   /** Riding without a driver since (gunners hold on a little). */
   alone?: number;
+  /** Bot pilots: what they're going after, and a pull-up after an attack run. */
+  flightPlan?: { target: Vehicle | Combatant | null; kind: 'air' | 'ground' | 'none'; until: number; pullUntil: number };
   /** Direction to watch when idle at a guard post or around the leader. */
   watch: THREE.Vector3 | null;
   /** Window this bot holds (marksmen and anchors near their objective). */
@@ -266,7 +269,7 @@ export class BotManager implements BotServices {
   driveInputs = new Map<number, DriveInput>();
   playerRiding: (() => boolean) | null = null;
   /** Fires one round from a vehicle's seat gun at a point (the game's shared vehicle gun code). */
-  fireMount: ((v: Vehicle, seat: number, shooter: { id: number; name: string; team: Team }, aim: THREE.Vector3) => void) | null = null;
+  fireMount: ((v: Vehicle, seat: number, shooter: { id: number; name: string; team: Team }, aim: THREE.Vector3 | null, alt?: boolean) => void) | null = null;
   private vehicleCheckAt = 0;
   /** Job key -> the bot doing it. */
   private readonly workers = new Map<string, Bot>();
@@ -1216,6 +1219,12 @@ export class BotManager implements BotServices {
       return;
     }
     v.seats[r.seat] = null;
+    if (v.flight) {
+      // Out of a plane: down on the ground below.
+      const down = this.physics.raycast(v.pos, DOWN, 2000, Layer.WORLD);
+      b.alight(down ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : v.pos.clone());
+      return;
+    }
     b.alight(v.exitSpot(r.seat, this.physics));
   }
 
@@ -1241,8 +1250,9 @@ export class BotManager implements BotServices {
     v.seatEye(r.seat, this.tmp);
     bot.carry(this.tmp, v.velocity);
     const role = v.spec.seats[r.seat]!.role;
-    if (role === 'driver') this.autopilot(e, v, dt);
-    if (v.mounts[r.seat]) this.botGunner(bot, v, r.seat);
+    if (role === 'driver' && v.flight) this.pilot(e, v);
+    else if (role === 'driver') this.autopilot(e, v, dt);
+    if (v.mounts[r.seat] && !(v.flight && role === 'driver')) this.botGunner(bot, v, r.seat);
     // Getting out: near the objective with the vehicle stopped, or left without a driver.
     const goal = e.objective?.pos;
     const near = !!goal && goal.distanceTo(bot.feet) < VEHICLE_DROP;
@@ -1252,6 +1262,133 @@ export class BotManager implements BotServices {
       e.alone = undefined;
       this.alightBot(e);
     } else if (!noDriver) e.alone = undefined;
+  }
+
+  /**
+   * Bot pilots. Fighters chase the nearest enemy aircraft (cannon when lined
+   * up, missiles when locked); close air support dives on enemy vehicles or
+   * groups the side knows about (cannon and rockets, pulling up low);
+   * bombers fly level over a target and drop when it's under them. With
+   * nothing to hit they circle the battlefield. They never fly into the
+   * ground on purpose: too low, they climb.
+   */
+  private pilot(e: BotEntry, v: Vehicle): void {
+    const bot = e.bot;
+    const f = v.flight!;
+    const out: DriveInput = { throttle: 0, steer: 0, brake: false, aimYaw: f.yaw, aimPitch: 0 };
+    this.driveInputs.set(v.id, out);
+    const below = this.physics.raycast(v.pos, DOWN, 2000, Layer.WORLD);
+    // Off the edge of the terrain: the battlefield's height.
+    const ground = below ? v.pos.y - below.distance : VehicleAir.airCenter.y;
+    const height = v.pos.y - ground;
+    const cruise = ground + 170;
+    const p = (e.flightPlan ??= { target: null, kind: 'none', until: 0, pullUntil: 0 });
+    if (this.time > p.until) {
+      p.until = this.time + 1;
+      p.target = null;
+      p.kind = 'none';
+      if (v.kind === 'fighter') {
+        let best = 1500;
+        for (const o of this.vehicles?.vehicles ?? []) {
+          if (!o.flight || o.wrecked || o.home === bot.team) continue;
+          const d = o.pos.distanceTo(v.pos);
+          if (d < best) {
+            best = d;
+            p.target = o;
+            p.kind = 'air';
+          }
+        }
+      } else {
+        // Ground: enemy vehicles first, else enemies the side knows about.
+        let best = 1300;
+        for (const o of this.vehicles?.vehicles ?? []) {
+          if (o.flight || o.wrecked || !o.team || o.team === bot.team) continue;
+          const d = o.pos.distanceTo(v.pos);
+          if (d < best) {
+            best = d;
+            p.target = o;
+            p.kind = 'ground';
+          }
+        }
+        if (!p.target) {
+          const seen = this.spottedEnemies(bot.team, v.pos);
+          let bestN = 0;
+          for (const c of seen) {
+            const n = this.enemiesNear(bot.team, c.feet, 15);
+            if (n > bestN && c.feet.distanceTo(v.pos) < 1500) {
+              bestN = n;
+              p.target = c;
+              p.kind = 'ground';
+            }
+          }
+        }
+      }
+    }
+    const t = p.target;
+    const tpos = t ? (t as { pos?: THREE.Vector3 }).pos ?? (t as Combatant).feet : null;
+    let fire = false;
+    let alt = false;
+    let wantThrottle = 0.75;
+    const lookAt = (at: THREE.Vector3): { yaw: number; pitch: number; angle: number; dist: number } => {
+      const d = at.clone().sub(v.pos);
+      const dist = d.length();
+      const yaw = Math.atan2(-d.x, -d.z);
+      const pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
+      const nose = v.velocity.clone().normalize();
+      return { yaw, pitch, angle: nose.angleTo(d.normalize()), dist };
+    };
+    if (t && tpos && p.kind === 'air') {
+      const tv = (t as Vehicle).velocity;
+      const lead = tpos.clone().addScaledVector(tv, v.pos.distanceTo(tpos) / 500);
+      const a = lookAt(lead);
+      out.aimYaw = a.yaw;
+      out.aimPitch = a.pitch;
+      fire = a.angle < 0.07 && a.dist < 800;
+      alt = a.angle < 0.4 && a.dist < 1300;
+      wantThrottle = 1;
+    } else if (t && tpos && p.kind === 'ground') {
+      const flat = Math.hypot(tpos.x - v.pos.x, tpos.z - v.pos.z);
+      const a = lookAt(tpos.clone().setY(tpos.y + 1));
+      if (v.kind === 'bomber') {
+        // Level over the target; drop when the fall carries the bombs onto it.
+        out.aimYaw = a.yaw;
+        out.aimPitch = THREE.MathUtils.clamp((cruise - v.pos.y) * 0.01, -0.3, 0.3);
+        const fall = Math.sqrt((2 * Math.max(10, v.pos.y - tpos.y)) / 9.8);
+        const yawOff = Math.abs(Math.atan2(Math.sin(a.yaw - f.yaw), Math.cos(a.yaw - f.yaw)));
+        fire = yawOff < 0.12 && Math.abs(flat - f.speed * fall) < 40;
+        wantThrottle = 0.6;
+      } else if (this.time < p.pullUntil || height < 70) {
+        out.aimPitch = 0.55;
+        if (height > 140) p.pullUntil = 0;
+      } else if (flat > 950) {
+        out.aimYaw = a.yaw;
+        out.aimPitch = THREE.MathUtils.clamp((cruise - v.pos.y) * 0.01, -0.3, 0.3);
+      } else {
+        // Attack run: dive at it, guns and rockets when lined up, pull up close or low.
+        out.aimYaw = a.yaw;
+        out.aimPitch = a.pitch;
+        fire = a.angle < 0.06 && a.dist < 750;
+        alt = a.angle < 0.05 && a.dist < 850 && a.dist > 250;
+        if (a.dist < 180 || height < 90) p.pullUntil = this.time + 3;
+        wantThrottle = 0.55;
+      }
+    } else {
+      // Nothing to hit: circle the battlefield at cruise height.
+      const c = VehicleAir.airCenter;
+      const ang = Math.atan2(v.pos.z - c.z, v.pos.x - c.x) + 0.35;
+      const r = VehicleAir.airRadius * 0.75;
+      const want = new THREE.Vector3(c.x + Math.cos(ang) * r, cruise, c.z + Math.sin(ang) * r);
+      const a = lookAt(want);
+      out.aimYaw = a.yaw;
+      out.aimPitch = THREE.MathUtils.clamp(a.pitch, -0.3, 0.3);
+      wantThrottle = 0.65;
+    }
+    // Never into the ground.
+    if (height < 55 && (out.aimPitch ?? 0) < 0.35) out.aimPitch = 0.45;
+    out.throttle = Math.sign(wantThrottle - f.throttle);
+    if (v.pullTrigger(0, fire, this.time, STEP)) this.fireMount?.(v, 0, { id: bot.id, name: bot.name, team: bot.team }, null);
+    if (v.altMounts[0] && v.pullTrigger(0, alt, this.time, STEP, true)) this.fireMount?.(v, 0, { id: bot.id, name: bot.name, team: bot.team }, null, true);
+    if (fire || alt) bot.firingUntil = this.time + 0.5;
   }
 
   /**

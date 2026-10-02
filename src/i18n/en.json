@@ -227,5 +227,18 @@
   "vehicle.rocket": "Rocket tank",
   "vehicleGun.rockets": "Rocket salvo",
   "support.rocketArrived": "Rocket tank at zone {zone} ({who})",
-  "vehicle.reserved": "Squad leader only"
+  "vehicle.reserved": "Squad leader only",
+  "vehicle.fighter": "Fighter",
+  "vehicle.cas": "Close air support",
+  "vehicle.bomber": "Tactical bomber",
+  "vehicleGun.jetcannon": "Cannon",
+  "vehicleGun.gau": "30mm cannon",
+  "vehicleGun.aam": "Air-to-air missile",
+  "vehicleGun.jetrockets": "Rocket pods",
+  "vehicleGun.bombs": "Bombs",
+  "spawn.jet": "Deploy in a jet",
+  "jet.hud": "Alt {alt} m · {spd} km/h · Throttle {thr}%",
+  "jet.locked": "Locked",
+  "jet.airspace": "Leaving the area — turning back",
+  "jet.controls": "W/S throttle · mouse to fly · right click second weapon · E eject"
 }
