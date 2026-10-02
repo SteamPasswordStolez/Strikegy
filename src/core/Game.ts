@@ -996,7 +996,7 @@ export class Game {
       bots.vehicles = this.vehicles;
       bots.driveInputs = this.driveInputs;
       bots.playerRiding = () => !!this.ride;
-      bots.fireMount = (v, seat, shooter, aim) => this.fireMount(v, seat, shooter, aim);
+      bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
     }
     if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
   }
