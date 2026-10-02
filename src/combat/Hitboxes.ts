@@ -12,8 +12,12 @@ export interface DamageSource {
   id: number;
 }
 
-/** What kind of hit: bullets barely scratch armour, AT weapons are made for it (people take all kinds the same). */
-export type DamageKind = 'bullet' | 'explosive' | 'at';
+/**
+ * What kind of hit: bullets barely scratch armour, `heavy` is a mounted gun
+ * (vehicle MGs, aircraft cannon: what brings planes down), AT weapons are made
+ * for armour (people take all kinds the same).
+ */
+export type DamageKind = 'bullet' | 'heavy' | 'explosive' | 'at';
 
 export interface Damageable {
   readonly id: number;

@@ -23,7 +23,7 @@ export interface BotSkill {
 
 export const SKILLS: Record<Difficulty, BotSkill> = {
   easy: {
-    reaction: 0.75,
+    reaction: 0.95,
     aimError: 7,
     aimErrorMin: 2.6,
     settleTime: 2.2,
@@ -34,7 +34,7 @@ export const SKILLS: Record<Difficulty, BotSkill> = {
     sight: 55,
   },
   normal: {
-    reaction: 0.45,
+    reaction: 0.6,
     aimError: 5,
     aimErrorMin: 1.5,
     settleTime: 1.5,
@@ -45,7 +45,7 @@ export const SKILLS: Record<Difficulty, BotSkill> = {
     sight: 70,
   },
   hard: {
-    reaction: 0.26,
+    reaction: 0.38,
     aimError: 3.2,
     aimErrorMin: 0.8,
     settleTime: 1,

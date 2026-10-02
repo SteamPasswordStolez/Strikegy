@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
-import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
+import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, VEHICLES, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
 
 /** A base pad: where it is and what it brings out. */
@@ -48,6 +48,12 @@ const FIRST_ID = 50000;
 /** Seconds a wreck burns before it's cleared, and how long an empty vehicle may stand unused. */
 const WRECK_LIFE = 12;
 const ABANDON = 150;
+
+/** How far a hull reaches from its centre on the ground (half its diagonal, m). */
+function hullReach(kind: VehicleKind): number {
+  const [hx, , hz] = VEHICLES[kind].half;
+  return Math.hypot(hx, hz);
+}
 
 /**
  * Every vehicle on the map, the base pads that bring out jeeps and APCs, and
@@ -98,7 +104,17 @@ export class VehicleWorld {
 
   /** A clear tank spot at `team`'s base, or null. */
   freeTankSpot(team: Team): TankSpot | null {
-    return this.tankSpots.find((s) => s.team === team && !this.vehicles.some((v) => v.pos.distanceTo(s.pos) < 7)) ?? null;
+    return this.tankSpots.find((s) => s.team === team && this.clearFor(s.pos, 'td')) ?? null;
+  }
+
+  /**
+   * Room for a `kind` at `pos`: no other hull within reach of its own. A new
+   * body put inside another gets shoved out hard by the physics, which can
+   * throw both (and whoever rides them) high into the air.
+   */
+  clearFor(pos: THREE.Vector3, kind: VehicleKind): boolean {
+    const reach = hullReach(kind);
+    return !this.vehicles.some((v) => !v.flight && v.pos.distanceTo(pos) < reach + hullReach(v.kind) + 0.5);
   }
 
   /** Brings a tank out at the base (under the side's limit, on a clear spot); null if it can't. */
@@ -228,7 +244,7 @@ export class VehicleWorld {
       }
       if (!padReady(p, this.time, this.count(p.kind, p.team), vehicleLimit(p.kind, this.botCount))) continue;
       // Wait until the pad is clear.
-      if (this.vehicles.some((v) => v.pos.distanceTo(p.pos) < 6)) continue;
+      if (!this.clearFor(p.pos, p.kind)) continue;
       const v = this.spawn(p.kind, p.pos, p.yaw, p.team);
       p.vehicle = v.id;
       p.spawnedAt = this.time;
@@ -245,7 +261,7 @@ export class VehicleWorld {
         continue;
       }
       if (this.time < b.lostAt + BIKES.respawn) continue;
-      const free = b.spots.filter((s) => !this.vehicles.some((v) => v.pos.distanceTo(s.pos) < 4));
+      const free = b.spots.filter((s) => this.clearFor(s.pos, 'bike'));
       if (!free.length) continue;
       const s = free[Math.floor(Math.random() * free.length)]!;
       b.vehicle = this.spawn('bike', s.pos, s.yaw, null).id;

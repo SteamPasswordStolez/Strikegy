@@ -388,6 +388,24 @@ body {
 .touch-stick.sprint {
   border-color: rgba(255, 179, 71, 0.85);
 }
+/* Sprint marker: push the thumb on past it (the stick stays put) to sprint. */
+.touch-stick::before {
+  content: '';
+  position: absolute;
+  left: 46px;
+  top: -24px;
+  width: 16px;
+  height: 16px;
+  border-left: 3px solid rgba(255, 255, 255, 0.45);
+  border-top: 3px solid rgba(255, 255, 255, 0.45);
+  transform: rotate(45deg);
+}
+.touch-stick.sprint::before {
+  border-color: rgba(255, 179, 71, 1);
+}
+.touch-layer.riding .touch-stick::before {
+  display: none;
+}
 .touch-knob {
   position: absolute;
   left: 32px;
@@ -476,7 +494,9 @@ body {
 .touch-grenade,
 .touch-switch,
 .touch-melee,
-.touch-gadget {
+.touch-gadget,
+.touch-gas,
+.touch-brake {
   --rad: var(--r1);
   right: calc(var(--cx) - cos(var(--a)) * var(--rad) - var(--B) / 2);
   bottom: calc(var(--cy) + sin(var(--a)) * var(--rad) - var(--B) / 2);
@@ -504,6 +524,36 @@ body {
 .touch-melee {
   --a: 172deg;
   --rad: var(--r2);
+}
+/* Pedals (driver's / pilot's seat) where jump and reload sit on foot. */
+.touch-gas {
+  --a: 88deg;
+  display: none;
+  border-color: rgba(120, 220, 140, 0.8);
+}
+.touch-brake {
+  --a: 128deg;
+  display: none;
+  border-color: rgba(255, 150, 120, 0.8);
+}
+/* Not in the editor on foot: they would sit on top of jump and reload. Opened
+   from the driver's seat, the editor shows the pedals in their place instead. */
+.touch-layer.driving .touch-gas,
+.touch-layer.driving .touch-brake {
+  display: flex;
+}
+/* Aboard: the on-foot buttons give way (crouch = view, swap = seat, aim = second weapon). */
+.touch-layer.riding .touch-btn.touch-jump,
+.touch-layer.riding .touch-btn.touch-reload,
+.touch-layer.riding .touch-btn.touch-grenade,
+.touch-layer.riding .touch-btn.touch-melee,
+.touch-layer.riding .touch-btn.touch-medkit,
+.touch-layer.riding .touch-btn.touch-build,
+.touch-layer.riding .touch-btn.touch-gadget,
+.touch-layer.riding .touch-btn.touch-breath,
+.touch-layer.riding .touch-btn.touch-inspect,
+.touch-layer.driving .touch-btn.touch-fire2 {
+  display: none;
 }
 /* Class gadget: outer arc above the grenade, only for classes that carry one. */
 .touch-gadget {

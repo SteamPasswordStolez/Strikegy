@@ -116,6 +116,14 @@ export interface BotServices {
   fortifiedAt(p: THREE.Vector3): boolean;
   /** `c` is riding a vehicle (assault bots rocket it). */
   inVehicle(c: Combatant): boolean;
+  /** Where `c` sits: on foot or in an open seat, under armour, or in an aircraft. */
+  coverOf(c: Combatant): 'open' | 'armour' | 'air';
+  /**
+   * Whether `bot` can usefully fight `e` from where both are: nobody on foot
+   * takes on a pilot overhead, crews under armour only with a rocket; vehicle
+   * guns: hitscan ones at aircraft, cannon at armour.
+   */
+  canEngage(bot: Bot, e: Combatant): boolean;
   /** One step in a vehicle seat: carried along, driving / firing the mounted gun; false once out. */
   rideStep(bot: Bot, dt: number): void;
   /** How much foliage (tree crowns) lies between two points: 0 = none, ~1 = a few thick trees. */
@@ -134,6 +142,23 @@ export interface BotServices {
 }
 
 let nextBotId = 1;
+
+/** Half the view's height (deg) above / below where a bot looks: what it can notice without looking up. */
+const VIEW_UP = 50;
+
+/** Height above a bot (m) past which a shot or a sound comes from an aircraft: no place to chase or shoot at. */
+const OVERHEAD = 25;
+
+function overhead(from: THREE.Vector3, feet: THREE.Vector3): boolean {
+  return from.y - feet.y > OVERHEAD;
+}
+
+/** `out` = `p` give or take `share` of its distance from `self` (sideways, not up or down). */
+function roughly(out: THREE.Vector3, p: THREE.Vector3, self: THREE.Vector3, share: number): THREE.Vector3 {
+  const r = Math.hypot(p.x - self.x, p.z - self.z) * share * Math.sqrt(Math.random());
+  const a = Math.random() * Math.PI * 2;
+  return out.set(p.x + Math.cos(a) * r, p.y, p.z + Math.sin(a) * r);
+}
 
 export class Bot implements Damageable, Combatant {
   readonly id = nextBotId++;
@@ -195,11 +220,15 @@ export class Bot implements Damageable, Combatant {
   private thinkTimer: number;
   private readonly notice = new Map<number, number>();
   private readonly lastSeen = { pos: new THREE.Vector3(), time: -Infinity };
+  /** Last sound worth checking: where (roughly) and the time the bot acts on it (a moment after hearing it). */
   private readonly heard = { pos: new THREE.Vector3(), time: -Infinity };
   private lastHurt = -Infinity;
-  /** Who shot us last (combatant id) and from where. */
+  /** Shot by someone unseen: turns toward where it came from at this time (a reaction, not a snap). */
+  private hurtTurnAt = Infinity;
+  /** Who shot us last (combatant id) and from where (unknown when it came from an aircraft overhead). */
   private lastAttacker = -1;
   private readonly lastAttackerPos = new THREE.Vector3();
+  private attackerKnown = false;
   /** 0..1: rounds cracking past recently (near misses and hits); decays over a few seconds. */
   suppression = 0;
   /** Flashbanged: blind until this sim time. */
@@ -333,6 +362,9 @@ export class Bot implements Damageable, Combatant {
     this.target = null;
     this.notice.clear();
     this.lastSeen.time = this.heard.time = this.lastHurt = -Infinity;
+    this.hurtTurnAt = Infinity;
+    this.lastAttacker = -1;
+    this.attackerKnown = false;
     this.action = 'advance';
     this.path.length = 0;
     this.hasGoal = false;
@@ -381,14 +413,19 @@ export class Bot implements Damageable, Combatant {
     const killed = this.health.damage(amount);
     this.lastHurt = this.nowRef;
     void part;
-    // Getting shot reveals roughly where it came from.
+    // Getting shot reveals roughly where it came from (not a plane's position:
+    // chasing or shooting at a spot in the sky gets nowhere).
     if (source) {
-      this.lastSeen.pos.copy(source.pos);
-      this.lastSeen.time = this.nowRef;
       this.lastAttacker = source.id;
-      this.lastAttackerPos.copy(source.pos);
       this.suppression = Math.min(1, this.suppression + 0.35);
-      if (!this.target) this.faceToward(source.pos, 0.6);
+      this.attackerKnown = !overhead(source.pos, this.feet);
+      if (this.attackerKnown) {
+        roughly(this.lastSeen.pos, source.pos, this.feet, 0.1);
+        this.lastSeen.time = this.nowRef;
+        this.lastAttackerPos.copy(this.lastSeen.pos);
+        // Turn toward it after a moment (reacting, not snapping round).
+        if (!this.target && this.hurtTurnAt === Infinity) this.hurtTurnAt = this.nowRef + (0.25 + Math.random() * 0.3) * this.personality.reaction;
+      }
     }
     if (killed) this.goDown();
     return killed;
@@ -488,11 +525,24 @@ export class Bot implements Damageable, Combatant {
     this.blindUntil = Math.max(this.blindUntil, time + seconds);
   }
 
-  /** Heard gunfire or footsteps at `pos`. */
-  hear(pos: THREE.Vector3, time: number): void {
-    if (!this.alive) return;
-    this.heard.pos.copy(pos);
-    this.heard.time = time;
+  /**
+   * Heard gunfire or footsteps at `pos`: where it came from only roughly
+   * (footsteps more roughly), acted on after a moment. Sounds keep coming
+   * while someone walks or fires: the first one sets the reaction time, the
+   * rest only refresh where it is.
+   */
+  hear(pos: THREE.Vector3, time: number, kind: 'shot' | 'step' = 'shot'): void {
+    if (!this.alive || overhead(pos, this.feet)) return;
+    roughly(this.heard.pos, pos, this.feet, kind === 'step' ? 0.3 : 0.12);
+    const waiting = this.heard.time > time;
+    if (waiting) return;
+    const delay = (kind === 'step' ? 0.55 + Math.random() * 0.6 : 0.2 + Math.random() * 0.3) * this.personality.reaction;
+    this.heard.time = time - this.heard.time < 3 ? time : time + delay;
+  }
+
+  /** Seconds since the bot reacted to the last sound (Infinity while it hasn't yet, or never heard one). */
+  private heardAge(now: number): number {
+    return now < this.heard.time ? Infinity : now - this.heard.time;
   }
 
   /**
@@ -503,7 +553,9 @@ export class Bot implements Damageable, Combatant {
   suppress(amount: number, from: THREE.Vector3, time: number): void {
     if (!this.alive) return;
     this.suppression = Math.min(1, this.suppression + amount * (1.25 - this.personality.aggression * 0.7));
-    this.heard.pos.copy(from);
+    if (overhead(from, this.feet)) return;
+    roughly(this.heard.pos, from, this.feet, 0.12);
+    // Rounds cracking past need no working out: acted on at once.
     this.heard.time = time;
   }
 
@@ -517,7 +569,12 @@ export class Bot implements Damageable, Combatant {
 
   /** Last attacker's position, for the manager's intel when this bot dies. */
   get killerPos(): THREE.Vector3 | null {
-    return this.lastAttacker >= 0 ? this.lastAttackerPos : null;
+    return this.lastAttacker >= 0 && this.attackerKnown ? this.lastAttackerPos : null;
+  }
+
+  /** Has a panzerfaust round left (worth taking on a vehicle crew). */
+  get hasRocket(): boolean {
+    return this.gadget === 'panzerfaust' && this.gadgetCount > 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -592,14 +649,26 @@ export class Bot implements Damageable, Combatant {
         this.notice.delete(e.id);
         continue;
       }
-      const dx = e.feet.x - this.feet.x;
-      const dz = e.feet.z - this.feet.z;
-      const dist = Math.hypot(dx, dz);
       const progress = this.notice.get(e.id) ?? 0;
+      // Pilots overhead, crews out of reach under armour: not someone to fight from here.
+      if (!s.canEngage(this, e)) {
+        if (progress > 0) this.notice.set(e.id, 0);
+        continue;
+      }
+      const dx = e.feet.x - this.feet.x;
+      const dy = e.feet.y - this.feet.y;
+      const dz = e.feet.z - this.feet.z;
+      const flat = Math.hypot(dx, dz);
+      const dist = Math.hypot(flat, dy);
       const firing = e.firingUntil > s.time;
-      if (progress === 0 && !firing && dist > skill.sight) continue;
+      // Vehicle gunners watch the sky for aircraft further out.
+      const sight = this.riding && s.coverOf(e) === 'air' ? skill.sight * 3 : skill.sight;
+      if (progress === 0 && !firing && dist > sight) continue;
       const off = offAxisDeg(this.aimYaw, dx, dz);
-      const inView = dist < skill.sight && (off < skill.fov / 2 || dist < 4);
+      // Up and down too: the view is about as tall as a person's (not straight overhead).
+      const offUp = Math.abs(Math.atan2(dy, flat) - this.aimPitch) / DEG;
+      // Out of view nobody is noticed, except someone bumping right into us.
+      const inView = dist < sight && ((off < skill.fov / 2 && (offUp < VIEW_UP || !!this.riding)) || dist < 1.5);
       if (!inView) {
         if (progress > 0) this.notice.set(e.id, Math.max(0, progress - dt * 0.5));
         continue;
@@ -642,7 +711,10 @@ export class Bot implements Damageable, Combatant {
       }
       if (visible) {
         const hidden = 1 + leaves * (firing ? 0.8 : 2);
-        progress = Math.min(1.5, progress + dt / (noticeTime(skill.reaction * this.personality.reaction, dist, off, skill.fov / 2, firing) * hidden));
+        // Someone crouched and still is harder to pick out; running draws the eye.
+        const moving = Math.hypot(e.velocity.x, e.velocity.z);
+        const posture = firing ? 1 : (e.eyeHeight < 1.3 ? 1.35 : 1) * (moving > 4.5 ? 0.85 : moving < 0.5 ? 1.15 : 1);
+        progress = Math.min(1.5, progress + dt / (noticeTime(skill.reaction * this.personality.reaction, dist, off, skill.fov / 2, firing) * hidden * posture));
         if (progress >= 1) {
           this.lastSeen.pos.copy(e.feet);
           this.lastSeen.time = s.time;
@@ -688,7 +760,7 @@ export class Bot implements Damageable, Combatant {
       ? this.target.feet
       : this.lastSeen.time > s.time - 4
         ? this.lastSeen.pos
-        : this.suppression > 0.3 && s.time - this.heard.time < 2
+        : this.suppression > 0.3 && this.heardAge(s.time) < 2
           ? this.heard.pos
           : null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
@@ -721,7 +793,7 @@ export class Bot implements Damageable, Combatant {
         health: this.health.value / 100,
         hasTarget: !!this.target,
         lastSeenAge: Math.min(ownAge, teamAge + 2),
-        heardAge: s.time - this.heard.time,
+        heardAge: this.heardAge(s.time),
         ammo: w.ammo / this.def.magSize,
         reloading: w.reloading,
         sinceHurt: s.time - this.lastHurt,
@@ -1003,7 +1075,7 @@ export class Bot implements Damageable, Combatant {
       this.suppressPos.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1.1);
       this.suppressUntil = this.blindUntil;
     }
-    const threat = age < 6 ? this.lastSeen.pos : s.time - this.heard.time < 4 ? this.heard.pos : null;
+    const threat = age < 6 ? this.lastSeen.pos : this.heardAge(s.time) < 4 ? this.heard.pos : null;
     if (threat && p.caution > 0.5) {
       if (this.action !== 'cover' || !this.hasGoal) this.backOff(threat, s);
       this.action = 'cover';
@@ -1234,6 +1306,9 @@ export class Bot implements Damageable, Combatant {
       [yaw, pitch] = yawPitchOf(aimAt.x - eye.x, aimAt.y - eye.y, aimAt.z - eye.z);
       yaw += this.jitter.x;
       pitch += this.jitter.y;
+    } else if (s.time >= this.hurtTurnAt && s.time - this.lastHurt < 2.5) {
+      // Shot by someone unseen: turn toward where it came from (a moment after the hit, at the turn rate).
+      [yaw] = yawPitchOf(this.lastAttackerPos.x - this.feet.x, 0, this.lastAttackerPos.z - this.feet.z);
     } else if (this.suppressing || (this.action === 'hold' && s.time - this.lastSeen.time < 10)) {
       // Watch (or shoot at) where the enemy was.
       const eye = this.eyePos(this.eye);
@@ -1255,6 +1330,7 @@ export class Bot implements Damageable, Combatant {
       const look = this.action === 'hunt' || this.action === 'investigate' ? this.goal : this.path[Math.min(this.pathIndex, this.path.length - 1)]!;
       [yaw] = yawPitchOf(look.x - this.feet.x, 0, look.z - this.feet.z);
     }
+    if (t || s.time - this.lastHurt >= 2.5) this.hurtTurnAt = Infinity;
     const step = skill.turnRate * DEG * dt;
     this.aimYaw = turnToward(this.aimYaw, yaw, step);
     this.aimPitch = turnToward(this.aimPitch, pitch, step);
@@ -1413,7 +1489,9 @@ export class Bot implements Damageable, Combatant {
     let trigger = false;
     const t = this.target;
     const suppress = !t && this.suppressing;
-    if ((t || suppress) && !w.reloading && w.ammo > 0) {
+    // A crew under armour is a rocket's job: no point emptying a rifle at the hull.
+    const armour = !!t && s.coverOf(t) === 'armour';
+    if ((t || suppress) && !armour && !w.reloading && w.ammo > 0) {
       const eye = this.eyePos(this.eye);
       const aimAt = t ? this.tmp.copy(t.feet).setY(t.feet.y + t.eyeHeight * 0.78) : this.tmp.copy(this.suppressPos);
       const [ty, tp] = yawPitchOf(aimAt.x - eye.x, aimAt.y - eye.y, aimAt.z - eye.z);

@@ -4,13 +4,12 @@
  *
  * - Jeep: 2 seats (driver, MG gunner), from a pad at each base.
  * - APC: 4 seats (driver, autocannon gunner, 2 passengers), from a pad at
- *   each base, at most 6 on the map (3 a side).
+ *   each base, ceil(bots / 8) a side.
  * - Motorbike: 1 seat, a few around each zone.
- * - Jets (picked on the deploy screen, ceil(bots / 8) a side): fighter (1
+ * - Jets (picked on the deploy screen, ceil(bots / 16) a side): fighter (1
  *   seat: cannon, heat-seeking missiles), close air support (2: cannon and
- *   rockets, rear gunner), tactical bomber (2: bombs, rear gunner). They
- *   start in the air off their side of the map.
- * - Tanks (picked on the deploy screen, ceil(bots / 8) a side, all kinds
+ *   rockets, rear gunner). They start in the air off their side of the map.
+ * - Tanks (picked on the deploy screen, ceil(bots / 16) a side, all kinds
  *   together): medium tank, self-propelled gun, tank destroyer. Four seats:
  *   the driver also works the main gun, a roof MG, a hull MG, one inside.
  *
@@ -20,13 +19,13 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'bomber';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'bombs';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets';
 /** Tank kinds (one limit for all of them). */
 export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
 /** Jet kinds (one limit for all of them). */
-export const JET_KINDS: readonly VehicleKind[] = ['fighter', 'cas', 'bomber'];
+export const JET_KINDS: readonly VehicleKind[] = ['fighter', 'cas'];
 
 export type { DamageKind };
 
@@ -119,7 +118,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 1.4,
     friction: 2.2,
     health: 420,
-    mult: { bullet: 0.22, explosive: 1, at: 1.7 },
+    mult: { bullet: 0.22, heavy: 0.22, explosive: 1, at: 1.7 },
   },
   apc: {
     kind: 'apc',
@@ -149,7 +148,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 1.6,
     friction: 2.4,
     health: 1100,
-    mult: { bullet: 0, explosive: 0.45, at: 1.6 },
+    mult: { bullet: 0, heavy: 0, explosive: 0.45, at: 1.6 },
   },
   tank: {
     kind: 'tank',
@@ -181,7 +180,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 2.2,
     friction: 2.6,
     health: 1200,
-    mult: { bullet: 0, explosive: 0.3, at: 1 },
+    mult: { bullet: 0, heavy: 0, explosive: 0.3, at: 1 },
     turnRate: 0.75,
   },
   spg: {
@@ -214,7 +213,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 2.2,
     friction: 2.6,
     health: 900,
-    mult: { bullet: 0, explosive: 0.4, at: 1 },
+    mult: { bullet: 0, heavy: 0, explosive: 0.4, at: 1 },
     turnRate: 0.7,
   },
   td: {
@@ -247,7 +246,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 2.2,
     friction: 2.6,
     health: 1300,
-    mult: { bullet: 0, explosive: 0.3, at: 0.9 },
+    mult: { bullet: 0, heavy: 0, explosive: 0.3, at: 0.9 },
     turnRate: 0.7,
   },
   // Rocket launcher truck (a call-in): the squad leader drives and fires the salvo.
@@ -277,7 +276,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 1.6,
     friction: 2.4,
     health: 700,
-    mult: { bullet: 0.08, explosive: 0.6, at: 1.4 },
+    mult: { bullet: 0.08, heavy: 0.08, explosive: 0.6, at: 1.4 },
   },
   fighter: {
     kind: 'fighter',
@@ -294,8 +293,10 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 1,
     friction: 1,
     top: 125,
-    health: 320,
-    mult: { bullet: 0.35, explosive: 1, at: 1.5 },
+    // Fragile (owner, 2026-10-02: "a few cannon hits and it's in trouble"): a
+    // short burst from a fighter's cannon (8 hits) or one missile brings it down.
+    health: 280,
+    mult: { bullet: 0.35, heavy: 1.6, explosive: 1.2, at: 1.6 },
     flight: { minSpeed: 55, maxSpeed: 125, turn: 1.05, accel: 14 },
   },
   cas: {
@@ -316,31 +317,10 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 1,
     friction: 1,
     top: 100,
-    health: 480,
-    mult: { bullet: 0.3, explosive: 1, at: 1.4 },
+    // Tougher than the fighter, still down to about 12 cannon hits or one missile.
+    health: 380,
+    mult: { bullet: 0.3, heavy: 1.3, explosive: 1.1, at: 1.4 },
     flight: { minSpeed: 45, maxSpeed: 100, turn: 0.85, accel: 10 },
-  },
-  bomber: {
-    kind: 'bomber',
-    seats: [
-      { role: 'driver', eye: [0, 1.15, -5.5], exposed: false, gun: 'bombs' },
-      { role: 'gunner', eye: [0, 1.5, 5.6], exposed: false, gun: 'mg', pitch: [-0.6, 0.6] },
-    ],
-    half: [2.0, 1.2, 9.5],
-    mass: 26000,
-    wheels: [],
-    wheelRadius: 0.3,
-    suspension: { rest: 0.2, travel: 0.1, stiffness: 20, damping: 2 },
-    engine: 0,
-    brake: 0,
-    steer: 0,
-    reverse: 0,
-    grip: 1,
-    friction: 1,
-    top: 90,
-    health: 560,
-    mult: { bullet: 0.3, explosive: 1, at: 1.3 },
-    flight: { minSpeed: 45, maxSpeed: 90, turn: 0.6, accel: 8 },
   },
   bike: {
     kind: 'bike',
@@ -364,7 +344,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     grip: 1.5,
     friction: 2.4,
     health: 160,
-    mult: { bullet: 0.5, explosive: 1.2, at: 2 },
+    mult: { bullet: 0.5, heavy: 0.5, explosive: 1.2, at: 2 },
   },
 };
 
@@ -393,8 +373,6 @@ export interface VehicleGunSpec {
   shell?: ShellSpec;
   /** Missiles: home on a locked enemy aircraft. */
   homing?: boolean;
-  /** Bombs: dropped with the plane's own speed. */
-  drop?: boolean;
 }
 
 export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
@@ -410,12 +388,11 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   atgun: { rpm: 17, damage: 999, spread: 0.08, range: 800, vsVehicle: 520, blast: 3, burst: 1, cool: 3.5, shell: { speed: 480, gravity: 3 } },
   // Rocket tank launcher: a salvo of 12 lobbed onto the aim point, then 20 s to reload.
   rockets: { rpm: 400, damage: 999, spread: 1.6, range: 900, vsVehicle: 200, blast: 7, burst: 12, cool: 20, shell: { speed: 90, gravity: 9.8, lob: true } },
-  // Jets. Fighter cannon, CAS 30 mm, air-to-air missiles, rocket pods, bombs.
+  // Jets. Fighter cannon, CAS 30 mm, air-to-air missiles, rocket pods.
   jetcannon: { rpm: 1100, damage: 45, spread: 0.6, range: 1000, vsVehicle: 22, blast: 0, burst: 120, cool: 4 },
   gau: { rpm: 900, damage: 80, spread: 0.7, range: 900, vsVehicle: 45, blast: 1.8, burst: 90, cool: 5 },
   aam: { rpm: 60, damage: 999, spread: 0, range: 1500, vsVehicle: 320, blast: 4, burst: 2, cool: 14, shell: { speed: 260, gravity: 0 }, homing: true },
   jetrockets: { rpm: 600, damage: 999, spread: 0.9, range: 1000, vsVehicle: 220, blast: 5, burst: 14, cool: 12, shell: { speed: 230, gravity: 2 } },
-  bombs: { rpm: 300, damage: 999, spread: 0, range: 2000, vsVehicle: 600, blast: 12, burst: 4, cool: 18, shell: { speed: 0, gravity: 9.8 }, drop: true },
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */
@@ -423,13 +400,14 @@ export const PADS = { afterLeave: 10, cooldown: 60, leaveDistance: 12 };
 
 /**
  * Most of a kind one side can have out, from the number of bots in the match
- * (owner, 2026-10-02): APCs one per 4 bots, tanks and jets one per 8, rounded
- * up (24 bots: 6 APCs, 3 tanks, 3 jets a side). Jeeps: 4 a side.
+ * (owner, 2026-10-02, halved the same day): APCs one per 8 bots, tanks and
+ * jets one per 16, rounded up (24 bots: 3 APCs, 2 tanks, 2 jets a side).
+ * Jeeps: 4 a side.
  */
 export function vehicleLimit(kind: VehicleKind, bots: number): number {
-  if (kind === 'apc') return Math.ceil(bots / 4);
+  if (kind === 'apc') return Math.ceil(bots / 8);
   if (kind === 'jeep') return 4;
-  if (TANK_KINDS.includes(kind) || JET_KINDS.includes(kind)) return Math.ceil(bots / 8);
+  if (TANK_KINDS.includes(kind) || JET_KINDS.includes(kind)) return Math.ceil(bots / 16);
   return 0;
 }
 /** Motorbikes: per zone, seconds to bring a lost one back, and how long one can sit unused away from its zone. */

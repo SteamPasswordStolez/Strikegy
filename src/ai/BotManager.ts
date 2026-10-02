@@ -46,7 +46,9 @@ const RESPAWN_SEC = 5;
 const DAMAGE_SCALE: Record<Difficulty, number> = { easy: 0.55, normal: 0.75, hard: 0.95 };
 /** How far gunfire and footsteps carry for bots (meters). */
 const HEAR_SHOT = 70;
-const HEAR_STEP = 13;
+/** Footsteps are heard this far (m): walking, running. Crouch-walking makes none. */
+export const HEAR_STEP = 8;
+export const HEAR_STEP_SPRINT = 14;
 /**
  * Bots closer than this push apart (meters), at up to SEPARATION_SPEED m/s.
  * Two bots standing still only once they overlap (capsules touch at 0.7 m):
@@ -106,6 +108,9 @@ const SPOT_FIRING_RANGE = 60;
 const WADE_MIN = 5;
 /** A bridge is taken when it adds at most this much walking (m); rushers accept less. */
 const BRIDGE_DETOUR = 90;
+/** A bot on a bridge (within this many metres of its middle) makes it this much "longer" for route picking. */
+const BRIDGE_CROWD_RADIUS = 25;
+const BRIDGE_CROWD = 12;
 /** Foliage grid cell (m) and sampling step along a sight line (m). */
 const LEAF_CELL = 3;
 const LEAF_STEP = 2;
@@ -136,6 +141,8 @@ export interface BotObjective {
   pos: THREE.Vector3;
   radius: number;
   defend?: boolean;
+  /** Held by the side and quiet: worth a guard squad when there are squads to spare. */
+  guard?: boolean;
   /** Unit direction attacks come from. */
   front?: THREE.Vector3;
 }
@@ -183,6 +190,8 @@ interface SquadContact {
 interface TeamState {
   objective: THREE.Vector3;
   planAt: number;
+  /** Squad -> the objective (zone centre) it was sent to last plan; kept while that one still wants a squad. */
+  assigned: Map<number, THREE.Vector3>;
   sighting: { pos: THREE.Vector3; time: number } | null;
   base: THREE.Vector3;
   spawns: SpawnPoint[];
@@ -315,7 +324,7 @@ export class BotManager implements BotServices {
       const base = own.length
         ? own.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(own.length)
         : new THREE.Vector3(0, 0, team === 'blue' ? 40 : -40);
-      return { objective: base.clone(), planAt: 0, sighting: null, base, spawns: own, kills: 0 };
+      return { objective: base.clone(), planAt: 0, assigned: new Map(), sighting: null, base, spawns: own, kills: 0 };
     };
     this.teams = { blue: teamState('blue'), red: teamState('red') };
     // Build every soldier + weapon mesh now rather than hitching on first respawn.
@@ -411,6 +420,7 @@ export class BotManager implements BotServices {
     this.coverBudget = COVER_SEARCHES_PER_STEP;
     for (const team of ['blue', 'red'] as const) this.plan(team);
     this.index();
+    this.indexSeats();
     this.dodgeGrenades();
     this.dodgeShells();
     for (const team of ['blue', 'red'] as const) this.considerSupport(team);
@@ -680,18 +690,24 @@ export class BotManager implements BotServices {
     if (w.wetLength(out) < WADE_MIN) return true;
     let direct = 0;
     for (let i = 1; i < out.length; i++) direct += out[i]!.distanceTo(out[i - 1]!);
-    // The bridge with the shortest straight-line detour.
+    // The bridge with the shortest straight-line detour, counting a crowd on
+    // it as extra distance: a jammed bridge sends people to the next one (or
+    // through the ford) instead of everyone queueing on one.
+    const crowd = this.bridgeCrowds(w.crossings);
     let best: readonly [number, number] | null = null;
     let bestLen = Infinity;
-    for (const c of w.crossings) {
+    let bestCost = Infinity;
+    w.crossings.forEach((c, i) => {
       const len = Math.hypot(c[0] - bot.feet.x, c[1] - bot.feet.z) + Math.hypot(to.x - c[0], to.z - c[1]);
-      if (len < bestLen) {
+      const cost = len + crowd[i]! * BRIDGE_CROWD;
+      if (cost < bestCost) {
+        bestCost = cost;
         bestLen = len;
         best = c;
       }
-    }
+    });
     const allowed = BRIDGE_DETOUR * (1.2 - bot.personality.aggression * 0.7);
-    if (!best || bestLen > direct + allowed) return true;
+    if (!best || bestLen > direct + allowed || bestCost > direct + allowed * 1.5) return true;
     // Bridge decks sit at about the banks' height: snap the centre onto the deck, not the bed below.
     const at = this.via.set(best[0], w.levelAt(best[0], best[1]) + 2, best[1]);
     if (Number.isNaN(at.y)) at.y = 1;
@@ -702,6 +718,25 @@ export class BotManager implements BotServices {
     for (const p of alt) out.push(p);
     return true;
   }
+
+  /** Bots (either side) on or by each river crossing, counted once a step. */
+  private bridgeCrowds(crossings: readonly (readonly [number, number])[]): number[] {
+    if (this.crowdStep === this.stepCount) return this.crowd;
+    this.crowdStep = this.stepCount;
+    this.crowd.length = 0;
+    const r2 = BRIDGE_CROWD_RADIUS * BRIDGE_CROWD_RADIUS;
+    for (const c of crossings) {
+      let n = 0;
+      for (const e of this.entries) {
+        const f = e.bot.feet;
+        if (e.bot.alive && !e.bot.riding && (f.x - c[0]) ** 2 + (f.z - c[1]) ** 2 < r2) n++;
+      }
+      this.crowd.push(n);
+    }
+    return this.crowd;
+  }
+  private crowd: number[] = [];
+  private crowdStep = -1;
 
   /** Buildings: window firing spots (kept if they are on the navmesh) and footprints. */
   setTactical(windows: { pos: [number, number, number]; facing: [number, number] }[], footprints: { x: number; z: number; yaw: number; hw: number; hd: number }[]): void {
@@ -837,9 +872,10 @@ export class BotManager implements BotServices {
     t.planAt = this.time + 7 + Math.random() * 4;
     const goals = this.hooks?.objectives(team) ?? [];
     if (goals.length > 0) {
-      // Whole squads go for an objective together; about half the squads per objective.
+      // Whole squads go for an objective together, spread over the map (see `assignSquads`).
       const squads = [...new Set(this.entries.filter((e) => e.bot.team === team).map((e) => e.squad))].sort((a, b) => a - b);
-      const n = Math.min(goals.length, Math.max(1, Math.ceil(squads.length / 2)));
+      const byPlayer = new Set(this.entries.filter((e) => e.bot.team === team && e.leader).map((e) => e.squad));
+      const pick = this.assignSquads(t, goals, squads.filter((q) => !byPlayer.has(q)), team);
       // Each squad picks a way in (left, straight or right) so they don't all funnel down one street.
       const sides = squads.map(() => Math.floor(Math.random() * 3) - 1);
       const guards = new Map<BotObjective, BotEntry[]>();
@@ -848,7 +884,7 @@ export class BotManager implements BotServices {
         const k = Math.max(0, squads.indexOf(e.squad));
         // The player's squad goes for whichever objective the player is closest to.
         const l = e.leader;
-        const g = l && l.alive ? goals.reduce((a, b) => (b.pos.distanceToSquared(l.feet) < a.pos.distanceToSquared(l.feet) ? b : a)) : goals[k % n]!;
+        const g = l && l.alive ? goals.reduce((a, b) => (b.pos.distanceToSquared(l.feet) < a.pos.distanceToSquared(l.feet) ? b : a)) : (pick.get(e.squad) ?? goals[0]!);
         const changed = !e.objective || e.objective.pos.distanceToSquared(g.pos) > 1;
         e.objective = g;
         if (g.defend) {
@@ -897,6 +933,66 @@ export class BotManager implements BotServices {
       if (e.bot.team !== team) continue;
       e.offset.set((Math.random() - 0.5) * 10, 0, (Math.random() - 0.5) * 10);
     }
+  }
+
+  /**
+   * Which objective each squad goes for. Every objective gets a squad of its
+   * own while there are enough squads (the most urgent first; quiet zones the
+   * side already holds last, as guard posts), the squads left over double up
+   * on the most urgent ones. A squad keeps the objective it has while that
+   * one is still on the list; the free ones take the open objectives nearest
+   * to where they are, so nobody is sent back and forth across the map (and
+   * through the middle of it) every time a zone changes hands.
+   */
+  private assignSquads(t: TeamState, goals: BotObjective[], squads: number[], team: Team): Map<number, BotObjective> {
+    const out = new Map<number, BotObjective>();
+    if (!squads.length) return out;
+    // Squads per objective: the ones to take (or hold under attack) first, a
+    // squad each and the rest doubling up from the top; quiet zones already
+    // held get a guard squad only from what's left, at most a quarter of them.
+    const open = goals.map(() => 0);
+    const attack = goals.map((_, i) => i).filter((i) => !goals[i]!.guard);
+    const guard = goals.map((_, i) => i).filter((i) => goals[i]!.guard);
+    const guards = attack.length ? Math.min(guard.length, Math.max(0, squads.length - attack.length), Math.max(1, Math.floor(squads.length / 4))) : squads.length;
+    for (let i = 0; i < guards && guard.length; i++) open[guard[i % guard.length]!]!++;
+    const rest = squads.length - (guard.length ? guards : 0);
+    for (let i = 0; i < rest && attack.length; i++) open[attack[i % attack.length]!]!++;
+    const goalAt = (p: THREE.Vector3): number => goals.findIndex((g) => g.pos.distanceToSquared(p) < 1);
+    const free: number[] = [];
+    for (const q of squads) {
+      const prev = t.assigned.get(q);
+      const i = prev ? goalAt(prev) : -1;
+      if (i >= 0 && open[i]! > 0) {
+        open[i]!--;
+        out.set(q, goals[i]!);
+      } else free.push(q);
+    }
+    // Where each free squad is now (its living members, else its base).
+    const where = new Map<number, THREE.Vector3>();
+    for (const q of free) {
+      const c = new THREE.Vector3();
+      let n = 0;
+      for (const e of this.entries) {
+        if (e.squad !== q || e.bot.team !== team || !e.bot.alive) continue;
+        c.add(e.bot.feet);
+        n++;
+      }
+      where.set(q, n ? c.divideScalar(n) : t.base);
+    }
+    // Most urgent open objective first, each to the nearest free squad.
+    for (let i = 0; i < goals.length && free.length; i++) {
+      while (open[i]! > 0 && free.length) {
+        let best = 0;
+        for (let j = 1; j < free.length; j++) {
+          if (where.get(free[j]!)!.distanceToSquared(goals[i]!.pos) < where.get(free[best]!)!.distanceToSquared(goals[i]!.pos)) best = j;
+        }
+        out.set(free.splice(best, 1)[0]!, goals[i]!);
+        open[i]!--;
+      }
+    }
+    t.assigned.clear();
+    for (const [q, g] of out) t.assigned.set(q, g.pos.clone());
+    return out;
   }
 
   // ---------------------------------------------------------------------------
@@ -1212,7 +1308,8 @@ export class BotManager implements BotServices {
       // A vehicle close by with a seat nobody has claimed.
       let best: { v: Vehicle; seat: number; d: number } | null = null;
       for (const v of vw.vehicles) {
-        if (v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
+        // Aircraft are only boarded on the deploy screen (one flying low past isn't a ride).
+        if (v.flight || v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
         const d = v.pos.distanceTo(b.feet);
         if (d > 30 || (best && d >= best.d)) continue;
         const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i) && (i > 0 || v.driverOnly === null || v.driverOnly === b.id));
@@ -1239,9 +1336,11 @@ export class BotManager implements BotServices {
     return this.entries.some((x) => x.board?.vehicle === vehicle && x.board.seat === seat);
   }
 
-  /** Puts a bot straight into a seat (a tank brought out for it). */
+  /** Puts a bot straight into a seat (a tank brought out for it, a deploy aboard): there at once, no slide across the map. */
   seatBot(bot: Bot, v: Vehicle, seat: number): void {
     this.boardBot(this.entryOf(bot), v, seat);
+    bot.carry(v.seatEye(seat, this.tmp), v.velocity);
+    bot.prevFeet.copy(bot.feet);
   }
 
   private boardBot(e: BotEntry, v: Vehicle, seat: number): void {
@@ -1265,9 +1364,11 @@ export class BotManager implements BotServices {
     }
     v.seats[r.seat] = null;
     if (v.flight) {
-      // Out of a plane: down on the ground below.
+      // Out of a plane: down on the ground below (outside the map, where the
+      // scenery has no collision, the nearest walkable ground instead of the sky).
       const down = this.physics.raycast(v.pos, DOWN, 2000, Layer.WORLD);
-      b.alight(down ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : v.pos.clone());
+      const ground = down ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : this.nav.closestFar(v.pos);
+      b.alight(ground ?? this.teams[b.team].base.clone());
       return;
     }
     b.alight(v.exitSpot(r.seat, this.physics));
@@ -1282,6 +1383,34 @@ export class BotManager implements BotServices {
   inVehicle(c: Combatant): boolean {
     if (c.id === PLAYER_ID) return this.playerRiding?.() ?? false;
     return !!this.entries.find((x) => x.bot.id === c.id)?.bot.riding;
+  }
+
+  /** Who sits under armour or in an aircraft this step (combatant id; everyone else is out in the open). */
+  private readonly seatCover = new Map<number, 'armour' | 'air'>();
+
+  private indexSeats(): void {
+    this.seatCover.clear();
+    for (const v of this.vehicles?.vehicles ?? []) {
+      v.seats.forEach((o, i) => {
+        if (!o) return;
+        if (v.flight) this.seatCover.set(o.id, 'air');
+        else if (!v.spec.seats[i]!.exposed) this.seatCover.set(o.id, 'armour');
+      });
+    }
+  }
+
+  coverOf(c: Combatant): 'open' | 'armour' | 'air' {
+    return this.seatCover.get(c.id) ?? 'open';
+  }
+
+  canEngage(bot: Bot, e: Combatant): boolean {
+    const cover = this.seatCover.get(e.id);
+    if (!cover) return true;
+    const r = bot.riding;
+    if (!r) return cover === 'armour' && bot.hasRocket;
+    const gun = this.vehicles?.get(r.vehicle)?.mounts[r.seat]?.gun;
+    if (!gun) return false;
+    return cover === 'air' ? !gun.shell : gun.blast > 0;
   }
 
   rideStep(bot: Bot, dt: number): void {
@@ -1312,8 +1441,7 @@ export class BotManager implements BotServices {
   /**
    * Bot pilots. Fighters chase the nearest enemy aircraft (cannon when lined
    * up, missiles when locked); close air support dives on enemy vehicles or
-   * groups the side knows about (cannon and rockets, pulling up low);
-   * bombers fly level over a target and drop when it's under them. With
+   * groups the side knows about (cannon and rockets, pulling up low). With
    * nothing to hit they circle the battlefield. They never fly into the
    * ground on purpose: too low, they climb.
    */
@@ -1383,9 +1511,8 @@ export class BotManager implements BotServices {
       return { yaw, pitch, angle: nose.angleTo(d.normalize()), dist };
     };
     if (t && tpos && p.kind === 'air') {
-      const tv = (t as Vehicle).velocity;
-      const lead = tpos.clone().addScaledVector(tv, v.pos.distanceTo(tpos) / 500);
-      const a = lookAt(lead);
+      // The cannon is hitscan (and missiles home): point the nose at the plane itself, not ahead of it.
+      const a = lookAt(tpos);
       out.aimYaw = a.yaw;
       out.aimPitch = a.pitch;
       fire = a.angle < 0.07 && a.dist < 800;
@@ -1394,15 +1521,7 @@ export class BotManager implements BotServices {
     } else if (t && tpos && p.kind === 'ground') {
       const flat = Math.hypot(tpos.x - v.pos.x, tpos.z - v.pos.z);
       const a = lookAt(tpos.clone().setY(tpos.y + 1));
-      if (v.kind === 'bomber') {
-        // Level over the target; drop when the fall carries the bombs onto it.
-        out.aimYaw = a.yaw;
-        out.aimPitch = THREE.MathUtils.clamp((cruise - v.pos.y) * 0.01, -0.3, 0.3);
-        const fall = Math.sqrt((2 * Math.max(10, v.pos.y - tpos.y)) / 9.8);
-        const yawOff = Math.abs(Math.atan2(Math.sin(a.yaw - f.yaw), Math.cos(a.yaw - f.yaw)));
-        fire = yawOff < 0.12 && Math.abs(flat - f.speed * fall) < 40;
-        wantThrottle = 0.6;
-      } else if (this.time < p.pullUntil || height < 70) {
+      if (this.time < p.pullUntil || height < 70) {
         out.aimPitch = 0.55;
         if (height > 140) p.pullUntil = 0;
       } else if (flat > 950) {
@@ -1736,7 +1855,7 @@ export class BotManager implements BotServices {
       const hit = this.physics.raycast({ x: bot.feet.x, y: bot.feet.y + 0.2, z: bot.feet.z }, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
       if (hit) this.audio.remoteFootstep(this.surfaces.get(hit.collider.handle, hit.point), bot.feet, sprinting);
     }
-    this.alert(bot.feet, sprinting ? HEAR_STEP * 1.4 : HEAR_STEP, bot);
+    this.alert(bot.feet, sprinting ? HEAR_STEP_SPRINT : HEAR_STEP, bot, 'step');
   }
 
   separation(bot: Bot, out: THREE.Vector3, wx = 0, wz = 0, speed = 0): THREE.Vector3 {
@@ -1888,11 +2007,11 @@ export class BotManager implements BotServices {
   }
 
   /** Something audible happened at `pos`; enemies of `source` within `radius` hear it. */
-  alert(pos: THREE.Vector3, radius: number, source: Combatant | null): void {
+  alert(pos: THREE.Vector3, radius: number, source: Combatant | null, kind: 'shot' | 'step' = 'shot'): void {
     for (const e of this.entries) {
       const b = e.bot;
       if (source && b.team === source.team) continue;
-      if (b.feet.distanceTo(pos) < radius) b.hear(pos, this.time);
+      if (b.feet.distanceTo(pos) < radius) b.hear(pos, this.time, kind);
     }
   }
 

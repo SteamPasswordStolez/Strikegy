@@ -31,6 +31,11 @@ describe('squads', () => {
     expect(mateSpawnBlock(member(1, true, true), 0)).toBe('combat');
   });
 
+  it('blocks spawning beside a squadmate in a vehicle (a pilot is up in the sky)', () => {
+    expect(mateSpawnBlock(member(1), 0, true)).toBe('vehicle');
+    expect(mateSpawnBlock(member(1, false), 0, true)).toBe('dead');
+  });
+
   it('is wiped only when every member is dead', () => {
     const [sq] = formSquads('red', [member(1, false), member(2, true)]);
     expect(sq!.wiped).toBe(false);

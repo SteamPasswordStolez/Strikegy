@@ -110,7 +110,6 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'rocket') return buildRocketTruck(team);
   if (kind === 'fighter') return buildFighter(team);
   if (kind === 'cas') return buildCas(team);
-  if (kind === 'bomber') return buildBomber(team);
   return buildBike(team);
 }
 
@@ -219,29 +218,6 @@ function buildCas(team: Team | null): VehicleModel {
   const gun = fixedMount(root, 0, -0.35, -8.0);
   const rear = mgMount(root, 0, 1.2, -1.6);
   return { root, wheels: [], mounts: [gun, rear] };
-}
-
-function buildBomber(team: Team | null): VehicleModel {
-  const root = new THREE.Group();
-  const p = greyPaint(team);
-  // Big swept-wing bomber: long body, glazed nose, four engines, tail gun turret.
-  cyl(root, p, 1.2, 17, 0, 0, 0.2, 'z', 16);
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(1.2, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(-Math.PI / 2).scale(1, 1, 1.8), canopy());
-  nose.position.set(0, 0, -8.3);
-  root.add(nose);
-  for (const s of [-1, 1]) {
-    wing(root, p, s, 11, 5.5, 2.0, 4.2, 1.0, -0.3, -2.8);
-    for (let i = 0; i < 2; i++) cyl(root, dark(), 0.55, 2.8, s * (3.6 + i * 3.4), -0.75, -1.4 + i * 1.6, 'z', 12);
-    wing(root, p, s, 3.6, 2.4, 1.0, 1.6, 0.8, 0.4, 7.0);
-  }
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.2, 3.0), p);
-  fin.position.set(0, 2.0, 7.6);
-  fin.rotation.x = -0.3;
-  root.add(fin);
-  box(root, dark(), 1.2, 0.2, 5.0, 0, -1.15, -0.5);
-  const bay = fixedMount(root, 0, -1.4, -0.5);
-  const tail = mgMount(root, 0, 0.4, 9.0);
-  return { root, wheels: [], mounts: [bay, tail] };
 }
 
 /** Six-wheel truck with a cab and a rocket launcher box on a turntable at the back. */

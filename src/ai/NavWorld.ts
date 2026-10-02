@@ -300,6 +300,13 @@ export class NavWorld {
     return out.set(res.point.x, res.point.y, res.point.z);
   }
 
+  /** Nearest point on the mesh to `p` searching wide (a point high above or off the map); null if none. */
+  closestFar(p: V3, out = new THREE.Vector3()): THREE.Vector3 | null {
+    const res = this.query.findClosestPoint(p, { halfExtents: { x: 400, y: 1000, z: 400 } });
+    if (!res.success || !res.polyRef) return null;
+    return out.set(res.point.x, res.point.y, res.point.z);
+  }
+
   /**
    * Random walkable point within `radius` of `center` (connected to it).
    * Detour picks a random polygon touching the circle and then a random point

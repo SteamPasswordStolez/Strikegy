@@ -19,6 +19,8 @@ export interface Objective {
   radius: number;
   /** Held by the asking team: guard it. */
   defend?: boolean;
+  /** Held and quiet (not under attack): a guard post for spare squads. */
+  guard?: boolean;
   /** Unit direction (xz) from the zone toward the enemy base: where attacks come from. */
   front?: THREE.Vector3;
 }
@@ -111,13 +113,19 @@ export class ZoneMode {
       pos = sp ? new THREE.Vector3(...sp.pos) : this.baseCenter[team].clone();
       if (nav) pos = nav.randomAround(pos, 3) ?? pos;
     } else if (ZoneRules.underAttack(z)) {
-      // Back from the fight, toward our own base.
+      // Back from the fight, toward our own base. The spot can land inside a
+      // building (no floor there at the zone's height): then another angle, and
+      // failing that the zone itself, never the spot as it is.
       const center = new THREE.Vector3(z.x, z.y, z.z);
-      const away = this.baseCenter[team].clone().sub(center).setY(0).normalize();
-      away.applyAxisAngle(new THREE.Vector3(0, 1, 0), (rand() - 0.5) * 70 * DEG);
+      const toBase = this.baseCenter[team].clone().sub(center).setY(0).normalize();
       const d = z.radius + CONTESTED_SPAWN_OFFSET[0] + rand() * (CONTESTED_SPAWN_OFFSET[1] - CONTESTED_SPAWN_OFFSET[0]);
-      pos = center.addScaledVector(away, d);
-      if (nav) pos = nav.randomAround(pos, 4) ?? nav.closest(pos) ?? pos;
+      let found: THREE.Vector3 | null = null;
+      for (let i = 0; i < 6 && !found; i++) {
+        const away = toBase.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), (rand() - 0.5) * (70 + i * 20) * DEG);
+        const at = center.clone().addScaledVector(away, d);
+        found = nav ? (nav.randomAround(at, 4) ?? nav.closest(at)) : at;
+      }
+      pos = found ?? (nav && nav.randomAround(center, z.radius * 0.6)) ?? center;
     } else {
       const center = new THREE.Vector3(z.x, z.y, z.z);
       pos = (nav && nav.randomAround(center, z.radius * 0.6)) || center;
@@ -164,6 +172,7 @@ export class ZoneMode {
       pos: new THREE.Vector3(z.x, z.y, z.z),
       radius: z.radius,
       defend: z.owner === team,
+      guard: z.owner === team && !ZoneRules.underAttack(z),
       front: new THREE.Vector3(enemy.x - z.x, 0, enemy.z - z.z).normalize(),
     }));
   }

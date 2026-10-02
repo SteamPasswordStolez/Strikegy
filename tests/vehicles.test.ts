@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PADS, VEHICLES, engineForce, padReady, vehicleDamage, vehicleLimit, type PadState } from '@/vehicles/vehicleData';
+import { JET_KINDS, PADS, VEHICLES, VEHICLE_GUNS, engineForce, padReady, vehicleDamage, vehicleLimit, type PadState } from '@/vehicles/vehicleData';
 
 const pad = (o: Partial<PadState> = {}): PadState => ({ kind: 'jeep', vehicle: null, leftAt: -Infinity, spawnedAt: -Infinity, ...o });
 
@@ -26,9 +26,12 @@ describe('vehicle pads', () => {
     expect(padReady(pad({ vehicle: 50001 }), 100, 0, 4)).toBe(false);
   });
 
-  it('scales the limits with the bots: APCs per 4, tanks and jets per 8, rounded up', () => {
-    expect(vehicleLimit('apc', 24)).toBe(6);
-    expect(vehicleLimit('apc', 10)).toBe(3);
+  it('scales the limits with the bots: APCs per 8, tanks and jets per 16, rounded up', () => {
+    expect(vehicleLimit('apc', 24)).toBe(3);
+    expect(vehicleLimit('apc', 10)).toBe(2);
+    expect(vehicleLimit('tank', 24)).toBe(2);
+    expect(vehicleLimit('fighter', 16)).toBe(1);
+    expect(vehicleLimit('cas', 150)).toBe(10);
   });
 });
 
@@ -49,6 +52,18 @@ describe('vehicle handling and armour', () => {
     const apcHits = Math.ceil(VEHICLES.apc.health / vehicleDamage('apc', 250, 'at'));
     expect(apcHits).toBeGreaterThanOrEqual(2);
     expect(apcHits).toBeLessThanOrEqual(4);
+  });
+
+  it('brings jets down fast with aircraft cannon, slowly with rifles', () => {
+    expect(JET_KINDS).toEqual(['fighter', 'cas']);
+    const cannon = VEHICLE_GUNS.jetcannon.vsVehicle;
+    const fighterHits = Math.ceil(VEHICLES.fighter.health / vehicleDamage('fighter', cannon, 'heavy'));
+    expect(fighterHits).toBeLessThanOrEqual(10);
+    expect(Math.ceil(VEHICLES.cas.health / vehicleDamage('cas', cannon, 'heavy'))).toBeLessThanOrEqual(14);
+    // A missile is enough for either.
+    for (const k of JET_KINDS) expect(vehicleDamage(k, VEHICLE_GUNS.aam.vsVehicle, 'at')).toBeGreaterThanOrEqual(VEHICLES[k].health);
+    // A rifle round (30) does far less than a cannon round.
+    expect(vehicleDamage('fighter', 30, 'bullet')).toBeLessThan(vehicleDamage('fighter', cannon, 'heavy') / 2);
   });
 
   it('has a seat per rider: jeep 2, APC 4, bike 1', () => {

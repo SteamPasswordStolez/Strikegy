@@ -58,11 +58,16 @@ export function formSquads(team: Team, members: readonly SquadMember[], size = S
   return out;
 }
 
-export type MateSpawnBlock = 'dead' | 'down' | 'combat' | null;
+export type MateSpawnBlock = 'dead' | 'down' | 'combat' | 'vehicle' | null;
 
-/** Why a squadmate cannot be spawned on right now (null = allowed). */
-export function mateSpawnBlock(m: SquadMember, now: number): MateSpawnBlock {
+/**
+ * Why a squadmate cannot be spawned on right now (null = allowed). Someone
+ * in a vehicle can't be spawned beside (a pilot is in the sky); a free seat
+ * is its own deploy option.
+ */
+export function mateSpawnBlock(m: SquadMember, now: number, riding = false): MateSpawnBlock {
   if (!m.alive) return m.downed ? 'down' : 'dead';
+  if (riding) return 'vehicle';
   if (m.inCombat(now)) return 'combat';
   return null;
 }

@@ -4,8 +4,16 @@ import { LAYOUT_BUTTONS, SIZE_MAX, SIZE_MIN, loadLayout, saveLayout, type Layout
 
 const LOOK_RAD_PER_PX = 0.006;
 const STICK_RADIUS = 56;
-/** Stick pushed this far forward sprints. */
-const SPRINT_PUSH = 0.92;
+/**
+ * Sprinting: the thumb pushed this far past the stick's middle (in stick
+ * radii, so out beyond the rim) and mostly forward. The stick itself stays
+ * where the thumb first landed (it used to follow the thumb past the rim,
+ * which moved it out from under the thumb before a sprint even started).
+ */
+const SPRINT_REACH = 1.3;
+const SPRINT_FORWARD = 0.75;
+/** Thumb wobble around the middle that doesn't count as moving (share of the radius). */
+const DEAD_ZONE = 0.12;
 
 type ButtonAction =
   | 'fire'
@@ -26,7 +34,9 @@ type ButtonAction =
   | 'build'
   | 'gadget'
   | 'breath'
-  | 'support';
+  | 'support'
+  | 'gas'
+  | 'brake';
 
 /** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
 const ICONS: Partial<Record<ButtonAction, string>> = {
@@ -47,15 +57,18 @@ const ICONS: Partial<Record<ButtonAction, string>> = {
   gadget: '<path d="M3 15l12-6M15 9l3-1.5 2.5 1.5-2.5 2L15 11zM6 13.5l2 4"/>',
   support: '<path d="M12 3v18M12 3l7 4-7 4"/><path d="M7 21h10"/>',
   breath: '<path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"/>',
+  gas: '<path d="M6 15l6-6 6 6"/><path d="M6 20l6-6 6 6"/>',
+  brake: '<path d="M6 4l6 6 6-6"/><path d="M6 9l6 6 6-6"/>',
 };
 
 const svg = (paths: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
 
 /**
- * Touch controls for phones in landscape: the left side is a floating move
- * stick (push it all the way forward to sprint), the right side drags the
- * view, plus action buttons. Both fire buttons also steer the view while held,
+ * Touch controls for phones in landscape: the left side is a move stick that
+ * stays where the thumb lands (push on past its rim, forward, to sprint; in a
+ * driver's seat it steers and pedals work the throttle), the right side drags
+ * the view, plus action buttons. Both fire buttons also steer the view while held,
  * so you can shoot and aim with one thumb. Layout lives in CSS (sized by
  * screen height, clear of the notch).
  */
@@ -64,6 +77,14 @@ export class TouchControls implements InputSource {
   private stickId: number | null = null;
   private stickOrigin = { x: 0, y: 0 };
   private stickVec = { x: 0, y: 0 };
+  /** Thumb pushed out past the rim, forward: sprint. */
+  private stickSprint = false;
+  /** In a vehicle: 'drive' / 'fly' (driver's / pilot's seat: pedals, the stick steers), 'seat' (any other seat), or null. */
+  private ride: 'drive' | 'fly' | 'seat' | null = null;
+  /** Touches holding the pedals (gas / brake-reverse; throttle up / down in a plane) and, aboard, the aim button. */
+  private gasHeld = 0;
+  private brakeHeld = 0;
+  private adsHeld = 0;
   private lookTouches = new Map<number, { x: number; y: number }>();
   private lookDx = 0;
   private lookDy = 0;
@@ -126,6 +147,9 @@ export class TouchControls implements InputSource {
       ['breath', 'touch.breath'],
       // Squad call-ins (squad leaders in bot matches), beside the minimap.
       ['support', 'touch.support'],
+      // Pedals, shown in the driver's / pilot's seat (the stick then steers).
+      ['gas', 'touch.gas'],
+      ['brake', 'touch.brake'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
       // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
@@ -190,6 +214,19 @@ export class TouchControls implements InputSource {
       btn.classList.toggle('held', down);
       return;
     }
+    if (action === 'gas' || action === 'brake') {
+      const n = (down ? 1 : -1) * touches.length;
+      if (action === 'gas') this.gasHeld = Math.max(0, this.gasHeld + n);
+      else this.brakeHeld = Math.max(0, this.brakeHeld + n);
+      btn.classList.toggle('held', down);
+      return;
+    }
+    if (action === 'ads' && this.ride) {
+      // Aboard, the aim button is the second weapon's trigger (missiles, rocket pods): held, not a toggle.
+      this.adsHeld = Math.max(0, this.adsHeld + (down ? 1 : -1) * touches.length);
+      btn.classList.toggle('held', down);
+      return;
+    }
     if (action === 'interact' || action === 'giveup') {
       // Held actions (revive, give up): count the touches on the button.
       const n = down ? 1 : -1;
@@ -208,6 +245,7 @@ export class TouchControls implements InputSource {
     } else if (action === 'crouch') {
       // In a vehicle the same button switches first / third person.
       this.pulses.add('crouch');
+      if (this.ride) return;
       this.crouchToggled = !this.crouchToggled;
       btn.classList.toggle('on', this.crouchToggled);
     } else if (action === 'score') {
@@ -228,6 +266,7 @@ export class TouchControls implements InputSource {
         this.stickId = tch.identifier;
         this.stickOrigin = { x: tch.clientX, y: tch.clientY };
         this.stickVec = { x: 0, y: 0 };
+        this.stickSprint = false;
         this.stickEl.style.display = 'block';
         this.restEl.style.display = 'none';
         this.stickEl.style.left = `${tch.clientX - STICK_RADIUS}px`;
@@ -248,22 +287,18 @@ export class TouchControls implements InputSource {
     }
     for (const tch of Array.from(e.changedTouches)) {
       if (tch.identifier === this.stickId) {
-        let dx = tch.clientX - this.stickOrigin.x;
-        let dy = tch.clientY - this.stickOrigin.y;
+        // The stick stays put; the knob stops at the rim while the thumb can go on past it.
+        const dx = tch.clientX - this.stickOrigin.x;
+        const dy = tch.clientY - this.stickOrigin.y;
         const len = Math.hypot(dx, dy);
-        if (len > STICK_RADIUS) {
-          // Past the rim the stick follows the thumb, so a long drag doesn't strand it.
-          const over = len - STICK_RADIUS;
-          this.stickOrigin.x += (dx / len) * over;
-          this.stickOrigin.y += (dy / len) * over;
-          this.stickEl.style.left = `${this.stickOrigin.x - STICK_RADIUS}px`;
-          this.stickEl.style.top = `${this.stickOrigin.y - STICK_RADIUS}px`;
-          dx = (dx / len) * STICK_RADIUS;
-          dy = (dy / len) * STICK_RADIUS;
-        }
-        this.stickVec = { x: dx / STICK_RADIUS, y: -dy / STICK_RADIUS };
-        this.knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
-        this.stickEl.classList.toggle('sprint', this.stickVec.y > SPRINT_PUSH);
+        const reach = Math.min(len, STICK_RADIUS);
+        const kx = len > 0 ? (dx / len) * reach : 0;
+        const ky = len > 0 ? (dy / len) * reach : 0;
+        const live = len > STICK_RADIUS * DEAD_ZONE;
+        this.stickVec = live ? { x: kx / STICK_RADIUS, y: -ky / STICK_RADIUS } : { x: 0, y: 0 };
+        this.stickSprint = !this.ride && len > STICK_RADIUS * SPRINT_REACH && -dy / len > SPRINT_FORWARD;
+        this.knobEl.style.transform = `translate(${kx}px, ${ky}px)`;
+        this.stickEl.classList.toggle('sprint', this.stickSprint);
         continue;
       }
       const prev = this.lookTouches.get(tch.identifier);
@@ -285,6 +320,7 @@ export class TouchControls implements InputSource {
       if (tch.identifier === this.stickId) {
         this.stickId = null;
         this.stickVec = { x: 0, y: 0 };
+        this.stickSprint = false;
         this.stickEl.style.display = 'none';
         this.stickEl.classList.remove('sprint');
         this.restEl.style.display = '';
@@ -296,11 +332,19 @@ export class TouchControls implements InputSource {
 
   apply(s: InputState): void {
     const { x, y } = this.stickVec;
-    if (x || y) {
+    if (this.ride === 'drive' || this.ride === 'fly') {
+      // Driving: the stick steers; the pedals work the throttle (the stick's
+      // forward / back only counts while neither pedal is held).
+      const pedals = (this.gasHeld > 0 ? 1 : 0) - (this.brakeHeld > 0 ? 1 : 0);
+      if (x) s.moveX = x;
+      if (pedals || this.gasHeld || this.brakeHeld) s.moveY = pedals;
+      else if (y) s.moveY = y;
+    } else if (x || y) {
       s.moveX = x;
       s.moveY = y;
-      s.sprint ||= y > SPRINT_PUSH;
+      s.sprint ||= this.stickSprint;
     }
+    if (this.ride) s.ads ||= this.adsHeld > 0;
     const scale = LOOK_RAD_PER_PX * this.getSensitivity();
     s.lookYaw += -this.lookDx * scale;
     s.lookPitch += -this.lookDy * scale;
@@ -308,7 +352,7 @@ export class TouchControls implements InputSource {
     this.lookDy = 0;
     s.fire ||= this.firing.size > 0;
     s.firePressed ||= this.pulses.has('fire');
-    s.ads ||= this.adsToggled;
+    if (!this.ride) s.ads ||= this.adsToggled;
     s.crouch ||= this.crouchToggled;
     s.scoreboard ||= this.scoreOpen;
     s.jump ||= this.pulses.has('jump');
@@ -354,7 +398,10 @@ export class TouchControls implements InputSource {
     scoped?: boolean;
     /** Call-ins: null hides the button, true lights it (menu open / aiming one). */
     support?: boolean | null;
+    /** In a vehicle: the driver's seat, a plane's pilot seat, any other seat; null on foot. */
+    ride?: 'drive' | 'fly' | 'seat' | null;
   }): void {
+    this.setRide(c.ride ?? null);
     const sup = this.buttons.get('support')!;
     sup.classList.toggle('show', c.support !== null && c.support !== undefined);
     sup.classList.toggle('on', !!c.support);
@@ -391,6 +438,35 @@ export class TouchControls implements InputSource {
     if (!c.interact) this.interactHeld = 0;
     this.root.classList.toggle('downed', c.downed);
     if (!c.downed) this.giveUpHeld = 0;
+  }
+
+  /**
+   * Aboard a vehicle the on-foot buttons give way: pedals for the driver /
+   * pilot (labels for a car or a plane), crouch switches the view, swap
+   * changes seats, aim fires the second weapon while held.
+   */
+  private setRide(ride: 'drive' | 'fly' | 'seat' | null): void {
+    if (ride === this.ride) return;
+    this.ride = ride;
+    this.gasHeld = this.brakeHeld = this.adsHeld = 0;
+    this.stickSprint = false;
+    this.stickEl.classList.remove('sprint');
+    this.root.classList.toggle('riding', !!ride);
+    this.root.classList.toggle('driving', ride === 'drive' || ride === 'fly');
+    const label = (b: ButtonAction, key: MessageKey): void => {
+      const l = this.buttons.get(b)?.querySelector('.tb-label');
+      if (l) l.textContent = t(key);
+    };
+    label('gas', ride === 'fly' ? 'touch.throttleUp' : 'touch.gas');
+    label('brake', ride === 'fly' ? 'touch.throttleDown' : 'touch.brake');
+    label('crouch', ride ? 'touch.view' : 'touch.crouch');
+    label('switch', ride ? 'touch.seat' : 'touch.switch');
+    label('ads', ride ? 'touch.alt' : 'touch.ads');
+    for (const b of ['gas', 'brake', 'ads', 'crouch'] as const) this.buttons.get(b)!.classList.remove('held');
+    // Toggles from on foot don't carry over (and back on foot they start off).
+    this.adsToggled = this.crouchToggled = false;
+    this.buttons.get('ads')!.classList.remove('on');
+    this.buttons.get('crouch')!.classList.remove('on');
   }
 
   /** Lights the reload button up when the magazine runs low. */

@@ -31,7 +31,7 @@ import { fallDamage } from '@/player/health';
 import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import { NavWorld } from '@/ai/NavWorld';
-import { BotManager, type BotOptions } from '@/ai/BotManager';
+import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
 import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
@@ -257,6 +257,8 @@ export class Game {
   private rideCamDist = 6;
   /** Vehicle view: first person by default, C switches to third person. */
   private rideThird = false;
+  /** When fullscreen was last asked for (phones; see `enterFullscreen`). */
+  private fullscreenAskedAt = -Infinity;
   /** Scenery outside the map (its clutter is culled by distance each frame). */
   private backdrop: THREE.Group | null = null;
   /** Under a parachute after bailing out of a plane (the canopy model), or null. */
@@ -308,6 +310,15 @@ export class Game {
       );
       this.touch.setVisible(false);
       this.sources.push(this.touch);
+      // Dropped out of fullscreen mid-match: the next lift of a finger asks again
+      // (touchend counts as a tap for that; capture, since buttons stop it there).
+      this.touch.root.addEventListener(
+        'touchend',
+        () => {
+          if (this.deployed && this.running && !this.matchOver && performance.now() - this.fullscreenAskedAt > 4000) this.enterFullscreen();
+        },
+        { capture: true, passive: true },
+      );
       const hint = document.createElement('div');
       hint.className = 'rotate-hint';
       hint.textContent = t('rotate.hint');
@@ -634,7 +645,7 @@ export class Game {
     bus.on('grenade:detonate', (e) => this.detonate(e.type, e.point, e.owner));
     bus.on('player:footstep', (e) => {
       this.audio.footstep(e.surface, e.sprinting);
-      this.bots?.alert(e.point, e.sprinting ? 18 : 13, this.playerCombatant);
+      this.bots?.alert(e.point, e.sprinting ? HEAR_STEP_SPRINT : HEAR_STEP, this.playerCombatant, 'step');
     });
     bus.on('player:landed', (e) => {
       this.audio.land(e.impactSpeed, e.surface);
@@ -671,15 +682,13 @@ export class Game {
       this.started = true;
       this.loop.reset();
       this.overlay.hide();
+      this.enterFullscreen();
       this.openDeploy();
       return;
     }
     if (this.touch) {
       this.touch.setVisible(true);
-      document.documentElement
-        .requestFullscreen?.()
-        .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
-        .catch(() => {});
+      this.enterFullscreen();
     } else {
       this.kbm.requestLock();
     }
@@ -687,6 +696,25 @@ export class Game {
     this.started = true;
     this.loop.reset();
     this.overlay.hide();
+  }
+
+  /**
+   * Phones: fullscreen, locked to landscape. Only works from a tap (user
+   * activation), so it is asked on the start / deploy taps and again on a
+   * touch when the browser has dropped out of it (back gesture, app switch).
+   * iPhone Safari has no requestFullscreen for pages: then it does nothing.
+   */
+  private enterFullscreen(): void {
+    if (!this.touch || document.fullscreenElement) return;
+    this.fullscreenAskedAt = performance.now();
+    try {
+      document.documentElement
+        .requestFullscreen?.()
+        .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
+        .catch(() => {});
+    } catch {
+      // Some browsers throw instead of rejecting outside a tap.
+    }
   }
 
   private pause(): void {
@@ -1080,6 +1108,12 @@ export class Game {
     return v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.bots?.claimedSeat(v.id, i));
   }
 
+  /** How many seats `freeSeatFor` could hand out in `v`. */
+  private freeSeatCount(v: Vehicle, team: Team, id: number): number {
+    if (this.freeSeatFor(v, team, id) < 0) return 0;
+    return v.seats.filter((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.bots?.claimedSeat(v.id, i)).length;
+  }
+
   /** Missile lock: the nearest enemy aircraft within 25° of the nose and in range. */
   private lockTarget(v: Vehicle, team: Team): Vehicle | null {
     const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
@@ -1214,14 +1248,29 @@ export class Game {
       return;
     }
     if (input.viewToggle) this.rideThird = !this.rideThird;
+    const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID);
     const want = input.weaponSlot;
-    if (want >= 0 && want < v.seats.length && !v.seats[want] && (want > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID)) this.enterSeat(v, want);
-    const seat = v.spec.seats[r.seat]!;
+    if (want >= 0 && want < v.seats.length && free(want)) this.enterSeat(v, want);
+    else if (input.weaponCycle !== 0) {
+      // The wheel (touch: the seat button): the next free seat that way round.
+      const n = v.seats.length;
+      const dir = Math.sign(input.weaponCycle);
+      for (let k = 1; k < n; k++) {
+        const i = (((r.seat + dir * k) % n) + n) % n;
+        if (free(i)) {
+          this.enterSeat(v, i);
+          break;
+        }
+      }
+    }
+    // A seat change above replaced `this.ride`; the rest of the step is in the new seat.
+    const at = this.ride!.seat;
+    const seat = v.spec.seats[at]!;
     const p = this.player;
     if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
-    if (seat.gun) this.stepVehicleGun(v, r.seat, input.fire, dt);
-    if (v.altMounts[r.seat] && v.pullTrigger(r.seat, input.ads, this.simTime, dt, true)) this.fireMount(v, r.seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null, true);
-    const eye = v.seatEye(r.seat, this.tmpEye);
+    if (seat.gun) this.stepVehicleGun(v, at, input.fire, dt);
+    if (v.altMounts[at] && v.pullTrigger(at, input.ads, this.simTime, dt, true)) this.fireMount(v, at, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null, true);
+    const eye = v.seatEye(at, this.tmpEye);
     this.player.ride(eye, v.velocity);
   }
 
@@ -1279,7 +1328,7 @@ export class Game {
     const p = this.player;
     v.aimMount(seat, p.yaw, p.pitch);
     if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
-    // Aircraft guns and bombs point along the plane (the pilot's seat).
+    // Aircraft guns point along the plane (the pilot's seat).
     if (v.flight && v.spec.seats[seat]!.role === 'driver') {
       this.fireMount(v, seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null);
       return;
@@ -1307,12 +1356,6 @@ export class Game {
     // No aim point: straight ahead along the plane's flight path.
     const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
     const aim = aimAt ?? muzzle.clone().addScaledVector(nose, gun.range);
-    if (gun.drop) {
-      // Bombs fall with the plane's speed.
-      this.gadgets.fireShell(muzzle.clone(), v.velocity.clone(), gun.shell!.gravity, { ...shooter, squad: null }, m.id);
-      this.audio.gadget('place', byPlayer ? null : muzzle);
-      return;
-    }
     if (gun.homing) {
       const lock = this.lockTarget(v, shooter.team);
       const vel = nose.clone().multiplyScalar(gun.shell!.speed).add(v.velocity);
@@ -1353,7 +1396,7 @@ export class Game {
       const isVehicle = !!this.vehicles?.get(target.owner.id);
       const dmg = isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5);
       const source: DamageSource = { pos: muzzle.clone(), name: shooter.name, team: shooter.team, weapon: name, id: shooter.id };
-      const killed = target.owner.id === PLAYER_ID ? this.damagePlayer(dmg, muzzle, 'bullet', source) : target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'bullet');
+      const killed = target.owner.id === PLAYER_ID ? this.damagePlayer(dmg, muzzle, 'bullet', source) : target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'heavy');
       this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer });
       if (killed) this.reportKill(shooter, target.owner.id, target.owner.id === PLAYER_ID ? this.playerCombatant.name : target.owner.name, target.owner.team ?? null, name);
     } else if (hit && !target) {
@@ -1391,7 +1434,7 @@ export class Game {
         }
       }
     }
-    const kind = gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : gun === 'aam' ? 'missile' : gun === 'bombs' ? 'bomb' : 'shell';
+    const kind = gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : gun === 'aam' ? 'missile' : 'shell';
     this.blast(kind, point, owner, name);
   }
 
@@ -2381,8 +2424,9 @@ export class Game {
       build: onField && this.buildMode ? 'on' : nearSpot ? 'near' : null,
       gadget: onField && this.gadget ? { label: `${t(`gadgetShort.${this.gadget}`)} ${this.gadgetCount}`, out: this.gadgetOut, empty: this.gadgetCount === 0 } : null,
       scoped: onField && !!w.def.scope && w.adsBlend > 0.5,
-      support: supportState ? this.supportMenu.open || !!this.supportAim : null,
-
+      // Call-ins are picked on foot only (see simStep), so the button goes while aboard.
+      support: supportState && !this.ride ? this.supportMenu.open || !!this.supportAim : null,
+      ride: this.ride ? (this.ride.v.spec.seats[this.ride.seat]!.role === 'driver' ? (this.ride.v.flight ? 'fly' : 'drive') : 'seat') : null,
     });
     this.hud.update(
       {
@@ -2663,8 +2707,11 @@ export class Game {
     this.loadoutPanel?.close();
     this.respawn(choice.key);
     this.deployScreen!.hide();
-    if (this.touch) this.touch.setVisible(true);
-    else this.kbm.requestLock();
+    if (this.touch) {
+      // Called from the deploy button's click, so the tap still counts for fullscreen.
+      this.enterFullscreen();
+      this.touch.setVisible(true);
+    } else this.kbm.requestLock();
   }
 
   private baseCenter(team: Team): THREE.Vector3 {
@@ -2675,12 +2722,16 @@ export class Game {
   /** Spawn position for a deploy key ('base' | 'zone:<id>' | 'mate:<id>'); invalid keys fall back to the base. */
   private spawnFor(team: Team, key: string, selfId: number): { pos: THREE.Vector3; yaw: number } {
     const [kind, id] = key.split(':');
-    // A bot deploying into a vehicle seat: seated right after the respawn (see `seatPending`).
+    // A bot deploying into a vehicle seat: seated right after the respawn (see
+    // `seatPending`), and meanwhile at its base, so if the seat has gone by
+    // then (taken, wrecked) it is on the ground there, not where a plane was.
     if (kind === 'veh' && selfId !== PLAYER_ID) {
       const v = this.vehicles?.get(Number(id));
-      if (v && this.freeSeatFor(v, team, selfId) >= 0) {
+      let pending = 0;
+      for (const vid of this.pendingSeats.values()) if (vid === v?.id) pending++;
+      if (v && this.freeSeatFor(v, team, selfId) >= 0 && this.freeSeatCount(v, team, selfId) > pending) {
         this.pendingSeats.set(selfId, v.id);
-        return { pos: v.pos.clone(), yaw: v.yaw };
+        return this.spawnFor(team, 'base', selfId);
       }
     }
     if (kind === 'beacon') {
@@ -2694,7 +2745,7 @@ export class Game {
     if (kind === 'mate') {
       const sq = this.squads.find((s) => s.team === team && s.has(selfId));
       const mate = sq?.members.find((m) => String(m.id) === id);
-      if (mate && !mateSpawnBlock(mate, this.bots!.time)) return this.besideMate(mate);
+      if (mate && !mateSpawnBlock(mate, this.bots!.time, this.riding(mate.id))) return this.besideMate(mate);
     }
     const zm = this.zoneMode;
     if (zm) return zm.spawnPoint(team, kind === 'zone' ? id! : 'base', this.nav);
@@ -2704,13 +2755,20 @@ export class Game {
     return { pos: this.nav?.randomAround(pos, 3) ?? pos, yaw: (sp?.yaw ?? 0) * DEG };
   }
 
+  /** Combatant `id` (the player or a bot) sits in a vehicle. */
+  private riding(id: number): boolean {
+    if (id === PLAYER_ID) return !!this.ride;
+    return !!this.bots?.bots.find((b) => b.id === id)?.riding;
+  }
+
   /** A step behind a squadmate, facing where they face. */
   private besideMate(m: SquadMember): { pos: THREE.Vector3; yaw: number } {
     const side = Math.random() < 0.5 ? -1 : 1;
     const back = new THREE.Vector3(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(2.2);
     const lateral = new THREE.Vector3(Math.cos(m.yaw), 0, -Math.sin(m.yaw)).multiplyScalar(side * 1.2);
     const want = m.feet.clone().add(back).add(lateral);
-    const pos = (this.nav && (this.nav.randomAround(want, 1.2) ?? this.nav.closest(want))) || want;
+    // Behind them may be a wall: then right where they stand.
+    const pos = (this.nav && (this.nav.randomAround(want, 1.2) ?? this.nav.closest(want) ?? this.nav.closest(m.feet))) || m.feet.clone();
     return { pos, yaw: m.yaw };
   }
 
@@ -2721,7 +2779,7 @@ export class Game {
   private botSpawnKey(bot: Bot, objective: THREE.Vector3 | null): string {
     const now = this.bots!.time;
     const sq = this.squads.find((s) => s.team === bot.team && s.has(bot.id));
-    const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, now)) : [];
+    const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, now, this.riding(m.id))) : [];
     if (sq === this.playerSquad && mates.some((m) => m.id === PLAYER_ID)) return `mate:${PLAYER_ID}`;
     const target = objective ?? this.baseCenter(otherTeam(bot.team));
     const cands: { key: string; x: number; z: number }[] = [];
@@ -2815,14 +2873,14 @@ export class Game {
     }
     const now = this.bots?.time ?? 0;
     for (const m of this.playerSquad?.mates(PLAYER_ID) ?? []) {
-      const block = mateSpawnBlock(m, now);
+      const block = mateSpawnBlock(m, now, this.riding(m.id));
       out.push({
         key: `mate:${m.id}`,
         kind: 'mate',
         label: m.name,
         x: m.feet.x,
         z: m.feet.z,
-        blocked: block === 'dead' ? t('deploy.dead') : block === 'down' ? t('deploy.down') : block === 'combat' ? t('deploy.combat') : null,
+        blocked: block === 'dead' ? t('deploy.dead') : block === 'down' ? t('deploy.down') : block === 'combat' ? t('deploy.combat') : block === 'vehicle' ? t('deploy.riding') : null,
         warn: null,
       });
     }
