@@ -44,6 +44,8 @@ export interface InputState {
   gadget: boolean;
   /** Held: hold your breath while scoped (X; touch: breath button). */
   holdBreath: boolean;
+  /** Pulse: open / close the squad call-in menu (B; touch: call-in button). */
+  support: boolean;
 }
 
 export function createInputState(): InputState {
@@ -72,6 +74,7 @@ export function createInputState(): InputState {
     buildMode: false,
     gadget: false,
     holdBreath: false,
+    support: false,
   };
 }
 
@@ -89,6 +92,7 @@ export function consumePulses(s: InputState): void {
   s.inspect = false;
   s.buildMode = false;
   s.gadget = false;
+  s.support = false;
 }
 
 export function resetFrameInput(s: InputState): void {

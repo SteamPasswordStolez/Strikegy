@@ -729,6 +729,16 @@ export class AudioSystem {
     }
   }
 
+  /** A shell about a second out: a falling whistle at the spot (heard from afar). */
+  incoming(pos: THREE.Vector3): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(pos, 0.35, 2, 2);
+    if (!out) return;
+    this.tone(out, t, 2300, 1.0, 0.09, 'sine', 700);
+    this.noiseBurst(out, t + 0.3, 0.7, 0.05, { type: 'bandpass', freq: 1800, q: 2, endFreq: 600 });
+  }
+
   /** Holding the breath behind a scope: a short intake, a slow exhale, or a gasp after too long. */
   breath(kind: 'in' | 'out' | 'gasp'): void {
     if (!this.ready) return;

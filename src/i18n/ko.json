@@ -183,5 +183,19 @@
   "gadgetInfo.support": "E로 주변 아군의 탄약을 채움",
   "gadgetInfo.recon": "",
   "gadgetInfo.beacon": "분대가 이 자리에서 5번 배치 · 쏘면 부서짐",
-  "gadgetInfo.mine": "적이 밟으면 0.3초 뒤 폭발 · 웅크려 걸으면 안 터짐"
+  "gadgetInfo.mine": "적이 밟으면 0.3초 뒤 폭발 · 웅크려 걸으면 안 터짐",
+  "touch.support": "지원",
+  "support.title": "전장 지원",
+  "support.rp": "분대 RP",
+  "support.short": "RP 부족",
+  "support.smoke": "연막 포격",
+  "support.recon": "정찰기",
+  "support.supply": "보급 투하",
+  "support.mortar": "박격포",
+  "support.artillery": "포병 사격",
+  "support.called": "{name} 요청함",
+  "support.aim": "좌클릭: 조준한 곳에 요청 · B: 취소",
+  "support.aimTouch": "사격 버튼: 조준한 곳에 요청 · 지원 버튼: 취소",
+  "support.noTarget": "너무 멀거나 조준한 곳이 없음",
+  "support.hud": "분대 RP"
 }

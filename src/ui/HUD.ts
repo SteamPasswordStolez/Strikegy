@@ -24,6 +24,8 @@ export interface HudFrame {
   breath: { air: number; holding: boolean; locked: boolean; hint: string } | null;
   /** 0..1 blackout from holding the breath too long. */
   dark: number;
+  /** Squad RP line for squad leaders (bot matches), or null. */
+  rp: string | null;
   grenadeLabel: string;
   grenadeCount: number;
   /** Class gadget: key hint ('4 · ' on PC), name, count left, in hand. Null: none (support, range). */
@@ -100,6 +102,7 @@ export class HUD {
   private weapon: HTMLDivElement;
   private grenade: HTMLDivElement;
   private gadgetEl: HTMLDivElement;
+  private rpEl: HTMLDivElement;
   private reloadBar: HTMLDivElement;
   private reloadFill: HTMLDivElement;
   private health: HTMLDivElement;
@@ -166,6 +169,7 @@ export class HUD {
     this.reloadFill = el('div', 'hud-reload-fill', this.reloadBar);
     this.grenade = el('div', 'hud-grenade', bottomRight);
     this.gadgetEl = el('div', 'hud-grenade hud-gadget', bottomRight);
+    this.rpEl = el('div', 'hud-grenade hud-rp', bottomRight);
 
     const bottomLeft = el('div', 'hud-bl', this.root);
     this.health = el('div', 'hud-health', bottomLeft);
@@ -302,6 +306,11 @@ export class HUD {
       this.gadgetEl.style.display = gd ? '' : 'none';
       this.gadgetEl.classList.toggle('empty', !!gd && gd.count === 0);
       this.gadgetEl.classList.toggle('on', !!gd?.out);
+    });
+
+    this.set('rp', f.rp ?? '', () => {
+      this.rpEl.textContent = f.rp ?? '';
+      this.rpEl.style.display = f.rp ? '' : 'none';
     });
 
     const hp = Math.ceil(f.health);

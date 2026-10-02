@@ -21,6 +21,16 @@ import type { WaterMap } from '@/world/water';
 import { REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Fortifications } from '@/modes/fortify';
 import type { GadgetWorld } from '@/modes/gadgetWorld';
 import { RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
+import { SUPPORT, type SupportId } from '@/data/support';
+import type { Danger } from '@/modes/supportWorld';
+
+/** Call-ins as the bots see them (squad RP, team cooldowns, calling one in, shells on their way). */
+export interface BotSupport {
+  rp(bot: Bot): number;
+  cooldown(team: Team, kind: SupportId): number;
+  call(kind: SupportId, point: THREE.Vector3, bot: Bot): boolean;
+  dangers(): Danger[];
+}
 
 const DEG = Math.PI / 180;
 const RESPAWN_SEC = 5;
@@ -238,6 +248,11 @@ export class BotManager implements BotServices {
   /** Class gadgets in the world, and each bot's squad key (for beacons); set by the game. */
   gadgets: GadgetWorld | null = null;
   squadKey: ((bot: Bot) => string | null) | null = null;
+  /** Squad call-ins (bot squad leaders use them), or null. */
+  support: BotSupport | null = null;
+  private supportAt: Record<Team, number> = { blue: 5, red: 5 };
+  /** Squad key -> sim time its leader may call again. */
+  private readonly squadCallAt = new Map<string, number>();
   /** Job key -> the bot doing it. */
   private readonly workers = new Map<string, Bot>();
   /** Set by the game: where bot grenades go. */
@@ -350,6 +365,8 @@ export class BotManager implements BotServices {
     for (const team of ['blue', 'red'] as const) this.plan(team);
     this.index();
     this.dodgeGrenades();
+    this.dodgeShells();
+    for (const team of ['blue', 'red'] as const) this.considerSupport(team);
     for (const e of this.entries) {
       const b = e.bot;
       b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
@@ -877,6 +894,16 @@ export class BotManager implements BotServices {
     this.spottedAt.set(e.id, this.time);
   }
 
+  /** Recon plane sweep: `team` learns where every enemy within `radius` of `center` is. */
+  reveal(team: Team, center: THREE.Vector3, radius: number): void {
+    const r2 = radius * radius;
+    for (const e of this.enemies[team]) {
+      if (!e.alive || e.feet.distanceToSquared(center) > r2) continue;
+      this.spottedAt.set(e.id, this.time);
+      this.noteSighting(team, e.feet);
+    }
+  }
+
   /**
    * Enemies of `team` its side currently knows about: noticed by one of its
    * bots in the last couple of seconds, or firing within earshot of `near`.
@@ -1110,6 +1137,72 @@ export class BotManager implements BotServices {
         const d = b.feet.distanceTo(g.pos);
         if (d > 7) continue;
         if (d < 3 || this.lineOfSight(b.eyePos(new THREE.Vector3()), g.pos.clone().setY(g.pos.y + 0.2))) b.dodge(g.pos, this);
+      }
+    }
+  }
+
+  /** Bots in the way of a mortar / artillery shell about to land run from it (they hear the whistle). */
+  private dodgeShells(): void {
+    if (!this.support) return;
+    for (const d of this.support.dangers()) {
+      if (d.in > 1.6) continue;
+      for (const e of this.entries) {
+        const b = e.bot;
+        if (b.alive && b.feet.distanceTo(d.point) < d.radius) b.dodge(d.point, this);
+      }
+    }
+  }
+
+  /**
+   * Bot squad leaders (the first living member of a squad without the
+   * player) spend their squad's RP every so often: mortar or artillery on a
+   * group of enemies their squad is fighting (never with friends close to
+   * it), smoke to cover pushing toward them, a recon plane over a zone they
+   * attack, a supply drop when the squad is out of grenades and medkits.
+   */
+  private considerSupport(team: Team): void {
+    const sup = this.support;
+    if (!sup || this.time < this.supportAt[team]) return;
+    this.supportAt[team] = this.time + 3 + Math.random() * 2;
+    const squads = new Map<number, BotEntry[]>();
+    for (const e of this.entries) {
+      if (e.bot.team !== team || e.squad < 0 || e.leader) continue;
+      const list = squads.get(e.squad) ?? [];
+      list.push(e);
+      squads.set(e.squad, list);
+    }
+    for (const [idx, members] of squads) {
+      const key = squadKey(team, idx);
+      if (this.time < (this.squadCallAt.get(key) ?? 0)) continue;
+      const lead = members.filter((m) => m.bot.alive).sort((a, b) => a.slot - b.slot)[0];
+      if (!lead) continue;
+      const bot = lead.bot;
+      const rp = sup.rp(bot);
+      const can = (k: SupportId): boolean => rp >= SUPPORT[k].cost && sup.cooldown(team, k) <= 0;
+      const call = (k: SupportId, p: THREE.Vector3): boolean => {
+        if (!sup.call(k, p, bot)) return false;
+        this.squadCallAt.set(key, this.time + 20);
+        return true;
+      };
+      const c = this.contacts.get(key);
+      if (c && this.time - c.last < 6) {
+        const d = c.pos.distanceTo(bot.feet);
+        const enemies = this.enemiesNear(team, c.pos, 18);
+        if (d > 30 && d < 300) {
+          if (enemies >= 3 && can('artillery') && this.alliesNear(team, c.pos, 26) === 0 && call('artillery', c.pos)) return;
+          if (enemies >= 2 && can('mortar') && this.alliesNear(team, c.pos, 16) === 0 && call('mortar', c.pos)) return;
+        }
+        if (d > 20 && can('smoke') && Math.random() < 0.25) {
+          const p = bot.feet.clone().lerp(c.pos, 0.45);
+          if (call('smoke', this.nav.closest(p) ?? p)) return;
+        }
+      }
+      const obj = lead.objective;
+      if (obj && !obj.defend && can('recon') && obj.pos.distanceTo(bot.feet) < 160 && Math.random() < 0.35 && call('recon', obj.pos)) return;
+      const needy = members.filter((m) => m.bot.alive && (m.bot.needsGrenades || (m.bot.cls !== 'medic' && m.bot.medkits < MEDKIT.carried))).length;
+      if (needy >= 2 && can('supply') && !(c && this.time - c.last < 4)) {
+        const p = bot.feet.clone().add(new THREE.Vector3(Math.sin(bot.yaw) * -2, 0, Math.cos(bot.yaw) * -2));
+        if (call('supply', this.nav.closest(p) ?? bot.feet)) return;
       }
     }
   }

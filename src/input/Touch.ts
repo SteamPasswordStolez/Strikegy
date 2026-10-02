@@ -25,7 +25,8 @@ type ButtonAction =
   | 'giveup'
   | 'build'
   | 'gadget'
-  | 'breath';
+  | 'breath'
+  | 'support';
 
 /** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
 const ICONS: Partial<Record<ButtonAction, string>> = {
@@ -44,6 +45,7 @@ const ICONS: Partial<Record<ButtonAction, string>> = {
   giveup: '<path d="M6 6l12 12M18 6L6 18"/>',
   build: '<path d="M14.5 4.5l5 5-3 3-5-5zM13 9l-8.5 8.5 2 2L15 11"/>',
   gadget: '<path d="M3 15l12-6M15 9l3-1.5 2.5 1.5-2.5 2L15 11zM6 13.5l2 4"/>',
+  support: '<path d="M12 3v18M12 3l7 4-7 4"/><path d="M7 21h10"/>',
   breath: '<path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"/>',
 };
 
@@ -122,6 +124,8 @@ export class TouchControls implements InputSource {
       ['gadget', 'touch.gadget'],
       // Hold your breath: shown while looking down a scope.
       ['breath', 'touch.breath'],
+      // Squad call-ins (squad leaders in bot matches), beside the minimap.
+      ['support', 'touch.support'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
       // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
@@ -318,6 +322,7 @@ export class TouchControls implements InputSource {
     s.inspect ||= this.pulses.has('inspect');
     s.buildMode ||= this.pulses.has('build');
     s.gadget ||= this.pulses.has('gadget');
+    s.support ||= this.pulses.has('support');
     this.pulses.clear();
   }
 
@@ -344,7 +349,12 @@ export class TouchControls implements InputSource {
     gadget?: { label: string; out: boolean; empty: boolean } | null;
     /** Looking down a scope: show the hold-breath button. */
     scoped?: boolean;
+    /** Call-ins: null hides the button, true lights it (menu open / aiming one). */
+    support?: boolean | null;
   }): void {
+    const sup = this.buttons.get('support')!;
+    sup.classList.toggle('show', c.support !== null && c.support !== undefined);
+    sup.classList.toggle('on', !!c.support);
     const br = this.buttons.get('breath')!;
     br.classList.toggle('show', !!c.scoped);
     if (!c.scoped) this.breathHeld = 0;

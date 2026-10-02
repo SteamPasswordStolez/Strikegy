@@ -37,6 +37,9 @@ import { TargetDummy } from '@/combat/TargetDummy';
 import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
+import { SupportWorld } from '@/modes/supportWorld';
+import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
+import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { ViewModel } from '@/weapons/ViewModel';
@@ -234,6 +237,12 @@ export class Game {
   private buildMode = false;
   /** Rockets, rifle grenades, beacons and mines in the world. */
   private gadgets!: GadgetWorld;
+  /** Squad call-ins (B): barrages, recon planes, supply drops; the menu and the call being aimed. */
+  private support!: SupportWorld;
+  private supportMenu!: SupportMenu;
+  private supportAim: SupportId | null = null;
+  private supportPoint: THREE.Vector3 | null = null;
+  private supportRing: THREE.Mesh | null = null;
   /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
   private gadget: GadgetId | null = null;
   private gadgetCount = 0;
@@ -372,6 +381,19 @@ export class Game {
       destroyed: (_kind, point) => this.audio.grenadeBounce(point, 12),
     });
     r.scene.add(this.gadgets.group);
+    this.support = new SupportWorld(this.physics, {
+      shell: (kind, point, owner) => this.blast(kind, point, owner, t(`support.${kind}`)),
+      smoke: (point) => {
+        this.effects.smoke(point, GRENADES.smoke.duration ?? 20, GRENADES.smoke.radius * 1.3);
+        this.audio.smokePop(point, GRENADES.smoke.duration ?? 20);
+      },
+      incoming: (point) => this.audio.incoming(point),
+      reveal: (team, center, radius) => this.bots?.reveal(team, center, radius),
+      resupply: (team, pos, reach) => this.crateResupply(team, pos, reach),
+      landed: (pos) => this.audio.gadget('place', pos),
+    });
+    r.scene.add(this.support.group);
+    this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
     this.spawn =map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
     this.player.water = water;
@@ -421,7 +443,25 @@ export class Game {
       this.setupZoneMode(map, terrain);
       this.setupFortifications(map, terrain, water, built);
     }
-    if (this.bots) this.setupSquads(map, terrain);
+    if (this.bots) {
+      this.setupSquads(map, terrain);
+      const support = this.support;
+      this.bots.support = {
+        rp: (bot) => {
+          const sq = this.squads.find((s) => s.has(bot.id));
+          return sq ? this.squadRpOf(sq) : 0;
+        },
+        cooldown: (team, kind) => support.cooldown(team, kind),
+        call: (kind, point, bot) => {
+          const sq = this.squads.find((s) => s.has(bot.id));
+          if (!sq) return false;
+          const owner: GadgetOwner = { id: bot.id, name: bot.name, team: bot.team, squad: `${sq.team}:${sq.name}` };
+          // The player's side sees the marker on its own team's calls.
+          return support.request(kind, point, owner, this.squadRpOf(sq), bot.team === PLAYER_TEAM);
+        },
+        dangers: () => support.dangers(),
+      };
+    }
     this.wireEvents();
 
     // Lights are filtered by camera layers like meshes; they must light every layer
@@ -812,6 +852,8 @@ export class Game {
       }
       // Barbed wire slows everyone wading through it.
       p.speedBonus = moveBonus(this.cls, w.def) * (this.fort?.slowAt(p.feet) ?? 1);
+      // Call-in menu first: while it is open, 1..5 pick a call-in (not weapons or the gadget).
+      this.stepSupport(input);
       // 4 (a match has three weapon slots) or the touch button: the class gadget.
       const gadgetKey = input.gadget || (!this.options.sandbox && input.weaponSlot === 3);
       if (gadgetKey) {
@@ -847,7 +889,7 @@ export class Game {
         p.sprinting = false;
       }
       // Hands busy (throwing, patching up, reviving): no shooting.
-      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut;
+      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut || this.supportAim !== null;
       this.weapons.step(dt, input, p, busy);
       p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
       this.stepSway(dt, input.holdBreath);
@@ -865,6 +907,7 @@ export class Game {
     this.zoneMode?.step(dt, this.combatants());
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
+    this.support.step(dt);
     this.physics.step();
     consumePulses(input);
   }
@@ -883,6 +926,129 @@ export class Game {
     const moving = Math.min(1.5, p.horizontalSpeed() / 4);
     const stance = (p.crouching && p.grounded ? 0.6 : 1) * (1 + moving * 0.7) * (p.grounded ? 1 : 2);
     scopeSway(this.breath, this.simTime, amp, w.adsBlend, stance, w.sway);
+  }
+
+  /** RP of a squad: its members' points (the scoreboard score) less what was spent on call-ins. */
+  private squadRpOf(sq: Squad): number {
+    let earned = 0;
+    for (const m of sq.members) earned += this.scores.get(m.id)?.score ?? 0;
+    return squadRp(earned, this.support.spent(`${sq.team}:${sq.name}`));
+  }
+
+  /** Menu state for the HUD, or null when the player can't call anything in. */
+  private supportState(): SupportMenuState | null {
+    const sq = this.playerSquad;
+    if (!sq || !this.player.alive || !this.deployed) return null;
+    const cooldown = {} as Record<SupportId, number>;
+    for (const id of SUPPORT_ORDER) cooldown[id] = this.support.cooldown(PLAYER_TEAM, id);
+    return { rp: this.squadRpOf(sq), cooldown, aiming: this.supportAim };
+  }
+
+  /** Picked a call-in from the menu (key or tap): aim it next, if it can be called. */
+  private pickSupport(id: SupportId): void {
+    const s = this.supportState();
+    if (!s || !SupportMenu.ready(s, id)) return;
+    this.supportMenu.open = false;
+    this.supportAim = id;
+    this.gadgetOut = false;
+    this.buildMode = false;
+  }
+
+  /**
+   * B opens the call-in menu (squad leaders, bot matches); 1..5 pick one, then
+   * the trigger calls it onto the point aimed at (up to CALL_RANGE). B again,
+   * or reaching for a weapon, cancels.
+   */
+  private stepSupport(input: InputState): void {
+    const state = this.supportState();
+    if (!state) {
+      this.supportMenu.open = false;
+      this.supportAim = null;
+      this.supportPoint = null;
+      return;
+    }
+    if (input.support) {
+      if (this.supportAim) this.supportAim = null;
+      else this.supportMenu.open = !this.supportMenu.open;
+    }
+    if (this.supportMenu.open && input.weaponSlot >= 0 && input.weaponSlot < SUPPORT_ORDER.length) {
+      this.pickSupport(SUPPORT_ORDER[input.weaponSlot]!);
+      input.weaponSlot = -1;
+    }
+    if (!this.supportAim) {
+      this.supportPoint = null;
+      return;
+    }
+    if (input.weaponSlot >= 0 || input.weaponCycle !== 0 || input.throwGrenade || input.melee || input.gadget || input.buildMode) {
+      this.supportAim = null;
+      return;
+    }
+    const { eye, fwd } = this.weapons.aimBasis(this.player);
+    const hit = this.physics.raycast(eye, fwd, CALL_RANGE, Layer.WORLD);
+    this.supportPoint = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : null;
+    if (input.firePressed && this.supportPoint) {
+      const sq = this.playerSquad!;
+      const owner: GadgetOwner = { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM, squad: `${sq.team}:${sq.name}` };
+      if (this.support.request(this.supportAim, this.supportPoint, owner, state.rp, true)) {
+        this.hud.notify(t('support.called').replace('{name}', t(`support.${this.supportAim}`)), 'ally');
+        this.audio.click();
+      }
+      this.supportAim = null;
+      this.supportPoint = null;
+    }
+    input.fire = false;
+    input.firePressed = false;
+  }
+
+  /** Ring on the ground where the call-in being aimed would land. */
+  private renderSupportAim(): void {
+    const p = this.supportPoint;
+    const id = this.supportAim;
+    if (!p || !id) {
+      if (this.supportRing) this.supportRing.visible = false;
+      return;
+    }
+    if (!this.supportRing) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffc860, transparent: true, opacity: 0.7, depthTest: false, side: THREE.DoubleSide, toneMapped: false });
+      this.supportRing = new THREE.Mesh(new THREE.RingGeometry(0.93, 1, 48).rotateX(-Math.PI / 2), mat);
+      this.supportRing.renderOrder = 10;
+      this.renderer.scene.add(this.supportRing);
+    }
+    const r = Math.max(3, SUPPORT[id].spread);
+    this.supportRing.visible = true;
+    this.supportRing.position.set(p.x, p.y + 0.15, p.z);
+    this.supportRing.scale.setScalar(r);
+  }
+
+  /**
+   * A supply crate on the ground hands one of its side a refill (ammo,
+   * grenades, gadget, medkits): the player or a bot within reach who needs it.
+   */
+  private crateResupply(team: Team, pos: THREE.Vector3, reach: number): boolean {
+    const p = this.player;
+    if (team === PLAYER_TEAM && p.alive && this.deployed && p.feet.distanceTo(pos) < reach) {
+      const need =
+        this.weapons.needsAmmo ||
+        this.grenades.count < GRENADE_COUNT[this.grenades.selected] ||
+        (!!this.gadget && this.gadgetCount < GADGETS[this.gadget].count) ||
+        (this.cls !== 'medic' && this.medkits < MEDKIT.carried);
+      if (need) {
+        this.weapons.refillReserve();
+        this.grenades.reset(this.grenades.selected);
+        if (this.gadget) this.gadgetCount = GADGETS[this.gadget].count;
+        if (this.cls !== 'medic') this.medkits = MEDKIT.carried;
+        this.audio.resupply();
+        return true;
+      }
+    }
+    for (const b of this.bots?.bots ?? []) {
+      if (!b.alive || b.team !== team || b.feet.distanceTo(pos) > reach) continue;
+      if (!b.needsGrenades && b.medkits >= MEDKIT.carried) continue;
+      b.restockGrenades();
+      if (b.cls !== 'medic') b.medkits = MEDKIT.carried;
+      return true;
+    }
+    return false;
   }
 
   /** Everyone who can set off a mine: the player (when on the field) and the bots. */
@@ -1463,6 +1629,7 @@ export class Game {
       gadgetLeft: this.gadgetCount,
     });
     this.fort?.render(this.renderer.camera.position, this.buildMode, this.buildTarget);
+    this.renderSupportAim();
 
   }
 
@@ -1585,9 +1752,14 @@ export class Game {
               text: `${t(`gadgetName.${g}`)} — ${t(this.touch ? 'gadget.fireTouch' : 'gadget.fire')}: ${t(`gadgetUse.${g}`)} · ${t(this.touch ? 'gadget.exitTouch' : 'gadget.exit')}`,
               progress: null,
             };
+    } else if (onField && this.supportAim) {
+      const ok = !!this.supportPoint;
+      prompt = { text: `${t(`support.${this.supportAim}`)} — ${ok ? t(this.touch ? 'support.aimTouch' : 'support.aim') : t('support.noTarget')}`, progress: null };
     } else if (!prompt && nearSpot && !this.touch && this.fort!.anyNear(this.player.feet, 6)) {
       prompt = { text: t('build.enter'), progress: null };
     }
+    const supportState = this.supportState();
+    this.supportMenu.update(supportState);
     this.touch?.setContext({
       medkit: medkit ? (medkit.ready ? `${t('touch.medkit')} ${kitText}` : kitText) : null,
       interact: touchLabel,
@@ -1595,6 +1767,7 @@ export class Game {
       build: onField && this.buildMode ? 'on' : nearSpot ? 'near' : null,
       gadget: onField && this.gadget ? { label: `${t(`gadgetShort.${this.gadget}`)} ${this.gadgetCount}`, out: this.gadgetOut, empty: this.gadgetCount === 0 } : null,
       scoped: onField && !!w.def.scope && w.adsBlend > 0.5,
+      support: supportState ? this.supportMenu.open || !!this.supportAim : null,
 
     });
     this.hud.update(
@@ -1619,6 +1792,7 @@ export class Game {
             ? { air: this.breath.air / BREATH.air, holding: this.breath.holding, locked: this.breath.locked, hint: t(this.touch ? 'breath.hintTouch' : 'breath.hint') }
             : null,
         dark: this.player.alive ? this.breath.dark : 0,
+        rp: supportState ? `${t('support.hud')} ${supportState.rp}${this.touch ? '' : ' · B'}` : null,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
         grenadeCount: this.grenades.count,
         gadget:

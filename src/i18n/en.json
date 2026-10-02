@@ -183,5 +183,19 @@
   "gadgetInfo.support": "E tops up nearby teammates' ammo",
   "gadgetInfo.recon": "",
   "gadgetInfo.beacon": "Your squad can deploy on it 5 times · breaks when shot",
-  "gadgetInfo.mine": "Goes off 0.3 s after an enemy steps on it · creeping crouched doesn't set it off"
+  "gadgetInfo.mine": "Goes off 0.3 s after an enemy steps on it · creeping crouched doesn't set it off",
+  "touch.support": "Call-in",
+  "support.title": "Call-ins",
+  "support.rp": "Squad RP",
+  "support.short": "Not enough RP",
+  "support.smoke": "Smoke barrage",
+  "support.recon": "Recon plane",
+  "support.supply": "Supply drop",
+  "support.mortar": "Mortar",
+  "support.artillery": "Artillery strike",
+  "support.called": "{name} called in",
+  "support.aim": "Click: call it where you aim · B: cancel",
+  "support.aimTouch": "Fire button: call it where you aim · Call-in button: cancel",
+  "support.noTarget": "Too far or nothing aimed at",
+  "support.hud": "Squad RP"
 }

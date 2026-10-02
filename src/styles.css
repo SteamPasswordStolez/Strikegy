@@ -529,6 +529,19 @@ body {
 .touch-layer.editing .touch-breath {
   display: flex;
 }
+/* Squad call-ins: right of the minimap. */
+.touch-support {
+  left: calc(max(16px, env(safe-area-inset-left)) + 140px);
+  top: calc(max(16px, env(safe-area-inset-top)) + 64px);
+  width: calc(var(--B) * 0.85);
+  height: calc(var(--B) * 0.85);
+  display: none;
+  border-color: rgba(255, 210, 110, 0.75);
+}
+.touch-support.show,
+.touch-layer.editing .touch-support {
+  display: flex;
+}
 .touch-fire {
   right: var(--r);
   bottom: calc(var(--cy) - var(--F) / 2);
@@ -902,6 +915,72 @@ body {
 }
 .hud-gadget {
   margin-top: 2px;
+}
+.hud-rp {
+  margin-top: 2px;
+  color: #e9c46a;
+}
+.is-touch .hud-rp {
+  display: block;
+  font-size: 11px;
+}
+/* Squad call-in menu (B): left of centre, picked with 1..5 or a tap. */
+.support-menu {
+  position: absolute;
+  left: max(24px, env(safe-area-inset-left));
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 250px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(14, 16, 20, 0.78);
+  border: 1px solid rgba(233, 196, 106, 0.4);
+  pointer-events: auto;
+  font: 600 13px/1.2 system-ui, sans-serif;
+  color: #e8ecf0;
+}
+.support-menu.show {
+  display: flex;
+}
+.support-head {
+  margin-bottom: 4px;
+  color: #e9c46a;
+  letter-spacing: 0.04em;
+}
+.support-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.support-row.off {
+  opacity: 0.45;
+}
+.support-row.on {
+  border-color: #e9c46a;
+}
+.support-key {
+  color: #9aa4ad;
+}
+.support-cost {
+  color: #e9c46a;
+}
+.support-state {
+  min-width: 36px;
+  text-align: right;
+  color: #ff9c6b;
+  font-size: 11px;
 }
 .hud-gadget.on {
   color: #ffb070;

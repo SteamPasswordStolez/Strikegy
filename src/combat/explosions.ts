@@ -20,7 +20,7 @@ export const GRENADES: Record<GrenadeType, GrenadeSpec> = {
   smoke: { type: 'smoke', fuse: 1.8, throwSpeed: 15, innerRadius: 1, radius: 5.5, maxDamage: 0, duration: 20 },
 };
 
-/** A blast that hurts: frag grenades, panzerfaust rockets, AP mines. */
+/** A blast that hurts: frag grenades, panzerfaust rockets, AP mines, mortar and artillery shells. */
 export interface BlastSpec {
   innerRadius: number;
   radius: number;
@@ -34,6 +34,9 @@ export const BLASTS = {
   // Direct hits are handled separately (they kill); the blast is tight.
   rocket: { innerRadius: 1.2, radius: 4, maxDamage: 150, fortMult: 2.4 },
   mine: { innerRadius: 1.6, radius: 4.5, maxDamage: 140, fortMult: 0.6 },
+  // Call-ins (data/support.ts): a mortar bomb, a field gun shell.
+  mortar: { innerRadius: 2.2, radius: 8, maxDamage: 160, fortMult: 1.6 },
+  artillery: { innerRadius: 3, radius: 11, maxDamage: 220, fortMult: 2.2 },
 } satisfies Record<string, BlastSpec>;
 
 export type BlastKind = keyof typeof BLASTS;
