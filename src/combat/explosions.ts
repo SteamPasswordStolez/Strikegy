@@ -43,6 +43,8 @@ export const BLASTS = {
   shell: { innerRadius: 1.5, radius: 5, maxDamage: 130, fortMult: 2.6 },
   howitzer: { innerRadius: 3, radius: 10, maxDamage: 200, fortMult: 2.4 },
   atshell: { innerRadius: 1, radius: 3, maxDamage: 90, fortMult: 2 },
+  // One rocket of the rocket tank's salvo.
+  salvo: { innerRadius: 2, radius: 7, maxDamage: 150, fortMult: 1.8 },
 } satisfies Record<string, BlastSpec>;
 
 export type BlastKind = keyof typeof BLASTS;

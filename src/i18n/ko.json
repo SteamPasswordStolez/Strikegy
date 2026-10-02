@@ -222,5 +222,10 @@
   "vehicle.reloading": "장전 중",
   "spawn.tank": "전차로 배치",
   "deploy.tankLimit": "최대 {n}대",
-  "deploy.noRoom": "자리 없음"
+  "deploy.noRoom": "자리 없음",
+  "support.rocketTank": "로켓 전차",
+  "vehicle.rocket": "로켓 전차",
+  "vehicleGun.rockets": "다연장 로켓",
+  "support.rocketArrived": "로켓 전차가 {zone} 거점에 도착 ({who})",
+  "vehicle.reserved": "분대장 전용"
 }

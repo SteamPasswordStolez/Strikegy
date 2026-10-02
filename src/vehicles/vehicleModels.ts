@@ -74,7 +74,7 @@ function wheel(r: number, width: number, side: number): THREE.Group {
 
 function addWheels(root: THREE.Group, kind: VehicleKind): THREE.Object3D[] {
   const spec = VEHICLES[kind];
-  const width = kind === 'bike' ? 0.16 : kind === 'apc' ? 0.42 : kind === 'jeep' ? 0.3 : 0.45;
+  const width = kind === 'bike' ? 0.16 : kind === 'apc' || kind === 'rocket' ? 0.42 : kind === 'jeep' ? 0.3 : 0.45;
   const out: THREE.Object3D[] = [];
   spec.wheels.forEach((w, i) => {
     // The bike's paired ray wheels share one visible wheel each.
@@ -96,7 +96,40 @@ export function buildVehicleModel(kind: VehicleKind, team: Team | null): Vehicle
   if (kind === 'tank') return buildTank(team);
   if (kind === 'spg') return buildSpg(team);
   if (kind === 'td') return buildTd(team);
+  if (kind === 'rocket') return buildRocketTruck(team);
   return buildBike(team);
+}
+
+/** Six-wheel truck with a cab and a rocket launcher box on a turntable at the back. */
+function buildRocketTruck(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const p = paint(team);
+  box(root, dark(), 2.0, 0.35, 7.0, 0, -0.35, 0);
+  // Cab.
+  box(root, p, 2.4, 1.4, 1.8, 0, 0.45, -2.55);
+  box(root, glass(), 2.0, 0.55, 0.05, 0, 0.75, -3.46, 0.15);
+  for (const s of [-1, 1]) {
+    box(root, lamp(), 0.18, 0.14, 0.05, s * 0.85, 0.05, -3.47);
+    box(root, p, 0.5, 0.1, 1.2, s * 1.15, 0.2, -2.5);
+    box(root, p, 0.5, 0.1, 2.6, s * 1.15, 0.2, 1.9);
+  }
+  // Bed and launcher.
+  box(root, p, 2.4, 0.3, 4.6, 0, 0.0, 1.3);
+  const turret = new THREE.Group();
+  turret.position.set(0, 0.4, 1.4);
+  root.add(turret);
+  cyl(turret, dark(), 0.8, 0.3, 0, 0, 0, 'y', 16);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.4, 0.6);
+  turret.add(gun);
+  // A pod of tubes (3 x 4), pointing forward when level.
+  box(gun, p, 1.9, 1.0, 3.6, 0, 0.5, -1.4);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) cyl(gun, dark(), 0.13, 0.08, -0.6 + c * 0.4, 0.2 + r * 0.3, -3.22, 'z', 8);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0.5, -3.4);
+  gun.add(muzzle);
+  const roof = mgMount(root, 0.5, 1.35, -2.0);
+  return { root, wheels: addWheels(root, 'rocket'), mounts: [{ turret, gun, muzzle }, roof] };
 }
 
 /** Tracks down both sides: a belt box over the road wheels, sprocket and idler. */

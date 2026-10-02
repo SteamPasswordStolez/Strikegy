@@ -7,7 +7,7 @@
  * wide cooldown so call-ins don't rain down back to back.
  */
 
-export type SupportId = 'smoke' | 'recon' | 'supply' | 'mortar' | 'artillery';
+export type SupportId = 'smoke' | 'recon' | 'supply' | 'mortar' | 'artillery' | 'rocketTank';
 
 export interface SupportSpec {
   id: SupportId;
@@ -31,10 +31,12 @@ export const SUPPORT: Record<SupportId, SupportSpec> = {
   supply: { id: 'supply', cost: 500, cooldown: 45, delay: 0, shells: 0, spread: 0, interval: 0 },
   mortar: { id: 'mortar', cost: 800, cooldown: 60, delay: 3.5, shells: 3, spread: 7, interval: 1.3 },
   artillery: { id: 'artillery', cost: 1500, cooldown: 120, delay: 5, shells: 8, spread: 22, interval: 0.75 },
+  // A rocket launcher truck the squad leader drives (appears at the zone nearest the leader).
+  rocketTank: { id: 'rocketTank', cost: 2500, cooldown: 180, delay: 0, shells: 0, spread: 0, interval: 0 },
 };
 
-/** Menu order (keys 1..5). */
-export const SUPPORT_ORDER: readonly SupportId[] = ['smoke', 'recon', 'supply', 'mortar', 'artillery'];
+/** Menu order (keys 1..6). */
+export const SUPPORT_ORDER: readonly SupportId[] = ['smoke', 'recon', 'supply', 'mortar', 'artillery', 'rocketTank'];
 
 /** Recon plane: seconds it marks enemies for, and how often it sweeps. */
 export const RECON = { duration: 20, sweep: 1 };

@@ -1172,13 +1172,19 @@ export class BotManager implements BotServices {
         if (v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
         const d = v.pos.distanceTo(b.feet);
         if (d > 30 || (best && d >= best.d)) continue;
-        const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i));
+        const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i) && (i > 0 || v.driverOnly === null || v.driverOnly === b.id));
         // Without a driver aboard or coming, only take the driver's seat.
         if (seat < 0 || (seat > 0 && !v.seats[0] && !this.claimed(v.id, 0))) continue;
         best = { v, seat, d };
       }
       if (best) e.board = { vehicle: best.v.id, seat: best.seat, until: this.time + 25 };
     }
+  }
+
+  /** A rocket tank was called in for `leaderId`: that bot heads for its driver's seat. */
+  rocketTankFor(leaderId: number, v: Vehicle): void {
+    const e = this.entries.find((x) => x.bot.id === leaderId);
+    if (e && e.bot.alive && !e.bot.riding) e.board = { vehicle: v.id, seat: 0, until: this.time + 90 };
   }
 
   private claimed(vehicle: number, seat: number): boolean {
@@ -1418,6 +1424,8 @@ export class BotManager implements BotServices {
           if (call('smoke', this.nav.closest(p) ?? p)) return;
         }
       }
+      // A rocket tank now and then, when the squad isn't in a fight.
+      if (can('rocketTank') && !(c && this.time - c.last < 8) && Math.random() < 0.12 && call('rocketTank', bot.feet)) return;
       const obj = lead.objective;
       if (obj && !obj.defend && can('recon') && obj.pos.distanceTo(bot.feet) < 160 && Math.random() < 0.35 && call('recon', obj.pos)) return;
       const needy = members.filter((m) => m.bot.alive && (m.bot.needsGrenades || (m.bot.cls !== 'medic' && m.bot.medkits < MEDKIT.carried))).length;

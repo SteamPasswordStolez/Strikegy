@@ -17,6 +17,8 @@ export interface SupportHooks {
   resupply(team: Team, pos: THREE.Vector3, reach: number): boolean;
   /** Crate touched down. */
   landed?(pos: THREE.Vector3): void;
+  /** Rocket tank: bring one out for the caller; false when there's nowhere to put it. */
+  vehicle?(owner: GadgetOwner, near: THREE.Vector3): boolean;
 }
 
 interface Shell {
@@ -97,6 +99,7 @@ export class SupportWorld {
   request(kind: SupportId, point: THREE.Vector3, owner: GadgetOwner, rp: number, marker: boolean): boolean {
     const spec = SUPPORT[kind];
     if (!owner.squad || rp < spec.cost || this.cooldown(owner.team, kind) > 0) return false;
+    if (kind === 'rocketTank' && !this.hooks.vehicle?.(owner, point)) return false;
     this.readyAt.set(`${owner.team}:${kind}`, this.time + spec.cooldown);
     this.spentBy.set(owner.squad, this.spent(owner.squad) + spec.cost);
     if (kind === 'smoke' || kind === 'mortar' || kind === 'artillery') {
@@ -108,14 +111,14 @@ export class SupportWorld {
       const plane = this.buildPlane();
       this.group.add(plane);
       this.sweeps.push({ team: owner.team, center: point.clone(), until: this.time + spec.delay + RECON.duration, next: this.time + spec.delay, plane, angle: this.rand() * Math.PI * 2 });
-    } else {
+    } else if (kind === 'supply') {
       const mesh = this.buildCrate();
       const land = this.ground(point.x, point.z, point.y);
       mesh.position.set(land.x, land.y + SUPPLY.height, land.z);
       this.group.add(mesh);
       this.crates.push({ team: owner.team, pos: land, landed: false, uses: SUPPLY.uses, until: Infinity, mesh, chute: mesh.getObjectByName('chute')! });
     }
-    if (marker && kind !== 'supply') this.addMarker(point, kind === 'recon' ? 0x7fd0ff : kind === 'smoke' ? 0xd8d8d8 : 0xff5a3c, spec.delay + spec.shells * spec.interval);
+    if (marker && kind !== 'supply' && kind !== 'rocketTank') this.addMarker(point, kind === 'recon' ? 0x7fd0ff : kind === 'smoke' ? 0xd8d8d8 : 0xff5a3c, spec.delay + spec.shells * spec.interval);
     return true;
   }
 

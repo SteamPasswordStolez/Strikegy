@@ -264,6 +264,39 @@ export class VehicleWorld {
 const WRECK_MAT = new THREE.MeshStandardMaterial({ color: 0x1b1a19, roughness: 0.95 });
 
 /**
+ * A level, clear patch of ground (half sizes `hx`, `hz`, turned by `yaw`) at x, z
+ * near height `y0`: its ground point, or null (sloped, roofed over, blocked).
+ */
+export function flatSpot(physics: PhysicsWorld, x: number, z: number, y0: number, hx: number, hz: number, yaw: number): THREE.Vector3 | null {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const [u, w] of [[0, 0], [-hx, -hz], [hx, -hz], [-hx, hz], [hx, hz], [0, -hz], [0, hz], [-hx, 0], [hx, 0]] as const) {
+    const px = x + u * c + w * s;
+    const pz = z - u * s + w * c;
+    const hit = physics.raycast({ x: px, y: y0 + 30, z: pz }, DOWN, 60, Layer.WORLD);
+    if (!hit || hit.normal.y < 0.94) return null;
+    lo = Math.min(lo, hit.point.y);
+    hi = Math.max(hi, hit.point.y);
+  }
+  // Level, and on the ground near the base / zone (not up on a roof).
+  if (hi - lo > 0.45 || Math.abs(lo - y0) > 4) return null;
+  // Nothing overhead or in the box (a hit from above lands on the roof, not the ground).
+  const mid = physics.raycast({ x, y: lo + 0.6, z }, { x: 0, y: 1, z: 0 }, 4, Layer.WORLD);
+  if (mid) return null;
+  // Low and high, across the box and out ahead of it (kerbs, low walls in the way out).
+  for (const h of [0.35, 0.8]) {
+    for (const [u, w, reach] of [[-hx, 0, 2], [0, -hz, 3]] as const) {
+      const from = { x: x - u * c - w * s, y: lo + h, z: z + u * s - w * c };
+      const dir = new THREE.Vector3(u * c + w * s, 0, -u * s + w * c).normalize();
+      if (physics.raycast(from, dir, Math.hypot(u, w) * reach, Layer.WORLD)) return null;
+    }
+  }
+  return new THREE.Vector3(x, hi, z);
+}
+
+/**
  * Pad and motorbike spots for a map: a clear, flat patch near each side's
  * base spawns (a jeep pad and an APC pad), and a few flat spots around each
  * zone for its motorbike. Found by ray casts at load, no map data needed.
@@ -275,34 +308,7 @@ export function planVehicleSpots(
 ): { pads: PadSpot[]; bikes: BikeSpot[]; tankSpots: TankSpot[] } {
   const pads: PadSpot[] = [];
   const taken: THREE.Vector3[] = [];
-  const flat = (x: number, z: number, y0: number, hx: number, hz: number, yaw: number): THREE.Vector3 | null => {
-    const c = Math.cos(yaw);
-    const s = Math.sin(yaw);
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const [u, w] of [[0, 0], [-hx, -hz], [hx, -hz], [-hx, hz], [hx, hz], [0, -hz], [0, hz], [-hx, 0], [hx, 0]] as const) {
-      const px = x + u * c + w * s;
-      const pz = z - u * s + w * c;
-      const hit = physics.raycast({ x: px, y: y0 + 30, z: pz }, DOWN, 60, Layer.WORLD);
-      if (!hit || hit.normal.y < 0.94) return null;
-      lo = Math.min(lo, hit.point.y);
-      hi = Math.max(hi, hit.point.y);
-    }
-    // Level, and on the ground near the base / zone (not up on a roof).
-    if (hi - lo > 0.45 || Math.abs(lo - y0) > 4) return null;
-    // Nothing overhead or in the box (a hit from above lands on the roof, not the ground).
-    const mid = physics.raycast({ x, y: lo + 0.6, z }, { x: 0, y: 1, z: 0 }, 4, Layer.WORLD);
-    if (mid) return null;
-    // Low and high, across the box and out ahead of it (kerbs, low walls in the way out).
-    for (const h of [0.35, 0.8]) {
-      for (const [u, w, reach] of [[-hx, 0, 2], [0, -hz, 3]] as const) {
-        const from = { x: x - u * c - w * s, y: lo + h, z: z + u * s - w * c };
-        const dir = new THREE.Vector3(u * c + w * s, 0, -u * s + w * c).normalize();
-        if (physics.raycast(from, dir, Math.hypot(u, w) * reach, Layer.WORLD)) return null;
-      }
-    }
-    return new THREE.Vector3(x, hi, z);
-  };
+  const flat = (x: number, z: number, y0: number, hx: number, hz: number, yaw: number) => flatSpot(physics, x, z, y0, hx, hz, yaw);
   const clear = (p: THREE.Vector3, r: number) => taken.every((t) => t.distanceTo(p) > r);
   for (const b of bases) {
     for (const kind of ['jeep', 'apc'] as VehicleKind[]) {

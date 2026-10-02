@@ -222,5 +222,10 @@
   "vehicle.reloading": "Reloading",
   "spawn.tank": "Deploy in a tank",
   "deploy.tankLimit": "Max {n}",
-  "deploy.noRoom": "No room"
+  "deploy.noRoom": "No room",
+  "support.rocketTank": "Rocket tank",
+  "vehicle.rocket": "Rocket tank",
+  "vehicleGun.rockets": "Rocket salvo",
+  "support.rocketArrived": "Rocket tank at zone {zone} ({who})",
+  "vehicle.reserved": "Squad leader only"
 }

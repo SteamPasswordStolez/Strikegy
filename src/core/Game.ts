@@ -38,7 +38,7 @@ import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type Blast
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
-import { VehicleWorld, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
+import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
@@ -406,6 +406,7 @@ export class Game {
       reveal: (team, center, radius) => this.bots?.reveal(team, center, radius),
       resupply: (team, pos, reach) => this.crateResupply(team, pos, reach),
       landed: (pos) => this.audio.gadget('place', pos),
+      vehicle: (owner, near) => this.callRocketTank(owner, near),
     });
     r.scene.add(this.support.group);
     this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
@@ -1019,6 +1020,36 @@ export class Game {
   }
   private botTankAt = 20;
 
+  /**
+   * Rocket tank call-in: a launcher truck at the zone nearest the caller (on
+   * a clear spot around it), only the caller may drive it; their side is
+   * told where it is.
+   */
+  private callRocketTank(owner: GadgetOwner, near: THREE.Vector3): boolean {
+    const vw = this.vehicles;
+    const zm = this.zoneMode;
+    if (!vw || !zm) return false;
+    const zones = zm.zones.map((z) => ({ id: z.id, pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius })).sort((a, b) => a.pos.distanceTo(near) - b.pos.distanceTo(near));
+    for (const z of zones.slice(0, 2)) {
+      for (let i = 0; i < 36; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const r = z.radius + 4 + Math.floor(i / 12) * 6;
+        const yaw = a + Math.PI / 2;
+        const p = flatSpot(this.physics, z.pos.x + Math.cos(a) * r, z.pos.z + Math.sin(a) * r, z.pos.y, 1.9, 4.2, yaw);
+        if (!p || vw.vehicles.some((v) => v.pos.distanceTo(p) < 8)) continue;
+        const v = vw.spawn('rocket', p, yaw, owner.team);
+        v.driverOnly = owner.id;
+        if (owner.team === PLAYER_TEAM) {
+          const who = owner.id === PLAYER_ID ? t('feed.you') : owner.name;
+          this.hud.notify(t('support.rocketArrived').replace('{zone}', z.id).replace('{who}', who), 'ally');
+        }
+        this.bots?.rocketTankFor(owner.id, v);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** People vehicles can run over: the player on foot and the bots. */
   private *vehicleWalkers(): Iterable<Walker> {
     if (this.player.alive && this.deployed && !this.ride) yield this.playerCombatant;
@@ -1029,7 +1060,7 @@ export class Game {
   private tryEnterVehicle(): boolean {
     const v = this.vehicles?.nearest(this.player.feet);
     if (!v) return false;
-    const seat = v.seats.findIndex((s) => !s);
+    const seat = v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID));
     if (seat < 0) return false;
     this.enterSeat(v, seat);
     return true;
@@ -1076,7 +1107,8 @@ export class Game {
       return;
     }
     if (input.viewToggle) this.rideThird = !this.rideThird;
-    if (input.weaponSlot >= 0 && input.weaponSlot < v.seats.length && !v.seats[input.weaponSlot]) this.enterSeat(v, input.weaponSlot);
+    const want = input.weaponSlot;
+    if (want >= 0 && want < v.seats.length && !v.seats[want] && (want > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID)) this.enterSeat(v, want);
     const seat = v.spec.seats[r.seat]!;
     if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld });
     if (seat.gun) this.stepVehicleGun(v, r.seat, input.fire, dt);
@@ -1130,7 +1162,8 @@ export class Game {
         vel.addScaledVector(right, (Math.random() - 0.5) * flat * gun.spread * DEG);
       } else vel = dir.clone().multiplyScalar(sh.speed);
       this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id);
-      this.audio.explosion(muzzle, Math.max(30, listenerDist));
+      if (m.id === 'rockets') this.audio.gadget('rocket', byPlayer ? null : muzzle);
+      else this.audio.explosion(muzzle, Math.max(30, listenerDist));
       if (byPlayer) this.shake = Math.min(0.06, this.shake + 0.035);
       return;
     }
@@ -1179,7 +1212,7 @@ export class Game {
         }
       }
     }
-    this.blast(gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : 'shell', point, owner, name);
+    this.blast(gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : 'shell', point, owner, name);
   }
 
   /** A vehicle blew up: everyone aboard dies outright (no going down). */
@@ -1243,6 +1276,13 @@ export class Game {
     const s = this.supportState();
     if (!s || !SupportMenu.ready(s, id)) return;
     this.supportMenu.open = false;
+    // The rocket tank isn't aimed: it comes to the zone nearest the leader.
+    if (id === 'rocketTank') {
+      const sq = this.playerSquad!;
+      const owner: GadgetOwner = { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM, squad: `${sq.team}:${sq.name}` };
+      if (this.support.request(id, this.player.feet, owner, s.rp, false)) this.audio.click();
+      return;
+    }
     this.supportAim = id;
     this.gadgetOut = false;
     this.buildMode = false;

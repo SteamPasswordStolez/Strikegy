@@ -16,9 +16,9 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets';
 /** Tank kinds (one limit for all of them). */
 export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
 
@@ -226,6 +226,35 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     mult: { bullet: 0, explosive: 0.3, at: 0.9 },
     turnRate: 0.7,
   },
+  // Rocket launcher truck (a call-in): the squad leader drives and fires the salvo.
+  rocket: {
+    kind: 'rocket',
+    seats: [
+      { role: 'driver', eye: [-0.5, 2.15, -2.3], exposed: false, gun: 'rockets', pitch: [0.1, 1.1] },
+      { role: 'gunner', eye: [0.5, 2.7, -1.6], exposed: true, gun: 'mg' },
+    ],
+    half: [1.25, 0.8, 3.6],
+    mass: 9000,
+    wheels: [
+      { pos: [-1.15, -0.45, -2.5], steer: true, drive: true },
+      { pos: [1.15, -0.45, -2.5], steer: true, drive: true },
+      { pos: [-1.15, -0.45, 1.2], steer: false, drive: true },
+      { pos: [1.15, -0.45, 1.2], steer: false, drive: true },
+      { pos: [-1.15, -0.45, 2.6], steer: false, drive: true },
+      { pos: [1.15, -0.45, 2.6], steer: false, drive: true },
+    ],
+    wheelRadius: 0.55,
+    suspension: { rest: 0.35, travel: 0.3, stiffness: 30, damping: 4 },
+    engine: 7500,
+    brake: 300,
+    steer: 0.45,
+    top: 18,
+    reverse: 6,
+    grip: 1.6,
+    friction: 2.4,
+    health: 700,
+    mult: { bullet: 0.08, explosive: 0.6, at: 1.4 },
+  },
   bike: {
     kind: 'bike',
     seats: [{ role: 'driver', eye: [0, 1.6, 0.25], exposed: true }],
@@ -288,6 +317,8 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   howitzer: { rpm: 9, damage: 999, spread: 0.3, range: 900, vsVehicle: 300, blast: 10, burst: 1, cool: 6.5, shell: { speed: 120, gravity: 9.8, lob: true } },
   // Tank destroyer: a fast, hard-hitting gun with little traverse.
   atgun: { rpm: 17, damage: 999, spread: 0.08, range: 800, vsVehicle: 520, blast: 3, burst: 1, cool: 3.5, shell: { speed: 480, gravity: 3 } },
+  // Rocket tank launcher: a salvo of 12 lobbed onto the aim point, then 20 s to reload.
+  rockets: { rpm: 400, damage: 999, spread: 1.6, range: 900, vsVehicle: 200, blast: 7, burst: 12, cool: 20, shell: { speed: 90, gravity: 9.8, lob: true } },
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */

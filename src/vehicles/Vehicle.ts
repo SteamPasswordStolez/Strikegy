@@ -52,6 +52,8 @@ export class Vehicle implements Damageable {
   removeAt = Infinity;
   /** Last time anyone sat in it (abandoned vehicles are cleared away). */
   usedAt = 0;
+  /** Only this combatant may take the driver's seat (a called-in rocket tank: its squad leader), or null. */
+  driverOnly: number | null = null;
   /** Guns by seat (null for seats without one). */
   readonly mounts: (Mount | null)[];
   /** Interpolation: transforms before and after the last sim step. */
