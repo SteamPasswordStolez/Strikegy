@@ -59,3 +59,21 @@ describe('Persia desert map', () => {
     expect(red.pos[2]).toBeGreaterThan(0);
   });
 });
+
+describe('Bilbao city map', () => {
+  const map = load('bilbao');
+
+  it('is valid, three zones, a river with one bridge along the south', () => {
+    expect(validateMap(map)).toEqual([]);
+    expect(map.zones?.map((z) => z.id)).toEqual(['A', 'B', 'C']);
+    const river = map.world.terrain!.rivers![0]!;
+    expect(river.crossings).toHaveLength(1);
+    for (const z of map.zones!) expect(polylineDistance(river.pts, z.pos[0], z.pos[2])).toBeGreaterThan(river.width / 2 + 20);
+  });
+
+  it('is a city: many buildings, none standing in the river', () => {
+    expect(map.buildings!.length).toBeGreaterThan(45);
+    const river = map.world.terrain!.rivers![0]!;
+    for (const b of map.buildings!) expect(polylineDistance(river.pts, b.pos[0], b.pos[1])).toBeGreaterThan(river.width / 2);
+  });
+});

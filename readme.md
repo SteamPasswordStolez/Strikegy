@@ -8,6 +8,7 @@
 npm install
 npm run dev        # http://localhost:5173  (?map=sandbox&bots=4v5&difficulty=normal, ?bots=0 = 사격장)
                    # Zone: ?map=iron_gate&bots=12v12 (&tickets=200, &mode=skirmish = 거점 없이 교전만)
+                   # 맵: iron_gate, ardennes(겨울 숲), lyon(초원 10v10), bilbao(시가지, 정복전용), persia(사막 1v1~2v2)
 npm run maps       # scripts/maps/*.mjs로 생성형 맵 JSON 다시 만들기
 npm test           # Vitest 단위 테스트
 npm run lint
@@ -81,7 +82,7 @@ src/
   audio/     AudioSystem(임시 합성 SFX)
   ui/        HUD, Overlay
   i18n/      ko.json / en.json
-public/maps/ 맵 JSON (iron_gate.json은 scripts/maps/iron-gate.mjs가 생성)
+public/maps/ 맵 JSON (sandbox 외에는 scripts/maps/*.mjs가 생성)
 tests/       단위 테스트
 ```
 

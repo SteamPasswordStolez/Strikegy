@@ -35,11 +35,12 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   },
   overcast: {
     sky: { turbidity: 10, rayleigh: 2.5, mieCoefficient: 0.01, mieDirectionalG: 0.7, cloudCoverage: 0.85, cloudDensity: 0.7 },
-    sun: { elevation: 50, azimuth: 120, color: 0xe4e8ee, intensity: 1.1 },
-    fog: { color: 0x9aa3ab, density: 0.006 },
-    hemi: { sky: 0xc0c8d0, ground: 0x4a463e, intensity: 0.6 },
-    envIntensity: 1.1,
-    exposure: 0.8,
+    // Tuned with Bilbao (2026-10-02): the old values washed everything out.
+    sun: { elevation: 50, azimuth: 120, color: 0xe4e8ee, intensity: 1.5 },
+    fog: { color: 0x9aa3ab, density: 0.004 },
+    hemi: { sky: 0xc0c8d0, ground: 0x4a463e, intensity: 0.45 },
+    envIntensity: 0.7,
+    exposure: 0.5,
   },
   // Low winter sun through thin high cloud; cold, hazy air.
   winter: {
