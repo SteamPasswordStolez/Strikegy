@@ -122,6 +122,8 @@ export interface MapDef {
     groundMaterial?: SurfaceMaterial;
     /** Tree kind for `trees` and the scenery around the map (default conifer). */
     flora?: Flora;
+    /** Vehicles in bot matches: all (default), or light — jeeps and motorbikes only (small maps). */
+    vehicles?: 'all' | 'light';
     /** Background sound levels 0..1 (defaults come from the visual profile). */
     ambience?: { wind?: number; birds?: number; battle?: number };
   };

@@ -76,6 +76,8 @@ export class VehicleWorld {
     /** Bots in the match (vehicle limits scale with it). */
     readonly botCount: number,
     readonly tankSpots: TankSpot[] = [],
+    /** Armour and aircraft allowed (off on small maps: jeeps and motorbikes only). */
+    readonly heavy = true,
   ) {}
 
   /** Tanks (all kinds) one side has out, and how many it may. */
@@ -84,6 +86,7 @@ export class VehicleWorld {
   }
 
   tankLimit(): number {
+    if (!this.heavy) return 0;
     return vehicleLimit('tank', this.botCount);
   }
 
@@ -93,6 +96,7 @@ export class VehicleWorld {
   }
 
   jetLimit(): number {
+    if (!this.heavy) return 0;
     return vehicleLimit('fighter', this.botCount);
   }
 

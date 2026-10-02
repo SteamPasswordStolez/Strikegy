@@ -33,3 +33,29 @@ describe('Lyon meadow map', () => {
     }
   });
 });
+
+describe('Persia desert map', () => {
+  const map = load('persia');
+
+  it('is valid: desert, palms, light vehicles only, three zones', () => {
+    expect(validateMap(map)).toEqual([]);
+    expect(map.world.visualProfile).toBe('desert');
+    expect(map.world.groundMaterial).toBe('sand');
+    expect(map.world.flora).toBe('palm');
+    expect(map.world.vehicles).toBe('light');
+    expect(map.zones?.map((z) => z.id)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('is small (about 180 x 140 m) with blue north-west and red south-east', () => {
+    const xs = map.world.boundary!.map((p) => p[0]);
+    const zs = map.world.boundary!.map((p) => p[1]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(220);
+    expect(Math.max(...zs) - Math.min(...zs)).toBeLessThan(170);
+    const blue = map.spawns.find((s) => s.team === 'blue')!;
+    const red = map.spawns.find((s) => s.team === 'red')!;
+    expect(blue.pos[0]).toBeLessThan(0);
+    expect(blue.pos[2]).toBeLessThan(0);
+    expect(red.pos[0]).toBeGreaterThan(0);
+    expect(red.pos[2]).toBeGreaterThan(0);
+  });
+});

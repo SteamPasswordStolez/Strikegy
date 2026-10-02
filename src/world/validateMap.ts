@@ -43,6 +43,12 @@ export function validateMap(raw: unknown): string[] {
     if (world.groundMaterial !== undefined && !MATERIALS.has(String(world.groundMaterial))) {
       errs.push(`world.groundMaterial: unknown "${String(world.groundMaterial)}"`);
     }
+    if (world.flora !== undefined && !['conifer', 'broadleaf', 'palm'].includes(String(world.flora))) {
+      errs.push(`world.flora: unknown "${String(world.flora)}"`);
+    }
+    if (world.vehicles !== undefined && !['all', 'light'].includes(String(world.vehicles))) {
+      errs.push(`world.vehicles: unknown "${String(world.vehicles)}"`);
+    }
     const rivers = isObj(world.terrain) ? world.terrain.rivers : undefined;
     if (rivers !== undefined) {
       if (!Array.isArray(rivers)) errs.push('world.terrain.rivers: expected array');

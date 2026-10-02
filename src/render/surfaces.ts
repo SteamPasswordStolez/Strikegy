@@ -256,8 +256,8 @@ function grassRecipe(n: TileNoise): SurfaceRecipe {
 
 /** Desert sand: wind ripples, darker gravel patches. */
 function sandRecipe(n: TileNoise): SurfaceRecipe {
-  const light = hexToRgb(0xd9c39a);
-  const warm = hexToRgb(0xc3a273);
+  const light = hexToRgb(0xb99a6a);
+  const warm = hexToRgb(0x9a784e);
   const gravel = hexToRgb(0x8f7b62);
   return {
     tileMeters: 4,
