@@ -112,6 +112,10 @@ export interface BotServices {
   nearOwnedZone(bot: Bot, r: number): boolean;
   /** A built fortification (sandbags, timber wall, barricade) right by `p`. */
   fortifiedAt(p: THREE.Vector3): boolean;
+  /** `c` is riding a vehicle (assault bots rocket it). */
+  inVehicle(c: Combatant): boolean;
+  /** One step in a vehicle seat: carried along, driving / firing the mounted gun; false once out. */
+  rideStep(bot: Bot, dt: number): void;
   /** How much foliage (tree crowns) lies between two points: 0 = none, ~1 = a few thick trees. */
   foliage(from: THREE.Vector3, to: THREE.Vector3): number;
   /** Depth of water over a point (0 when dry). */
@@ -175,6 +179,8 @@ export class Bot implements Damageable, Combatant {
   action: BotAction = 'advance';
   /** Current enemy being fought (visible and noticed). */
   target: Combatant | null = null;
+  /** In a vehicle seat (the manager carries, drives and fires for it), or null. */
+  riding: { vehicle: number; seat: number } | null = null;
   readonly hitboxes: CharacterHitboxes;
 
   private readonly body: RAPIER.RigidBody;
@@ -301,6 +307,7 @@ export class Bot implements Damageable, Combatant {
 
   spawn(pos: THREE.Vector3, yaw: number, def: WeaponDef): void {
     this.def = def;
+    this.riding = null;
     this.weapon = new WeaponState(def);
     this.weapon.reserve = Infinity;
     this.health.reset();
@@ -396,6 +403,50 @@ export class Bot implements Damageable, Combatant {
     this.setCrouch(false);
   }
 
+  /** Into a vehicle seat: no capsule, no walking; hitboxes only where the seat is out in the open. */
+  board(vehicle: number, seat: number, exposed: boolean): void {
+    this.riding = { vehicle, seat };
+    this.capsule.setEnabled(false);
+    this.hitboxes.setEnabled(exposed);
+    this.path.length = 0;
+    this.hasGoal = false;
+    this.job = null;
+    this.atWork = false;
+    this.setCrouch(false);
+  }
+
+  /** Out of the vehicle, standing at `feet`. */
+  alight(feet: THREE.Vector3): void {
+    this.riding = null;
+    this.feet.copy(feet).setY(feet.y + 0.05);
+    this.prevFeet.copy(this.feet);
+    this.navRef = 0;
+    this.velocity.set(0, 0, 0);
+    if (this.alive) {
+      this.capsule.setEnabled(true);
+      this.hitboxes.setEnabled(true);
+      this.body.setTranslation(this.center(), true);
+    }
+  }
+
+  /** Carried in a seat: eye at `eye`, moving with the vehicle. */
+  carry(eye: THREE.Vector3, velocity: THREE.Vector3): void {
+    this.prevFeet.copy(this.feet);
+    this.feet.copy(eye).setY(eye.y - this.eyeHeight);
+    this.velocity.copy(velocity);
+    this.hitboxes.sync(this.feet, this.yaw, this.height);
+  }
+
+  /** Killed outright (a vehicle blowing up under them): no going down first. */
+  killOutright(source?: DamageSource): void {
+    void source;
+    if (this.alive) {
+      this.health.value = 0;
+      this.goDown();
+    }
+    this.finish();
+  }
+
   /** Bled out or gave up: dead for good until the respawn. */
   finish(): void {
     if (!this.downed) return;
@@ -475,6 +526,16 @@ export class Bot implements Damageable, Combatant {
     }
     this.health.step(dt);
     this.suppression = Math.max(0, this.suppression - dt * SUPPRESSION_DECAY);
+    if (this.riding) {
+      // Aboard: still looking out (the gunner fires at what it sees), carried by the vehicle.
+      this.perceiveTimer -= dt;
+      if (this.perceiveTimer <= 0) {
+        this.perceiveTimer += PERCEIVE_EVERY;
+        this.perceive(s, PERCEIVE_EVERY);
+      }
+      s.rideStep(this, dt);
+      return;
+    }
 
     this.perceiveTimer -= dt;
     if (this.perceiveTimer <= 0) {
@@ -821,7 +882,7 @@ export class Bot implements Damageable, Combatant {
         if (!t) return;
         const d = this.feet.distanceTo(t.feet);
         if (d < 10 || d > 70 || s.alliesNear(this.team, t.feet, 5) > 0) return;
-        const dug = s.insideBuilding(t.feet) || s.fortifiedAt(t.feet);
+        const dug = s.insideBuilding(t.feet) || s.fortifiedAt(t.feet) || s.inVehicle(t);
         if (!dug && Math.random() > 0.06 * (0.5 + p.aggression)) return;
         use('rocket', this.tmp2.copy(t.feet).setY(t.feet.y + (dug ? 0.9 : 0.6)), 7 + Math.random() * 5);
         return;

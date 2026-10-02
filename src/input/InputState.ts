@@ -46,6 +46,8 @@ export interface InputState {
   holdBreath: boolean;
   /** Pulse: open / close the squad call-in menu (B; touch: call-in button). */
   support: boolean;
+  /** Pulse: first / third person in a vehicle (C; touch: crouch button while riding). */
+  viewToggle: boolean;
 }
 
 export function createInputState(): InputState {
@@ -75,6 +77,7 @@ export function createInputState(): InputState {
     gadget: false,
     holdBreath: false,
     support: false,
+    viewToggle: false,
   };
 }
 
@@ -93,6 +96,7 @@ export function consumePulses(s: InputState): void {
   s.buildMode = false;
   s.gadget = false;
   s.support = false;
+  s.viewToggle = false;
 }
 
 export function resetFrameInput(s: InputState): void {

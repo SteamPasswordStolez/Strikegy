@@ -211,5 +211,6 @@
   "vehicle.seats": "1–{n} change seat",
   "vehicle.overheat": "Overheated",
   "vehicle.exitTouch": "Get out button",
-  "touch.exitVehicle": "Get out"
+  "touch.exitVehicle": "Get out",
+  "vehicle.view": "C switch view"
 }

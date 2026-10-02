@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
-import { BIKES, ENTER_REACH, PADS, ROADKILL, padReady, type PadState, type VehicleKind } from './vehicleData';
+import { BIKES, ENTER_REACH, PADS, ROADKILL, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
 
 /** A base pad: where it is and what it brings out. */
@@ -60,6 +60,8 @@ export class VehicleWorld {
     private readonly hooks: VehicleHooks,
     readonly pads: PadSpot[],
     readonly bikes: BikeSpot[],
+    /** Bots in the match (vehicle limits scale with it). */
+    readonly botCount: number,
   ) {}
 
   spawn(kind: VehicleKind, pos: THREE.Vector3, yaw: number, home: Team | null): Vehicle {
@@ -178,7 +180,7 @@ export class VehicleWorld {
         if (!v || v.wrecked || v.pos.distanceTo(p.pos) > PADS.leaveDistance) this.leftPad(p);
         continue;
       }
-      if (!padReady(p, this.time, this.count(p.kind, p.team))) continue;
+      if (!padReady(p, this.time, this.count(p.kind, p.team), vehicleLimit(p.kind, this.botCount))) continue;
       // Wait until the pad is clear.
       if (this.vehicles.some((v) => v.pos.distanceTo(p.pos) < 6)) continue;
       const v = this.spawn(p.kind, p.pos, p.yaw, p.team);
@@ -262,10 +264,13 @@ export function planVehicleSpots(
     // Nothing overhead or in the box (a hit from above lands on the roof, not the ground).
     const mid = physics.raycast({ x, y: lo + 0.6, z }, { x: 0, y: 1, z: 0 }, 4, Layer.WORLD);
     if (mid) return null;
-    for (const [u, w] of [[-hx, 0], [0, -hz]] as const) {
-      const from = { x: x - u * c - w * s, y: lo + 0.8, z: z + u * s - w * c };
-      const dir = new THREE.Vector3(u * c + w * s, 0, -u * s + w * c).normalize();
-      if (physics.raycast(from, dir, Math.hypot(u, w) * 2, Layer.WORLD)) return null;
+    // Low and high, across the box and out ahead of it (kerbs, low walls in the way out).
+    for (const h of [0.35, 0.8]) {
+      for (const [u, w, reach] of [[-hx, 0, 2], [0, -hz, 3]] as const) {
+        const from = { x: x - u * c - w * s, y: lo + h, z: z + u * s - w * c };
+        const dir = new THREE.Vector3(u * c + w * s, 0, -u * s + w * c).normalize();
+        if (physics.raycast(from, dir, Math.hypot(u, w) * reach, Layer.WORLD)) return null;
+      }
     }
     return new THREE.Vector3(x, hi, z);
   };

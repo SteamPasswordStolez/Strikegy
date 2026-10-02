@@ -211,5 +211,6 @@
   "vehicle.seats": "1–{n} 자리 바꾸기",
   "vehicle.overheat": "과열",
   "vehicle.exitTouch": "내리기 버튼",
-  "touch.exitVehicle": "내리기"
+  "touch.exitVehicle": "내리기",
+  "vehicle.view": "C 시점 전환"
 }

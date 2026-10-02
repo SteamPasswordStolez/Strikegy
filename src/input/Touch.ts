@@ -206,6 +206,8 @@ export class TouchControls implements InputSource {
       this.adsToggled = !this.adsToggled;
       btn.classList.toggle('on', this.adsToggled);
     } else if (action === 'crouch') {
+      // In a vehicle the same button switches first / third person.
+      this.pulses.add('crouch');
       this.crouchToggled = !this.crouchToggled;
       btn.classList.toggle('on', this.crouchToggled);
     } else if (action === 'score') {
@@ -323,6 +325,7 @@ export class TouchControls implements InputSource {
     s.buildMode ||= this.pulses.has('build');
     s.gadget ||= this.pulses.has('gadget');
     s.support ||= this.pulses.has('support');
+    s.viewToggle ||= this.pulses.has('crouch');
     this.pulses.clear();
   }
 

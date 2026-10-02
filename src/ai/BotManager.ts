@@ -23,6 +23,13 @@ import type { GadgetWorld } from '@/modes/gadgetWorld';
 import { RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
 import { SUPPORT, type SupportId } from '@/data/support';
 import type { Danger } from '@/modes/supportWorld';
+import type { VehicleWorld } from '@/vehicles/VehicleWorld';
+import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
+
+/** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
+const VEHICLE_TRIP = 110;
+const VEHICLE_DROP = 30;
+const STEP = 1 / 60;
 
 /** Call-ins as the bots see them (squad RP, team cooldowns, calling one in, shells on their way). */
 export interface BotSupport {
@@ -182,6 +189,12 @@ interface BotEntry {
   /** Flank run in progress, and the contact (its start time) it was for. */
   flankGoal: THREE.Vector3 | null;
   flankFor: number;
+  /** Walking to a vehicle seat (claimed until `until`). */
+  board: { vehicle: number; seat: number; until: number } | null;
+  /** Driving: the path being followed and stuck handling. */
+  drive: { path: THREE.Vector3[]; at: number; repathAt: number; waitUntil: number; stuckFor: number; backUntil: number; tries: number } | null;
+  /** Riding without a driver since (gunners hold on a little). */
+  alone?: number;
   /** Direction to watch when idle at a guard post or around the leader. */
   watch: THREE.Vector3 | null;
   /** Window this bot holds (marksmen and anchors near their objective). */
@@ -191,11 +204,6 @@ interface BotEntry {
   leader: Combatant | null;
   /** Slot in the leader's formation (1..). */
   slot: number;
-  /**
-   * Where this member settled near the leader; kept until the leader has
-   * moved well away from it, so the squad moves in bounds instead of glued on.
-   */
-  anchor: THREE.Vector3 | null;
   /** Detour on the way to the objective (the squad's approach route), cleared once passed. */
   via: THREE.Vector3 | null;
 }
@@ -253,6 +261,13 @@ export class BotManager implements BotServices {
   private supportAt: Record<Team, number> = { blue: 5, red: 5 };
   /** Squad key -> sim time its leader may call again. */
   private readonly squadCallAt = new Map<string, number>();
+  /** Vehicles, the drive inputs the game hands to them this step, and helpers from the game. */
+  vehicles: VehicleWorld | null = null;
+  driveInputs = new Map<number, DriveInput>();
+  playerRiding: (() => boolean) | null = null;
+  vehicleGunName: ((v: Vehicle) => string) | null = null;
+  vehicleBlast: ((point: THREE.Vector3, owner: { id: number; name: string; team: Team }, weapon: string) => void) | null = null;
+  private vehicleCheckAt = 0;
   /** Job key -> the bot doing it. */
   private readonly workers = new Map<string, Bot>();
   /** Set by the game: where bot grenades go. */
@@ -311,7 +326,8 @@ export class BotManager implements BotServices {
           squad: -1,
           leader: null,
           slot: 0,
-          anchor: null,
+          board: null,
+          drive: null,
           via: null,
           flankGoal: null,
           flankFor: -1,
@@ -367,12 +383,14 @@ export class BotManager implements BotServices {
     this.dodgeGrenades();
     this.dodgeShells();
     for (const team of ['blue', 'red'] as const) this.considerSupport(team);
+    this.considerVehicles();
     for (const e of this.entries) {
       const b = e.bot;
       b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
       b.step(dt, this);
       if (e.simAlive && !b.alive) {
-        // Down: out of the fight (the kill was reported when the shot landed).
+        // Down: out of the fight (the kill was reported when the shot landed), and out of any vehicle.
+        this.alightBot(e);
         this.release(e);
         this.shareKill(b);
         this.releaseRevive(b);
@@ -787,7 +805,9 @@ export class BotManager implements BotServices {
       for (const e of this.entries) {
         if (e.bot.team !== team) continue;
         const k = Math.max(0, squads.indexOf(e.squad));
-        const g = goals[k % n]!;
+        // The player's squad goes for whichever objective the player is closest to.
+        const l = e.leader;
+        const g = l && l.alive ? goals.reduce((a, b) => (b.pos.distanceToSquared(l.feet) < a.pos.distanceToSquared(l.feet) ? b : a)) : goals[k % n]!;
         const changed = !e.objective || e.objective.pos.distanceToSquared(g.pos) > 1;
         e.objective = g;
         if (g.defend) {
@@ -968,7 +988,7 @@ export class BotManager implements BotServices {
   squadGoal(bot: Bot): THREE.Vector3 {
     const t = this.teams[bot.team];
     const e = this.entryOf(bot);
-    const follow = this.followPoint(e);
+    const follow = this.followPoint(e) ?? this.boardGoal(e);
     if (follow) return follow;
     if (this.isFlanking(bot)) return e.flankGoal!.clone();
     if (e.post) return e.post.pos.clone();
@@ -1007,38 +1027,13 @@ export class BotManager implements BotServices {
   }
 
   /**
-   * Spot near the squad leader (the player), or null when not following.
-   * Members keep their spot until the leader is well away from it (farther
-   * while fighting), then pick a new one: each on its own side of where the
-   * leader is heading, 6-10 m out, so they spread over the area instead of
-   * trailing in a line and crossing each other when the leader turns.
+   * The player's squad mates no longer trail the player (owner, 2026-10-02:
+   * "they keep following me"): they fight for the zone the player is nearest
+   * to, on their own (see `plan`). Kept as a hook for squad orders later.
    */
   private followPoint(e: BotEntry): THREE.Vector3 | null {
-    const l = e.leader;
-    if (!l || !l.alive) {
-      e.anchor = null;
-      return null;
-    }
-    const fighting = this.time - (this.contacts.get(squadKey(e.bot.team, e.squad))?.last ?? -99) < 8;
-    const reach = fighting ? 26 : 13;
-    if (e.anchor && e.anchor.distanceTo(l.feet) < reach && e.bot.alive) return e.anchor.clone();
-    const speed = Math.hypot(l.velocity.x, l.velocity.z);
-    // Fixed sides per slot (right, left, far right, far left, behind), relative to
-    // where the leader goes (or faces when stopped); a moving leader is led a bit.
-    const heading = speed > 1 ? Math.atan2(-l.velocity.x, -l.velocity.z) : l.yaw;
-    const sides = [-1.2, 1.2, -2.0, 2.0, Math.PI];
-    const ang = heading + sides[(e.slot - 1) % sides.length]!;
-    const dist = 6 + ((e.slot * 1.7) % 4);
-    const lead = speed > 1 ? 6 : 0;
-    const p = new THREE.Vector3(
-      l.feet.x - Math.sin(ang) * dist - Math.sin(heading) * lead,
-      l.feet.y,
-      l.feet.z - Math.cos(ang) * dist - Math.cos(heading) * lead,
-    );
-    e.anchor = this.nav.closest(p) ?? l.feet.clone();
-    // Look outward from the leader once there.
-    e.watch = new THREE.Vector3(-Math.sin(ang), 0, -Math.cos(ang));
-    return e.anchor.clone();
+    void e;
+    return null;
   }
 
   /** Squad member heading for (or on) a flank of the squad's current fight. */
@@ -1089,10 +1084,10 @@ export class BotManager implements BotServices {
     return e.watch;
   }
 
-  /** Walking with a leader who is walking or crouching: don't sprint ahead. */
+  /** Squad mates don't trail the player any more, so nobody has to keep pace. */
   keepPace(bot: Bot): boolean {
-    const l = this.entryOf(bot).leader;
-    return !!l && l.alive && Math.hypot(l.velocity.x, l.velocity.z) < 3.3 && l.feet.distanceTo(bot.feet) < 14;
+    void bot;
+    return false;
   }
 
   throwGrenade(bot: Bot, type: 'frag' | 'smoke' | 'flash', at: THREE.Vector3): boolean {
@@ -1139,6 +1134,248 @@ export class BotManager implements BotServices {
         if (d < 3 || this.lineOfSight(b.eyePos(new THREE.Vector3()), g.pos.clone().setY(g.pos.y + 0.2))) b.dodge(g.pos, this);
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vehicles
+
+  /**
+   * Bots take vehicles when their objective is far: a free seat in an empty
+   * or friendly vehicle close by (driver's seat first). Drivers wait a few
+   * seconds for squad mates, then drive along the navmesh path to the
+   * objective, back up and try again when stuck, and everyone gets out near
+   * the objective (or when the driver gives up). Gunners fire the mounted
+   * gun at what they see.
+   */
+  private considerVehicles(): void {
+    const vw = this.vehicles;
+    if (!vw || this.time < this.vehicleCheckAt) return;
+    this.vehicleCheckAt = this.time + 1;
+    for (const e of this.entries) {
+      const b = e.bot;
+      if (!b.alive || b.riding) continue;
+      if (e.board) {
+        const v = vw.get(e.board.vehicle);
+        const taken = !v || v.wrecked || !!v.seats[e.board.seat] || (v.team && v.team !== b.team);
+        if (taken || this.time > e.board.until) {
+          e.board = null;
+          continue;
+        }
+        if (vw.nearest(b.feet, 2.6) === v) this.boardBot(e, v, e.board.seat);
+        continue;
+      }
+      if (b.inCombat(this.time) || b.downed || !e.objective) continue;
+      if (e.objective.pos.distanceTo(b.feet) < VEHICLE_TRIP) continue;
+      // A vehicle close by with a seat nobody has claimed.
+      let best: { v: Vehicle; seat: number; d: number } | null = null;
+      for (const v of vw.vehicles) {
+        if (v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
+        const d = v.pos.distanceTo(b.feet);
+        if (d > 30 || (best && d >= best.d)) continue;
+        const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i));
+        // Without a driver aboard or coming, only take the driver's seat.
+        if (seat < 0 || (seat > 0 && !v.seats[0] && !this.claimed(v.id, 0))) continue;
+        best = { v, seat, d };
+      }
+      if (best) e.board = { vehicle: best.v.id, seat: best.seat, until: this.time + 25 };
+    }
+  }
+
+  private claimed(vehicle: number, seat: number): boolean {
+    return this.entries.some((x) => x.board?.vehicle === vehicle && x.board.seat === seat);
+  }
+
+  private boardBot(e: BotEntry, v: Vehicle, seat: number): void {
+    e.board = null;
+    v.seats[seat] = { id: e.bot.id, team: e.bot.team };
+    const spec = v.spec.seats[seat]!;
+    e.bot.board(v.id, seat, spec.exposed);
+    e.drive = seat === 0 ? { path: [], at: 0, repathAt: 0, waitUntil: this.time + 6, stuckFor: 0, backUntil: 0, tries: 0 } : null;
+  }
+
+  /** Out of the vehicle on the ground beside the seat (or on top when boxed in). */
+  private alightBot(e: BotEntry): void {
+    const b = e.bot;
+    const r = b.riding;
+    if (!r) return;
+    const v = this.vehicles?.get(r.vehicle);
+    e.drive = null;
+    if (!v) {
+      b.alight(b.feet);
+      return;
+    }
+    v.seats[r.seat] = null;
+    b.alight(v.exitSpot(r.seat, this.physics));
+  }
+
+  /** Bot squad goal while boarding: the vehicle. */
+  private boardGoal(e: BotEntry): THREE.Vector3 | null {
+    const v = e.board ? this.vehicles?.get(e.board.vehicle) : null;
+    return v ? (this.nav.closest(v.pos) ?? v.pos.clone()) : null;
+  }
+
+  inVehicle(c: Combatant): boolean {
+    if (c.id === PLAYER_ID) return this.playerRiding?.() ?? false;
+    return !!this.entries.find((x) => x.bot.id === c.id)?.bot.riding;
+  }
+
+  rideStep(bot: Bot, dt: number): void {
+    const e = this.entryOf(bot);
+    const r = bot.riding!;
+    const v = this.vehicles?.get(r.vehicle);
+    if (!v || v.wrecked) {
+      this.alightBot(e);
+      return;
+    }
+    v.seatEye(r.seat, this.tmp);
+    bot.carry(this.tmp, v.velocity);
+    const role = v.spec.seats[r.seat]!.role;
+    if (role === 'driver') this.autopilot(e, v, dt);
+    else if (role === 'gunner') this.botGunner(bot, v);
+    // Getting out: near the objective with the vehicle stopped, or left without a driver.
+    const goal = e.objective?.pos;
+    const near = !!goal && goal.distanceTo(bot.feet) < VEHICLE_DROP;
+    const stopped = v.velocity.length() < 1.5;
+    const noDriver = !v.seats[0];
+    if (stopped && (near || (noDriver && role !== 'gunner') || (noDriver && !bot.target && this.time > (e.alone ??= this.time + 6)))) {
+      e.alone = undefined;
+      this.alightBot(e);
+    } else if (!noDriver) e.alone = undefined;
+  }
+
+  /**
+   * Driving to the squad objective along the navmesh path: steer at the
+   * next corner a few metres ahead, slow for sharp turns, brake near the end;
+   * stuck for a moment, back up turning the other way; stuck too often, park.
+   */
+  private autopilot(e: BotEntry, v: Vehicle, dt: number): void {
+    const d = e.drive!;
+    const out = { throttle: 0, steer: 0, brake: false };
+    this.driveInputs.set(v.id, out);
+    // Give squad mates (and the player) a moment to climb in.
+    if (this.time < d.waitUntil && v.seats.some((s) => !s) && this.entries.some((x) => x.board?.vehicle === v.id)) {
+      out.brake = true;
+      return;
+    }
+    const goal = e.objective?.pos;
+    if (!goal) {
+      out.brake = true;
+      return;
+    }
+    if (goal.distanceTo(v.pos) < VEHICLE_DROP) {
+      out.brake = true;
+      return;
+    }
+    if (this.time > d.repathAt || d.at >= d.path.length) {
+      d.repathAt = this.time + 6;
+      d.path.length = 0;
+      d.at = 0;
+      if (!this.nav.path(v.pos, goal, d.path)) d.path.push(goal.clone());
+    }
+    // Next corner more than a few metres ahead.
+    while (d.at < d.path.length - 1 && d.path[d.at]!.distanceTo(v.pos) < 7) d.at++;
+    const to = d.path[d.at]!;
+    const want = Math.atan2(-(to.x - v.pos.x), -(to.z - v.pos.z));
+    let diff = want - v.yaw;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    const speed = v.forwardSpeed();
+    if (this.time < d.backUntil) {
+      out.throttle = -1;
+      out.steer = diff > 0 ? 1 : -1;
+      return;
+    }
+    // Positive diff = target to the left (yaw grows turning left); steer +1 is right.
+    out.steer = THREE.MathUtils.clamp(-diff * 1.8, -1, 1);
+    const sharp = Math.abs(diff);
+    out.throttle = sharp > 1.2 ? 0.35 : sharp > 0.6 ? 0.6 : 1;
+    if (sharp > 1.2 && speed > 7) out.brake = true;
+    // Stuck: pushing without getting anywhere.
+    if (Math.abs(speed) < 1) d.stuckFor += dt;
+    else d.stuckFor = Math.max(0, d.stuckFor - dt);
+    if (d.stuckFor > 2.5) {
+      d.stuckFor = 0;
+      d.backUntil = this.time + 1.6;
+      d.repathAt = this.time + 1.7;
+      if (++d.tries > 4) d.waitUntil = Infinity;
+    }
+    if (d.tries > 4) {
+      // Gave up: park and get out (they'll walk).
+      out.throttle = 0;
+      out.brake = true;
+      if (Math.abs(speed) < 1.5) for (const x of this.entries) if (x.bot.riding?.vehicle === v.id) this.alightBot(x);
+    }
+  }
+
+  /** The gunner swings the mounted gun onto whoever it sees and fires in bursts. */
+  private botGunner(bot: Bot, v: Vehicle): void {
+    const gun = v.gun;
+    const t = bot.target;
+    if (!gun) return;
+    if (v.overheated || !t) v.heat = Math.max(0, v.heat - STEP / gun.cool);
+    if (v.overheated && v.heat <= 0) v.overheated = false;
+    if (!t || !t.alive) return;
+    const muzzle = v.model.muzzle ? v.model.muzzle.getWorldPosition(this.tmp2) : bot.eyePos(this.tmp2);
+    const aim = t.feet.clone().setY(t.feet.y + 1.1);
+    const dir = aim.clone().sub(muzzle);
+    const yaw = Math.atan2(-dir.x, -dir.z);
+    v.turretYaw = Math.atan2(Math.sin(yaw - v.yaw), Math.cos(yaw - v.yaw));
+    v.gunPitch = THREE.MathUtils.clamp(Math.atan2(dir.y, Math.hypot(dir.x, dir.z)), -0.2, 0.6);
+    bot.aimYaw = bot.yaw = yaw;
+    if (v.overheated || this.time < v.nextShot || dir.length() > gun.range) return;
+    v.nextShot = this.time + 60 / gun.rpm;
+    v.heat += 1 / gun.burst;
+    if (v.heat >= 1) v.overheated = true;
+    dir.normalize();
+    // Aim error: a bit wider than a rifle, with the bots' skill.
+    const err = ((gun.spread + this.skill.aimErrorMin * 0.6) * Math.PI) / 180;
+    dir.x += (Math.random() - 0.5) * err;
+    dir.y += (Math.random() - 0.5) * err;
+    dir.z += (Math.random() - 0.5) * err;
+    dir.normalize();
+    const name = this.vehicleGunName?.(v) ?? '';
+    const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
+    const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, gun.range);
+    const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+    this.nearMiss(muzzle, to, bot.team, target?.owner.id ?? -1, 1);
+    if (target && target.owner.alive && target.owner.team !== bot.team) {
+      const isVehicle = !!this.vehicles?.get(target.owner.id);
+      const dmg = (isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5)) * (isVehicle ? 1 : this.damageScale);
+      const source: DamageSource = { pos: muzzle.clone(), name: bot.name, team: bot.team, weapon: name, id: bot.id };
+      const killed = target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'bullet');
+      this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: false });
+      if (killed) {
+        this.bus.emit('combat:kill', {
+          attacker: bot.name,
+          victim: target.owner.name,
+          weapon: name,
+          headshot: target.part === 'head',
+          byPlayer: false,
+          attackerTeam: bot.team,
+          victimTeam: target.owner.team ?? null,
+          attackerId: bot.id,
+          victimId: target.owner.id,
+        });
+      }
+    } else if (hit && !target) {
+      this.bus.emit('combat:impact', { point: to, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), surface: this.surfaces.get(hit.collider.handle, hit.point) });
+    }
+    if (hit && gun.blast > 0) this.vehicleBlast?.(to, { id: bot.id, name: bot.name, team: bot.team }, name);
+    this.effects.spawnShots([{ from: muzzle, to }], muzzle);
+    this.effects.muzzleFlash(muzzle, dir);
+    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, muzzle.distanceTo(this.listener));
+    bot.firingUntil = this.time + 0.4;
+  }
+
+  /** A vehicle blew up: bots aboard die outright (no going down). */
+  vehicleLost(v: Vehicle, source: DamageSource | null): Bot[] {
+    const dead: Bot[] = [];
+    for (const e of this.entries) {
+      if (e.bot.riding?.vehicle !== v.id) continue;
+      this.alightBot(e);
+      e.bot.killOutright(source ?? undefined);
+      dead.push(e.bot);
+    }
+    return dead;
   }
 
   /** Bots in the way of a mortar / artillery shell about to land run from it (they hear the whistle). */
@@ -1214,9 +1451,10 @@ export class BotManager implements BotServices {
     if (e) this.noteContact(this.player.team, e.squad, pos);
   }
 
+  /** No regrouping on the player either (see `followPoint`). */
   mustRegroup(bot: Bot): boolean {
-    const l = this.entryOf(bot).leader;
-    return !!l && l.alive && l.feet.distanceTo(bot.feet) > 32;
+    void bot;
+    return false;
   }
 
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean {
@@ -1496,16 +1734,22 @@ export class BotManager implements BotServices {
       if (!b.alive && e.wasAlive) e.model.onDeath();
       e.wasAlive = b.alive;
       pos.lerpVectors(b.prevFeet, b.feet, alpha);
+      // Aboard: sitting (a jeep gunner stands), hidden inside armour.
+      const v = b.riding ? this.vehicles?.get(b.riding.vehicle) : undefined;
+      const seat = v && b.riding ? v.spec.seats[b.riding.seat] : undefined;
+      const standing = seat?.role === 'gunner';
+      if (seat && !standing) pos.y += b.eyeHeight - 1.2;
       e.model.update(pos, {
-        speed: b.horizontalSpeed,
-        crouch: b.crouchAmount(dt),
-        yaw: b.yaw,
+        speed: seat ? 0 : b.horizontalSpeed,
+        crouch: seat ? 0 : b.crouchAmount(dt),
+        yaw: seat && !standing ? v!.yaw : b.yaw,
         aimPitch: b.aimPitch,
         deadFor: b.alive ? -1 : b.downed ? b.downTime : 10,
         dt,
+        seated: !!seat && !standing,
       });
-      e.model.root.visible = b.alive || b.downed || b.deadTime < RESPAWN_SEC - 0.2;
-      if (e.model.root.visible) {
+      e.model.root.visible = seat ? seat.exposed : b.alive || b.downed || b.deadTime < RESPAWN_SEC - 0.2;
+      if (e.model.root.visible && !seat) {
         // Wider under a body lying on the ground.
         const s = BLOB_SIZE * (b.alive ? 1 : 1.5);
         this.blobMatrix.makeScale(s, 1, s).setPosition(pos.x, pos.y + 0.02, pos.z);

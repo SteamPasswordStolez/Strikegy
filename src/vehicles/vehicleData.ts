@@ -164,8 +164,19 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   autocannon: { rpm: 200, damage: 70, spread: 0.35, range: 400, vsVehicle: 40, blast: 2.2, burst: 20, cool: 3.5 },
 };
 
-/** Base pads: seconds after a vehicle leaves before the next, the least time between two, the most out per side. */
-export const PADS = { afterLeave: 10, cooldown: 60, leaveDistance: 12, perTeam: { jeep: 4, apc: 3, bike: 0 } as Record<VehicleKind, number> };
+/** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */
+export const PADS = { afterLeave: 10, cooldown: 60, leaveDistance: 12 };
+
+/**
+ * Most of a kind one side can have out, from the number of bots in the match
+ * (owner, 2026-10-02): APCs one per 4 bots, tanks and jets one per 8, rounded
+ * up (24 bots: 6 APCs, 3 tanks, 3 jets a side). Jeeps: 4 a side.
+ */
+export function vehicleLimit(kind: VehicleKind, bots: number): number {
+  if (kind === 'apc') return Math.ceil(bots / 4);
+  if (kind === 'jeep') return 4;
+  return 0;
+}
 /** Motorbikes: per zone, seconds to bring a lost one back, and how long one can sit unused away from its zone. */
 export const BIKES = { perZone: 1, respawn: 45, abandon: 90, abandonDistance: 40 };
 /** Running someone over: speed (m/s) above which it kills, and the reach around the hull (m). */
@@ -184,11 +195,11 @@ export interface PadState {
 
 /**
  * Should the pad bring out a new vehicle now? Empty pad, 10 s after the last
- * left, a minute since the last appeared, and under the side's limit.
+ * left, a minute since the last appeared, and under the side's limit (`vehicleLimit`).
  */
-export function padReady(p: PadState, time: number, outOnSide: number): boolean {
+export function padReady(p: PadState, time: number, outOnSide: number, limit: number): boolean {
   if (p.vehicle !== null) return false;
-  if (outOnSide >= PADS.perTeam[p.kind]) return false;
+  if (outOnSide >= limit) return false;
   return time >= p.leftAt + PADS.afterLeave && time >= p.spawnedAt + PADS.cooldown;
 }
 

@@ -251,6 +251,29 @@ export class Vehicle implements Damageable {
     if (this.model.gun) this.model.gun.rotation.x = this.gunPitch;
   }
 
+  /** Where someone getting out of `seat` stands: beside it on the ground, else behind / in front, else on top. */
+  exitSpot(seat: number, physics: PhysicsWorld): THREE.Vector3 {
+    const [hx, , hz] = this.spec.half;
+    const seatZ = this.spec.seats[seat]!.eye[2];
+    const tries = [
+      [-(hx + 0.9), seatZ],
+      [hx + 0.9, seatZ],
+      [0, hz + 1.2],
+      [0, -(hz + 1.2)],
+    ] as const;
+    const local = new THREE.Vector3();
+    const at = new THREE.Vector3();
+    for (const [x, z] of tries) {
+      this.toWorld(local.set(x, 0.5, z), at);
+      const down = physics.raycast({ x: at.x, y: at.y + 1.5, z: at.z }, { x: 0, y: -1, z: 0 }, 5, Layer.WORLD, this.collider);
+      if (!down || down.normal.y < 0.6) continue;
+      const g = new THREE.Vector3(down.point.x, down.point.y, down.point.z);
+      if (physics.blocked(this.pos, g.clone().setY(g.y + 0.9), Layer.WORLD)) continue;
+      return g;
+    }
+    return this.pos.clone().setY(this.pos.y + this.spec.half[1] + 0.3);
+  }
+
   /** Gun spec of the seat that has one. */
   gunSeat(): number {
     return this.spec.seats.findIndex((s) => !!s.gun);

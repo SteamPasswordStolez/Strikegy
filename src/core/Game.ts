@@ -253,6 +253,8 @@ export class Game {
   private readonly driveInputs = new Map<number, DriveInput>();
   /** Vehicle third-person camera distance, eased (pulled in by walls). */
   private rideCamDist = 6;
+  /** Vehicle view: first person by default, C switches to third person. */
+  private rideThird = false;
   /** The player's own body, seen from the driver's third-person view. */
   private rider: SoldierModel | null = null;
   /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
@@ -978,15 +980,27 @@ export class Game {
       },
       pads,
       bikes,
+      this.bots?.bots.length ?? 0,
     );
     this.renderer.scene.add(this.vehicles.group);
+    if (this.bots) {
+      const bots = this.bots;
+      bots.vehicles = this.vehicles;
+      bots.driveInputs = this.driveInputs;
+      bots.playerRiding = () => !!this.ride;
+      bots.vehicleGunName = (v) => {
+        const g = v.spec.seats.find((s) => s.gun)?.gun;
+        return g ? t(`vehicleGun.${g}`) : '';
+      };
+      bots.vehicleBlast = (point, owner, weapon) => this.blast('cannon', point, owner, weapon);
+    }
     if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
   }
 
   /** People vehicles can run over: the player on foot and the bots. */
   private *vehicleWalkers(): Iterable<Walker> {
     if (this.player.alive && this.deployed && !this.ride) yield this.playerCombatant;
-    if (this.bots) yield* this.bots.bots;
+    for (const b of this.bots?.bots ?? []) if (!b.riding) yield b;
   }
 
   /** E next to a vehicle with a free seat: in, driver's seat first. */
@@ -1017,27 +1031,7 @@ export class Game {
     if (!r) return;
     this.ride = null;
     r.v.seats[r.seat] = null;
-    const [hx, , hz] = r.v.spec.half;
-    const seatZ = r.v.spec.seats[r.seat]!.eye[2];
-    const tries = [
-      [-(hx + 0.9), seatZ],
-      [hx + 0.9, seatZ],
-      [0, hz + 1.2],
-      [0, -(hz + 1.2)],
-    ];
-    const local = new THREE.Vector3();
-    const at = new THREE.Vector3();
-    let spot: THREE.Vector3 | null = null;
-    for (const [x, z] of tries) {
-      r.v.toWorld(local.set(x!, 0.5, z!), at);
-      const down = this.physics.raycast({ x: at.x, y: at.y + 1.5, z: at.z }, new THREE.Vector3(0, -1, 0), 5, Layer.WORLD, r.v.collider);
-      if (!down || down.normal.y < 0.6) continue;
-      const g = new THREE.Vector3(down.point.x, down.point.y, down.point.z);
-      if (this.physics.blocked(r.v.pos, g.clone().setY(g.y + 0.9), Layer.WORLD)) continue;
-      spot = g;
-      break;
-    }
-    spot ??= r.v.pos.clone().setY(r.v.pos.y + r.v.spec.half[1] + 0.3);
+    const spot = r.v.exitSpot(r.seat, this.physics);
     this.player.dismount(spot);
     this.playerBoxes.setEnabled(this.player.alive);
     this.weapons.drawTimer = DRAW_TIME;
@@ -1059,6 +1053,7 @@ export class Game {
       this.leaveVehicle();
       return;
     }
+    if (input.viewToggle) this.rideThird = !this.rideThird;
     if (input.weaponSlot >= 0 && input.weaponSlot < v.seats.length && !v.seats[input.weaponSlot]) this.enterSeat(v, input.weaponSlot);
     const seat = v.spec.seats[r.seat]!;
     if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld });
@@ -1129,6 +1124,9 @@ export class Game {
         if (by && by.id !== PLAYER_ID) this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
         this.die('explosion', by ?? undefined);
       }
+    }
+    for (const b of this.bots?.vehicleLost(v, by) ?? []) {
+      if (by) this.reportKill(owner, b.id, b.name, b.team, weapon);
     }
     v.seats.fill(null);
   }
@@ -1824,9 +1822,9 @@ export class Game {
   }
 
   /**
-   * In a vehicle: the driver (and a rider) sees it from behind, orbiting
-   * with the view and pulled in by walls; the gunner looks from behind the
-   * gun; passengers from their seat.
+   * In a vehicle: first person from the seat by default (the gunner a little
+   * behind the gun); C switches to a third-person view orbiting the vehicle
+   * with the view, pulled in by walls.
    */
   private rideCamera(alpha: number, dt: number): void {
     const { v, seat } = this.ride!;
@@ -1834,7 +1832,7 @@ export class Game {
     const p = this.player;
     const role = v.spec.seats[seat]!.role;
     const fwd = this.tmpFwd.set(0, 0, -1).applyEuler(new THREE.Euler(p.pitch, p.yaw, 0, 'YXZ'));
-    if (role === 'driver') {
+    if (this.rideThird) {
       const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + 1.1, 0), new THREE.Vector3(), alpha);
       const want = v.kind === 'apc' ? 10 : v.kind === 'bike' ? 4.5 : 6.5;
       const hit = this.physics.raycast(target, fwd.clone().negate(), want, Layer.WORLD, v.collider);
@@ -1853,7 +1851,7 @@ export class Game {
   private renderRider(alpha: number, dt: number): void {
     const r = this.ride;
     const seat = r?.v.spec.seats[r.seat];
-    const show = !!r && !!seat && seat.exposed && seat.role === 'driver' && this.player.alive;
+    const show = !!r && !!seat && seat.exposed && this.rideThird && this.player.alive;
     if (!show) {
       if (this.rider) this.rider.root.visible = false;
       return;
@@ -1864,7 +1862,8 @@ export class Game {
     }
     const eye = r.v.seatEye(r.seat, new THREE.Vector3(), alpha);
     this.rider.root.visible = true;
-    this.rider.update(eye.setY(eye.y - 1.2), { speed: 0, crouch: 0, yaw: r.v.yaw, aimPitch: 0, deadFor: -1, dt, seated: true });
+    const standing = seat.role === 'gunner';
+    this.rider.update(eye.setY(eye.y - (standing ? 1.6 : 1.2)), { speed: 0, crouch: 0, yaw: standing ? this.player.yaw : r.v.yaw, aimPitch: standing ? this.player.pitch : 0, deadFor: -1, dt, seated: !standing });
   }
 
   /** Vertical FOV while fully aimed (before the user's FOV scaling): recon scopes can zoom further. */
@@ -2022,6 +2021,7 @@ export class Game {
       if (v.overheated) parts.push(t('vehicle.overheat'));
       parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
       if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{n}', String(n)));
+      if (!this.touch) parts.push(t('vehicle.view'));
       prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
       touchLabel = t('touch.exitVehicle');
     } else if (onField && !prompt && !this.buildMode) {
