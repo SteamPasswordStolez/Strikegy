@@ -30,7 +30,11 @@ export type ModelKind =
   | 'steeple'
   | 'sawShed'
   | 'archBridge'
-  | 'trussBridge';
+  | 'trussBridge'
+  | 'silo'
+  | 'stall'
+  | 'crane'
+  | 'tankWreck';
 
 export const MODEL_KINDS: readonly ModelKind[] = [
   'car',
@@ -55,6 +59,10 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   'sawShed',
   'archBridge',
   'trussBridge',
+  'silo',
+  'stall',
+  'crane',
+  'tankWreck',
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
@@ -767,6 +775,83 @@ const KITS: Record<ModelKind, Kit> = {
     }
     for (let i = 1; i < panels; i++) b.box('trim', [w - 0.3, 0.2, 0.2], [0, deckTop + trussH, -L / 2 + i * pl]);
     return cols;
+  },
+
+  silo(b, w, h, d) {
+    // Farm silo: stave-banded cylinder, domed cap, ladder cage up one side.
+    const r = Math.min(w, d) / 2 - 0.25;
+    const body = h - r * 0.6;
+    b.cyl('concrete', r + 0.25, r + 0.25, 0.4, [0, 0.2, 0], [0, 0, 0], 20);
+    b.cyl('body', r, r, body, [0, body / 2, 0], [0, 0, 0], 20);
+    for (let y = 1.2; y < body - 0.3; y += 1.4) b.cyl('trim', r + 0.03, r + 0.03, 0.1, [0, y, 0], [0, 0, 0], 20, true);
+    b.sphere('metal', r, [0, body, 0], [1, 0.6, 1]);
+    b.cyl('metal', 0.25, 0.4, 0.5, [0, body + r * 0.6, 0], [0, 0, 0], 10);
+    const lx = r + 0.25;
+    for (const s of [-1, 1]) b.box('metal', [0.05, body - 1.5, 0.05], [lx, 1.5 + (body - 1.5) / 2, s * 0.22]);
+    for (let y = 1.7; y < body; y += 0.35) b.box('metal', [0.04, 0.04, 0.44], [lx, y, 0]);
+    // Chute down to a shed roof height.
+    b.box('wood', [0.6, 0.6, 1.6], [0, 3.2, -r - 0.6], [0.5, 0, 0]);
+    const side = 2 * r * 0.95;
+    return [
+      { center: [0, h / 2, 0], size: [side, h, side] },
+      { center: [0, h / 2, 0], size: [side, h, side], yaw: Math.PI / 4 },
+    ];
+  },
+
+  stall(b, w, h, d, rand) {
+    // Market stall: four poles, sagging cloth awning, a counter with goods.
+    const ph = h - 0.25;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('wood', [0.1, ph, 0.1], [sx * (w / 2 - 0.1), ph / 2, sz * (d / 2 - 0.1)]);
+    b.box('body', [w + 0.3, 0.05, d * 0.55], [0, ph + 0.05, -d * 0.22], [0.18, 0, 0]);
+    b.box('body', [w + 0.3, 0.05, d * 0.55], [0, ph + 0.05, d * 0.22], [-0.18, 0, 0]);
+    b.box('wood', [w - 0.3, 0.9, d * 0.45], [0, 0.45, d * 0.15]);
+    for (let i = 0; i < 5; i++) {
+      const x = -w / 2 + 0.5 + (i * (w - 1)) / 4;
+      b.box(rand() < 0.5 ? 'canvas' : 'dirt', [0.45, 0.25 + rand() * 0.2, 0.35], [x, 1.02, d * 0.15]);
+    }
+    return [{ center: [0, 0.45, d * 0.15], size: [w - 0.3, 0.9, d * 0.45] }];
+  },
+
+  crane(b, w, h, d) {
+    // Gantry crane straddling a yard track: two A-frame legs, a box girder, the hoist.
+    const legW = 0.45;
+    const girder = 1.1;
+    for (const sx of [-1, 1]) {
+      const x = sx * (w / 2 - legW / 2);
+      for (const sz of [-1, 1]) b.box('body', [legW, h - girder, legW], [x, (h - girder) / 2, sz * (d / 2 - 1)], [sz * 0.08, 0, 0]);
+      b.box('trim', [legW, 0.4, d], [x, h - girder - 0.2, 0]);
+      b.box('dark', [0.9, 0.6, d + 0.4], [x, 0.3, 0]);
+      b.box('trim', [0.12, h * 0.55, 0.12], [x, h * 0.45, 0], [0.75, 0, 0]);
+    }
+    b.box('body', [w + 1, girder, 1.4], [0.5, h - girder / 2, 0]);
+    b.box('dark', [1.6, 1.2, 1.8], [w * 0.15, h - girder - 0.6, 0]);
+    b.box('glass', [1.4, 1.0, 0.05], [-w / 2 + 1.4, h - girder - 1.2, 0.72]);
+    b.box('body', [1.6, 1.4, 1.5], [-w / 2 + 1.4, h - girder - 1.3, 0]);
+    b.cyl('dark', 0.03, 0.03, h * 0.45, [w * 0.15, h - girder - 1.2 - h * 0.225, 0], [0, 0, 0], 4);
+    b.box('metal', [0.6, 0.3, 0.4], [w * 0.15, h * 0.32, 0]);
+    // Only the legs block.
+    const cols: KitBox[] = [];
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) cols.push({ center: [sx * (w / 2 - legW / 2), (h - girder) / 2, sz * (d / 2 - 1)], size: [legW, h - girder, legW] });
+    return cols;
+  },
+
+  tankWreck(b, w, h, d) {
+    // A knocked-out tank (map dressing): hull, tracks, turret turned aside, drooping gun.
+    const trackW = w * 0.24;
+    const hullH = h * 0.42;
+    for (const s of [-1, 1]) {
+      b.box('dark', [trackW, hullH * 0.9, d], [s * (w / 2 - trackW / 2), hullH * 0.45, 0]);
+      for (let i = 0; i < 5; i++) b.cyl('rubber', 0.36, 0.36, trackW * 0.7, [s * (w / 2 - trackW / 2), 0.38, -d / 2 + 0.8 + (i * (d - 1.6)) / 4], [0, 0, Math.PI / 2], 10);
+    }
+    b.box('body', [w - trackW * 1.4, hullH, d * 0.95], [0, hullH / 2 + 0.25, 0]);
+    b.box('body', [w * 0.9, 0.12, d], [0, hullH + 0.25, 0]);
+    b.box('body', [w - trackW * 1.4, hullH * 0.7, 0.8], [0, hullH * 0.6, -d / 2 + 0.2], [0.6, 0, 0]);
+    const ty = hullH + 0.31;
+    const tr = w * 0.3;
+    b.cyl('body', tr * 0.85, tr, h - ty - 0.1, [0.2, ty + (h - ty) / 2 - 0.05, 0.3], [0, 0, 0.06], 10);
+    b.cyl('trim', 0.1, 0.13, d * 0.55, [0.6 + d * 0.12, ty + 0.2, -d * 0.18], [Math.PI / 2 - 0.15, 0, -0.5], 8);
+    b.box('dirt', [w * 0.6, 0.05, d * 0.5], [0.3, hullH + 0.33, d * 0.15]);
+    return [{ center: [0, h * 0.45, 0], size: [w, h * 0.9, d] }];
   },
 };
 

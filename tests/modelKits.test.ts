@@ -27,6 +27,10 @@ describe('model kits', () => {
       sawShed: [12, 5, 7],
       archBridge: [8, 4.6, 34],
       trussBridge: [5, 8.5, 36],
+      silo: [6, 15, 6],
+      stall: [3, 2.6, 2.4],
+      crane: [10, 12, 6],
+      tankWreck: [3.4, 2.6, 7],
     };
     for (const kind of MODEL_KINDS) {
       const [w, h, d] = size[kind]!;

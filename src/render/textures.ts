@@ -79,6 +79,8 @@ const MACRO_STRENGTH: Record<SurfaceMaterial, number> = {
   wood: 0.12,
   brick: 0.14,
   snow: 0.08,
+  grass: 0.22,
+  sand: 0.16,
 };
 
 interface ScannedSet {
@@ -97,6 +99,8 @@ const SCANNED_TILE_METERS: Record<SurfaceMaterial, number> = {
   wood: 2,
   brick: 2,
   snow: 3,
+  grass: 3,
+  sand: 3,
 };
 
 /** Surfaces that reuse another surface's scanned set (with their own tiling/tint). */
@@ -113,8 +117,11 @@ const SCANNED_TINT: Record<SurfaceMaterial, number> = {
   wood: 1,
   brick: 0.95,
   snow: 0.92,
+  grass: 1,
+  sand: 1,
 };
 
+/** Kinds with a scanned texture set in public/assets/textures (grass and sand are procedural only). */
 export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow'];
 
 /** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */

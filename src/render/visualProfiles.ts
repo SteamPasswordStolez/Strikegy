@@ -51,6 +51,15 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     envIntensity: 0.95,
     exposure: 0.5,
   },
+  // High, hot sun; pale dusty sky and warm haze.
+  desert: {
+    sky: { turbidity: 6, rayleigh: 1.4, mieCoefficient: 0.008, mieDirectionalG: 0.8, cloudCoverage: 0.12, cloudDensity: 0.25 },
+    sun: { elevation: 55, azimuth: 40, color: 0xfff0d8, intensity: 2.8 },
+    fog: { color: 0xd8c8ac, density: 0.0028 },
+    hemi: { sky: 0xe8e4d8, ground: 0x9c8058, intensity: 0.35 },
+    envIntensity: 0.9,
+    exposure: 0.42,
+  },
   indoor: {
     background: 0x15171a,
     fog: { color: 0x15171a, density: 0.012 },

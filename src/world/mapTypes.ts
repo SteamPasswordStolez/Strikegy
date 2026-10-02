@@ -1,8 +1,10 @@
 import type { ModelKind } from './modelKits';
 export type Vec3 = [number, number, number];
 export type Team = 'blue' | 'red';
-export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter';
-export type SurfaceMaterial = 'ground' | 'concrete' | 'concrete_floor' | 'metal' | 'wood' | 'brick' | 'snow';
+export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter' | 'desert';
+export type SurfaceMaterial = 'ground' | 'concrete' | 'concrete_floor' | 'metal' | 'wood' | 'brick' | 'snow' | 'grass' | 'sand';
+/** Kind of trees on a map and in its scenery (default conifer). */
+export type Flora = 'conifer' | 'broadleaf' | 'palm';
 export type ObjectType = 'wall' | 'cover' | 'floor' | 'ramp' | 'prop';
 
 export interface MapObject {
@@ -118,6 +120,8 @@ export interface MapDef {
     terrain?: TerrainDef;
     visualProfile: VisualProfileId;
     groundMaterial?: SurfaceMaterial;
+    /** Tree kind for `trees` and the scenery around the map (default conifer). */
+    flora?: Flora;
     /** Background sound levels 0..1 (defaults come from the visual profile). */
     ambience?: { wind?: number; birds?: number; battle?: number };
   };

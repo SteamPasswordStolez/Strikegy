@@ -389,7 +389,7 @@ export class Game {
       this.snowfall = new Snowfall(r.preset === 'low' ? 1200 : r.preset === 'medium' ? 2500 : 4000);
       r.scene.add(this.snowfall.points);
     }
-    const kit = outdoor ? createConiferKit(q.msaa, winter) : null;
+    const kit = outdoor ? createConiferKit(q.msaa, winter, map.world.flora) : null;
     if (kit && map.trees?.length) {
       // Low quality (phones): 3D trees only close by, impostors beyond.
       this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
@@ -397,7 +397,7 @@ export class Game {
     }
     lap('water+forest');
     this.fitShadows(map, terrain, built.root, props);
-    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, phone: r.preset === 'low' });
+    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: r.preset === 'low' });
     lap('backdrop');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
