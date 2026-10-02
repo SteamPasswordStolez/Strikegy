@@ -41,7 +41,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
-import { VEHICLE_GUNS, type VehicleGunId } from '@/vehicles/vehicleData';
+import { TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
@@ -393,6 +393,7 @@ export class Game {
         this.audio.smokePop(point, GRENADES.smoke.duration ?? 20);
       },
       destroyed: (_kind, point) => this.audio.grenadeBounce(point, 12),
+      shell: (gun, point, owner, target, part) => this.shellHit(gun, point, owner, target, part),
     });
     r.scene.add(this.gadgets.group);
     this.support = new SupportWorld(this.physics, {
@@ -935,6 +936,7 @@ export class Game {
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
+    this.botTanks();
     this.vehicles?.step(dt, this.driveInputs, this.vehicleWalkers());
     this.physics.step();
     this.vehicles?.afterStep();
@@ -970,7 +972,7 @@ export class Game {
       bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
-    const { pads, bikes } = planVehicleSpots(this.physics, bases, zones);
+    const { pads, bikes, tankSpots } = planVehicleSpots(this.physics, bases, zones);
     this.vehicles = new VehicleWorld(
       this.physics,
       this.registry,
@@ -981,6 +983,7 @@ export class Game {
       pads,
       bikes,
       this.bots?.bots.length ?? 0,
+      tankSpots,
     );
     this.renderer.scene.add(this.vehicles.group);
     if (this.bots) {
@@ -988,14 +991,33 @@ export class Game {
       bots.vehicles = this.vehicles;
       bots.driveInputs = this.driveInputs;
       bots.playerRiding = () => !!this.ride;
-      bots.vehicleGunName = (v) => {
-        const g = v.spec.seats.find((s) => s.gun)?.gun;
-        return g ? t(`vehicleGun.${g}`) : '';
-      };
-      bots.vehicleBlast = (point, owner, weapon) => this.blast('cannon', point, owner, weapon);
+      bots.fireMount = (v, seat, shooter, aim) => this.fireMount(v, seat, shooter, aim);
     }
     if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
   }
+
+  /**
+   * Bots take tanks as well: every few seconds, a side under its tank limit
+   * gets one for a bot that has just come back at its base (driver; mates
+   * board it like any vehicle).
+   */
+  private botTanks(): void {
+    const vw = this.vehicles;
+    const bots = this.bots;
+    if (!vw || !bots || this.simTime < this.botTankAt) return;
+    this.botTankAt = this.simTime + 6;
+    for (const team of ['blue', 'red'] as const) {
+      if (vw.tanks(team) >= vw.tankLimit() || Math.random() < 0.5) continue;
+      const spot = vw.freeTankSpot(team);
+      if (!spot) continue;
+      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && b.feet.distanceTo(spot.pos) < 40 && !b.inCombat(bots.time));
+      if (!bot) continue;
+      const kind = TANK_KINDS[Math.floor(Math.random() * TANK_KINDS.length)]!;
+      const v = vw.spawnTank(kind, team);
+      if (v) bots.seatBot(bot, v, 0);
+    }
+  }
+  private botTankAt = 20;
 
   /** People vehicles can run over: the player on foot and the bots. */
   private *vehicleWalkers(): Iterable<Walker> {
@@ -1057,56 +1079,107 @@ export class Game {
     if (input.weaponSlot >= 0 && input.weaponSlot < v.seats.length && !v.seats[input.weaponSlot]) this.enterSeat(v, input.weaponSlot);
     const seat = v.spec.seats[r.seat]!;
     if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld });
-    if (seat.gun) this.stepVehicleGun(v, seat.gun, input.fire, dt);
+    if (seat.gun) this.stepVehicleGun(v, r.seat, input.fire, dt);
     const eye = v.seatEye(r.seat, this.tmpEye);
     this.player.ride(eye, v.velocity);
   }
 
-  /** The mounted gun: follows the view, fires in bursts until it overheats. */
-  private stepVehicleGun(v: Vehicle, id: VehicleGunId, trigger: boolean, dt: number): void {
-    const gun = VEHICLE_GUNS[id];
+  /** The player's seat gun: follows the view; the trigger fires it (MGs overheat, shell guns reload). */
+  private stepVehicleGun(v: Vehicle, seat: number, trigger: boolean, dt: number): void {
     const p = this.player;
-    v.turretYaw = Math.atan2(Math.sin(p.yaw - v.yaw), Math.cos(p.yaw - v.yaw));
-    v.gunPitch = THREE.MathUtils.clamp(p.pitch, -0.2, 0.6);
-    if (v.overheated || !trigger) v.heat = Math.max(0, v.heat - dt / gun.cool);
-    if (v.overheated && v.heat <= 0) v.overheated = false;
-    if (!trigger || v.overheated || this.simTime < v.nextShot) return;
-    v.nextShot = this.simTime + 60 / gun.rpm;
-    v.heat += 1 / gun.burst;
-    if (v.heat >= 1) v.overheated = true;
-    // Aim: what the view centre points at, fired from the muzzle.
-    const muzzle = v.model.muzzle ? v.model.muzzle.getWorldPosition(new THREE.Vector3()) : v.seatEye(this.ride!.seat, new THREE.Vector3());
+    v.aimMount(seat, p.yaw, p.pitch);
+    if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
+    // Aim: what the view centre points at.
     const cam = this.renderer.camera;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-    const look = this.physics.raycast(cam.position, fwd, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
-    const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, gun.range);
-    const dir = aim.sub(muzzle).normalize();
-    const s = (gun.spread * DEG) * Math.sqrt(Math.random());
+    const range = v.mounts[seat]!.gun.range;
+    const look = this.physics.raycast(cam.position, fwd, range, Layer.WORLD | Layer.HITBOX, v.collider);
+    const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, range);
+    this.fireMount(v, seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, aim);
+  }
+
+  /**
+   * One round from a vehicle gun at `aim`: hitscan for the MGs and the
+   * autocannon, a flying shell for tank guns (lobbed for the howitzer).
+   * Shared by the player and the bots.
+   */
+  private fireMount(v: Vehicle, seat: number, shooter: GrenadeOwner, aim: THREE.Vector3): void {
+    const m = v.mounts[seat];
+    if (!m) return;
+    const gun = m.gun;
+    const byPlayer = shooter.id === PLAYER_ID;
+    const muzzle = v.muzzleOf(seat, new THREE.Vector3());
+    const dir = aim.clone().sub(muzzle).normalize();
+    const s = gun.spread * DEG * Math.sqrt(Math.random());
     const a = Math.random() * Math.PI * 2;
     const right = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
     const up = new THREE.Vector3().crossVectors(right, dir);
     dir.addScaledVector(right, Math.cos(a) * Math.tan(s)).addScaledVector(up, Math.sin(a) * Math.tan(s)).normalize();
-    const name = t(`vehicleGun.${id}`);
-    const owner: GrenadeOwner = { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM };
+    const name = t(`vehicleGun.${m.id}`);
+    const listenerDist = muzzle.distanceTo(this.renderer.camera.position);
+    this.effects.muzzleFlash(muzzle, dir);
+    if (gun.shell) {
+      const sh = gun.shell;
+      let vel: THREE.Vector3;
+      if (sh.lob) {
+        // Lobbed onto the aim point: flight time grows with range.
+        const d = aim.clone().sub(muzzle);
+        const flat = Math.hypot(d.x, d.z);
+        const time = THREE.MathUtils.clamp(2 + flat / 120, 2.5, 7);
+        vel = new THREE.Vector3(d.x / time, d.y / time + 0.5 * sh.gravity * time, d.z / time);
+        vel.addScaledVector(right, (Math.random() - 0.5) * flat * gun.spread * DEG);
+      } else vel = dir.clone().multiplyScalar(sh.speed);
+      this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id);
+      this.audio.explosion(muzzle, Math.max(30, listenerDist));
+      if (byPlayer) this.shake = Math.min(0.06, this.shake + 0.035);
+      return;
+    }
     const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
     const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, gun.range);
     const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
-    if (target && target.owner.alive && target.owner.team !== PLAYER_TEAM) {
+    if (target && target.owner.alive && target.owner.team !== shooter.team) {
       const isVehicle = !!this.vehicles?.get(target.owner.id);
       const dmg = isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5);
-      const source: DamageSource = { pos: muzzle.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: name, id: PLAYER_ID };
-      const killed = target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'bullet');
-      this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: true });
-      if (killed) this.reportKill(owner, target.owner.id, target.owner.name, target.owner.team ?? null, name);
+      const source: DamageSource = { pos: muzzle.clone(), name: shooter.name, team: shooter.team, weapon: name, id: shooter.id };
+      const killed = target.owner.id === PLAYER_ID ? this.damagePlayer(dmg, muzzle, 'bullet', source) : target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'bullet');
+      this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer });
+      if (killed) this.reportKill(shooter, target.owner.id, target.owner.id === PLAYER_ID ? this.playerCombatant.name : target.owner.name, target.owner.team ?? null, name);
     } else if (hit && !target) {
       this.bus.emit('combat:impact', { point: to, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), surface: this.impacts.get(hit.collider.handle, hit.point) });
     }
-    if (hit && gun.blast > 0) this.blast('cannon', to, owner, name);
+    if (hit && gun.blast > 0) this.blast('cannon', to, shooter, name);
     this.effects.spawnShots([{ from: muzzle, to }], muzzle);
-    this.effects.muzzleFlash(muzzle, dir);
-    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, 0);
-    this.bots?.nearMiss(muzzle, to, PLAYER_TEAM, target?.owner.id ?? -1, 1);
-    this.shake = Math.min(0.03, this.shake + (gun.blast > 0 ? 0.012 : 0.004));
+    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, byPlayer ? 0 : listenerDist);
+    this.bots?.nearMiss(muzzle, to, shooter.team, target?.owner.id ?? -1, 1);
+    if (byPlayer) this.shake = Math.min(0.03, this.shake + (gun.blast > 0 ? 0.012 : 0.004));
+  }
+
+  /**
+   * A shell came down: a direct hit kills people outright (no going down)
+   * and hurts vehicles a lot; then the blast.
+   */
+  private shellHit(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart): void {
+    const spec = VEHICLE_GUNS[gun as VehicleGunId];
+    if (!spec) return;
+    const name = t(`vehicleGun.${gun as VehicleGunId}`);
+    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon: name, id: owner.id };
+    if (target && target.team !== owner.team && target.id >= 0) {
+      if (this.vehicles?.get(target.id)) target.applyDamage(spec.vsVehicle, part, source, 'at');
+      else if (target.id === PLAYER_ID) {
+        if (this.damagePlayer(999, point, 'explosion', source)) {
+          this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, name);
+          this.die('explosion', source);
+        }
+      } else {
+        const bot = this.bots?.bots.find((b) => b.id === target.id);
+        if (bot?.alive) {
+          bot.killOutright(source);
+          this.bus.emit('combat:hit', { targetId: bot.id, part, damage: 999, killed: true, point: point.clone(), byPlayer: owner.id === PLAYER_ID });
+          this.reportKill(owner, bot.id, bot.name, bot.team, name);
+        }
+      }
+    }
+    this.blast(gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : 'shell', point, owner, name);
   }
 
   /** A vehicle blew up: everyone aboard dies outright (no going down). */
@@ -1788,6 +1861,11 @@ export class Game {
     this.breath = createBreath();
     this.weapons.sway.pitch = this.weapons.sway.yaw = 0;
     this.bus.emit('player:respawned', {});
+    // Deployed in a tank: it comes out at the base with the player at the controls.
+    if (key.startsWith('tank:') && this.vehicles) {
+      const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, PLAYER_TEAM);
+      if (v) this.enterSeat(v, 0);
+    }
   }
 
   private updateCamera(alpha: number, dt: number, adsFov: number): void {
@@ -2018,7 +2096,9 @@ export class Game {
       const role = v.spec.seats[seat]!.role;
       const n = v.seats.length;
       const parts = [`${t(`vehicle.${v.kind}`)} · ${t(`seat.${role}`)}`];
-      if (v.overheated) parts.push(t('vehicle.overheat'));
+      const mount = v.mounts[seat];
+      if (mount?.overheated) parts.push(t('vehicle.overheat'));
+      if (v.reloadLeft(seat, this.simTime) > 0) parts.push(t('vehicle.reloading'));
       parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
       if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{n}', String(n)));
       if (!this.touch) parts.push(t('vehicle.view'));
@@ -2433,6 +2513,23 @@ export class Game {
     for (const b of this.gadgets.beaconsFor(PLAYER_TEAM, this.squadKeyOf(PLAYER_TEAM, PLAYER_ID))) {
       const who = b.owner.id === PLAYER_ID ? t('feed.you') : b.owner.name;
       out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${who}) ×${b.uses}`, x: b.pos.x, z: b.pos.z, blocked: null, warn: null });
+    }
+    // Tanks: start in one at the base, while the side is under its limit.
+    const vw = this.vehicles;
+    if (vw && vw.tankSpots.some((s) => s.team === PLAYER_TEAM)) {
+      const full = vw.tanks(PLAYER_TEAM) >= vw.tankLimit();
+      const spot = vw.freeTankSpot(PLAYER_TEAM);
+      for (const kind of TANK_KINDS) {
+        out.push({
+          key: `tank:${kind}`,
+          kind: 'vehicle',
+          label: `${t('spawn.tank')}: ${t(`vehicle.${kind}`)} (${vw.tanks(PLAYER_TEAM)}/${vw.tankLimit()})`,
+          x: spot?.pos.x ?? base.x,
+          z: spot?.pos.z ?? base.z,
+          blocked: full ? t('deploy.tankLimit').replace('{n}', String(vw.tankLimit())) : !spot ? t('deploy.noRoom') : null,
+          warn: null,
+        });
+      }
     }
     const now = this.bots?.time ?? 0;
     for (const m of this.playerSquad?.mates(PLAYER_ID) ?? []) {

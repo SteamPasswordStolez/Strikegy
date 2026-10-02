@@ -265,8 +265,8 @@ export class BotManager implements BotServices {
   vehicles: VehicleWorld | null = null;
   driveInputs = new Map<number, DriveInput>();
   playerRiding: (() => boolean) | null = null;
-  vehicleGunName: ((v: Vehicle) => string) | null = null;
-  vehicleBlast: ((point: THREE.Vector3, owner: { id: number; name: string; team: Team }, weapon: string) => void) | null = null;
+  /** Fires one round from a vehicle's seat gun at a point (the game's shared vehicle gun code). */
+  fireMount: ((v: Vehicle, seat: number, shooter: { id: number; name: string; team: Team }, aim: THREE.Vector3) => void) | null = null;
   private vehicleCheckAt = 0;
   /** Job key -> the bot doing it. */
   private readonly workers = new Map<string, Bot>();
@@ -1185,6 +1185,11 @@ export class BotManager implements BotServices {
     return this.entries.some((x) => x.board?.vehicle === vehicle && x.board.seat === seat);
   }
 
+  /** Puts a bot straight into a seat (a tank brought out for it). */
+  seatBot(bot: Bot, v: Vehicle, seat: number): void {
+    this.boardBot(this.entryOf(bot), v, seat);
+  }
+
   private boardBot(e: BotEntry, v: Vehicle, seat: number): void {
     e.board = null;
     v.seats[seat] = { id: e.bot.id, team: e.bot.team };
@@ -1231,7 +1236,7 @@ export class BotManager implements BotServices {
     bot.carry(this.tmp, v.velocity);
     const role = v.spec.seats[r.seat]!.role;
     if (role === 'driver') this.autopilot(e, v, dt);
-    else if (role === 'gunner') this.botGunner(bot, v);
+    if (v.mounts[r.seat]) this.botGunner(bot, v, r.seat);
     // Getting out: near the objective with the vehicle stopped, or left without a driver.
     const goal = e.objective?.pos;
     const near = !!goal && goal.distanceTo(bot.feet) < VEHICLE_DROP;
@@ -1306,63 +1311,42 @@ export class BotManager implements BotServices {
     }
   }
 
-  /** The gunner swings the mounted gun onto whoever it sees and fires in bursts. */
-  private botGunner(bot: Bot, v: Vehicle): void {
-    const gun = v.gun;
+  /**
+   * A bot on a gun seat (a gunner, or a tank driver on the main gun) swings
+   * it onto whoever it sees and fires: MGs in bursts, shell guns when loaded
+   * (enemy vehicles and groups first for those; the howitzer only at range).
+   */
+  private botGunner(bot: Bot, v: Vehicle, seat: number): void {
+    const m = v.mounts[seat];
     const t = bot.target;
-    if (!gun) return;
-    if (v.overheated || !t) v.heat = Math.max(0, v.heat - STEP / gun.cool);
-    if (v.overheated && v.heat <= 0) v.overheated = false;
-    if (!t || !t.alive) return;
-    const muzzle = v.model.muzzle ? v.model.muzzle.getWorldPosition(this.tmp2) : bot.eyePos(this.tmp2);
-    const aim = t.feet.clone().setY(t.feet.y + 1.1);
-    const dir = aim.clone().sub(muzzle);
-    const yaw = Math.atan2(-dir.x, -dir.z);
-    v.turretYaw = Math.atan2(Math.sin(yaw - v.yaw), Math.cos(yaw - v.yaw));
-    v.gunPitch = THREE.MathUtils.clamp(Math.atan2(dir.y, Math.hypot(dir.x, dir.z)), -0.2, 0.6);
-    bot.aimYaw = bot.yaw = yaw;
-    if (v.overheated || this.time < v.nextShot || dir.length() > gun.range) return;
-    v.nextShot = this.time + 60 / gun.rpm;
-    v.heat += 1 / gun.burst;
-    if (v.heat >= 1) v.overheated = true;
-    dir.normalize();
-    // Aim error: a bit wider than a rifle, with the bots' skill.
-    const err = ((gun.spread + this.skill.aimErrorMin * 0.6) * Math.PI) / 180;
-    dir.x += (Math.random() - 0.5) * err;
-    dir.y += (Math.random() - 0.5) * err;
-    dir.z += (Math.random() - 0.5) * err;
-    dir.normalize();
-    const name = this.vehicleGunName?.(v) ?? '';
-    const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
-    const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, gun.range);
-    const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
-    this.nearMiss(muzzle, to, bot.team, target?.owner.id ?? -1, 1);
-    if (target && target.owner.alive && target.owner.team !== bot.team) {
-      const isVehicle = !!this.vehicles?.get(target.owner.id);
-      const dmg = (isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5)) * (isVehicle ? 1 : this.damageScale);
-      const source: DamageSource = { pos: muzzle.clone(), name: bot.name, team: bot.team, weapon: name, id: bot.id };
-      const killed = target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'bullet');
-      this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: false });
-      if (killed) {
-        this.bus.emit('combat:kill', {
-          attacker: bot.name,
-          victim: target.owner.name,
-          weapon: name,
-          headshot: target.part === 'head',
-          byPlayer: false,
-          attackerTeam: bot.team,
-          victimTeam: target.owner.team ?? null,
-          attackerId: bot.id,
-          victimId: target.owner.id,
-        });
-      }
-    } else if (hit && !target) {
-      this.bus.emit('combat:impact', { point: to, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), surface: this.surfaces.get(hit.collider.handle, hit.point) });
+    if (!m) return;
+    const firing = !!t && t.alive;
+    if (!firing) {
+      v.pullTrigger(seat, false, this.time, STEP);
+      return;
     }
-    if (hit && gun.blast > 0) this.vehicleBlast?.(to, { id: bot.id, name: bot.name, team: bot.team }, name);
-    this.effects.spawnShots([{ from: muzzle, to }], muzzle);
-    this.effects.muzzleFlash(muzzle, dir);
-    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, muzzle.distanceTo(this.listener));
+    const muzzle = v.muzzleOf(seat, this.tmp2);
+    const aim = t.feet.clone().setY(t.feet.y + (m.gun.shell ? 0.6 : 1.1));
+    const dir = aim.clone().sub(muzzle);
+    const dist = dir.length();
+    const yaw = Math.atan2(-dir.x, -dir.z);
+    const pitch = Math.atan2(dir.y, Math.hypot(dir.x, dir.z));
+    v.aimMount(seat, yaw, pitch);
+    bot.aimYaw = bot.yaw = yaw;
+    // Out of its traverse (casemate guns): not this time.
+    const rel = Math.atan2(Math.sin(yaw - v.yaw), Math.cos(yaw - v.yaw));
+    if (Math.abs(rel - m.yaw) > 0.05) {
+      v.pullTrigger(seat, false, this.time, STEP);
+      return;
+    }
+    const shellOk = !m.gun.shell || (m.gun.shell.lob ? dist > 60 : dist > 8);
+    if (dist > m.gun.range || !shellOk || !v.pullTrigger(seat, true, this.time, STEP)) return;
+    // Bots' aim error, a bit wider than with a rifle.
+    const err = this.skill.aimErrorMin * 0.04 * dist;
+    aim.x += (Math.random() - 0.5) * err;
+    aim.y += (Math.random() - 0.5) * err * 0.5;
+    aim.z += (Math.random() - 0.5) * err;
+    this.fireMount?.(v, seat, { id: bot.id, name: bot.name, team: bot.team }, aim);
     bot.firingUntil = this.time + 0.4;
   }
 

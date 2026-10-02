@@ -6,15 +6,21 @@
  * - APC: 4 seats (driver, autocannon gunner, 2 passengers), from a pad at
  *   each base, at most 6 on the map (3 a side).
  * - Motorbike: 1 seat, a few around each zone.
+ * - Tanks (picked on the deploy screen, ceil(bots / 8) a side, all kinds
+ *   together): medium tank, self-propelled gun, tank destroyer. Four seats:
+ *   the driver also works the main gun, a roof MG, a hull MG, one inside.
  *
  * Base pads: a new one appears 10 s after the last drove off, but never
  * sooner than 1 min after the last one appeared there.
  */
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike';
-export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon';
 import type { DamageKind } from '@/combat/Hitboxes';
+
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td';
+export type SeatRole = 'driver' | 'gunner' | 'passenger';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun';
+/** Tank kinds (one limit for all of them). */
+export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
 
 export type { DamageKind };
 
@@ -26,6 +32,9 @@ export interface SeatSpec {
   exposed: boolean;
   /** Mounted gun this seat works. */
   gun?: VehicleGunId;
+  /** How far the gun turns either way from straight ahead (rad; default all round), and its pitch range. */
+  traverse?: number;
+  pitch?: readonly [number, number];
 }
 
 export interface WheelSpec {
@@ -57,6 +66,8 @@ export interface VehicleSpec {
   health: number;
   /** Damage taken per point of damage, by kind. */
   mult: Record<DamageKind, number>;
+  /** Tracks: steers by turning on the spot (rad/s) instead of steering wheels. */
+  turnRate?: number;
 }
 
 export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
@@ -116,6 +127,105 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     health: 1100,
     mult: { bullet: 0, explosive: 0.45, at: 1.6 },
   },
+  tank: {
+    kind: 'tank',
+    seats: [
+      { role: 'driver', eye: [0.35, 2.55, 0.2], exposed: false, gun: 'tankgun', pitch: [-0.15, 0.35] },
+      { role: 'gunner', eye: [-0.45, 3.15, 0.6], exposed: true, gun: 'mg' },
+      { role: 'gunner', eye: [0.6, 1.55, -2.4], exposed: false, gun: 'mg', traverse: 0.45, pitch: [-0.2, 0.3] },
+      { role: 'passenger', eye: [-0.5, 1.7, 1.6], exposed: false },
+    ],
+    half: [1.65, 0.75, 3.4],
+    mass: 22000,
+    wheels: [
+      { pos: [-1.45, -0.35, -2.1], steer: false, drive: true },
+      { pos: [1.45, -0.35, -2.1], steer: false, drive: true },
+      { pos: [-1.45, -0.35, -0.7], steer: false, drive: true },
+      { pos: [1.45, -0.35, -0.7], steer: false, drive: true },
+      { pos: [-1.45, -0.35, 0.7], steer: false, drive: true },
+      { pos: [1.45, -0.35, 0.7], steer: false, drive: true },
+      { pos: [-1.45, -0.35, 2.1], steer: false, drive: true },
+      { pos: [1.45, -0.35, 2.1], steer: false, drive: true },
+    ],
+    wheelRadius: 0.45,
+    suspension: { rest: 0.3, travel: 0.25, stiffness: 32, damping: 4.5 },
+    engine: 15000,
+    brake: 900,
+    steer: 0,
+    top: 13,
+    reverse: 5,
+    grip: 2.2,
+    friction: 2.6,
+    health: 1200,
+    mult: { bullet: 0, explosive: 0.3, at: 1 },
+    turnRate: 0.75,
+  },
+  spg: {
+    kind: 'spg',
+    seats: [
+      { role: 'driver', eye: [0, 2.85, 0.9], exposed: false, gun: 'howitzer', pitch: [-0.05, 0.95] },
+      { role: 'gunner', eye: [-0.55, 3.1, 1.6], exposed: true, gun: 'mg' },
+      { role: 'passenger', eye: [0.5, 1.7, 0.4], exposed: false },
+      { role: 'passenger', eye: [-0.5, 1.7, 0.4], exposed: false },
+    ],
+    half: [1.6, 0.7, 3.3],
+    mass: 19000,
+    wheels: [
+      { pos: [-1.4, -0.35, -2.1], steer: false, drive: true },
+      { pos: [1.4, -0.35, -2.1], steer: false, drive: true },
+      { pos: [-1.4, -0.35, -0.7], steer: false, drive: true },
+      { pos: [1.4, -0.35, -0.7], steer: false, drive: true },
+      { pos: [-1.4, -0.35, 0.7], steer: false, drive: true },
+      { pos: [1.4, -0.35, 0.7], steer: false, drive: true },
+      { pos: [-1.4, -0.35, 2.1], steer: false, drive: true },
+      { pos: [1.4, -0.35, 2.1], steer: false, drive: true },
+    ],
+    wheelRadius: 0.45,
+    suspension: { rest: 0.3, travel: 0.25, stiffness: 32, damping: 4.5 },
+    engine: 12500,
+    brake: 800,
+    steer: 0,
+    top: 11,
+    reverse: 4,
+    grip: 2.2,
+    friction: 2.6,
+    health: 900,
+    mult: { bullet: 0, explosive: 0.4, at: 1 },
+    turnRate: 0.7,
+  },
+  td: {
+    kind: 'td',
+    seats: [
+      { role: 'driver', eye: [0.3, 2.3, -0.6], exposed: false, gun: 'atgun', traverse: 0.22, pitch: [-0.1, 0.25] },
+      { role: 'gunner', eye: [-0.5, 2.85, 0.6], exposed: true, gun: 'mg' },
+      { role: 'gunner', eye: [-0.6, 1.5, -2.5], exposed: false, gun: 'mg', traverse: 0.45, pitch: [-0.2, 0.3] },
+      { role: 'passenger', eye: [0.5, 1.6, 1.6], exposed: false },
+    ],
+    half: [1.6, 0.68, 3.5],
+    mass: 20000,
+    wheels: [
+      { pos: [-1.4, -0.35, -2.1], steer: false, drive: true },
+      { pos: [1.4, -0.35, -2.1], steer: false, drive: true },
+      { pos: [-1.4, -0.35, -0.7], steer: false, drive: true },
+      { pos: [1.4, -0.35, -0.7], steer: false, drive: true },
+      { pos: [-1.4, -0.35, 0.7], steer: false, drive: true },
+      { pos: [1.4, -0.35, 0.7], steer: false, drive: true },
+      { pos: [-1.4, -0.35, 2.1], steer: false, drive: true },
+      { pos: [1.4, -0.35, 2.1], steer: false, drive: true },
+    ],
+    wheelRadius: 0.45,
+    suspension: { rest: 0.3, travel: 0.25, stiffness: 32, damping: 4.5 },
+    engine: 15000,
+    brake: 900,
+    steer: 0,
+    top: 14,
+    reverse: 5,
+    grip: 2.2,
+    friction: 2.6,
+    health: 1300,
+    mult: { bullet: 0, explosive: 0.3, at: 0.9 },
+    turnRate: 0.7,
+  },
   bike: {
     kind: 'bike',
     seats: [{ role: 'driver', eye: [0, 1.6, 0.25], exposed: true }],
@@ -142,6 +252,14 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   },
 };
 
+/** A gun that fires a shell (flies and drops) instead of a hitscan round. */
+export interface ShellSpec {
+  /** Muzzle speed (m/s), drop (m/s²); `lob`: fired in an arc onto the point aimed at. */
+  speed: number;
+  gravity: number;
+  lob?: boolean;
+}
+
 export interface VehicleGunSpec {
   /** Rounds a minute, damage per hit (people), spread (deg), range (m). */
   rpm: number;
@@ -155,6 +273,8 @@ export interface VehicleGunSpec {
   /** Rounds before it has to cool off, and the cool-off (s). */
   burst: number;
   cool: number;
+  /** Shell guns: how it flies; a direct hit kills people outright. */
+  shell?: ShellSpec;
 }
 
 export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
@@ -162,6 +282,12 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   mg: { rpm: 550, damage: 34, spread: 0.7, range: 320, vsVehicle: 9, blast: 0, burst: 60, cool: 3 },
   // 30 mm autocannon on the APC: slow, explosive, hurts light vehicles.
   autocannon: { rpm: 200, damage: 70, spread: 0.35, range: 400, vsVehicle: 40, blast: 2.2, burst: 20, cool: 3.5 },
+  // Medium tank main gun: a shell every 4 s, kills on a direct hit, 4 hits wreck a tank.
+  tankgun: { rpm: 15, damage: 999, spread: 0.12, range: 700, vsVehicle: 380, blast: 5, burst: 1, cool: 4, shell: { speed: 320, gravity: 4 } },
+  // Self-propelled gun: lobs a heavy shell onto the point aimed at, slow to load.
+  howitzer: { rpm: 9, damage: 999, spread: 0.3, range: 900, vsVehicle: 300, blast: 10, burst: 1, cool: 6.5, shell: { speed: 120, gravity: 9.8, lob: true } },
+  // Tank destroyer: a fast, hard-hitting gun with little traverse.
+  atgun: { rpm: 17, damage: 999, spread: 0.08, range: 800, vsVehicle: 520, blast: 3, burst: 1, cool: 3.5, shell: { speed: 480, gravity: 3 } },
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */
@@ -175,6 +301,7 @@ export const PADS = { afterLeave: 10, cooldown: 60, leaveDistance: 12 };
 export function vehicleLimit(kind: VehicleKind, bots: number): number {
   if (kind === 'apc') return Math.ceil(bots / 4);
   if (kind === 'jeep') return 4;
+  if (TANK_KINDS.includes(kind)) return Math.ceil(bots / 8);
   return 0;
 }
 /** Motorbikes: per zone, seconds to bring a lost one back, and how long one can sit unused away from its zone. */

@@ -8,12 +8,18 @@ import { VEHICLES, type VehicleKind } from './vehicleData';
  * vehicle); the gun seat's turret yaws on `turret` and the barrel pitches on
  * `gun`, with `muzzle` at the end. No shadows: the sun's shadow map is baked for static scenery.
  */
+export interface MountNodes {
+  /** Yaws with the gun (null: fixed), pitches the barrel, the muzzle at its end. */
+  turret: THREE.Object3D | null;
+  gun: THREE.Object3D;
+  muzzle: THREE.Object3D;
+}
+
 export interface VehicleModel {
   root: THREE.Group;
   wheels: THREE.Object3D[];
-  turret: THREE.Object3D | null;
-  gun: THREE.Object3D | null;
-  muzzle: THREE.Object3D | null;
+  /** Gun pivots by seat (null for seats without a gun). */
+  mounts: (MountNodes | null)[];
 }
 
 const mats = new Map<string, THREE.Material>();
@@ -68,7 +74,7 @@ function wheel(r: number, width: number, side: number): THREE.Group {
 
 function addWheels(root: THREE.Group, kind: VehicleKind): THREE.Object3D[] {
   const spec = VEHICLES[kind];
-  const width = kind === 'bike' ? 0.16 : kind === 'apc' ? 0.42 : 0.3;
+  const width = kind === 'bike' ? 0.16 : kind === 'apc' ? 0.42 : kind === 'jeep' ? 0.3 : 0.45;
   const out: THREE.Object3D[] = [];
   spec.wheels.forEach((w, i) => {
     // The bike's paired ray wheels share one visible wheel each.
@@ -87,7 +93,130 @@ function addWheels(root: THREE.Group, kind: VehicleKind): THREE.Object3D[] {
 export function buildVehicleModel(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'jeep') return buildJeep(team);
   if (kind === 'apc') return buildApc(team);
+  if (kind === 'tank') return buildTank(team);
+  if (kind === 'spg') return buildSpg(team);
+  if (kind === 'td') return buildTd(team);
   return buildBike(team);
+}
+
+/** Tracks down both sides: a belt box over the road wheels, sprocket and idler. */
+function tracks(root: THREE.Group, x: number, y: number, len: number, p: THREE.Material): void {
+  for (const s of [-1, 1]) {
+    box(root, rubber(), 0.55, 0.95, len, s * x, y, 0);
+    box(root, p, 0.62, 0.08, len + 0.2, s * x, y + 0.52, 0);
+    cyl(root, dark(), 0.42, 0.5, s * x, y + 0.08, -len / 2 + 0.2, 'x', 12);
+    cyl(root, dark(), 0.38, 0.5, s * x, y + 0.08, len / 2 - 0.2, 'x', 12);
+    for (let i = 0; i < 6; i++) cyl(root, metal(), 0.36, 0.56, s * x, y - 0.12, -len / 2 + 0.75 + i * ((len - 1.5) / 5), 'x', 12);
+  }
+}
+
+/** A machine gun on a pivot (for roof and hull MG seats). */
+function mgMount(parent: THREE.Object3D, x: number, y: number, z: number): MountNodes {
+  const turret = new THREE.Group();
+  turret.position.set(x, y, z);
+  parent.add(turret);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.1, 0);
+  turret.add(gun);
+  box(gun, dark(), 0.12, 0.14, 0.55, 0, 0, 0);
+  cyl(gun, dark(), 0.025, 0.7, 0, 0.02, -0.6, 'z', 8);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0.02, -0.95);
+  gun.add(muzzle);
+  return { turret, gun, muzzle };
+}
+
+function buildTank(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const p = paint(team);
+  tracks(root, 1.45, -0.35, 6.6, p);
+  // Hull: upper deck, sloped glacis, engine deck grilles, lights.
+  box(root, p, 2.4, 0.7, 6.4, 0, 0.1, 0.05);
+  box(root, p, 2.4, 0.9, 1.2, 0, -0.05, -3.0, 0.9);
+  box(root, p, 3.2, 0.12, 5.6, 0, 0.47, 0.3);
+  for (let i = 0; i < 4; i++) box(root, dark(), 1.6, 0.04, 0.12, 0, 0.55, 1.6 + i * 0.35);
+  for (const s of [-1, 1]) box(root, lamp(), 0.14, 0.1, 0.06, s * 1.0, 0.35, -3.25);
+  // Turret with the main gun, mantlet, cupola, smoke dischargers, stowage.
+  const turret = new THREE.Group();
+  turret.position.set(0, 0.55, 0.2);
+  root.add(turret);
+  box(turret, p, 2.2, 0.75, 2.6, 0, 0.38, 0.2);
+  box(turret, p, 1.8, 0.6, 0.9, 0, 0.35, -1.25, -0.25);
+  box(turret, p, 2.0, 0.5, 0.8, 0, 0.32, 1.7);
+  cyl(turret, p, 0.32, 0.25, -0.45, 0.85, 0.6, 'y', 14);
+  for (const s of [-1, 1]) for (let i = 0; i < 3; i++) cyl(turret, dark(), 0.06, 0.28, s * 1.05, 0.55, -0.6 + i * 0.14, 'x', 8);
+  box(turret, canvas(), 1.8, 0.3, 0.4, 0, 0.3, 2.15);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.35, -1.6);
+  turret.add(gun);
+  box(gun, p, 0.7, 0.5, 0.5, 0, 0, 0);
+  cyl(gun, dark(), 0.1, 4.4, 0, 0, -2.4, 'z', 12);
+  cyl(gun, dark(), 0.16, 0.6, 0, 0, -2.0, 'z', 12);
+  cyl(gun, dark(), 0.13, 0.35, 0, 0, -4.55, 'z', 12);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0, -4.75);
+  gun.add(muzzle);
+  const roof = mgMount(root, -0.45, 1.75, 0.6);
+  const hull = mgMount(root, 0.6, 0.45, -3.0);
+  return { root, wheels: addWheels(root, 'tank'), mounts: [{ turret, gun, muzzle }, roof, hull, null] };
+}
+
+function buildSpg(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const p = paint(team);
+  tracks(root, 1.4, -0.35, 6.4, p);
+  box(root, p, 2.3, 0.65, 6.2, 0, 0.1, 0);
+  box(root, p, 2.3, 0.8, 1.0, 0, -0.05, -2.95, 0.9);
+  box(root, p, 3.1, 0.1, 5.4, 0, 0.45, 0.2);
+  // A big boxy turret at the back with a long howitzer.
+  const turret = new THREE.Group();
+  turret.position.set(0, 0.5, 0.9);
+  root.add(turret);
+  box(turret, p, 2.6, 1.3, 3.0, 0, 0.65, 0.2);
+  box(turret, p, 2.4, 0.9, 0.6, 0, 0.55, -1.45, -0.3);
+  cyl(turret, dark(), 0.3, 0.12, -0.55, 1.35, 1.0, 'y', 14);
+  for (let i = 0; i < 3; i++) box(turret, dark(), 0.05, 0.6, 0.05, 1.31, 0.6, -0.6 + i * 0.6);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.75, -1.6);
+  turret.add(gun);
+  box(gun, p, 0.7, 0.6, 0.6, 0, 0, 0);
+  cyl(gun, dark(), 0.12, 5.6, 0, 0, -3.0, 'z', 12);
+  cyl(gun, dark(), 0.2, 0.5, 0, 0, -5.85, 'z', 12);
+  for (const s of [-1, 1]) cyl(gun, metal(), 0.07, 1.2, s * 0.25, 0.25, -0.5, 'z', 8);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0, -6.1);
+  gun.add(muzzle);
+  // Spade at the back.
+  box(root, dark(), 2.0, 0.4, 0.15, 0, -0.1, 3.25, -0.4);
+  const roof = mgMount(root, -0.55, 2.0, 1.6);
+  return { root, wheels: addWheels(root, 'spg'), mounts: [{ turret, gun, muzzle }, roof, null, null] };
+}
+
+function buildTd(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const p = paint(team);
+  tracks(root, 1.4, -0.35, 6.8, p);
+  // Low hull and a sloped fixed casemate; the gun sits in a ball mantlet.
+  box(root, p, 2.4, 0.6, 6.8, 0, 0.05, 0.05);
+  box(root, p, 2.4, 0.8, 1.2, 0, 0.05, -3.2, 1.0);
+  box(root, p, 2.6, 0.95, 3.6, 0, 0.8, 0.4);
+  box(root, p, 2.6, 0.9, 1.1, 0, 0.75, -1.65, 0.75);
+  for (const s of [-1, 1]) box(root, p, 0.1, 0.9, 3.6, s * 1.32, 0.78, 0.4, 0, 0, s * -0.2);
+  box(root, canvas(), 1.6, 0.25, 0.6, 0, 1.4, 1.6);
+  const turret = new THREE.Group();
+  turret.position.set(0.3, 0.85, -2.0);
+  root.add(turret);
+  cyl(turret, p, 0.42, 0.5, 0, 0, 0, 'z', 14);
+  const gun = new THREE.Group();
+  turret.add(gun);
+  cyl(gun, dark(), 0.11, 5.0, 0, 0, -2.6, 'z', 12);
+  cyl(gun, dark(), 0.15, 0.45, 0, 0, -5.1, 'z', 12);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0, -5.35);
+  gun.add(muzzle);
+  const roof = mgMount(root, -0.5, 1.45, 0.6);
+  const hull = mgMount(root, -0.6, 0.35, -3.2);
+  return { root, wheels: addWheels(root, 'td'), mounts: [{ turret, gun, muzzle }, roof, hull, null] };
 }
 
 function buildJeep(team: Team | null): VehicleModel {
@@ -141,7 +270,7 @@ function buildJeep(team: Team | null): VehicleModel {
   const muzzle = new THREE.Object3D();
   muzzle.position.set(0, 0.02, -1.33);
   gun.add(muzzle);
-  return { root, wheels: addWheels(root, 'jeep'), turret, gun, muzzle };
+  return { root, wheels: addWheels(root, 'jeep'), mounts: [null, { turret, gun, muzzle }] };
 }
 
 function buildApc(team: Team | null): VehicleModel {
@@ -180,7 +309,7 @@ function buildApc(team: Team | null): VehicleModel {
   const muzzle = new THREE.Object3D();
   muzzle.position.set(0, 0, -2.5);
   gun.add(muzzle);
-  return { root, wheels: addWheels(root, 'apc'), turret, gun, muzzle };
+  return { root, wheels: addWheels(root, 'apc'), mounts: [null, { turret, gun, muzzle }, null, null] };
 }
 
 function buildBike(team: Team | null): VehicleModel {
@@ -197,5 +326,5 @@ function buildBike(team: Team | null): VehicleModel {
   cyl(root, metal(), 0.045, 0.8, 0.17, 0.0, 0.45, 'z', 8);
   box(root, p, 0.28, 0.05, 0.4, 0, 0.12, 0.72);
   box(root, canvas(), 0.36, 0.3, 0.3, 0, 0.55, 0.62);
-  return { root, wheels: addWheels(root, 'bike'), turret: null, gun: null, muzzle: null };
+  return { root, wheels: addWheels(root, 'bike'), mounts: [null] };
 }

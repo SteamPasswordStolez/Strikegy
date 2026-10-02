@@ -5,7 +5,7 @@ export type Tone = 'ally' | 'enemy' | 'neutral';
 
 export interface DeployOption {
   key: string;
-  kind: 'base' | 'zone' | 'mate' | 'beacon';
+  kind: 'base' | 'zone' | 'mate' | 'beacon' | 'vehicle';
   label: string;
   /** Map position of the marker (world x, z). */
   x: number;
@@ -224,6 +224,8 @@ export class DeployScreen {
       g.stroke();
     }
     for (const o of s.options) {
+      // Vehicles start at the base: listed only, no marker of their own.
+      if (o.kind === 'vehicle') continue;
       const [u, v] = this.map.project(o.x, o.z);
       const sel = o.key === s.selected;
       const hot = o.key === this.hover;

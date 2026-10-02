@@ -27,6 +27,8 @@ export interface MineWalker {
 }
 
 export interface GadgetHooks {
+  /** A tank / gun shell struck something (`target` when it hit someone or a vehicle) and goes off. */
+  shell?(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart): void;
   /** A rocket or mine went off at `point`. */
   explode(kind: 'rocket' | 'mine', point: THREE.Vector3, owner: GadgetOwner): void;
   /** A rocket struck someone directly. */
@@ -37,7 +39,7 @@ export interface GadgetHooks {
   destroyed?(kind: 'beacon' | 'mine', point: THREE.Vector3): void;
 }
 
-type ShotKind = 'rocket' | 'riflesmoke';
+type ShotKind = 'rocket' | 'riflesmoke' | 'shell';
 
 interface Shot {
   kind: ShotKind;
@@ -47,6 +49,8 @@ interface Shot {
   gravity: number;
   life: number;
   mesh: THREE.Object3D;
+  /** Shells: the gun that fired it. */
+  gun?: string;
 }
 
 export interface Beacon {
@@ -111,6 +115,14 @@ export class GadgetWorld {
     mesh.position.copy(origin);
     this.group.add(mesh);
     this.shots.push({ kind, owner, pos: origin.clone(), vel, gravity: spec.gravity, life: spec.life, mesh });
+  }
+
+  /** A vehicle gun shell with its own velocity and drop (`gun`: which gun, for the hooks). */
+  fireShell(origin: THREE.Vector3, vel: THREE.Vector3, gravity: number, owner: GadgetOwner, gun: string): void {
+    const mesh = this.models.shell.clone();
+    mesh.position.copy(origin);
+    this.group.add(mesh);
+    this.shots.push({ kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: 12, mesh, gun });
   }
 
   /** Puts a beacon down (replacing the owner's earlier one). */
@@ -187,6 +199,10 @@ export class GadgetWorld {
           continue;
         }
         const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+        if (s.kind === 'shell') {
+          this.hooks.shell?.(s.gun ?? '', at, s.owner, target && target.owner.alive ? target.owner : null, target?.part ?? 'body');
+          continue;
+        }
         if (target && target.owner.alive) this.hooks.directHit(target.owner, target.part, at, s.owner);
         this.hooks.explode('rocket', at, s.owner);
         this.blast(at, 4);
@@ -298,7 +314,7 @@ function gadgetModels(): ReturnType<typeof buildModels> {
   return (cachedModels ??= buildModels());
 }
 
-function buildModels(): { rocket: THREE.Group; rifleGrenade: THREE.Group; beacon: THREE.Group; mine: THREE.Group } {
+function buildModels(): { rocket: THREE.Group; rifleGrenade: THREE.Group; beacon: THREE.Group; mine: THREE.Group; shell: THREE.Group } {
   const olive = new THREE.MeshStandardMaterial({ color: 0x4a5236, roughness: 0.75, metalness: 0.2 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x222325, roughness: 0.6, metalness: 0.5 });
   const flame = new THREE.MeshBasicMaterial({ color: 0xffb35a, toneMapped: false });
@@ -320,6 +336,10 @@ function buildModels(): { rocket: THREE.Group; rifleGrenade: THREE.Group; beacon
     rocket.add(fin);
   }
   rocket.add(mesh(new THREE.ConeGeometry(0.03, 0.18, 8).rotateX(Math.PI), flame, -0.42));
+  // A shell with a bright tracer behind it (along +Y).
+  const shell = new THREE.Group();
+  shell.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8), dark, 0));
+  shell.add(mesh(new THREE.CylinderGeometry(0.02, 0.06, 1.6, 6), new THREE.MeshBasicMaterial({ color: 0xffd38a, toneMapped: false, transparent: true, opacity: 0.8 }), -1.0));
   const rifleGrenade = new THREE.Group();
   rifleGrenade.add(mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.12, 10), new THREE.MeshStandardMaterial({ color: 0x8a8f86, roughness: 0.6 }), 0.04));
   rifleGrenade.add(mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.16, 8), dark, -0.1));
@@ -332,5 +352,5 @@ function buildModels(): { rocket: THREE.Group; rifleGrenade: THREE.Group; beacon
   const mine = new THREE.Group();
   mine.add(mesh(new THREE.CylinderGeometry(0.11, 0.12, 0.06, 16), olive, 0.03));
   mine.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.02, 12), dark, 0.07));
-  return { rocket, rifleGrenade, beacon, mine };
+  return { rocket, rifleGrenade, beacon, mine, shell };
 }

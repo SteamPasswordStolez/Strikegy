@@ -212,5 +212,15 @@
   "vehicle.overheat": "과열",
   "vehicle.exitTouch": "내리기 버튼",
   "touch.exitVehicle": "내리기",
-  "vehicle.view": "C 시점 전환"
+  "vehicle.view": "C 시점 전환",
+  "vehicle.tank": "중형전차",
+  "vehicle.spg": "자주포",
+  "vehicle.td": "구축전차",
+  "vehicleGun.tankgun": "전차포",
+  "vehicleGun.howitzer": "곡사포",
+  "vehicleGun.atgun": "대전차포",
+  "vehicle.reloading": "장전 중",
+  "spawn.tank": "전차로 배치",
+  "deploy.tankLimit": "최대 {n}대",
+  "deploy.noRoom": "자리 없음"
 }

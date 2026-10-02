@@ -212,5 +212,15 @@
   "vehicle.overheat": "Overheated",
   "vehicle.exitTouch": "Get out button",
   "touch.exitVehicle": "Get out",
-  "vehicle.view": "C switch view"
+  "vehicle.view": "C switch view",
+  "vehicle.tank": "Medium tank",
+  "vehicle.spg": "Self-propelled gun",
+  "vehicle.td": "Tank destroyer",
+  "vehicleGun.tankgun": "Tank gun",
+  "vehicleGun.howitzer": "Howitzer",
+  "vehicleGun.atgun": "AT gun",
+  "vehicle.reloading": "Reloading",
+  "spawn.tank": "Deploy in a tank",
+  "deploy.tankLimit": "Max {n}",
+  "deploy.noRoom": "No room"
 }

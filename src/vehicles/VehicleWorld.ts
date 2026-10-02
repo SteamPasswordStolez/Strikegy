@@ -2,11 +2,18 @@ import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
-import { BIKES, ENTER_REACH, PADS, ROADKILL, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
+import { BIKES, ENTER_REACH, PADS, ROADKILL, TANK_KINDS, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
 
 /** A base pad: where it is and what it brings out. */
 export interface PadSpot extends PadState {
+  team: Team;
+  pos: THREE.Vector3;
+  yaw: number;
+}
+
+/** A spot at a base where a tank can be brought out. */
+export interface TankSpot {
   team: Team;
   pos: THREE.Vector3;
   yaw: number;
@@ -62,7 +69,29 @@ export class VehicleWorld {
     readonly bikes: BikeSpot[],
     /** Bots in the match (vehicle limits scale with it). */
     readonly botCount: number,
+    readonly tankSpots: TankSpot[] = [],
   ) {}
+
+  /** Tanks (all kinds) one side has out, and how many it may. */
+  tanks(team: Team): number {
+    return this.vehicles.filter((v) => TANK_KINDS.includes(v.kind) && v.home === team && !v.wrecked).length;
+  }
+
+  tankLimit(): number {
+    return vehicleLimit('tank', this.botCount);
+  }
+
+  /** A clear tank spot at `team`'s base, or null. */
+  freeTankSpot(team: Team): TankSpot | null {
+    return this.tankSpots.find((s) => s.team === team && !this.vehicles.some((v) => v.pos.distanceTo(s.pos) < 7)) ?? null;
+  }
+
+  /** Brings a tank out at the base (under the side's limit, on a clear spot); null if it can't. */
+  spawnTank(kind: VehicleKind, team: Team): Vehicle | null {
+    if (this.tanks(team) >= this.tankLimit()) return null;
+    const spot = this.freeTankSpot(team);
+    return spot ? this.spawn(kind, spot.pos, spot.yaw, team) : null;
+  }
 
   spawn(kind: VehicleKind, pos: THREE.Vector3, yaw: number, home: Team | null): Vehicle {
     const v = new Vehicle(this.nextId++, kind, this.physics, pos, yaw, home);
@@ -243,7 +272,7 @@ export function planVehicleSpots(
   physics: PhysicsWorld,
   bases: { team: Team; pos: THREE.Vector3; facing: number }[],
   zones: { id: string; pos: THREE.Vector3; radius: number }[],
-): { pads: PadSpot[]; bikes: BikeSpot[] } {
+): { pads: PadSpot[]; bikes: BikeSpot[]; tankSpots: TankSpot[] } {
   const pads: PadSpot[] = [];
   const taken: THREE.Vector3[] = [];
   const flat = (x: number, z: number, y0: number, hx: number, hz: number, yaw: number): THREE.Vector3 | null => {
@@ -294,6 +323,22 @@ export function planVehicleSpots(
       }
     }
   }
+  // Tank spots: a few big clear patches near each base.
+  const tankSpots: TankSpot[] = [];
+  for (const b of bases) {
+    let n = 0;
+    for (let r = 10; r <= 70 && n < 4; r += 5) {
+      for (let k = 0; k < 16 && n < 4; k++) {
+        const a = b.facing + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 8) + Math.PI;
+        const p = flat(b.pos.x - Math.sin(a) * r, b.pos.z - Math.cos(a) * r, b.pos.y, 2.3, 4.4, b.facing);
+        if (p && clear(p, 9)) {
+          tankSpots.push({ team: b.team, pos: p, yaw: b.facing });
+          taken.push(p);
+          n++;
+        }
+      }
+    }
+  }
   const bikes: BikeSpot[] = [];
   for (const z of zones) {
     const spots: { pos: THREE.Vector3; yaw: number }[] = [];
@@ -309,5 +354,5 @@ export function planVehicleSpots(
     }
     if (spots.length) for (let n = 0; n < BIKES.perZone; n++) bikes.push({ zone: z.id, spots, vehicle: null, lostAt: -Infinity });
   }
-  return { pads, bikes };
+  return { pads, bikes, tankSpots };
 }

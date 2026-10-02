@@ -39,6 +39,10 @@ export const BLASTS = {
   artillery: { innerRadius: 3, radius: 11, maxDamage: 220, fortMult: 2.2 },
   // APC autocannon round: a small burst.
   cannon: { innerRadius: 0.6, radius: 2.2, maxDamage: 45, fortMult: 1.2 },
+  // Tank shells: medium tank HE, self-propelled howitzer, tank destroyer AP.
+  shell: { innerRadius: 1.5, radius: 5, maxDamage: 130, fortMult: 2.6 },
+  howitzer: { innerRadius: 3, radius: 10, maxDamage: 200, fortMult: 2.4 },
+  atshell: { innerRadius: 1, radius: 3, maxDamage: 90, fortMult: 2 },
 } satisfies Record<string, BlastSpec>;
 
 export type BlastKind = keyof typeof BLASTS;
