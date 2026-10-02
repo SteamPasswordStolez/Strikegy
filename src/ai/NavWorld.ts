@@ -35,6 +35,8 @@ const TOP_FACE = [12, 18] as const;
 /** Detour's "no more links" value. */
 const NULL_LINK = 0xffffffff;
 
+/** Longest path a route search may return (polygons). */
+const PATH_POLYS = 1024;
 /** Search box (half extents, m) for putting a bot back on the mesh right where it stands. */
 const SNAP_NEAR = { x: 0.6, y: 1.2, z: 0.6 };
 
@@ -287,7 +289,9 @@ export class NavWorld {
    */
   path(from: V3, to: V3, out: THREE.Vector3[]): boolean {
     out.length = 0;
-    const res = this.query.computePath(from, to, { halfExtents: this.halfExtents });
+    // Detour's default 256 polygons cut long routes short now that buildings have
+    // rooms on every floor (each room and corridor is several polygons).
+    const res = this.query.computePath(from, to, { halfExtents: this.halfExtents, maxPathPolys: PATH_POLYS });
     if (!res.success || res.path.length === 0) return false;
     for (const p of res.path) out.push(new THREE.Vector3(p.x, p.y, p.z));
     return true;

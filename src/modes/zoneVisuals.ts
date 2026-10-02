@@ -89,8 +89,10 @@ export class ZoneVisuals {
 }
 
 function ringMesh(zone: ZoneState, groundAt: (x: number, z: number) => number): THREE.Mesh {
-  const seg = 96;
-  const inner = zone.radius - 0.35;
+  // About a segment per metre and a half so the ring keeps to the ground on big zones;
+  // wider on big zones so it still reads from the far side.
+  const seg = Math.max(96, Math.ceil((Math.PI * 2 * zone.radius) / 1.5));
+  const inner = zone.radius - Math.max(0.35, zone.radius * 0.012);
   const outer = zone.radius;
   const pos: number[] = [];
   const idx: number[] = [];

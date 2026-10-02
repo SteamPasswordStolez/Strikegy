@@ -6,7 +6,7 @@ import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces'
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
 import { buildBuilding, type WindowSpot } from './buildings';
-import { buildKit, kitMaterials, type KitMaterial } from './modelKits';
+import { buildKit, kitMaterials, MODEL_KINDS, type KitMaterial } from './modelKits';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
@@ -17,6 +17,7 @@ const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
 };
 
 const DEG = Math.PI / 180;
+const warnedKits = new Set<string>();
 
 interface Batch {
   material: THREE.Material;
@@ -103,6 +104,15 @@ export function buildBlockout(
   }
   let kitMats: ReturnType<typeof kitMaterials> | null = null;
   for (const obj of map.objects) {
+    if (obj.model && !MODEL_KINDS.includes(obj.model)) {
+      // A kit this build doesn't have (newer map JSON): draw and collide as the plain box.
+      if (!warnedKits.has(obj.model)) {
+        warnedKits.add(obj.model);
+        console.warn(`map: unknown model kit "${obj.model}", drawing its box`);
+      }
+      addBox({ ...obj, model: undefined }, batches, physics, surfaces, impacts);
+      continue;
+    }
     if (obj.model) {
       addModel(obj, batches, physics, surfaces, impacts, (kitMats ??= kitMaterials()));
       continue;
@@ -121,6 +131,18 @@ export function buildBlockout(
     const built = buildBuilding(b, base, { snow: map.world.visualProfile === 'winter' });
     for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts);
     for (const obj of built.decor) addBox(obj, batches, physics, surfaces, impacts, '', false);
+    for (const sh of built.shapes) {
+      // A plain 0..n-1 index lets gables and roofs merge into the boxes of their
+      // wall colour (box geometry is indexed) instead of costing a batch of their own.
+      const material = surfaces.tinted(sh.material, sh.color);
+      sh.geo.setIndex(Array.from({ length: sh.geo.getAttribute('position').count }, (_, i) => i));
+      let batch = batches.get(material.uuid);
+      if (!batch) {
+        batch = { material, geometries: [], castShadow: true };
+        batches.set(material.uuid, batch);
+      }
+      batch.geometries.push(sh.geo);
+    }
     windows.push(...built.windows);
     footprints.push({ x: b.pos[0], z: b.pos[1], yaw: ((b.rot ?? 0) * Math.PI) / 180, hw: b.size[0] / 2, hd: b.size[1] / 2 });
   }

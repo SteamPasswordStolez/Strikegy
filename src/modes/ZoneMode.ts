@@ -125,10 +125,10 @@ export class ZoneMode {
         const at = center.clone().addScaledVector(away, d);
         found = nav ? (nav.randomAround(at, 4) ?? nav.closest(at)) : at;
       }
-      pos = found ?? (nav && nav.randomAround(center, z.radius * 0.6)) ?? center;
+      pos = found ?? (nav && groundAround(nav, center, z.radius * 0.6)) ?? center;
     } else {
       const center = new THREE.Vector3(z.x, z.y, z.z);
-      pos = (nav && nav.randomAround(center, z.radius * 0.6)) || center;
+      pos = (nav && groundAround(nav, center, z.radius * 0.6)) || center;
     }
     return { pos, yaw: this.faceYaw(team, pos) };
   }
@@ -176,4 +176,20 @@ export class ZoneMode {
       front: new THREE.Vector3(enemy.x - z.x, 0, enemy.z - z.z).normalize(),
     }));
   }
+}
+
+/**
+ * A random walkable point within `r` of `at` at about its height: the navmesh
+ * reaches the upper floors of buildings in a zone, and nobody should spawn on
+ * the fourth floor of the hospital. Falls back to any point if none is low.
+ */
+function groundAround(nav: NavWorld, at: THREE.Vector3, r: number): THREE.Vector3 | null {
+  let any: THREE.Vector3 | null = null;
+  for (let i = 0; i < 6; i++) {
+    const p = nav.randomAround(at, r);
+    if (!p) break;
+    if (Math.abs(p.y - at.y) < 2.5) return p;
+    any ??= p;
+  }
+  return any;
 }

@@ -44,6 +44,12 @@ export interface ZoneRulesOptions {
 export const ZONE_DEFAULTS = { tickets: 200, stepSec: 8 };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
+/**
+ * How far above or below the zone's ground a soldier still counts as in it: the
+ * lower floors of a block in the zone (up to the fourth, ~10 m) count, rooftops
+ * of the tall landmarks don't.
+ */
+export const ZONE_HEIGHT = 12;
 
 export class ZoneRules {
   readonly zones: ZoneState[];
@@ -88,7 +94,7 @@ export class ZoneRules {
   static inside(zone: ZoneState, p: { x: number; y: number; z: number }): boolean {
     const dx = p.x - zone.x;
     const dz = p.z - zone.z;
-    return dx * dx + dz * dz <= zone.radius * zone.radius && Math.abs(p.y - zone.y) < 8;
+    return dx * dx + dz * dz <= zone.radius * zone.radius && Math.abs(p.y - zone.y) < ZONE_HEIGHT;
   }
 
   /**

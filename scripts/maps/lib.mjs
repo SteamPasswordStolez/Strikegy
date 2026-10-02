@@ -165,3 +165,74 @@ export function wallLine(pts, { height = 3, thick = 0.4, material = 'concrete', 
   }
   return out;
 }
+
+/** Extra points along a polyline so no piece is longer than `step`. */
+export function densify(pts, step) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1];
+    const [bx, bz] = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step));
+    for (let k = 1; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+  }
+  return out;
+}
+
+/**
+ * Local frame at (cx, cz) turned by `yaw` degrees, same convention as building
+ * `rot` and object yaw: returns (u, v) -> [x, z] (u = local x, v = local z).
+ */
+export function localFrame(cx, cz, yaw = 0) {
+  const a = (yaw * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return (u, v) => [cx + u * c + v * s, cz - u * s + v * c];
+}
+
+/** Normalised radius of (x, z) in an ellipse (centre, radii, yaw in degrees): < 1 inside. */
+export function ellipseIn(x, z, cx, cz, rx, rz, yaw = 0) {
+  const a = (yaw * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const dx = x - cx;
+  const dz = z - cz;
+  // Inverse of localFrame's rotation.
+  const u = dx * c - dz * s;
+  const v = dx * s + dz * c;
+  return Math.hypot(u / rx, v / rz);
+}
+
+/** Z of a polyline running west to east at x (clamped to its ends). */
+export function zAtX(pts, x) {
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i];
+    const [bx, bz] = pts[i + 1];
+    if ((x - ax) * (x - bx) <= 0 && ax !== bx) return az + ((bz - az) * (x - ax)) / (bx - ax);
+  }
+  return pts[pts.length - 1][1];
+}
+
+/**
+ * A point beside a polyline: `frac` of the way along it, `off` meters to its
+ * left (negative: right), with the line's unit direction there.
+ */
+export function besideLine(pts, frac, off) {
+  const lens = [];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    lens.push(l);
+    total += l;
+  }
+  let d = Math.max(0, Math.min(1, frac)) * total;
+  let i = 0;
+  while (i < lens.length - 1 && d > lens[i]) d -= lens[i++];
+  const [ax, az] = pts[i];
+  const [bx, bz] = pts[i + 1];
+  const L = lens[i] || 1;
+  const dx = (bx - ax) / L;
+  const dz = (bz - az) / L;
+  const t = d / L;
+  return { x: ax + (bx - ax) * t + dz * off, z: az + (bz - az) * t - dx * off, dx, dz };
+}

@@ -30,7 +30,13 @@ export type ModelKind =
   | 'steeple'
   | 'sawShed'
   | 'archBridge'
-  | 'trussBridge';
+  | 'trussBridge'
+  | 'bus'
+  | 'fuelCanopy'
+  | 'waterTower'
+  | 'tankWreck'
+  | 'millWheel'
+  | 'cart';
 
 export const MODEL_KINDS: readonly ModelKind[] = [
   'car',
@@ -55,6 +61,12 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   'sawShed',
   'archBridge',
   'trussBridge',
+  'bus',
+  'fuelCanopy',
+  'waterTower',
+  'tankWreck',
+  'millWheel',
+  'cart',
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
@@ -767,6 +779,273 @@ const KITS: Record<ModelKind, Kit> = {
     }
     for (let i = 1; i < panels; i++) b.box('trim', [w - 0.3, 0.2, 0.2], [0, deckTop + trussH, -L / 2 + i * pl]);
     return cols;
+  },
+
+  bus(b, w, h, d) {
+    // Single-deck bus along z (front +z): window band with pillars, doors on the right (+x), two axles.
+    const r = 0.5;
+    const floor = 0.75;
+    const belt = 1.45;
+    const roof = h - 0.25;
+    b.box('body', [w, belt - 0.35, d], [0, 0.35 + (belt - 0.35) / 2, 0]);
+    b.box('glass', [w - 0.06, roof - belt, d - 0.3], [0, (belt + roof) / 2, -0.05]);
+    // Pillars between the side windows, solid panel at the back corners.
+    for (let z = -d / 2 + 0.6; z <= d / 2 - 0.4; z += 1.45) b.box('body', [w + 0.02, roof - belt, 0.14], [0, (belt + roof) / 2, z]);
+    b.box('body', [w + 0.02, roof - belt, 0.9], [0, (belt + roof) / 2, -d / 2 + 0.45]);
+    b.box('body', [w, 0.28, d], [0, roof + 0.14, 0]);
+    b.box('trim', [w - 0.5, 0.25, d * 0.3], [0, h - 0.1, -d * 0.1]);
+    // Front: raked windscreen, destination board, bumper and lights.
+    b.box('glass', [w - 0.2, roof - belt + 0.3, 0.06], [0, (belt + roof) / 2 - 0.1, d / 2 + 0.02], [-0.08, 0, 0]);
+    b.box('light', [w * 0.6, 0.22, 0.05], [0, roof - 0.1, d / 2 + 0.06]);
+    b.box('dark', [w + 0.04, 0.3, 0.16], [0, 0.45, d / 2 + 0.04]);
+    b.box('dark', [w + 0.04, 0.3, 0.16], [0, 0.45, -d / 2 - 0.04]);
+    for (const s of [-1, 1]) {
+      b.box('light', [0.3, 0.16, 0.04], [s * (w / 2 - 0.3), 0.8, d / 2 + 0.03]);
+      b.box('redLight', [0.22, 0.4, 0.04], [s * (w / 2 - 0.25), 1.0, -d / 2 - 0.03]);
+      // Mirrors on stalks.
+      b.box('dark', [0.06, 0.06, 0.5], [s * (w / 2 + 0.1), roof - 0.2, d / 2 + 0.1]);
+      b.box('dark', [0.06, 0.35, 0.2], [s * (w / 2 + 0.12), roof - 0.45, d / 2 + 0.3]);
+    }
+    // Doors on the kerb side: front and middle, dark glazed leaves.
+    for (const z of [d / 2 - 1.1, -0.4]) b.box('dark', [0.05, roof - 0.4, 1.2], [w / 2 + 0.01, (roof + 0.4) / 2, z]);
+    b.box('trim', [w + 0.02, 0.12, d], [0, belt, 0]);
+    // Wheels in arches; the floor hides daylight under the body.
+    for (const z of [d / 2 - 2.4, -d / 2 + 3]) for (const s of [-1, 1]) b.wheel(s * (w / 2 - 0.2), r, z, r, 0.32);
+    b.box('dark', [w - 0.4, 0.2, d - 0.6], [0, floor - 0.35, 0]);
+  },
+
+  fuelCanopy(b, w, h, d) {
+    // Flat canopy on four columns over two pump islands (along z), lit underside, deep fascia.
+    const deck = 0.55;
+    b.box('body', [w, deck, d], [0, h - deck / 2, 0]);
+    b.box('trim', [w + 0.06, 0.18, d + 0.06], [0, h - deck + 0.12, 0]);
+    b.box('light', [w - 1, 0.03, d - 1], [0, h - deck - 0.01, 0]);
+    const cols: KitBox[] = [{ center: [0, h - deck / 2, 0], size: [w, deck, d] }];
+    for (const sx of [-1, 1]) {
+      const x = sx * w * 0.24;
+      const len = d * 0.62;
+      // Raised island with kerbs, a column at each end, two pumps between them.
+      b.box('concrete', [1.3, 0.18, len], [x, 0.09, 0]);
+      b.box('trim', [1.36, 0.06, len + 0.06], [x, 0.17, 0]);
+      cols.push({ center: [x, 0.09, 0], size: [1.3, 0.18, len] });
+      for (const sz of [-1, 1]) {
+        const z = sz * (len / 2 - 0.35);
+        b.box('metal', [0.4, h - deck - 0.18, 0.4], [x, 0.18 + (h - deck - 0.18) / 2, z]);
+        cols.push({ center: [x, h / 2, z], size: [0.4, h, 0.4] });
+        // Pump: cabinet, display head, nozzles and hoses on both faces.
+        const pz = sz * len * 0.16;
+        const ph = 1.75;
+        b.box('body', [0.6, ph * 0.72, 0.9], [x, 0.18 + (ph * 0.72) / 2, pz]);
+        b.box('trim', [0.66, ph * 0.28, 0.96], [x, 0.18 + ph * 0.86, pz]);
+        for (const fx of [-1, 1]) {
+          b.box('dark', [0.03, 0.26, 0.5], [x + fx * 0.34, 0.18 + ph * 0.86, pz]);
+          b.box('dark', [0.1, 0.22, 0.12], [x + fx * 0.33, 0.18 + ph * 0.5, pz + 0.25]);
+          b.cyl('rubber', 0.025, 0.025, ph * 0.5, [x + fx * 0.36, 0.18 + ph * 0.3, pz + 0.32], [0.25, 0, 0], 6);
+        }
+        cols.push({ center: [x, 0.18 + ph / 2, pz], size: [0.6, ph, 0.9] });
+        // Bollards at the island ends.
+        b.cyl('redLight', 0.09, 0.09, 0.9, [x, 0.18 + 0.45, sz * (len / 2 + 0.25)], [0, 0, 0], 8);
+      }
+    }
+  },
+
+  waterTower(b, w, h, d) {
+    // Steel tank on four braced legs, catwalk round its foot, conical cap, ladder up one leg.
+    const R = Math.min(w, d) / 2 - 0.15;
+    const tankH = Math.min(5, h * 0.28);
+    const capH = Math.min(1.6, h * 0.08);
+    const base = h - tankH - capH;
+    const lx = R * 0.72;
+    const leg = 0.32;
+    const cols: KitBox[] = [];
+    for (const sx of [-1, 1])
+      for (const sz of [-1, 1]) {
+        b.box('trim', [leg, base, leg], [sx * lx, base / 2, sz * lx]);
+        b.box('concrete', [0.8, 0.4, 0.8], [sx * lx, 0.2, sz * lx]);
+        cols.push({ center: [sx * lx, base / 2, sz * lx], size: [leg, base, leg] });
+      }
+    // Horizontal ties and X braces on each face, in two stages.
+    const stages = 2;
+    for (let k = 0; k < stages; k++) {
+      const y0 = 0.8 + (k * (base - 0.8)) / stages;
+      const sh = (base - 0.8) / stages;
+      const ang = Math.atan2(2 * lx, sh);
+      const L = Math.hypot(2 * lx, sh);
+      for (const s of [-1, 1]) {
+        b.box('trim', [2 * lx, 0.12, 0.12], [0, y0 + sh, s * lx]);
+        b.box('trim', [0.12, 0.12, 2 * lx], [s * lx, y0 + sh, 0]);
+        for (const t of [-1, 1]) {
+          b.box('mesh', [0.07, L, 0.07], [0, y0 + sh / 2, s * lx], [0, 0, t * ang]);
+          b.box('mesh', [0.07, L, 0.07], [s * lx, y0 + sh / 2, 0], [t * ang, 0, 0]);
+        }
+      }
+    }
+    // Riser pipe, tank, bands, cap and finial.
+    b.cyl('metal', 0.3, 0.3, base, [0, base / 2, 0], [0, 0, 0], 10);
+    b.cyl('body', R * 0.9, R * 0.9, 0.3, [0, base + 0.15, 0], [0, 0, 0], 24);
+    b.cyl('body', R, R, tankH - 0.3, [0, base + 0.3 + (tankH - 0.3) / 2, 0], [0, 0, 0], 28);
+    for (const y of [base + 1.2, base + tankH - 0.6]) b.cyl('trim', R + 0.04, R + 0.04, 0.14, [0, y, 0], [0, 0, 0], 28, true);
+    b.cyl('trim', 0.25, R + 0.12, capH, [0, base + tankH + capH / 2, 0], [0, 0, 0], 28);
+    b.cyl('metal', 0.06, 0.06, 0.9, [0, h - 0.1, 0], [0, 0, 0], 6);
+    // Catwalk ring (eight planks) and its rail.
+    const cw = R + 0.75;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const seg = 2 * cw * Math.tan(Math.PI / 8);
+      b.box('mesh', [seg + 0.05, 0.06, 0.7], [Math.sin(a) * (cw - 0.35), base + 0.05, Math.cos(a) * (cw - 0.35)], [0, a, 0]);
+      b.box('metal', [seg + 0.05, 0.05, 0.05], [Math.sin(a) * cw, base + 1.05, Math.cos(a) * cw], [0, a, 0]);
+      b.box('metal', [0.05, 1.0, 0.05], [Math.sin(a + Math.PI / 8) * cw * 1.08, base + 0.55, Math.cos(a + Math.PI / 8) * cw * 1.08]);
+    }
+    // Ladder up the south-east leg.
+    const ly = base + 0.1;
+    for (const s of [-1, 1]) b.box('metal', [0.05, ly, 0.05], [lx + 0.3, ly / 2, lx + 0.3 + s * 0.22]);
+    for (let y = 0.4; y < ly; y += 0.4) b.box('metal', [0.04, 0.04, 0.44], [lx + 0.3, y, lx + 0.3]);
+    const side = 2 * R * 0.95;
+    cols.push({ center: [0, base + tankH / 2, 0], size: [side, tankH, side] }, { center: [0, base + tankH / 2, 0], size: [side, tankH, side], yaw: Math.PI / 4 });
+    return cols;
+  },
+
+  tankWreck(b, w, h, d, rand) {
+    // Burnt-out medium tank along z (front +z): sloped hull on its tracks, the turret
+    // knocked askew with the gun drooping, scorched all over. Solid cover.
+    const trackW = Math.min(0.62, w * 0.18);
+    const hullTop = h * 0.62;
+    const hw = w - 2 * trackW + 0.1;
+    for (const s of [-1, 1]) {
+      const x = s * (w / 2 - trackW / 2);
+      // Track run: upper and lower belts, sprocket and idler, road wheels in a row.
+      b.profile(
+        'dark',
+        [
+          [-d / 2 + 0.25, 0.05],
+          [d / 2 - 0.35, 0.05],
+          [d / 2, 0.55],
+          [d / 2 - 0.15, 0.95],
+          [-d / 2 + 0.05, 0.95],
+          [-d / 2 - 0.05, 0.5],
+        ],
+        trackW,
+        [x, 0, 0],
+      );
+      for (let i = 0; i < 6; i++) b.cyl('rubber', 0.36, 0.36, 0.08, [x + s * (trackW / 2 + 0.03), 0.42, -d / 2 + 0.9 + (i * (d - 1.8)) / 5], [0, 0, Math.PI / 2], 12);
+      // A thrown section of track lying beside one side.
+      if (s > 0 && rand() < 0.6) b.box('dark', [trackW * 0.9, 0.08, d * 0.35], [x + trackW + 0.2, 0.04, -d * 0.2], [0, 0.25, 0]);
+      // Mudguard shelf over the track.
+      b.box('body', [trackW + 0.05, 0.05, d - 0.4], [x, 1.0, 0]);
+    }
+    b.profile(
+      'body',
+      [
+        [-d / 2 + 0.1, 0.45],
+        [d / 2 - 0.9, 0.45],
+        [d / 2 - 0.1, 0.75],
+        [d / 2 - 0.6, hullTop],
+        [-d / 2 + 0.25, hullTop],
+        [-d / 2, hullTop - 0.35],
+      ],
+      hw,
+    );
+    // Engine deck grilles, a hatch blown open, scorch streaks.
+    b.box('dark', [hw * 0.7, 0.04, d * 0.25], [0, hullTop + 0.02, -d * 0.33]);
+    b.box('trim', [0.6, 0.08, 0.6], [hw * 0.25, hullTop + 0.35, d * 0.18], [1.1, 0, 0]);
+    // Turret, turned and tipped, the gun drooping.
+    const tr = Math.min(hw, d * 0.3) * 0.48;
+    const ty = hullTop + (h - hullTop) / 2 - 0.05;
+    const turn = (rand() - 0.5) * 1.6;
+    const tilt = 0.08 + rand() * 0.1;
+    const turret = new Builder();
+    turret.cyl('body', tr * 0.82, tr, h - hullTop - 0.05, [0, 0, 0], [0, 0, 0], 10);
+    turret.box('trim', [tr * 0.9, 0.35, tr * 0.9], [0, (h - hullTop) * 0.25, -tr * 0.6]);
+    turret.cyl('dark', 0.1, 0.13, d * 0.42, [0, -0.08 - d * 0.04, tr + d * 0.2], [Math.PI / 2 + 0.22, 0, 0], 8);
+    turret.cyl('dark', 0.2, 0.2, 0.5, [0, 0.02, tr + 0.1], [Math.PI / 2 + 0.22, 0, 0], 10);
+    const m = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(tilt, turn, tilt * 0.6, 'YXZ')).setPosition(rand() * 0.3 - 0.15, ty, -d * 0.05);
+    for (const p of turret.pieces) {
+      p.geo.applyMatrix4(m);
+      b.pieces.push(p);
+    }
+    // Debris round the hull.
+    for (let i = 0; i < 5; i++) {
+      const a = rand() * Math.PI * 2;
+      const rr = Math.max(w, d) * (0.5 + rand() * 0.15);
+      b.box(i % 2 ? 'dark' : 'body', [0.2 + rand() * 0.4, 0.06 + rand() * 0.1, 0.2 + rand() * 0.5], [Math.cos(a) * rr * (w / d), 0.05, Math.sin(a) * rr * 0.55], [0, rand() * 3, rand() * 0.3]);
+    }
+    return [
+      { center: [0, hullTop / 2, 0], size: [w, hullTop, d - 0.2] },
+      { center: [0, (hullTop + h) / 2, -d * 0.05], size: [tr * 1.7, h - hullTop, tr * 1.7], yaw: turn },
+    ];
+  },
+
+  millWheel(b, w, h, d) {
+    // Undershot water wheel turning about x: two rims with spokes, paddles between, iron hub and axle.
+    const R = Math.min(h, d) / 2;
+    const cy = h / 2;
+    const W = w - 0.2;
+    const n = 16;
+    const seg = 2 * R * Math.sin(Math.PI / n) + 0.04;
+    for (const s of [-1, 1]) {
+      const x = (s * W) / 2;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        const rr = R - 0.12;
+        // Tangent to the circle: a box's z axis turned 90° - a about x.
+        b.box('wood', [0.12, 0.22, seg], [x, cy + Math.sin(a) * rr, Math.cos(a) * rr], [Math.PI / 2 - a, 0, 0]);
+      }
+      // Spokes: four boards through the hub, eight arms.
+      for (let i = 0; i < 4; i++) b.box('wood', [0.1, 0.16, 2 * R - 0.3], [x * 0.9, cy, 0], [(i * Math.PI) / 4, 0, 0]);
+    }
+    // Paddles (floats) across the rims, leaning off the radius a little.
+    for (let i = 0; i < n; i++) {
+      const a = ((i + 0.5) / n) * Math.PI * 2;
+      const rr = R - 0.35;
+      b.box('wood', [W, 0.5, 0.05], [0, cy + Math.sin(a) * rr, Math.cos(a) * rr], [Math.PI / 2 - a + 0.2, 0, 0]);
+    }
+    // Hub and axle stub out to the bearing block on the wall side.
+    b.cyl('dark', 0.35, 0.35, W * 0.7, [0, cy, 0], [0, 0, Math.PI / 2], 12);
+    b.cyl('metal', 0.12, 0.12, w + 0.6, [0, cy, 0], [0, 0, Math.PI / 2], 8);
+    b.box('wood', [0.3, cy + 0.2, 0.5], [-w / 2 - 0.2, (cy + 0.2) / 2, 0]);
+    return [{ center: [0, cy, 0], size: [W, 2 * R * 0.92, 2 * R * 0.92] }];
+  },
+
+  cart(b, w, h, d, rand) {
+    // Farm wagon along z (shaft forward, +z): plank bed with side boards, spoked
+    // wheels (bigger at the back), a load of sacks or hay.
+    const bed = Math.min(1.05, h * 0.6);
+    const rb = Math.min(0.6, bed * 0.6);
+    const rf = rb * 0.82;
+    const L = d - 0.9;
+    const z0 = -d / 2 + 0.05;
+    const zc = z0 + L / 2;
+    b.box('wood', [w - 0.3, 0.1, L], [0, bed, zc]);
+    for (const s of [-1, 1]) {
+      b.box('body', [0.06, 0.45, L], [s * (w / 2 - 0.18), bed + 0.27, zc]);
+      for (let z = z0 + 0.2; z < z0 + L; z += 0.9) b.box('wood', [0.09, 0.55, 0.09], [s * (w / 2 - 0.14), bed + 0.22, z]);
+    }
+    b.box('body', [w - 0.3, 0.45, 0.06], [0, bed + 0.27, z0 + 0.03]);
+    b.box('body', [w - 0.3, 0.45, 0.06], [0, bed + 0.27, z0 + L - 0.03]);
+    b.box('dark', [0.12, 0.12, L - 0.4], [0, bed - 0.12, zc]);
+    // Wheels: rim, hub, eight spokes each; axles across.
+    const wheel = (z: number, r: number) => {
+      for (const s of [-1, 1]) {
+        const x = s * (w / 2 - 0.05);
+        b.cyl('wood', r, r, 0.08, [x, r, z], [0, 0, Math.PI / 2], 16, true);
+        b.cyl('dark', r * 0.18, r * 0.18, 0.2, [x, r, z], [0, 0, Math.PI / 2], 8);
+        for (let i = 0; i < 4; i++) b.box('wood', [0.04, 2 * r - 0.1, 0.05], [x, r, z], [(i * Math.PI) / 4, 0, 0]);
+      }
+      b.cyl('dark', 0.05, 0.05, w, [0, r, z], [0, 0, Math.PI / 2], 6);
+    };
+    wheel(z0 + 0.65, rb);
+    wheel(z0 + L - 0.55, rf);
+    // Shaft resting on the ground ahead.
+    const sl = d - L + 0.3;
+    const sa = Math.atan2(bed - 0.15, sl);
+    for (const s of [-0.3, 0.3]) b.box('wood', [0.08, 0.08, Math.hypot(sl, bed - 0.15)], [s, (bed + 0.1) / 2, z0 + L + sl / 2 - 0.2], [sa, 0, 0]);
+    // Load.
+    if (rand() < 0.5) b.box('canvas', [w - 0.5, Math.max(0.2, h - bed - 0.15), L * 0.7], [0, bed + 0.05 + (h - bed - 0.15) / 2, zc - L * 0.08]);
+    else for (let i = 0; i < 4; i++) b.sphere('canvas', 0.3, [((i % 2) - 0.5) * (w - 0.7), bed + 0.28, zc + (Math.floor(i / 2) - 0.5) * 1.0], [1.2, 0.75, 0.9]);
+    return [
+      { center: [0, bed + 0.25, zc], size: [w - 0.2, 0.75, L] },
+      { center: [0, Math.min(h, bed + 0.9) / 2 + (bed - 0.2) / 2, zc - L * 0.08], size: [w - 0.5, Math.max(0.3, Math.min(h, bed + 0.9) - bed), L * 0.7] },
+    ];
   },
 };
 

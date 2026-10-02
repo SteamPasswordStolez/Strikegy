@@ -1,5 +1,4 @@
 import type { MapDef } from './mapTypes';
-import { MODEL_KINDS } from './modelKits';
 
 const OBJECT_TYPES = new Set(['wall', 'cover', 'floor', 'ramp', 'prop']);
 const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor', 'winter']);
@@ -91,11 +90,23 @@ export function validateMap(raw: unknown): string[] {
       if (o.material !== undefined && !MATERIALS.has(String(o.material))) {
         errs.push(`objects[${i}].material: unknown "${String(o.material)}"`);
       }
-      if (o.model !== undefined && !(MODEL_KINDS as readonly string[]).includes(String(o.model))) {
-        errs.push(`objects[${i}].model: unknown "${String(o.model)}"`);
-      }
+      // An unknown kit name (a map newer than the build) is not fatal: it draws as its box.
+      if (o.model !== undefined && typeof o.model !== 'string') errs.push(`objects[${i}].model: expected a kit name`);
       if (o.base !== undefined && (!isNum(o.base) || o.base < 0)) errs.push(`objects[${i}].base: expected a number >= 0`);
     });
+  }
+
+  if (raw.buildings !== undefined) {
+    if (!Array.isArray(raw.buildings)) errs.push('buildings: expected array');
+    else
+      raw.buildings.forEach((b, i) => {
+        const okPos = isObj(b) && Array.isArray(b.pos) && b.pos.length === 2 && b.pos.every(isNum);
+        const okSize = isObj(b) && Array.isArray(b.size) && b.size.length === 2 && b.size.every((n) => isNum(n) && n > 0);
+        if (!okPos || !okSize) errs.push(`buildings[${i}]: expected { pos: [x, z], size: [w, d] > 0 }`);
+        // Unknown styles build as houses (with a warning), so only the type is checked here.
+        else if (b.style !== undefined && typeof b.style !== 'string') errs.push(`buildings[${i}].style: expected a style name`);
+        else if (b.floors !== undefined && !(isNum(b.floors) && b.floors >= 1)) errs.push(`buildings[${i}].floors: expected a number >= 1`);
+      });
   }
 
   if (raw.zones !== undefined) {

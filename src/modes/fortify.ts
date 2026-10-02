@@ -169,6 +169,15 @@ const RECIPE: { kind: Exclude<FortKind, 'barricade'>; count: number; rings: numb
   { kind: 'hedgehog', count: 3, rings: [1.25, 1.45, 1.1], room: 2.4, pad: 2 },
 ];
 const BARRICADES_PER_ZONE = 6;
+/**
+ * Zone radius the RECIPE counts are for. Bigger zones get more of everything,
+ * growing slower than the area (about 1.5x at twice the radius) so a map of
+ * big zones keeps its spot count (blueprints, colliders when built) in check.
+ */
+const RECIPE_RADIUS = 18;
+export function fortScale(radius: number): number {
+  return Math.min(1.75, Math.max(1, Math.pow(radius / RECIPE_RADIUS, 0.585)));
+}
 /** 0..31 in bit-reversed order: consecutive picks land far apart round a circle. */
 const SPREAD = Array.from({ length: 32 }, (_, i) => parseInt(i.toString(2).padStart(5, '0').split('').reverse().join(''), 2));
 /** Standing eye height a barricade's slit is cut at, above the floor. */
@@ -205,6 +214,7 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
   for (const zone of zones) {
     const [cx, , cz] = zone.pos;
     const R = zone.radius;
+    const scale = fortScale(R);
     const taken: { x: number; z: number; r: number }[] = [];
     const free = (x: number, z: number, r: number) => taken.every((t) => Math.hypot(t.x - x, t.z - z) >= t.r + r);
     const start = (hashId(zone.id) % 32) / 32;
@@ -242,9 +252,10 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
     // Build spots round the zone: front (-z) facing out, long side across the way in.
     for (const r of RECIPE) {
       const size = FORT_SIZE[r.kind];
+      const count = Math.round(r.count * scale);
       let n = 0;
       for (const p of ring(r.rings)) {
-        if (n >= r.count) break;
+        if (n >= count) break;
         const g = probe.ground(p.x, p.z);
         if (!g || nearBuilding(footprints, p.x, p.z, r.pad) || !free(p.x, p.z, r.room)) continue;
         const ox = Math.cos(p.a);
@@ -270,7 +281,7 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
       .sort((a, b) => Math.hypot(a.pos[0] - cx, a.pos[2] - cz) - Math.hypot(b.pos[0] - cx, b.pos[2] - cz));
     let boards = 0;
     for (const w of near) {
-      if (boards >= BARRICADES_PER_ZONE) break;
+      if (boards >= Math.round(BARRICADES_PER_ZONE * scale)) break;
       const o = w.opening;
       const sill = o.center[1] - o.height / 2;
       const slitAt = w.pos[1] + SLIT_EYE - sill;
