@@ -36,7 +36,7 @@ const HEAR_STEP = 13;
  */
 const SEPARATION_RADIUS = 0.95;
 const SEPARATION_STANDING = 0.7;
-const SEPARATION_SPEED = 2.2;
+const SEPARATION_SPEED = 1.9;
 /** A walking bot steps around someone up to this far ahead (m) and this far off its line (m). */
 const AVOID_AHEAD = 2;
 const AVOID_WIDTH = 0.85;
@@ -181,6 +181,11 @@ interface BotEntry {
   leader: Combatant | null;
   /** Slot in the leader's formation (1..). */
   slot: number;
+  /**
+   * Where this member settled near the leader; kept until the leader has
+   * moved well away from it, so the squad moves in bounds instead of glued on.
+   */
+  anchor: THREE.Vector3 | null;
   /** Detour on the way to the objective (the squad's approach route), cleared once passed. */
   via: THREE.Vector3 | null;
 }
@@ -291,6 +296,7 @@ export class BotManager implements BotServices {
           squad: -1,
           leader: null,
           slot: 0,
+          anchor: null,
           via: null,
           flankGoal: null,
           flankFor: -1,
@@ -973,29 +979,39 @@ export class BotManager implements BotServices {
     return this.nav.closest(p);
   }
 
-  /** Formation spot behind the squad leader, or null when not following. */
+  /**
+   * Spot near the squad leader (the player), or null when not following.
+   * Members keep their spot until the leader is well away from it (farther
+   * while fighting), then pick a new one: each on its own side of where the
+   * leader is heading, 6-10 m out, so they spread over the area instead of
+   * trailing in a line and crossing each other when the leader turns.
+   */
   private followPoint(e: BotEntry): THREE.Vector3 | null {
     const l = e.leader;
-    if (!l || !l.alive) return null;
-    const side = e.slot % 2 ? 1 : -1;
-    const speed = Math.hypot(l.velocity.x, l.velocity.z);
-    let ang: number;
-    let dist: number;
-    if (speed > 1) {
-      // On the move: staggered behind, along the way the leader is actually going.
-      const heading = Math.atan2(-l.velocity.x, -l.velocity.z);
-      ang = heading + Math.PI + side * (0.45 + 0.2 * e.slot);
-      dist = 4 + e.slot * 1.8;
-      e.watch = null;
-    } else {
-      // Stopped: fan out around the leader and cover the other directions.
-      const posts = [2.4, -2.4, 1.3, -1.3, Math.PI];
-      ang = l.yaw + posts[(e.slot - 1) % posts.length]!;
-      dist = 4.5 + (e.slot > 2 ? 1.5 : 0);
-      e.watch = new THREE.Vector3(-Math.sin(ang), 0, -Math.cos(ang));
+    if (!l || !l.alive) {
+      e.anchor = null;
+      return null;
     }
-    const p = new THREE.Vector3(l.feet.x - Math.sin(ang) * dist, l.feet.y, l.feet.z - Math.cos(ang) * dist);
-    return this.nav.closest(p) ?? l.feet.clone();
+    const fighting = this.time - (this.contacts.get(squadKey(e.bot.team, e.squad))?.last ?? -99) < 8;
+    const reach = fighting ? 26 : 13;
+    if (e.anchor && e.anchor.distanceTo(l.feet) < reach && e.bot.alive) return e.anchor.clone();
+    const speed = Math.hypot(l.velocity.x, l.velocity.z);
+    // Fixed sides per slot (right, left, far right, far left, behind), relative to
+    // where the leader goes (or faces when stopped); a moving leader is led a bit.
+    const heading = speed > 1 ? Math.atan2(-l.velocity.x, -l.velocity.z) : l.yaw;
+    const sides = [-1.2, 1.2, -2.0, 2.0, Math.PI];
+    const ang = heading + sides[(e.slot - 1) % sides.length]!;
+    const dist = 6 + ((e.slot * 1.7) % 4);
+    const lead = speed > 1 ? 6 : 0;
+    const p = new THREE.Vector3(
+      l.feet.x - Math.sin(ang) * dist - Math.sin(heading) * lead,
+      l.feet.y,
+      l.feet.z - Math.cos(ang) * dist - Math.cos(heading) * lead,
+    );
+    e.anchor = this.nav.closest(p) ?? l.feet.clone();
+    // Look outward from the leader once there.
+    e.watch = new THREE.Vector3(-Math.sin(ang), 0, -Math.cos(ang));
+    return e.anchor.clone();
   }
 
   /** Squad member heading for (or on) a flank of the squad's current fight. */
@@ -1107,7 +1123,7 @@ export class BotManager implements BotServices {
 
   mustRegroup(bot: Bot): boolean {
     const l = this.entryOf(bot).leader;
-    return !!l && l.alive && l.feet.distanceTo(bot.feet) > 18;
+    return !!l && l.alive && l.feet.distanceTo(bot.feet) > 32;
   }
 
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean {
@@ -1115,8 +1131,9 @@ export class BotManager implements BotServices {
     if (e.flankGoal && e.flankGoal.distanceTo(current) > 4 && this.isFlanking(bot)) return true;
     const l = e.leader;
     if (!l || !l.alive) return false;
-    // Re-path when the leader has walked well away from where we were heading.
-    return l.feet.distanceTo(current) > 10;
+    // Re-path only when the spot near the leader was given up for a new one.
+    const spot = this.followPoint(e);
+    return !!spot && spot.distanceTo(current) > 3;
   }
 
   teamSighting(team: Team): { pos: THREE.Vector3; time: number } | null {

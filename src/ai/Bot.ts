@@ -256,6 +256,8 @@ export class Bot implements Damageable, Combatant {
   private triggerHeld = false;
 
   private readonly tmp = new THREE.Vector3();
+  /** Crowd push, smoothed so neighbours nudging each other don't jitter. */
+  private readonly push = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
   private readonly tmp3 = new THREE.Vector3();
   private readonly eye = new THREE.Vector3();
@@ -335,6 +337,7 @@ export class Bot implements Damageable, Combatant {
     this.gadget = classGadget(this.cls, this.id % 2 === 0 ? 'beacon' : 'mine');
     this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
     this.gadgetReadyAt = 0;
+    this.push.set(0, 0, 0);
     this.spawnedAt = -1;
     this.job = null;
     this.atWork = false;
@@ -1229,7 +1232,9 @@ export class Bot implements Damageable, Combatant {
     this.setCrouch(wantCrouch);
     if (this.crouching) speed = Math.min(speed, MOVE.crouchSpeed);
 
-    const push = s.separation(this, this.tmp, wx, wz, speed);
+    const raw = s.separation(this, this.tmp, wx, wz, speed);
+    const push = this.push.lerp(raw, 1 - Math.exp(-8 * dt));
+    if (push.lengthSq() < 0.0025 && raw.lengthSq() === 0) push.set(0, 0, 0);
     const tx = wx * speed + push.x;
     const tz = wz * speed + push.z;
     const accel = speed > 0 || push.lengthSq() > 0 ? MOVE.groundAccel : MOVE.groundDecel;
