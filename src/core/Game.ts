@@ -389,7 +389,7 @@ export class Game {
       this.snowfall = new Snowfall(r.preset === 'low' ? 1200 : r.preset === 'medium' ? 2500 : 4000);
       r.scene.add(this.snowfall.points);
     }
-    const kit = outdoor ? createConiferKit(q.msaa, winter) : null;
+    const kit = outdoor ? createConiferKit(q.msaa, winter, map.world.flora) : null;
     if (kit && map.trees?.length) {
       // Low quality (phones): 3D trees only close by, impostors beyond.
       this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
@@ -397,7 +397,7 @@ export class Game {
     }
     lap('water+forest');
     this.fitShadows(map, terrain, built.root, props);
-    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, phone: r.preset === 'low' });
+    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: r.preset === 'low' });
     lap('backdrop');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
@@ -1018,7 +1018,12 @@ export class Game {
       bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
-    const { pads, bikes, tankSpots } = planVehicleSpots(this.physics, bases, zones);
+    const plan = planVehicleSpots(this.physics, bases, zones);
+    // Small maps: jeeps and motorbikes only.
+    const heavy = map.world.vehicles !== 'light';
+    const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
+    const { bikes } = plan;
+    const tankSpots = heavy ? plan.tankSpots : [];
     if (zones.length) VehicleClass.airCenter.copy(zones.reduce((a, z) => a.add(z.pos), new THREE.Vector3()).divideScalar(zones.length));
     VehicleClass.airRadius = Math.max(map.world.size[0], map.world.size[1]) / 2;
     this.vehicles = new VehicleWorld(
@@ -1032,6 +1037,8 @@ export class Game {
       bikes,
       this.bots?.bots.length ?? 0,
       tankSpots,
+      heavy,
+      map.world.vehicles !== 'noJets',
     );
     this.renderer.scene.add(this.vehicles.group);
     if (this.bots) {
@@ -1075,7 +1082,7 @@ export class Game {
   private callRocketTank(owner: GadgetOwner, near: THREE.Vector3): boolean {
     const vw = this.vehicles;
     const zm = this.zoneMode;
-    if (!vw || !zm) return false;
+    if (!vw?.heavy || !zm) return false;
     const zones = zm.zones.map((z) => ({ id: z.id, pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius })).sort((a, b) => a.pos.distanceTo(near) - b.pos.distanceTo(near));
     for (const z of zones.slice(0, 2)) {
       for (let i = 0; i < 36; i++) {
@@ -2842,7 +2849,7 @@ export class Game {
         });
       }
     }
-    if (vw) {
+    if (vw && vw.jetLimit() > 0) {
       const full = vw.jets(PLAYER_TEAM) >= vw.jetLimit();
       for (const kind of JET_KINDS) {
         out.push({

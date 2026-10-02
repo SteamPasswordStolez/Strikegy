@@ -33,6 +33,9 @@ describe('model kits', () => {
       tankWreck: [3.6, 2.6, 7.4],
       millWheel: [1.4, 6, 6],
       cart: [1.8, 1.7, 4.2],
+      silo: [6, 15, 6],
+      stall: [3, 2.6, 2.4],
+      crane: [10, 12, 6],
     };
     for (const kind of MODEL_KINDS) {
       const [w, h, d] = size[kind]!;

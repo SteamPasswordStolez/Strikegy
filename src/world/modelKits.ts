@@ -36,7 +36,10 @@ export type ModelKind =
   | 'waterTower'
   | 'tankWreck'
   | 'millWheel'
-  | 'cart';
+  | 'cart'
+  | 'silo'
+  | 'stall'
+  | 'crane';
 
 export const MODEL_KINDS: readonly ModelKind[] = [
   'car',
@@ -67,6 +70,9 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   'tankWreck',
   'millWheel',
   'cart',
+  'silo',
+  'stall',
+  'crane',
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
@@ -1046,6 +1052,64 @@ const KITS: Record<ModelKind, Kit> = {
       { center: [0, bed + 0.25, zc], size: [w - 0.2, 0.75, L] },
       { center: [0, Math.min(h, bed + 0.9) / 2 + (bed - 0.2) / 2, zc - L * 0.08], size: [w - 0.5, Math.max(0.3, Math.min(h, bed + 0.9) - bed), L * 0.7] },
     ];
+  },
+
+  silo(b, w, h, d) {
+    // Farm silo: stave-banded cylinder, domed cap, ladder cage up one side.
+    const r = Math.min(w, d) / 2 - 0.25;
+    const body = h - r * 0.6;
+    b.cyl('concrete', r + 0.25, r + 0.25, 0.4, [0, 0.2, 0], [0, 0, 0], 20);
+    b.cyl('body', r, r, body, [0, body / 2, 0], [0, 0, 0], 20);
+    for (let y = 1.2; y < body - 0.3; y += 1.4) b.cyl('trim', r + 0.03, r + 0.03, 0.1, [0, y, 0], [0, 0, 0], 20, true);
+    b.sphere('metal', r, [0, body, 0], [1, 0.6, 1]);
+    b.cyl('metal', 0.25, 0.4, 0.5, [0, body + r * 0.6, 0], [0, 0, 0], 10);
+    const lx = r + 0.25;
+    for (const s of [-1, 1]) b.box('metal', [0.05, body - 1.5, 0.05], [lx, 1.5 + (body - 1.5) / 2, s * 0.22]);
+    for (let y = 1.7; y < body; y += 0.35) b.box('metal', [0.04, 0.04, 0.44], [lx, y, 0]);
+    // Chute down to a shed roof height.
+    b.box('wood', [0.6, 0.6, 1.6], [0, 3.2, -r - 0.6], [0.5, 0, 0]);
+    const side = 2 * r * 0.95;
+    return [
+      { center: [0, h / 2, 0], size: [side, h, side] },
+      { center: [0, h / 2, 0], size: [side, h, side], yaw: Math.PI / 4 },
+    ];
+  },
+
+  stall(b, w, h, d, rand) {
+    // Market stall: four poles, sagging cloth awning, a counter with goods.
+    const ph = h - 0.25;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('wood', [0.1, ph, 0.1], [sx * (w / 2 - 0.1), ph / 2, sz * (d / 2 - 0.1)]);
+    b.box('body', [w + 0.3, 0.05, d * 0.55], [0, ph + 0.05, -d * 0.22], [0.18, 0, 0]);
+    b.box('body', [w + 0.3, 0.05, d * 0.55], [0, ph + 0.05, d * 0.22], [-0.18, 0, 0]);
+    b.box('wood', [w - 0.3, 0.9, d * 0.45], [0, 0.45, d * 0.15]);
+    for (let i = 0; i < 5; i++) {
+      const x = -w / 2 + 0.5 + (i * (w - 1)) / 4;
+      b.box(rand() < 0.5 ? 'canvas' : 'dirt', [0.45, 0.25 + rand() * 0.2, 0.35], [x, 1.02, d * 0.15]);
+    }
+    return [{ center: [0, 0.45, d * 0.15], size: [w - 0.3, 0.9, d * 0.45] }];
+  },
+
+  crane(b, w, h, d) {
+    // Gantry crane straddling a yard track: two A-frame legs, a box girder, the hoist.
+    const legW = 0.45;
+    const girder = 1.1;
+    for (const sx of [-1, 1]) {
+      const x = sx * (w / 2 - legW / 2);
+      for (const sz of [-1, 1]) b.box('body', [legW, h - girder, legW], [x, (h - girder) / 2, sz * (d / 2 - 1)], [sz * 0.08, 0, 0]);
+      b.box('trim', [legW, 0.4, d], [x, h - girder - 0.2, 0]);
+      b.box('dark', [0.9, 0.6, d + 0.4], [x, 0.3, 0]);
+      b.box('trim', [0.12, h * 0.55, 0.12], [x, h * 0.45, 0], [0.75, 0, 0]);
+    }
+    b.box('body', [w + 1, girder, 1.4], [0.5, h - girder / 2, 0]);
+    b.box('dark', [1.6, 1.2, 1.8], [w * 0.15, h - girder - 0.6, 0]);
+    b.box('glass', [1.4, 1.0, 0.05], [-w / 2 + 1.4, h - girder - 1.2, 0.72]);
+    b.box('body', [1.6, 1.4, 1.5], [-w / 2 + 1.4, h - girder - 1.3, 0]);
+    b.cyl('dark', 0.03, 0.03, h * 0.45, [w * 0.15, h - girder - 1.2 - h * 0.225, 0], [0, 0, 0], 4);
+    b.box('metal', [0.6, 0.3, 0.4], [w * 0.15, h * 0.32, 0]);
+    // Only the legs block.
+    const cols: KitBox[] = [];
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) cols.push({ center: [sx * (w / 2 - legW / 2), (h - girder) / 2, sz * (d / 2 - 1)], size: [legW, h - girder, legW] });
+    return cols;
   },
 };
 

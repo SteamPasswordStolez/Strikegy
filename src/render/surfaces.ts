@@ -220,7 +220,66 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
       return brickRecipe(n);
     case 'snow':
       return snowRecipe(n);
+    case 'grass':
+      return grassRecipe(n);
+    case 'sand':
+      return sandRecipe(n);
   }
+}
+
+/** Summer meadow: blades in two greens, dry straw patches and bare soil showing through. */
+function grassRecipe(n: TileNoise): SurfaceRecipe {
+  const deep = hexToRgb(0x3f5326);
+  const fresh = hexToRgb(0x6d8238);
+  const straw = hexToRgb(0x9a8c55);
+  const soil = hexToRgb(0x5a4a33);
+  return {
+    tileMeters: 3,
+    normalStrength: 4,
+    paint(u, v, o) {
+      const base = n.fbm(u, v, 3, 4);
+      // Blades: fine streaks, stretched along v.
+      const blades = n.fbm(u * 3, v, 96, 2);
+      const dry = smoothstep(0.55, 0.75, n.fbm(u + 0.31, v + 0.77, 5, 3));
+      const bare = smoothstep(0.7, 0.8, n.fbm(u + 0.9, v + 0.4, 12, 2));
+      let c = mixRgb(deep, fresh, clamp01(base * 1.2 + (blades - 0.5) * 0.9));
+      c = mixRgb(c, straw, dry * 0.7);
+      c = mixRgb(c, soil, bare * 0.65);
+      o.color = c;
+      o.height = 0.6 * blades + 0.3 * base - 0.3 * bare;
+      o.rough = 0.95;
+      o.metal = 0;
+      o.ao = 0.7 + 0.3 * clamp01(blades * 1.3);
+    },
+  };
+}
+
+/** Desert sand: wind ripples, darker gravel patches. */
+function sandRecipe(n: TileNoise): SurfaceRecipe {
+  const light = hexToRgb(0xb99a6a);
+  const warm = hexToRgb(0x9a784e);
+  const gravel = hexToRgb(0x8f7b62);
+  return {
+    tileMeters: 4,
+    normalStrength: 3,
+    paint(u, v, o) {
+      const base = n.fbm(u, v, 3, 4);
+      const warp = n.fbm(u + 0.2, v + 0.6, 6, 2);
+      // Ripples: bands across u, bent by the noise.
+      const ripple = 0.5 + 0.5 * Math.sin((u * 26 + warp * 3.5) * Math.PI * 2);
+      const grit = n.fbm(u, v, 128, 2);
+      const stones = smoothstep(0.64, 0.74, n.fbm(u + 0.45, v + 0.13, 20, 3));
+      let c = mixRgb(warm, light, clamp01(base * 1.2 - 0.1 + ripple * 0.12));
+      const k = 0.9 + 0.2 * grit;
+      c = [c[0] * k, c[1] * k, c[2] * k];
+      c = mixRgb(c, gravel, stones * 0.55);
+      o.color = c;
+      o.height = 0.35 * ripple + 0.2 * base + 0.35 * stones + 0.1 * grit;
+      o.rough = 0.93;
+      o.metal = 0;
+      o.ao = 0.85 + 0.15 * clamp01(o.height * 1.4);
+    },
+  };
 }
 
 /** Wind-packed snow: soft drifts, footprint dimples and a faint blue in the hollows. */

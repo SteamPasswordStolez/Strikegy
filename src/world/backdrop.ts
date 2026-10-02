@@ -68,6 +68,8 @@ export interface BackdropOptions {
   kit?: ConiferKit;
   /** Snow-covered ground and trees, no green undergrowth. */
   winter?: boolean;
+  /** Sand and rock, few trees, no green undergrowth. */
+  desert?: boolean;
   /** Weakest devices (low preset): fewer 3D trees along the edge. */
   phone?: boolean;
 }
@@ -102,7 +104,8 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   /** 0..1 forest cover: clustered woods with clearings, thinning on high rocky ground. */
   const forest = (x: number, z: number) => {
     const [u, v] = uvOf(x, z);
-    const f = smoothstep(0.34, 0.5, n.fbm(u, v, 6, 3));
+    // Desert: only the odd palm grove.
+    const f = opts.desert ? 0.12 * smoothstep(0.55, 0.62, n.fbm(u, v, 6, 3)) : smoothstep(0.34, 0.5, n.fbm(u, v, 6, 3));
     return f * (1 - smoothstep(70, 110, heightAt(x, z)));
   };
 
@@ -113,10 +116,11 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
   const winter = !!opts.winter;
-  const grass = new THREE.Color(winter ? 0xe6ebf0 : 0x5f6e40);
-  const dryGrass = new THREE.Color(winter ? 0xd2dae3 : 0x958a5d);
-  const floor = new THREE.Color(winter ? 0xb4bcc2 : 0x3a3a26);
-  const rock = new THREE.Color(winter ? 0x8e9194 : 0x807b70);
+  const desert = !!opts.desert;
+  const grass = new THREE.Color(winter ? 0xe6ebf0 : desert ? 0xcdb48a : 0x5f6e40);
+  const dryGrass = new THREE.Color(winter ? 0xd2dae3 : desert ? 0xb8996c : 0x958a5d);
+  const floor = new THREE.Color(winter ? 0xb4bcc2 : desert ? 0x9c8a62 : 0x3a3a26);
+  const rock = new THREE.Color(winter ? 0x8e9194 : desert ? 0xa08466 : 0x807b70);
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
@@ -168,8 +172,9 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   // lighter presets only the first row is real 3D trees (~5k triangles each);
   // impostors take over from there.
   const nearOut = opts.lowDetail ? 18 : 48;
-  const near = scatter(opts.lowDetail ? (opts.phone ? 60 : 90) : 300, 4, nearOut, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
-  const far = scatter(opts.lowDetail ? 3700 : 7000, opts.lowDetail ? 15 : 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
+  const sparse = desert ? 0.06 : 1;
+  const near = scatter(Math.round((opts.lowDetail ? (opts.phone ? 60 : 90) : 300) * sparse), 4, nearOut, (x, z, d) => rng() < forest(x, z) + (desert ? 0.3 : d < 20 ? 0.6 : 0.1));
+  const far = scatter(Math.round((opts.lowDetail ? 3700 : 7000) * sparse), opts.lowDetail ? 15 : 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
   for (const chunk of bySector(near, (p) => p.pos)) group.add(buildNearTrees(kit, chunk));
   for (const chunk of bySector(far, (p) => p.pos)) group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, chunk));
 
@@ -201,7 +206,7 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   place('rock_moss_set_02', Math.round(6 * k), 4, 60, [1, 1.8], 0.1);
   place('tree_stump_01', Math.round(10 * k), 4, 45, [0.9, 1.4]);
   place('dead_tree_trunk', Math.round(8 * k), 4, 45, [1.5, 2.5], 0.02);
-  if (!winter) {
+  if (!winter && !desert) {
     place('shrub_02', Math.round(14 * k), 3, 40, [0.8, 1.3]);
     // Undergrowth along the inside of the edge softens it.
     placeAlongEdge(opts.models, detail, terrain, rng, k);

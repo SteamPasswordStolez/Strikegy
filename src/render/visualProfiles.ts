@@ -35,11 +35,12 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   },
   overcast: {
     sky: { turbidity: 10, rayleigh: 2.5, mieCoefficient: 0.01, mieDirectionalG: 0.7, cloudCoverage: 0.85, cloudDensity: 0.7 },
-    sun: { elevation: 50, azimuth: 120, color: 0xe4e8ee, intensity: 1.1 },
-    fog: { color: 0x9aa3ab, density: 0.006 },
-    hemi: { sky: 0xc0c8d0, ground: 0x4a463e, intensity: 0.6 },
-    envIntensity: 1.1,
-    exposure: 0.8,
+    // Tuned with Bilbao (2026-10-02): the old values washed everything out.
+    sun: { elevation: 50, azimuth: 120, color: 0xe4e8ee, intensity: 1.5 },
+    fog: { color: 0x9aa3ab, density: 0.004 },
+    hemi: { sky: 0xc0c8d0, ground: 0x4a463e, intensity: 0.45 },
+    envIntensity: 0.7,
+    exposure: 0.5,
   },
   // Low winter sun through thin high cloud; cold, hazy air.
   winter: {
@@ -50,6 +51,16 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     hemi: { sky: 0xdfe8f4, ground: 0xb8bcc2, intensity: 0.45 },
     envIntensity: 0.95,
     exposure: 0.5,
+  },
+  // High, hot sun; pale dusty sky and warm haze.
+  desert: {
+    sky: { turbidity: 6, rayleigh: 1.4, mieCoefficient: 0.008, mieDirectionalG: 0.8, cloudCoverage: 0.12, cloudDensity: 0.25 },
+    sun: { elevation: 55, azimuth: 40, color: 0xffdcaa, intensity: 2.2 },
+    fog: { color: 0xd8c8ac, density: 0.0028 },
+    // Warm bounce off the sand; the blue sky light is kept low or sand turns grey.
+    hemi: { sky: 0xf0d8b0, ground: 0xb08858, intensity: 0.6 },
+    envIntensity: 0.4,
+    exposure: 0.4,
   },
   indoor: {
     background: 0x15171a,

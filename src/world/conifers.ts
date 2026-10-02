@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { makeRng } from '@/render/noise';
+import type { Flora } from './mapTypes';
+import { broadleafVariant, frondTexture, leafTexture, palmVariant } from './treeSpecies';
 
 /**
  * Procedural conifers: a tapered trunk with whorls of branch "cards" (quads
@@ -239,11 +241,13 @@ export interface ConiferKit {
   impostorMaterial?: THREE.MeshBasicMaterial;
 }
 
-export function createConiferKit(alphaToCoverage: boolean, snow = false): ConiferKit {
-  const variants = Array.from({ length: VARIANTS }, (_, i) => buildVariant(101 + i * 17));
+/** Trees for a map: conifers (default), broadleaf (meadows, orchards) or date palms. */
+export function createConiferKit(alphaToCoverage: boolean, snow = false, flora: Flora = 'conifer'): ConiferKit {
+  const build = flora === 'broadleaf' ? (s: number) => broadleafVariant(s, TREE_HEIGHT) : flora === 'palm' ? (s: number) => palmVariant(s, TREE_HEIGHT) : buildVariant;
+  const variants = Array.from({ length: VARIANTS }, (_, i) => build(101 + i * 17));
   const foliageMaterial = new THREE.MeshStandardMaterial({
-    map: needleTexture(snow),
-    color: 0xa3ad9c,
+    map: flora === 'broadleaf' ? leafTexture() : flora === 'palm' ? frondTexture() : needleTexture(snow),
+    color: flora === 'conifer' ? 0xa3ad9c : 0xb4b8a8,
     vertexColors: true,
     alphaTest: 0.45,
     alphaToCoverage,

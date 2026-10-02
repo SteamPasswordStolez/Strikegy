@@ -15,7 +15,7 @@
     "clean": "node scripts/clean.mjs",
     "assets": "node scripts/fetch-assets.mjs && node scripts/optimize-assets.mjs",
     "sounds": "node scripts/build-sounds.mjs",
-    "maps": "node scripts/maps/iron-gate.mjs && node scripts/maps/ardennes.mjs"
+    "maps": "node scripts/maps/iron-gate.mjs && node scripts/maps/ardennes.mjs && node scripts/maps/lyon.mjs && node scripts/maps/persia.mjs && node scripts/maps/bilbao.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
