@@ -1038,6 +1038,7 @@ export class Game {
       this.bots?.bots.length ?? 0,
       tankSpots,
       heavy,
+      map.world.vehicles !== 'noJets',
     );
     this.renderer.scene.add(this.vehicles.group);
     if (this.bots) {
@@ -2848,7 +2849,7 @@ export class Game {
         });
       }
     }
-    if (vw?.heavy) {
+    if (vw && vw.jetLimit() > 0) {
       const full = vw.jets(PLAYER_TEAM) >= vw.jetLimit();
       for (const kind of JET_KINDS) {
         out.push({

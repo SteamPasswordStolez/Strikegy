@@ -65,6 +65,7 @@ describe('Bilbao city map', () => {
 
   it('is valid, three zones, a river with one bridge along the south', () => {
     expect(validateMap(map)).toEqual([]);
+    expect(map.world.vehicles).toBe('noJets');
     expect(map.zones?.map((z) => z.id)).toEqual(['A', 'B', 'C']);
     const river = map.world.terrain!.rivers![0]!;
     expect(river.crossings).toHaveLength(1);

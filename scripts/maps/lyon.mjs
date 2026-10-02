@@ -79,12 +79,12 @@ function onRiver(x, z) {
 
 // --- Zones and bases -------------------------------------------------------------
 const Z = {
-  A: P(773, 410), // central farm
+  A: P(770, 500), // central farm (pulled south of the sketch so both sides have a similar walk)
   B: P(330, 545), // barn and silo
-  C: P(1222, 420), // orchard
+  C: P(1215, 480), // orchard
 };
 const BLUE = P(805, 165);
-const RED = P(745, 935);
+const RED = P(745, 900);
 const RIDGE = P(1235, 820);
 
 // Bridges cross the creek square to its flow.

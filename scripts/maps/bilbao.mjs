@@ -409,6 +409,7 @@ const map = {
     visualProfile: 'overcast',
     groundMaterial: 'ground',
     flora: 'broadleaf',
+    vehicles: 'noJets',
     boundary,
     terrain,
   },
