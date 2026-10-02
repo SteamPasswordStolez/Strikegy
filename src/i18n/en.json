@@ -240,5 +240,6 @@
   "jet.hud": "Alt {alt} m · {spd} km/h · Throttle {thr}%",
   "jet.locked": "Locked",
   "jet.airspace": "Leaving the area — turning back",
-  "jet.controls": "W/S throttle · mouse to fly · right click second weapon · E eject"
+  "jet.controls": "W/S throttle · mouse to fly · right click second weapon · E eject",
+  "deploy.damaged": "Damaged"
 }

@@ -1190,6 +1190,11 @@ export class BotManager implements BotServices {
     if (e && e.bot.alive && !e.bot.riding) e.board = { vehicle: v.id, seat: 0, until: this.time + 90 };
   }
 
+  /** A bot is on its way to this seat. */
+  claimedSeat(vehicle: number, seat: number): boolean {
+    return this.claimed(vehicle, seat);
+  }
+
   private claimed(vehicle: number, seat: number): boolean {
     return this.entries.some((x) => x.board?.vehicle === vehicle && x.board.seat === seat);
   }

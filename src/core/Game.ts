@@ -41,6 +41,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
+import { wishDirection } from '@/player/movement';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
@@ -256,6 +257,9 @@ export class Game {
   private rideCamDist = 6;
   /** Vehicle view: first person by default, C switches to third person. */
   private rideThird = false;
+  /** Under a parachute after bailing out of a plane (the canopy model), or null. */
+  private chute: THREE.Group | null = null;
+  private readonly chuteVel = new THREE.Vector3();
   /** The player's own body, seen from the driver's third-person view. */
   private rider: SoldierModel | null = null;
   /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
@@ -743,6 +747,11 @@ export class Game {
       this.renderer.adaptResolution(dt * 1000, dt);
       this.vehicles?.render(alpha);
       this.renderRider(alpha, dt);
+      if (this.chute) {
+        const p = this.player;
+        this.chute.position.lerpVectors(p.prevFeet, p.feet, alpha);
+        this.chute.rotation.y = p.yaw;
+      }
       this.updateCamera(alpha, dt, adsFov);
     }
     input.lookYaw = 0;
@@ -866,6 +875,8 @@ export class Game {
     this.driveInputs.clear();
     if (p.alive && this.deployed && this.ride) {
       this.stepRide(dt, input);
+    } else if (p.alive && this.deployed && this.chute) {
+      this.stepChute(dt, input);
     } else if (p.alive && this.deployed) {
       // Recon: the wheel (touch: swap) changes scope power while aiming instead of weapons.
       const w = this.weapons;
@@ -940,6 +951,7 @@ export class Game {
     this.support.step(dt);
     this.botTanks();
     this.botJets();
+    this.seatPending();
     this.vehicles?.step(dt, this.driveInputs, this.vehicleWalkers());
     this.physics.step();
     this.vehicles?.afterStep();
@@ -1054,6 +1066,17 @@ export class Game {
     return false;
   }
 
+  /**
+   * A seat someone of `team` could deploy into: tanks and jets of that side
+   * (crewed by it, or empty and its own), not wrecked, the driver's seat
+   * first unless it is kept for someone else. -1 when there's none.
+   */
+  private freeSeatFor(v: Vehicle, team: Team, id: number): number {
+    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || v.kind === 'rocket')) return -1;
+    if ((v.team ?? v.home) !== team) return -1;
+    return v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.bots?.claimedSeat(v.id, i));
+  }
+
   /** Missile lock: the nearest enemy aircraft within 25° of the nose and in range. */
   private lockTarget(v: Vehicle, team: Team): Vehicle | null {
     const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
@@ -1103,6 +1126,19 @@ export class Game {
   }
   private botJetAt = 30;
 
+  /** Bots that deployed into a vehicle seat this step (bot id -> vehicle id). */
+  private readonly pendingSeats = new Map<number, number>();
+
+  private seatPending(): void {
+    for (const [botId, vid] of this.pendingSeats) {
+      const bot = this.bots?.bots.find((b) => b.id === botId);
+      const v = this.vehicles?.get(vid);
+      const seat = v && bot ? this.freeSeatFor(v, bot.team, bot.id) : -1;
+      if (bot && v && seat >= 0 && bot.alive) this.bots!.seatBot(bot, v, seat);
+    }
+    this.pendingSeats.clear();
+  }
+
   /** People vehicles can run over: the player on foot and the bots. */
   private *vehicleWalkers(): Iterable<Walker> {
     if (this.player.alive && this.deployed && !this.ride) yield this.playerCombatant;
@@ -1144,9 +1180,14 @@ export class Game {
     r.v.seats[r.seat] = null;
     let spot = r.v.exitSpot(r.seat, this.physics);
     if (r.v.flight) {
-      // Bailing out of a plane: down to the ground below.
-      const down = this.physics.raycast(r.v.pos, new THREE.Vector3(0, -1, 0), 600, Layer.WORLD);
-      spot = down ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : this.baseCenter(PLAYER_TEAM);
+      // Bailing out of a plane: high up, out under a parachute; on the ground, beside it.
+      const down = this.physics.raycast(r.v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
+      if (!down || down.distance > 12) {
+        this.openChute(r.v.pos.clone().setY(r.v.pos.y - r.v.spec.half[1] - 2), r.v.velocity);
+        this.playerBoxes.setEnabled(this.player.alive);
+        return;
+      }
+      spot = new THREE.Vector3(down.point.x, down.point.y, down.point.z);
     }
     this.player.dismount(spot);
     this.playerBoxes.setEnabled(this.player.alive);
@@ -1179,6 +1220,55 @@ export class Game {
     if (v.altMounts[r.seat] && v.pullTrigger(r.seat, input.ads, this.simTime, dt, true)) this.fireMount(v, r.seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null, true);
     const eye = v.seatEye(r.seat, this.tmpEye);
     this.player.ride(eye, v.velocity);
+  }
+
+  /** Out of a plane at `at`: a canopy opens, drifting down from there (keeping some of the plane's speed at first). */
+  private openChute(at: THREE.Vector3, carry: THREE.Vector3): void {
+    if (!this.chute) {
+      this.chute = buildParachute();
+      this.renderer.scene.add(this.chute);
+    }
+    this.chute.visible = true;
+    this.chuteVel.copy(carry).multiplyScalar(0.25).setY(-CHUTE.fall);
+    this.player.ride(at.clone().setY(at.y + this.player.eyeHeight), this.chuteVel);
+    this.audio.gadget('place', null);
+  }
+
+  /** Shot down under the canopy (or respawning): straight onto the ground below, canopy gone. */
+  private dropChute(): void {
+    if (!this.chute) return;
+    this.chute.visible = false;
+    this.chute = null;
+    const p = this.player;
+    const down = this.physics.raycast(p.feet, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
+    p.dismount(down ? new THREE.Vector3(down.point.x, down.point.y, down.point.z) : p.feet.clone());
+  }
+
+  /**
+   * Under the canopy: WASD steers (drifting at CHUTE.steer m/s), it comes
+   * down at CHUTE.fall m/s and lands on whatever is below; the gun still
+   * works on the way down.
+   */
+  private stepChute(dt: number, input: InputState): void {
+    const p = this.player;
+    const [wx, wz] = input.moveX || input.moveY ? wishDirection(input.moveX, input.moveY, p.yaw) : [0, 0];
+    const k = Math.min(1, dt * 1.5);
+    this.chuteVel.x += (wx * CHUTE.steer - this.chuteVel.x) * k;
+    this.chuteVel.z += (wz * CHUTE.steer - this.chuteVel.z) * k;
+    this.chuteVel.y = -CHUTE.fall;
+    const step = this.chuteVel.clone().multiplyScalar(dt);
+    const hit = this.physics.raycast(p.feet.clone().setY(p.feet.y + 0.5), step.clone().normalize(), step.length() + 0.5, Layer.WORLD);
+    if (hit) {
+      // Down: canopy away, on foot.
+      this.chute!.visible = false;
+      this.chute = null;
+      p.dismount(new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z));
+      this.weapons.drawTimer = DRAW_TIME;
+      return;
+    }
+    const eye = p.feet.clone().add(step).setY(p.feet.y + step.y + p.eyeHeight);
+    p.ride(eye, this.chuteVel);
+    this.weapons.step(dt, input, p, false);
   }
 
   /** The player's seat gun: follows the view; the trigger fires it (MGs overheat, shell guns reload). */
@@ -1685,6 +1775,7 @@ export class Game {
     this.shake = Math.min(0.05, this.shake + amount * 0.0004);
     if (killed) {
       if (this.ride) this.leaveVehicle();
+      if (this.chute) this.dropChute();
       this.goDown(cause, source);
     }
     return killed;
@@ -1952,6 +2043,7 @@ export class Game {
 
   private respawn(key = 'base'): void {
     this.buildMode = false;
+    if (this.chute) this.dropChute();
 
     const p = this.player;
     p.health.reset();
@@ -1992,6 +2084,11 @@ export class Game {
     if (key.startsWith('tank:') && this.vehicles) {
       const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, PLAYER_TEAM);
       if (v) this.enterSeat(v, 0);
+    }
+    if (key.startsWith('veh:') && this.vehicles) {
+      const v = this.vehicles.get(Number(key.slice(4)));
+      const seat = v ? this.freeSeatFor(v, PLAYER_TEAM, PLAYER_ID) : -1;
+      if (v && seat >= 0) this.enterSeat(v, seat);
     }
     if (key.startsWith('jet:') && this.vehicles) {
       const v = this.spawnJet(key.slice(4) as VehicleKind, PLAYER_TEAM);
@@ -2575,6 +2672,14 @@ export class Game {
   /** Spawn position for a deploy key ('base' | 'zone:<id>' | 'mate:<id>'); invalid keys fall back to the base. */
   private spawnFor(team: Team, key: string, selfId: number): { pos: THREE.Vector3; yaw: number } {
     const [kind, id] = key.split(':');
+    // A bot deploying into a vehicle seat: seated right after the respawn (see `seatPending`).
+    if (kind === 'veh' && selfId !== PLAYER_ID) {
+      const v = this.vehicles?.get(Number(id));
+      if (v && this.freeSeatFor(v, team, selfId) >= 0) {
+        this.pendingSeats.set(selfId, v.id);
+        return { pos: v.pos.clone(), yaw: v.yaw };
+      }
+    }
     if (kind === 'beacon') {
       const b = this.gadgets.beaconsFor(team, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
       if (b) {
@@ -2626,6 +2731,12 @@ export class Game {
     }
     for (const m of mates) cands.push({ key: `mate:${m.id}`, x: m.feet.x, z: m.feet.z });
     for (const b of this.gadgets.beaconsFor(bot.team, this.squadKeyOf(bot.team, bot.id))) cands.push({ key: `beacon:${b.id}`, x: b.pos.x, z: b.pos.z });
+    // Now and then straight into a free seat in one of the side's tanks or jets.
+    if (Math.random() < 0.3) {
+      for (const v of this.vehicles?.vehicles ?? []) {
+        if (v.seats.some((s) => s) && this.freeSeatFor(v, bot.team, bot.id) >= 0) return `veh:${v.id}`;
+      }
+    }
     let best = cands[0]!;
     let bestD = Infinity;
     for (const c of cands) {
@@ -2683,6 +2794,21 @@ export class Game {
           warn: null,
         });
       }
+    }
+    // A free seat in one of the side's tanks or jets: deploy aboard.
+    for (const v of vw?.vehicles ?? []) {
+      const seat = this.freeSeatFor(v, PLAYER_TEAM, PLAYER_ID);
+      if (seat < 0) continue;
+      const aboard = v.seats.filter((s) => s).length;
+      out.push({
+        key: `veh:${v.id}`,
+        kind: 'ride',
+        label: `${t(`vehicle.${v.kind}`)} — ${t(`seat.${v.spec.seats[seat]!.role}`)} (${aboard}/${v.seats.length})`,
+        x: v.pos.x,
+        z: v.pos.z,
+        blocked: null,
+        warn: v.health < v.spec.health * 0.35 ? t('deploy.damaged') : null,
+      });
     }
     const now = this.bots?.time ?? 0;
     for (const m of this.playerSquad?.mates(PLAYER_ID) ?? []) {
@@ -2830,3 +2956,31 @@ export class Game {
     this.container.replaceChildren();
   }
 }
+
+/** Parachute: falling speed and how fast it can be steered sideways (m/s). */
+const CHUTE = { fall: 8, steer: 4.5 };
+
+/** A round canopy on lines, its harness at the player's shoulders (origin at the feet). */
+function buildParachute(): THREE.Group {
+  const g = new THREE.Group();
+  const cloth = new THREE.MeshStandardMaterial({ color: 0x7a7b5c, roughness: 0.9, side: THREE.DoubleSide });
+  const line = new THREE.MeshBasicMaterial({ color: 0x2a2a26 });
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(3.2, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2.6), cloth);
+  canopy.scale.y = 0.6;
+  canopy.position.y = 6.2;
+  g.add(canopy);
+  const rim = 3.2 * Math.sin(Math.PI / 2.6);
+  const rimY = 6.2 + 3.2 * Math.cos(Math.PI / 2.6) * 0.6;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const top = new THREE.Vector3(Math.cos(a) * rim, rimY, Math.sin(a) * rim);
+    const bottom = new THREE.Vector3(0, 1.5, 0);
+    const len = top.distanceTo(bottom);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, len, 3), line);
+    m.position.copy(top).add(bottom).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), top.clone().sub(bottom).normalize());
+    g.add(m);
+  }
+  return g;
+}
+
