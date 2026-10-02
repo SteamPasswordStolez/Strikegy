@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Team } from '@/world/mapTypes';
 import { VEHICLES, type VehicleKind } from './vehicleData';
 
@@ -91,6 +92,16 @@ function addWheels(root: THREE.Group, kind: VehicleKind): THREE.Object3D[] {
 }
 
 export function buildVehicleModel(kind: VehicleKind, team: Team | null): VehicleModel {
+  const m = buildParts(kind, team);
+  // Dozens of small parts per vehicle: merge them into one mesh per material
+  // within each moving piece (hull, turret, barrel, each wheel).
+  const pivots = new Set<THREE.Object3D>(m.wheels);
+  for (const n of m.mounts) if (n) for (const o of [n.turret, n.gun, n.muzzle]) if (o) pivots.add(o);
+  mergeTree(m.root, pivots);
+  return m;
+}
+
+function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'jeep') return buildJeep(team);
   if (kind === 'apc') return buildApc(team);
   if (kind === 'tank') return buildTank(team);
@@ -101,6 +112,33 @@ export function buildVehicleModel(kind: VehicleKind, team: Team | null): Vehicle
   if (kind === 'cas') return buildCas(team);
   if (kind === 'bomber') return buildBomber(team);
   return buildBike(team);
+}
+
+/** Merges each node's plain mesh children by material (pivots and their children stay apart), all the way down. */
+function mergeTree(node: THREE.Object3D, pivots: Set<THREE.Object3D>): void {
+  const byMat = new Map<THREE.Material, THREE.Mesh[]>();
+  for (const c of node.children) {
+    const mesh = c as THREE.Mesh;
+    if (!mesh.isMesh || pivots.has(c) || c.children.length || Array.isArray(mesh.material)) continue;
+    const list = byMat.get(mesh.material as THREE.Material) ?? [];
+    list.push(mesh);
+    byMat.set(mesh.material as THREE.Material, list);
+  }
+  for (const [mat, list] of byMat) {
+    if (list.length < 2) continue;
+    const geos = list.map((mesh) => {
+      mesh.updateMatrix();
+      const g = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix);
+      for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') g.deleteAttribute(k);
+      if (!g.getAttribute('uv')) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
+      return g;
+    });
+    const merged = mergeGeometries(geos);
+    if (!merged) continue;
+    for (const mesh of list) node.remove(mesh);
+    node.add(new THREE.Mesh(merged, mat));
+  }
+  for (const c of [...node.children]) if (c.children.length) mergeTree(c, pivots);
 }
 
 /** A fixed gun / launcher point on an aircraft (fires along the nose). */

@@ -24,6 +24,37 @@ function bySector<T>(items: T[], pos: (t: T) => THREE.Vector3): T[][] {
 
 const EXTENT = SCENERY_EXTENT;
 
+/**
+ * Forest-floor clutter (scanned rocks, stumps, ferns, shrubs: thousands of
+ * triangles each) is grouped in DETAIL_CELL squares and only drawn within
+ * DETAIL_RANGE of the camera (`cullBackdropDetail`).
+ */
+const DETAIL_CELL = 40;
+const DETAIL_RANGE = 75;
+
+function byCell<T>(items: T[], pos: (t: T) => THREE.Vector3): T[][] {
+  const cells = new Map<string, T[]>();
+  for (const it of items) {
+    const p = pos(it);
+    const key = `${Math.floor(p.x / DETAIL_CELL)},${Math.floor(p.z / DETAIL_CELL)}`;
+    const list = cells.get(key) ?? [];
+    list.push(it);
+    cells.set(key, list);
+  }
+  return [...cells.values()];
+}
+
+/** Shows backdrop clutter near the camera only (call every frame or so). */
+export function cullBackdropDetail(backdrop: THREE.Object3D, camera: THREE.Vector3): void {
+  const list = backdrop.userData.detail as THREE.Mesh[] | undefined;
+  if (!list) return;
+  for (const m of list) {
+    const s = m.geometry.boundingSphere ? (m as THREE.InstancedMesh).boundingSphere : null;
+    if (!s) continue;
+    m.visible = s.center.distanceTo(camera) - s.radius < DETAIL_RANGE;
+  }
+}
+
 /** Forest-floor models scattered around the map (render only, no collision). */
 export const BACKDROP_MODELS = ['shrub_02', 'shrub_04', 'fern_02', 'rock_moss_set_01', 'rock_moss_set_02', 'tree_stump_01', 'dead_tree_trunk'];
 
@@ -133,9 +164,12 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
     // when occluders are drawn before what they hide (the player is always inside).
     return out.sort((a, b) => a.pos.x * a.pos.x + a.pos.z * a.pos.z - (b.pos.x * b.pos.x + b.pos.z * b.pos.z));
   };
-  // A dense tree line right behind the walls, then woods and clearings.
-  const near = scatter(opts.lowDetail ? (opts.phone ? 90 : 160) : 300, 4, 48, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
-  const far = scatter(opts.lowDetail ? 3500 : 7000, 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
+  // A dense tree line right behind the walls, then woods and clearings. On the
+  // lighter presets only the first row is real 3D trees (~5k triangles each);
+  // impostors take over from there.
+  const nearOut = opts.lowDetail ? 18 : 48;
+  const near = scatter(opts.lowDetail ? (opts.phone ? 60 : 90) : 300, 4, nearOut, (x, z, d) => rng() < forest(x, z) + (d < 20 ? 0.6 : 0.1));
+  const far = scatter(opts.lowDetail ? 3700 : 7000, opts.lowDetail ? 15 : 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
   for (const chunk of bySector(near, (p) => p.pos)) group.add(buildNearTrees(kit, chunk));
   for (const chunk of bySector(far, (p) => p.pos)) group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, chunk));
 
@@ -157,8 +191,11 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
       matrices.push(new THREE.Matrix4().compose(new THREE.Vector3(x, groundAt(x, z) - sink * s, z), q.setFromEuler(e), new THREE.Vector3(s, s, s)));
     }
     const p = new THREE.Vector3();
-    for (const chunk of bySector(matrices, (m) => p.setFromMatrixPosition(m).clone())) instanceModel(tpl, chunk, group, false);
+    for (const chunk of byCell(matrices, (m) => p.setFromMatrixPosition(m).clone())) instanceModel(tpl, chunk, detail, false);
   };
+  const detail = new THREE.Group();
+  detail.name = 'detail';
+  group.add(detail);
   const k = opts.lowDetail ? 0.5 : 1;
   place('rock_moss_set_01', Math.round(6 * k), 4, 60, [1, 1.8], 0.1);
   place('rock_moss_set_02', Math.round(6 * k), 4, 60, [1, 1.8], 0.1);
@@ -167,8 +204,9 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   if (!winter) {
     place('shrub_02', Math.round(14 * k), 3, 40, [0.8, 1.3]);
     // Undergrowth along the inside of the edge softens it.
-    placeAlongEdge(opts.models, group, terrain, rng, k);
+    placeAlongEdge(opts.models, detail, terrain, rng, k);
   }
+  group.userData.detail = detail.children.filter((c) => (c as THREE.Mesh).isMesh);
 
   group.traverse((o) => o.layers.set(LAYER_BACKDROP));
   scene.add(group);
@@ -215,7 +253,7 @@ function placeAlongEdge(models: ModelLibrary, parent: THREE.Object3D, terrain: T
   };
   const fern = models.template('fern_02');
   const p = new THREE.Vector3();
-  const sectors = (list: THREE.Matrix4[]) => bySector(list, (m) => p.setFromMatrixPosition(m).clone());
+  const sectors = (list: THREE.Matrix4[]) => byCell(list, (m) => p.setFromMatrixPosition(m).clone());
   if (fern) for (const chunk of sectors(spots(Math.round(45 * k), [0.9, 1.8], [0.8, 1.3]))) instanceModel(fern, chunk, parent, false);
   const shrub = models.template('shrub_04');
   if (shrub) for (const chunk of sectors(spots(Math.round(35 * k), [0.7, 1.4], [3, 5]))) instanceModel(shrub, chunk, parent, false);

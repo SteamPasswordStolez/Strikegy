@@ -64,6 +64,34 @@ const PALETTES: Record<Team, Palette> = {
   red: { uniform: 0x444a37, uniformDark: 0x33382b, gear: 0x2f3228, helmet: 0x363a29, skin: 0xb08566, boots: 0x231f1a, glove: 0x23211d, mark: 0xc9402f },
 };
 
+/**
+ * A distant soldier: a few coloured boxes (legs, torso, arms with a rifle,
+ * helmeted head) in one geometry, drawn instanced for everyone far away of
+ * a side (no skinning, one draw call). Feet at 0, facing -Z.
+ */
+export function buildFarSoldier(team: Team): THREE.BufferGeometry {
+  const pal = PALETTES[team];
+  const parts: [THREE.BufferGeometry, number][] = [
+    [box(0.36, 0.86, 0.22, 0, 0.43, 0), pal.uniformDark],
+    [box(0.46, 0.62, 0.28, 0, 1.18, 0), pal.uniform],
+    [box(0.5, 0.2, 0.3, 0, 1.38, -0.02), pal.gear],
+    [box(0.12, 0.5, 0.12, -0.28, 1.15, -0.12), pal.uniform],
+    [box(0.12, 0.5, 0.12, 0.28, 1.15, -0.12), pal.uniform],
+    [box(0.06, 0.08, 0.8, 0.12, 1.32, -0.45), 0x222222],
+    [box(0.2, 0.22, 0.22, 0, 1.62, 0), pal.skin],
+    [box(0.28, 0.12, 0.3, 0, 1.76, 0), pal.helmet],
+  ];
+  const geos = parts.map(([g, color]) => {
+    const c = new THREE.Color(color);
+    const n = g.getAttribute('position').count;
+    const cols = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) cols.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g.toNonIndexed();
+  });
+  return mergeGeometries(geos)!;
+}
+
 /** Where the gun's grip (trigger origin) sits in model space. */
 const GRIP = new THREE.Vector3(0.09, 1.4, -0.12);
 

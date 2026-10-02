@@ -23,6 +23,8 @@ import { GADGETS, classGadget, type GadgetId } from '@/data/gadgets';
 const DEG = Math.PI / 180;
 const DOWN = { x: 0, y: -1, z: 0 };
 const PERCEIVE_EVERY = 0.1;
+/** Enemies in view a bot checks line of sight to per look (the ones that matter most). */
+const PERCEIVE_LOOKS = 8;
 const THINK_EVERY = 0.25;
 const CROUCH_HEIGHT = MOVE.crouchHeight;
 /** Teammates' enemy sightings farther than this (m) don't send a bot hunting. */
@@ -250,6 +252,12 @@ export class Bot implements Damageable, Combatant {
   private navRef = 0;
   /** Far from the viewer and out of combat: movement runs every other step (set by the manager). */
   far = false;
+  /** Close to the viewer: its capsule (which only the player bumps into) is kept up to date. */
+  nearViewer = true;
+  /** Enemies in view this look (reused between looks). */
+  private readonly cand: { e: Combatant; dist: number; off: number; firing: boolean; score: number }[] = [];
+  /** Simulation time owed while skipped by the update level of detail (see BotManager.step). */
+  lodDt = 0;
   private moveDt = 0;
   private lodTick = Math.random() < 0.5 ? 0 : 1;
 
@@ -437,6 +445,11 @@ export class Bot implements Damageable, Combatant {
     this.hitboxes.sync(this.feet, this.yaw, this.height);
   }
 
+  /** Puts the capsule back where the bot is (it isn't moved while far from the viewer). */
+  syncCapsule(): void {
+    if (this.alive) this.body.setNextKinematicTranslation(this.center());
+  }
+
   /** Killed outright (a vehicle blowing up under them): no going down first. */
   killOutright(source?: DamageSource): void {
     void source;
@@ -570,6 +583,10 @@ export class Bot implements Damageable, Combatant {
     this.perceiveCount++;
     let best: Combatant | null = null;
     let bestDist = Infinity;
+    // First pass: who is in view at all (cheap maths, no rays). Out of view, any
+    // notice fades; quiet ones nobody was noticing need no bookkeeping.
+    const cand = this.cand;
+    let n = 0;
     for (const e of s.enemiesOf(this.team)) {
       if (!e.alive) {
         this.notice.delete(e.id);
@@ -578,18 +595,45 @@ export class Bot implements Damageable, Combatant {
       const dx = e.feet.x - this.feet.x;
       const dz = e.feet.z - this.feet.z;
       const dist = Math.hypot(dx, dz);
-      let progress = this.notice.get(e.id) ?? 0;
+      const progress = this.notice.get(e.id) ?? 0;
+      const firing = e.firingUntil > s.time;
+      if (progress === 0 && !firing && dist > skill.sight) continue;
       const off = offAxisDeg(this.aimYaw, dx, dz);
       const inView = dist < skill.sight && (off < skill.fov / 2 || dist < 4);
-      const firing = e.firingUntil > s.time;
+      if (!inView) {
+        if (progress > 0) this.notice.set(e.id, Math.max(0, progress - dt * 0.5));
+        continue;
+      }
       // Distant, quiet enemies not yet noticed at all are looked for every other time (halves the rays).
       if (progress === 0 && !firing && dist > 25 && (this.perceiveCount + e.id) % 2 === 1) continue;
-      let visible = false;
-      if (inView) {
-        const head = this.tmp.copy(e.feet).setY(e.feet.y + e.eyeHeight);
-        const chest = this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7);
-        visible = s.canSee(this, e, eye, head, chest);
-      }
+      // Who matters most: whoever shoots at us, the current target, those being noticed, the closest.
+      let score = dist;
+      if (e === this.target) score *= 0.3;
+      if (e.id === this.lastAttacker) score *= 0.3;
+      if (progress > 0) score *= 0.6;
+      if (firing) score *= 0.7;
+      const c = (cand[n] ??= { e, dist: 0, off: 0, firing: false, score: 0 });
+      c.e = e;
+      c.dist = dist;
+      c.off = off;
+      c.firing = firing;
+      c.score = score;
+      n++;
+    }
+    // Second pass: line of sight for the few that matter most (a crowd in view
+    // can't all be tracked at once); the rest keep where they were.
+    const look = Math.min(n, PERCEIVE_LOOKS);
+    for (let i = 0; i < look; i++) {
+      let k = i;
+      for (let j = i + 1; j < n; j++) if (cand[j]!.score < cand[k]!.score) k = j;
+      if (k !== i) [cand[i], cand[k]] = [cand[k]!, cand[i]!];
+    }
+    for (let i = 0; i < look; i++) {
+      const { e, dist, off, firing } = cand[i]!;
+      let progress = this.notice.get(e.id) ?? 0;
+      const head = this.tmp.copy(e.feet).setY(e.feet.y + e.eyeHeight);
+      const chest = this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7);
+      let visible = s.canSee(this, e, eye, head, chest);
       // Tree crowns in between hide people at range (thick woods completely).
       let leaves = 0;
       if (visible && dist > 12) {
@@ -1323,7 +1367,8 @@ export class Bot implements Damageable, Combatant {
     this.velocity.set(moved.x / dt, 0, moved.z / dt);
     this.grounded = true;
     this.feet.add(moved);
-    this.body.setNextKinematicTranslation(this.center());
+    // Only the player bumps into the capsule: far away it can wait.
+    if (this.nearViewer) this.body.setNextKinematicTranslation(this.center());
 
     // Footsteps.
     const horiz = Math.hypot(moved.x, moved.z);

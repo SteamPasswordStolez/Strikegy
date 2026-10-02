@@ -19,6 +19,8 @@ export class CharacterHitboxes {
   private readonly torso: RAPIER.Collider;
   private readonly head: RAPIER.Collider;
   private lastHeight = -1;
+  /** Where it was last put (skips moving a body that hasn't moved). */
+  private readonly last = { x: NaN, y: NaN, z: NaN, yaw: NaN };
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -54,6 +56,12 @@ export class CharacterHitboxes {
   /** Moves the hitboxes to the character's feet, facing and height. */
   sync(feet: { x: number; y: number; z: number }, yaw: number, height: number): void {
     this.layout(height);
+    const l = this.last;
+    if (l.x === feet.x && l.y === feet.y && l.z === feet.z && l.yaw === yaw) return;
+    l.x = feet.x;
+    l.y = feet.y;
+    l.z = feet.z;
+    l.yaw = yaw;
     this.body.setNextKinematicTranslation(feet);
     const h = yaw / 2;
     this.body.setNextKinematicRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) });
@@ -61,6 +69,7 @@ export class CharacterHitboxes {
 
   /** Teleport without interpolation (spawns). */
   place(feet: { x: number; y: number; z: number }, yaw: number): void {
+    this.last.x = NaN;
     this.body.setTranslation(feet, true);
     const h = yaw / 2;
     this.body.setRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) }, true);

@@ -11,7 +11,7 @@ import { WEAPONS, damageAtDistance, type WeaponDef } from '@/weapons/weaponData'
 import { Bot, type BotServices } from './Bot';
 import type { NavWorld } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
-import { SoldierModel } from './SoldierModel';
+import { SoldierModel, buildFarSoldier } from './SoldierModel';
 import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
@@ -70,8 +70,25 @@ const CELL = 2;
 const cellKey = (x: number, z: number): number => (Math.floor(x / CELL) + 32768) * 65536 + (Math.floor(z / CELL) + 32768);
 /** How long one pair's line-of-sight result is reused by the other side. */
 const SIGHT_SHARE_SEC = 0.09;
+const SIGHT_SHARE_FAR_SEC = 0.25;
 /** Beyond this distance from the viewer (and out of combat) bots move at half rate. */
 const FAR_SQ = 60 * 60;
+/**
+ * Update level of detail: bots this far (m) from the viewer think and move
+ * every 2nd / 3rd step (with the time they skipped), unless they are in a
+ * vehicle; their capsules (only the player bumps into them) update within
+ * CAPSULE_RANGE.
+ */
+const LOD_MID_SQ = 90 * 90;
+const LOD_FAR_SQ = 160 * 160;
+const CAPSULE_RANGE_SQ = 45 * 45;
+/**
+ * Render level of detail: beyond this distance (m) a bot is drawn as part of
+ * its side's instanced far model instead of its skinned one; ally markers
+ * further than MARKER_RANGE only show for squad mates and the downed.
+ */
+const FAR_MODEL = 70;
+const MARKER_RANGE = 160;
 const COVER_SEARCHES_PER_STEP = 3;
 /** A round passing within this distance of a bot's head suppresses it (m). */
 const NEAR_MISS = 2.5;
@@ -344,6 +361,17 @@ export class BotManager implements BotServices {
     add(otherTeam(PLAYER_TEAM), opts.enemies);
     this.blobs = this.makeBlobs(this.entries.length);
     scene.add(this.blobs);
+    this.markers = this.makeMarkerPoints(this.entries.length, false);
+    this.crosses = this.makeMarkerPoints(this.entries.length, true);
+    scene.add(this.markers, this.crosses);
+    const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+    for (const team of ['blue', 'red'] as const) {
+      const m = new THREE.InstancedMesh(buildFarSoldier(team), farMat, Math.max(1, this.entries.length));
+      m.count = 0;
+      m.frustumCulled = false;
+      this.far[team] = m;
+      scene.add(m);
+    }
 
     bus.on('combat:kill', (e) => {
       if (e.attackerTeam && e.attackerTeam !== e.victimTeam) this.teams[e.attackerTeam].kills++;
@@ -387,10 +415,20 @@ export class BotManager implements BotServices {
     this.dodgeShells();
     for (const team of ['blue', 'red'] as const) this.considerSupport(team);
     this.considerVehicles();
+    this.stepCount++;
     for (const e of this.entries) {
       const b = e.bot;
-      b.far = b.feet.distanceToSquared(this.listener) > FAR_SQ && !b.inCombat(this.time);
-      b.step(dt, this);
+      const d2 = b.feet.distanceToSquared(this.listener);
+      b.far = d2 > FAR_SQ && !b.inCombat(this.time);
+      const near = d2 < CAPSULE_RANGE_SQ;
+      if (near && !b.nearViewer) b.syncCapsule();
+      b.nearViewer = near;
+      const every = b.riding ? 1 : d2 > LOD_FAR_SQ ? 3 : d2 > LOD_MID_SQ ? 2 : 1;
+      b.lodDt += dt;
+      if (every === 1 || (this.stepCount + b.id) % every === 0) {
+        b.step(b.lodDt, this);
+        b.lodDt = 0;
+      }
       if (e.simAlive && !b.alive) {
         // Down: out of the fight (the kill was reported when the shot landed), and out of any vehicle.
         this.alightBot(e);
@@ -890,7 +928,9 @@ export class BotManager implements BotServices {
     // Sight is (nearly) symmetric: whoever checks a pair first answers for both.
     const key = self.id < other.id ? self.id * 4096 + other.id : other.id * 4096 + self.id;
     const hit = this.sightCache.get(key);
-    if (hit && this.time - hit.time < SIGHT_SHARE_SEC) return hit.visible;
+    // Far apart, a sight line is trusted a little longer (people move little relative to the range).
+    const share = eye.distanceToSquared(head) > 40 * 40 ? SIGHT_SHARE_FAR_SEC : SIGHT_SHARE_SEC;
+    if (hit && this.time - hit.time < share) return hit.visible;
     const visible = this.lineOfSight(eye, head) || this.lineOfSight(eye, chest);
     if (hit) {
       hit.time = this.time;
@@ -1640,7 +1680,9 @@ export class BotManager implements BotServices {
     const pellets = def.pellets ?? 1;
     const source: DamageSource = { pos: eye.clone(), name: bot.name, team: bot.team, weapon: def.name, id: bot.id };
     const e = this.entryOf(bot);
-    e.model.muzzleWorld(this.muzzle);
+    // Hidden (off screen or drawn as the far model): the skinned model isn't posed, fire from the eye.
+    if (e.model.root.visible) e.model.muzzleWorld(this.muzzle);
+    else this.muzzle.copy(eye);
     for (let i = 0; i < pellets; i++) {
       const r = Math.tan(spread) * Math.sqrt(Math.random());
       const a = Math.random() * Math.PI * 2;
@@ -1857,11 +1899,38 @@ export class BotManager implements BotServices {
   // ---------------------------------------------------------------------------
   // Rendering
 
-  /** Updates models from interpolated sim state. */
-  render(alpha: number, dt: number, listener: THREE.Vector3): void {
-    this.listener.copy(listener);
+  private stepCount = 0;
+  /** Ally chevrons and revive crosses: one point cloud each (a sprite per ally was a draw call each). */
+  private markers!: THREE.Points;
+  private crosses!: THREE.Points;
+  private markerCount = 0;
+  private crossCount = 0;
+  /** Instanced far models, one per side. */
+  private readonly far: Partial<Record<Team, THREE.InstancedMesh>> = {};
+  private readonly frustum = new THREE.Frustum();
+  private readonly projView = new THREE.Matrix4();
+  private readonly cullSphere = new THREE.Sphere();
+  private readonly farMatrix = new THREE.Matrix4();
+  private readonly farQuat = new THREE.Quaternion();
+  private readonly farEuler = new THREE.Euler();
+  private readonly farScale = new THREE.Vector3();
+
+  /**
+   * Updates models from interpolated sim state. Bots off screen are skipped
+   * (no draw, no bone update); far ones are drawn as their side's instanced
+   * far model; only near, on-screen bots get the skinned, animated one.
+   */
+  render(alpha: number, dt: number, camera: THREE.Camera): void {
+    this.listener.copy(camera.position);
+    this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.projView);
     const pos = this.tmp;
     let blobs = 0;
+    const farCount: Record<Team, number> = { blue: 0, red: 0 };
+    this.markerCount = this.crossCount = 0;
+    // Marker size: a fixed share of the screen height, as the sprites had.
+    (this.markers.material as THREE.PointsMaterial).size = 0.022 * window.innerHeight;
+    (this.crosses.material as THREE.PointsMaterial).size = 0.03 * window.innerHeight;
     for (const e of this.entries) {
       const b = e.bot;
       if (b.alive && !e.wasAlive) this.refreshModel(e);
@@ -1873,6 +1942,25 @@ export class BotManager implements BotServices {
       const seat = v && b.riding ? v.spec.seats[b.riding.seat] : undefined;
       const standing = seat?.role === 'gunner';
       if (seat && !standing) pos.y += b.eyeHeight - 1.2;
+      const shown = seat ? seat.exposed : b.alive || b.downed || b.deadTime < RESPAWN_SEC - 0.2;
+      const dist = pos.distanceTo(this.listener);
+      this.cullSphere.center.set(pos.x, pos.y + 0.9, pos.z);
+      this.cullSphere.radius = 1.4;
+      const onScreen = shown && this.frustum.intersectsSphere(this.cullSphere);
+      this.marker(e, pos, dist);
+      if (!onScreen || (dist > FAR_MODEL && !seat)) {
+        e.model.root.visible = false;
+        if (onScreen) {
+          // Far away: one instance of the side's simple model (lying down when down or dead).
+          const lying = !b.alive;
+          this.farEuler.set(lying ? -Math.PI / 2 : 0, b.yaw, 0, 'YXZ');
+          this.farQuat.setFromEuler(this.farEuler);
+          this.farScale.set(1, lying ? 1 : b.crouching ? 0.72 : 1, 1);
+          this.farMatrix.compose(lying ? pos.clone().setY(pos.y + 0.2) : pos, this.farQuat, this.farScale);
+          this.far[b.team]!.setMatrixAt(farCount[b.team]++, this.farMatrix);
+        }
+        continue;
+      }
       e.model.update(pos, {
         speed: seat ? 0 : b.horizontalSpeed,
         crouch: seat ? 0 : b.crouchAmount(dt),
@@ -1882,24 +1970,69 @@ export class BotManager implements BotServices {
         dt,
         seated: !!seat && !standing,
       });
-      e.model.root.visible = seat ? seat.exposed : b.alive || b.downed || b.deadTime < RESPAWN_SEC - 0.2;
-      if (e.model.root.visible && !seat) {
+      e.model.root.visible = true;
+      if (!seat) {
         // Wider under a body lying on the ground.
         const s = BLOB_SIZE * (b.alive ? 1 : 1.5);
         this.blobMatrix.makeScale(s, 1, s).setPosition(pos.x, pos.y + 0.02, pos.z);
         this.blobs.setMatrixAt(blobs++, this.blobMatrix);
       }
-      if (e.marker) {
-        // Downed allies get a revive cross over them instead of the chevron.
-        e.marker.visible = b.alive || b.downed;
-        const mat = b.downed ? this.reviveMarker() : this.markerMaterial('#4d8cff');
-        if (e.marker.material !== mat) e.marker.material = mat;
-        e.marker.scale.setScalar(b.downed ? 0.03 : 0.022);
-        e.marker.position.set(pos.x, pos.y + (b.downed ? 0.9 : b.eyeHeight + 0.55), pos.z);
-      }
     }
     this.blobs.count = blobs;
     this.blobs.instanceMatrix.needsUpdate = true;
+    for (const team of ['blue', 'red'] as const) {
+      const m = this.far[team]!;
+      m.count = farCount[team];
+      m.instanceMatrix.needsUpdate = true;
+    }
+    for (const [pts, n] of [[this.markers, this.markerCount], [this.crosses, this.crossCount]] as const) {
+      pts.geometry.setDrawRange(0, n);
+      pts.geometry.getAttribute('position').needsUpdate = true;
+      const col = pts.geometry.getAttribute('color');
+      if (col) col.needsUpdate = true;
+    }
+  }
+
+  /** A point cloud of markers: chevrons coloured per point, or green revive crosses. */
+  private makeMarkerPoints(n: number, cross: boolean): THREE.Points {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(Math.max(1, n) * 3), 3));
+    if (!cross) geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(Math.max(1, n) * 3), 3));
+    geo.setDrawRange(0, 0);
+    const sprite = cross ? this.reviveMarker() : this.markerMaterial('#ffffff');
+    const mat = new THREE.PointsMaterial({
+      map: sprite.map,
+      vertexColors: !cross,
+      sizeAttenuation: false,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+      alphaTest: 0.05,
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.renderOrder = 10;
+    pts.layers.set(LAYER_FX);
+    return pts;
+  }
+
+  /** Ally chevron (revive cross when down): squad mates and the downed always, others within MARKER_RANGE. */
+  private marker(e: BotEntry, pos: THREE.Vector3, dist: number): void {
+    if (!e.marker) return;
+    e.marker.visible = false;
+    const b = e.bot;
+    if (!(b.alive || b.downed) || !(dist < MARKER_RANGE || !!e.leader || b.downed)) return;
+    if (b.downed) {
+      (this.crosses.geometry.getAttribute('position') as THREE.BufferAttribute).setXYZ(this.crossCount++, pos.x, pos.y + 0.9, pos.z);
+      return;
+    }
+    const i = this.markerCount++;
+    (this.markers.geometry.getAttribute('position') as THREE.BufferAttribute).setXYZ(i, pos.x, pos.y + b.eyeHeight + 0.55, pos.z);
+    // Squad mates green, other allies blue.
+    const col = this.markers.geometry.getAttribute('color') as THREE.BufferAttribute;
+    if (e.leader) col.setXYZ(i, 0.42, 0.86, 0.42);
+    else col.setXYZ(i, 0.3, 0.55, 1);
   }
 
   private makeBlobs(n: number): THREE.InstancedMesh {

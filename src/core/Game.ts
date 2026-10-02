@@ -15,7 +15,7 @@ import { fetchMap } from '@/world/validateMap';
 import { buildBlockout, hasTerrain, snapToTerrain, type BuiltMap } from '@/world/buildBlockout';
 import { Boundary, Terrain } from '@/world/terrain';
 import { buildingPadRadius } from '@/world/buildings';
-import { BACKDROP_MODELS, buildBackdrop } from '@/world/backdrop';
+import { BACKDROP_MODELS, buildBackdrop, cullBackdropDetail } from '@/world/backdrop';
 import { createConiferKit } from '@/world/conifers';
 import { Forest } from '@/world/forest';
 import { buildRivers } from '@/world/river';
@@ -257,6 +257,8 @@ export class Game {
   private rideCamDist = 6;
   /** Vehicle view: first person by default, C switches to third person. */
   private rideThird = false;
+  /** Scenery outside the map (its clutter is culled by distance each frame). */
+  private backdrop: THREE.Group | null = null;
   /** Under a parachute after bailing out of a plane (the canopy model), or null. */
   private chute: THREE.Group | null = null;
   private readonly chuteVel = new THREE.Vector3();
@@ -384,7 +386,7 @@ export class Game {
     }
     lap('water+forest');
     this.fitShadows(map, terrain, built.root, props);
-    if (kit) buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, phone: r.preset === 'low' });
+    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, phone: r.preset === 'low' });
     lap('backdrop');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
@@ -543,6 +545,7 @@ export class Game {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     this.atmosphere.update(cam.position, 0);
     this.forest?.update(cam.position);
+    if (this.backdrop) cullBackdropDetail(this.backdrop, cam.position);
 
     const temp = this.throwables.warmupMeshes();
     temp.forEach((m, i) => {
@@ -758,7 +761,7 @@ export class Game {
     input.lookPitch = 0;
 
     for (const tg of this.targets) tg.update(simDt);
-    this.bots?.render(this.lastAlpha, dt, this.renderer.camera.position);
+    this.bots?.render(this.lastAlpha, dt, this.renderer.camera);
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.deployScreen && this.running) {
       if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver) this.openDeploy();
