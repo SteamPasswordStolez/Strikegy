@@ -6,6 +6,10 @@ export const DRS = {
   windowSec: 1,
   /** A frame interval above this missed the 60 fps budget (vsync then shows it twice). */
   missMs: 20,
+  /** Frames longer than this are hitches when alone, load when they come in a row. */
+  hitchMs: 60,
+  /** Frames longer than this are never load (throttled timers, a tab coming back). */
+  stallMs: 250,
   /** Step down when more than this share of a window's frames missed (3 in 60 already stutters). */
   missFrac: 0.05,
   /** Minimum time between two resizes (each one reallocates buffers). */
@@ -30,6 +34,7 @@ export class DynamicResolution {
   private calm = 0;
   private upWait: number = DRS.upWaitSec;
   private sinceUp = Infinity;
+  private lastLong = false;
 
   get scale(): number {
     return this._scale;
@@ -48,8 +53,14 @@ export class DynamicResolution {
 
   /** @returns the new scale when it changed, otherwise null. */
   update(dt: number, frameMs: number): number | null {
-    // Hitches and throttled frames (alt-tab, background tab) are not load.
-    if (frameMs > 60) return null;
+    // Hitches (GC, a shader compile, alt-tab) and throttled frames are not load.
+    // Long frames in a row are, though: a phone running under ~17 fps must
+    // still step down, and it never did while every long frame was skipped.
+    if (frameMs > DRS.stallMs) return null;
+    const long = frameMs > DRS.hitchMs;
+    const lone = long && !this.lastLong;
+    this.lastLong = long;
+    if (lone) return null;
     this.frames++;
     if (frameMs > DRS.missMs) this.misses++;
     this.cooldown -= dt;

@@ -4,6 +4,7 @@ import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
 import { DynamicResolution } from './dynamicResolution';
+import { updateShownMatrices } from './sceneMatrices';
 import { loadJSON, saveJSON } from '@/core/storage';
 
 installGradeToneMapping();
@@ -234,6 +235,10 @@ export class Renderer {
         shadow = true;
       }
     }
+    // World matrices once per frame, shown objects only; the passes below
+    // (two in direct rendering, more in the post chain) would each redo all of them.
+    updateShownMatrices(this.scene);
+    this.scene.matrixWorldAutoUpdate = false;
     if (this.postfx) {
       this.postfx.render();
     } else {
@@ -255,6 +260,8 @@ export class Renderer {
         this.gl.render(this.fpScene, this.fpCamera);
       });
     }
+    // Anything else drawing this scene (map snapshots, impostor bakes) gets three's own update.
+    this.scene.matrixWorldAutoUpdate = true;
     return shadow;
   }
 

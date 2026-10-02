@@ -37,6 +37,14 @@ describe('DynamicResolution', () => {
     expect(d.scale).toBe(0.85);
   });
 
+  it('steps down on a device that is always slower than 17 fps, but not for a lone hitch', () => {
+    const d = new DynamicResolution();
+    run(d, 30, [...Array<number>(29).fill(16.7), 80]);
+    expect(d.scale).toBe(1);
+    run(d, 30, [80]);
+    expect(d.scale).toBe(DRS.min);
+  });
+
   it('climbs back after load goes away, and backs off after a failed climb', () => {
     const d = new DynamicResolution();
     run(d, 10, [33.3]);
