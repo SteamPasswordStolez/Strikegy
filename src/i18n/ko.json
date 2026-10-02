@@ -197,5 +197,19 @@
   "support.aim": "좌클릭: 조준한 곳에 요청 · B: 취소",
   "support.aimTouch": "사격 버튼: 조준한 곳에 요청 · 지원 버튼: 취소",
   "support.noTarget": "너무 멀거나 조준한 곳이 없음",
-  "support.hud": "분대 RP"
+  "support.hud": "분대 RP",
+  "vehicle.jeep": "지프",
+  "vehicle.apc": "장갑차",
+  "vehicle.bike": "오토바이",
+  "vehicleGun.mg": "중기관총",
+  "vehicleGun.autocannon": "30mm 기관포",
+  "seat.driver": "운전석",
+  "seat.gunner": "사수석",
+  "seat.passenger": "승객석",
+  "vehicle.enter": "탑승",
+  "vehicle.exit": "E 내리기",
+  "vehicle.seats": "1–{n} 자리 바꾸기",
+  "vehicle.overheat": "과열",
+  "vehicle.exitTouch": "내리기 버튼",
+  "touch.exitVehicle": "내리기"
 }

@@ -37,6 +37,8 @@ export const BLASTS = {
   // Call-ins (data/support.ts): a mortar bomb, a field gun shell.
   mortar: { innerRadius: 2.2, radius: 8, maxDamage: 160, fortMult: 1.6 },
   artillery: { innerRadius: 3, radius: 11, maxDamage: 220, fortMult: 2.2 },
+  // APC autocannon round: a small burst.
+  cannon: { innerRadius: 0.6, radius: 2.2, maxDamage: 45, fortMult: 1.2 },
 } satisfies Record<string, BlastSpec>;
 
 export type BlastKind = keyof typeof BLASTS;

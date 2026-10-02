@@ -197,5 +197,19 @@
   "support.aim": "Click: call it where you aim · B: cancel",
   "support.aimTouch": "Fire button: call it where you aim · Call-in button: cancel",
   "support.noTarget": "Too far or nothing aimed at",
-  "support.hud": "Squad RP"
+  "support.hud": "Squad RP",
+  "vehicle.jeep": "Jeep",
+  "vehicle.apc": "APC",
+  "vehicle.bike": "Motorbike",
+  "vehicleGun.mg": "Heavy MG",
+  "vehicleGun.autocannon": "30mm cannon",
+  "seat.driver": "Driver",
+  "seat.gunner": "Gunner",
+  "seat.passenger": "Passenger",
+  "vehicle.enter": "Get in",
+  "vehicle.exit": "E get out",
+  "vehicle.seats": "1–{n} change seat",
+  "vehicle.overheat": "Overheated",
+  "vehicle.exitTouch": "Get out button",
+  "touch.exitVehicle": "Get out"
 }

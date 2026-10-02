@@ -12,6 +12,9 @@ export interface DamageSource {
   id: number;
 }
 
+/** What kind of hit: bullets barely scratch armour, AT weapons are made for it (people take all kinds the same). */
+export type DamageKind = 'bullet' | 'explosive' | 'at';
+
 export interface Damageable {
   readonly id: number;
   /** Display name for the kill feed. */
@@ -20,7 +23,7 @@ export interface Damageable {
   /** Team for friendly-fire checks; null = neutral (practice targets). */
   readonly team?: Team | null;
   /** Returns true if this damage killed the target. */
-  applyDamage(amount: number, part: HitPart, source?: DamageSource): boolean;
+  applyDamage(amount: number, part: HitPart, source?: DamageSource, kind?: DamageKind): boolean;
 }
 
 export const PART_MULT: Record<HitPart, number> = { head: 1, body: 1, limb: 0.85 };

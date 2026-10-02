@@ -28,7 +28,7 @@ import { KeyboardMouse } from '@/input/KeyboardMouse';
 import { TouchControls } from '@/input/Touch';
 import { Player } from '@/player/Player';
 import { fallDamage } from '@/player/health';
-import { HitboxRegistry, type DamageSource, type Damageable } from '@/combat/Hitboxes';
+import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import { NavWorld } from '@/ai/NavWorld';
 import { BotManager, type BotOptions } from '@/ai/BotManager';
@@ -38,6 +38,10 @@ import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type Blast
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
+import { VehicleWorld, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
+import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
+import { SoldierModel } from '@/ai/SoldierModel';
+import { VEHICLE_GUNS, type VehicleGunId } from '@/vehicles/vehicleData';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
@@ -243,6 +247,14 @@ export class Game {
   private supportAim: SupportId | null = null;
   private supportPoint: THREE.Vector3 | null = null;
   private supportRing: THREE.Mesh | null = null;
+  /** Vehicles (bot matches with zones): pads, bikes, and the seat the player is in. */
+  private vehicles: VehicleWorld | null = null;
+  private ride: { v: Vehicle; seat: number } | null = null;
+  private readonly driveInputs = new Map<number, DriveInput>();
+  /** Vehicle third-person camera distance, eased (pulled in by walls). */
+  private rideCamDist = 6;
+  /** The player's own body, seen from the driver's third-person view. */
+  private rider: SoldierModel | null = null;
   /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
   private gadget: GadgetId | null = null;
   private gadgetCount = 0;
@@ -442,6 +454,7 @@ export class Game {
     if ((mode === 'zone' || (mode === 'auto' && this.bots)) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain);
       this.setupFortifications(map, terrain, water, built);
+      if (this.bots && !this.options.sandbox) this.setupVehicles(map);
     }
     if (this.bots) {
       this.setupSquads(map, terrain);
@@ -723,6 +736,8 @@ export class Game {
       this.lastAlpha = alpha;
       simMs = performance.now() - tSim;
       this.renderer.adaptResolution(dt * 1000, dt);
+      this.vehicles?.render(alpha);
+      this.renderRider(alpha, dt);
       this.updateCamera(alpha, dt, adsFov);
     }
     input.lookYaw = 0;
@@ -843,7 +858,10 @@ export class Game {
 
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
-    if (p.alive && this.deployed) {
+    this.driveInputs.clear();
+    if (p.alive && this.deployed && this.ride) {
+      this.stepRide(dt, input);
+    } else if (p.alive && this.deployed) {
       // Recon: the wheel (touch: swap) changes scope power while aiming instead of weapons.
       const w = this.weapons;
       if (this.cls === 'recon' && w.def.scope && w.adsBlend > 0.5 && input.weaponCycle !== 0) {
@@ -881,6 +899,7 @@ export class Game {
       if (input.medkit) this.useMedkit();
       this.stepMedkit(dt);
       this.stepInteract(dt, input);
+      if (!this.interact && input.interactPressed && this.tryEnterVehicle()) return this.finishStep(dt, input);
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
       const firing = input.fire;
       // Pulling the trigger, aiming or swinging ends a sprint immediately.
@@ -900,6 +919,12 @@ export class Game {
       // With a deploy screen the player chooses when to go; otherwise respawn automatically.
       if (!this.deployFlow && this.respawnTimer <= 0) this.respawn();
     }
+    this.finishStep(dt, input);
+  }
+
+  /** The rest of a sim step, after the player's own part: everyone else, then physics. */
+  private finishStep(dt: number, input: InputState): void {
+    const p = this.player;
     this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
     this.bots?.step(dt);
     this.fort?.step();
@@ -908,7 +933,9 @@ export class Game {
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
+    this.vehicles?.step(dt, this.driveInputs, this.vehicleWalkers());
     this.physics.step();
+    this.vehicles?.afterStep();
     consumePulses(input);
   }
 
@@ -926,6 +953,202 @@ export class Game {
     const moving = Math.min(1.5, p.horizontalSpeed() / 4);
     const stance = (p.crouching && p.grounded ? 0.6 : 1) * (1 + moving * 0.7) * (p.grounded ? 1 : 2);
     scopeSway(this.breath, this.simTime, amp, w.adsBlend, stance, w.sway);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vehicles
+
+  /** Pads at both bases and motorbikes around the zones (bot matches with zones). */
+  private setupVehicles(map: MapDef): void {
+    const bases: { team: Team; pos: THREE.Vector3; facing: number }[] = [];
+    for (const team of ['blue', 'red'] as const) {
+      const sp = map.spawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+      if (!sp.length) continue;
+      const pos = sp.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(sp.length);
+      bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
+    }
+    const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
+    const { pads, bikes } = planVehicleSpots(this.physics, bases, zones);
+    this.vehicles = new VehicleWorld(
+      this.physics,
+      this.registry,
+      {
+        destroyed: (v, by) => this.vehicleDestroyed(v, by),
+        roadkill: (v, victim) => this.roadkill(v, victim),
+      },
+      pads,
+      bikes,
+    );
+    this.renderer.scene.add(this.vehicles.group);
+    if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
+  }
+
+  /** People vehicles can run over: the player on foot and the bots. */
+  private *vehicleWalkers(): Iterable<Walker> {
+    if (this.player.alive && this.deployed && !this.ride) yield this.playerCombatant;
+    if (this.bots) yield* this.bots.bots;
+  }
+
+  /** E next to a vehicle with a free seat: in, driver's seat first. */
+  private tryEnterVehicle(): boolean {
+    const v = this.vehicles?.nearest(this.player.feet);
+    if (!v) return false;
+    const seat = v.seats.findIndex((s) => !s);
+    if (seat < 0) return false;
+    this.enterSeat(v, seat);
+    return true;
+  }
+
+  private enterSeat(v: Vehicle, seat: number): void {
+    if (this.ride) this.ride.v.seats[this.ride.seat] = null;
+    v.seats[seat] = { id: PLAYER_ID, team: PLAYER_TEAM };
+    this.ride = { v, seat };
+    this.gadgetOut = false;
+    this.buildMode = false;
+    this.supportAim = null;
+    this.weapons.adsBlend = 0;
+    this.playerBoxes.setEnabled(v.spec.seats[seat]!.exposed);
+    this.audio.gadget('place', null);
+  }
+
+  /** Out of the vehicle, on the ground beside it (or on top when boxed in). */
+  private leaveVehicle(): void {
+    const r = this.ride;
+    if (!r) return;
+    this.ride = null;
+    r.v.seats[r.seat] = null;
+    const [hx, , hz] = r.v.spec.half;
+    const seatZ = r.v.spec.seats[r.seat]!.eye[2];
+    const tries = [
+      [-(hx + 0.9), seatZ],
+      [hx + 0.9, seatZ],
+      [0, hz + 1.2],
+      [0, -(hz + 1.2)],
+    ];
+    const local = new THREE.Vector3();
+    const at = new THREE.Vector3();
+    let spot: THREE.Vector3 | null = null;
+    for (const [x, z] of tries) {
+      r.v.toWorld(local.set(x!, 0.5, z!), at);
+      const down = this.physics.raycast({ x: at.x, y: at.y + 1.5, z: at.z }, new THREE.Vector3(0, -1, 0), 5, Layer.WORLD, r.v.collider);
+      if (!down || down.normal.y < 0.6) continue;
+      const g = new THREE.Vector3(down.point.x, down.point.y, down.point.z);
+      if (this.physics.blocked(r.v.pos, g.clone().setY(g.y + 0.9), Layer.WORLD)) continue;
+      spot = g;
+      break;
+    }
+    spot ??= r.v.pos.clone().setY(r.v.pos.y + r.v.spec.half[1] + 0.3);
+    this.player.dismount(spot);
+    this.playerBoxes.setEnabled(this.player.alive);
+    this.weapons.drawTimer = DRAW_TIME;
+  }
+
+  /**
+   * In a vehicle: E gets out, 1..n change seats, the driver drives (WASD,
+   * Space brakes), the gunner aims the mounted gun with the view and fires.
+   */
+  private stepRide(dt: number, input: InputState): void {
+    this.interact = null;
+    const r = this.ride!;
+    const v = r.v;
+    if (v.wrecked) {
+      this.leaveVehicle();
+      return;
+    }
+    if (input.interactPressed) {
+      this.leaveVehicle();
+      return;
+    }
+    if (input.weaponSlot >= 0 && input.weaponSlot < v.seats.length && !v.seats[input.weaponSlot]) this.enterSeat(v, input.weaponSlot);
+    const seat = v.spec.seats[r.seat]!;
+    if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld });
+    if (seat.gun) this.stepVehicleGun(v, seat.gun, input.fire, dt);
+    const eye = v.seatEye(r.seat, this.tmpEye);
+    this.player.ride(eye, v.velocity);
+  }
+
+  /** The mounted gun: follows the view, fires in bursts until it overheats. */
+  private stepVehicleGun(v: Vehicle, id: VehicleGunId, trigger: boolean, dt: number): void {
+    const gun = VEHICLE_GUNS[id];
+    const p = this.player;
+    v.turretYaw = Math.atan2(Math.sin(p.yaw - v.yaw), Math.cos(p.yaw - v.yaw));
+    v.gunPitch = THREE.MathUtils.clamp(p.pitch, -0.2, 0.6);
+    if (v.overheated || !trigger) v.heat = Math.max(0, v.heat - dt / gun.cool);
+    if (v.overheated && v.heat <= 0) v.overheated = false;
+    if (!trigger || v.overheated || this.simTime < v.nextShot) return;
+    v.nextShot = this.simTime + 60 / gun.rpm;
+    v.heat += 1 / gun.burst;
+    if (v.heat >= 1) v.overheated = true;
+    // Aim: what the view centre points at, fired from the muzzle.
+    const muzzle = v.model.muzzle ? v.model.muzzle.getWorldPosition(new THREE.Vector3()) : v.seatEye(this.ride!.seat, new THREE.Vector3());
+    const cam = this.renderer.camera;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const look = this.physics.raycast(cam.position, fwd, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
+    const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, gun.range);
+    const dir = aim.sub(muzzle).normalize();
+    const s = (gun.spread * DEG) * Math.sqrt(Math.random());
+    const a = Math.random() * Math.PI * 2;
+    const right = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+    const up = new THREE.Vector3().crossVectors(right, dir);
+    dir.addScaledVector(right, Math.cos(a) * Math.tan(s)).addScaledVector(up, Math.sin(a) * Math.tan(s)).normalize();
+    const name = t(`vehicleGun.${id}`);
+    const owner: GrenadeOwner = { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM };
+    const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
+    const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, gun.range);
+    const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+    if (target && target.owner.alive && target.owner.team !== PLAYER_TEAM) {
+      const isVehicle = !!this.vehicles?.get(target.owner.id);
+      const dmg = isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5);
+      const source: DamageSource = { pos: muzzle.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: name, id: PLAYER_ID };
+      const killed = target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'bullet');
+      this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: true });
+      if (killed) this.reportKill(owner, target.owner.id, target.owner.name, target.owner.team ?? null, name);
+    } else if (hit && !target) {
+      this.bus.emit('combat:impact', { point: to, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), surface: this.impacts.get(hit.collider.handle, hit.point) });
+    }
+    if (hit && gun.blast > 0) this.blast('cannon', to, owner, name);
+    this.effects.spawnShots([{ from: muzzle, to }], muzzle);
+    this.effects.muzzleFlash(muzzle, dir);
+    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, 0);
+    this.bots?.nearMiss(muzzle, to, PLAYER_TEAM, target?.owner.id ?? -1, 1);
+    this.shake = Math.min(0.03, this.shake + (gun.blast > 0 ? 0.012 : 0.004));
+  }
+
+  /** A vehicle blew up: everyone aboard dies outright (no going down). */
+  private vehicleDestroyed(v: Vehicle, by: DamageSource | null): void {
+    const at = v.pos.clone();
+    this.effects.explosion(at);
+    this.effects.explosion(at.clone().setY(at.y + 1));
+    this.audio.explosion(at, this.renderer.camera.position.distanceTo(at));
+    this.renderer.requestShadowUpdate();
+    const owner: GrenadeOwner = { id: by?.id ?? -1, name: by?.name ?? '', team: by?.team ?? otherTeam(PLAYER_TEAM) };
+    const weapon = by?.weapon ?? t(`vehicle.${v.kind}`);
+    if (this.ride?.v === v) {
+      this.leaveVehicle();
+      if (this.damagePlayer(999, at, 'explosion', by ?? undefined)) {
+        if (by && by.id !== PLAYER_ID) this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
+        this.die('explosion', by ?? undefined);
+      }
+    }
+    v.seats.fill(null);
+  }
+
+  /** Someone run over: down (or dead) and credited to the driver. */
+  private roadkill(v: Vehicle, victim: Walker): void {
+    const d = v.driver!;
+    const isPlayer = d.id === PLAYER_ID;
+    const name = isPlayer ? t('feed.you') : (this.bots?.bots.find((b) => b.id === d.id)?.name ?? '');
+    const weapon = t(`vehicle.${v.kind}`);
+    const source: DamageSource = { pos: v.pos.clone(), name, team: d.team, weapon, id: d.id };
+    if (victim.id === PLAYER_ID) {
+      if (this.damagePlayer(999, v.pos, 'explosion', source)) this.reportKill({ id: d.id, name, team: d.team }, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
+      return;
+    }
+    const bot = this.bots?.bots.find((b) => b.id === victim.id);
+    if (!bot || !bot.alive) return;
+    const killed = bot.applyDamage(999, 'body', source);
+    this.bus.emit('combat:hit', { targetId: bot.id, part: 'body', damage: 999, killed, point: bot.feet.clone(), byPlayer: isPlayer });
+    if (killed) this.reportKill({ id: d.id, name, team: d.team }, bot.id, bot.name, bot.team, weapon);
   }
 
   /** RP of a squad: its members' points (the scoreboard score) less what was spent on call-ins. */
@@ -1152,6 +1375,13 @@ export class Game {
       this.effects.explosion(s.kind === 'barricade' ? s.pos : s.pos.clone().setY(s.pos.y + 0.5));
     }
     if (kind === 'frag') this.gadgets.blast(point, spec.radius * 0.6);
+    for (const v of this.vehicles?.vehicles ?? []) {
+      if (v.wrecked || (v.team && v.team === owner.team && owner.id !== PLAYER_ID)) continue;
+      // Distance to the hull, roughly.
+      const d = Math.max(0, v.pos.distanceTo(point) - Math.min(v.spec.half[0], v.spec.half[2]));
+      const dmg = fragDamage(spec, d, false);
+      if (dmg > 0) v.applyDamage(dmg, 'body', source, kind === 'rocket' || kind === 'cannon' ? 'at' : 'explosive');
+    }
     for (const tg of this.targets) {
       if (!tg.alive || !byPlayer) continue;
       const c = tg.center;
@@ -1186,7 +1416,7 @@ export class Game {
     const weapon = t('gadget.assault');
     const byPlayer = owner.id === PLAYER_ID;
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
-    const killed = target.applyDamage(ROCKET.directDamage, part, source);
+    const killed = target.applyDamage(ROCKET.directDamage, part, source, 'at');
     this.bus.emit('combat:hit', { targetId: target.id, part, damage: ROCKET.directDamage, killed, point: point.clone(), byPlayer });
     if (killed) this.reportKill(owner, target.id, target.id === PLAYER_ID ? this.playerCombatant.name : target.name, target.team ?? null, weapon);
   }
@@ -1255,7 +1485,10 @@ export class Game {
     this.hud.showDamage(yaw, amount);
     this.audio.hurt(amount);
     this.shake = Math.min(0.05, this.shake + amount * 0.0004);
-    if (killed) this.goDown(cause, source);
+    if (killed) {
+      if (this.ride) this.leaveVehicle();
+      this.goDown(cause, source);
+    }
     return killed;
   }
 
@@ -1569,6 +1802,7 @@ export class Game {
     this.deathBlend += ((p.alive ? 0 : gone ? 1 : 0.7) - this.deathBlend) * (1 - Math.exp(-4 * dt));
     this.tmpEye.y -= this.deathBlend * (p.eyeHeight - 0.35);
     cam.position.copy(this.tmpEye);
+    if (this.ride && p.alive) this.rideCamera(alpha, dt);
 
     this.shake *= Math.exp(-7 * dt);
     const sx = (Math.random() - 0.5) * this.shake;
@@ -1587,6 +1821,50 @@ export class Game {
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);
+  }
+
+  /**
+   * In a vehicle: the driver (and a rider) sees it from behind, orbiting
+   * with the view and pulled in by walls; the gunner looks from behind the
+   * gun; passengers from their seat.
+   */
+  private rideCamera(alpha: number, dt: number): void {
+    const { v, seat } = this.ride!;
+    const cam = this.renderer.camera;
+    const p = this.player;
+    const role = v.spec.seats[seat]!.role;
+    const fwd = this.tmpFwd.set(0, 0, -1).applyEuler(new THREE.Euler(p.pitch, p.yaw, 0, 'YXZ'));
+    if (role === 'driver') {
+      const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + 1.1, 0), new THREE.Vector3(), alpha);
+      const want = v.kind === 'apc' ? 10 : v.kind === 'bike' ? 4.5 : 6.5;
+      const hit = this.physics.raycast(target, fwd.clone().negate(), want, Layer.WORLD, v.collider);
+      const dist = hit ? Math.max(1.2, hit.distance - 0.3) : want;
+      // Pull in at once, ease back out.
+      this.rideCamDist = dist < this.rideCamDist ? dist : this.rideCamDist + (dist - this.rideCamDist) * (1 - Math.exp(-3 * dt));
+      cam.position.copy(target).addScaledVector(fwd, -this.rideCamDist);
+    } else {
+      v.seatEye(seat, cam.position, alpha);
+      // Gunner: a little behind and above the gun.
+      if (role === 'gunner') cam.position.addScaledVector(fwd, -0.35).y += 0.15;
+    }
+  }
+
+  /** The player's body in the seat, for the third-person driving view (seen ones only). */
+  private renderRider(alpha: number, dt: number): void {
+    const r = this.ride;
+    const seat = r?.v.spec.seats[r.seat];
+    const show = !!r && !!seat && seat.exposed && seat.role === 'driver' && this.player.alive;
+    if (!show) {
+      if (this.rider) this.rider.root.visible = false;
+      return;
+    }
+    if (!this.rider) {
+      this.rider = new SoldierModel(PLAYER_TEAM, this.weapons.def);
+      this.renderer.scene.add(this.rider.root);
+    }
+    const eye = r.v.seatEye(r.seat, new THREE.Vector3(), alpha);
+    this.rider.root.visible = true;
+    this.rider.update(eye.setY(eye.y - 1.2), { speed: 0, crouch: 0, yaw: r.v.yaw, aimPitch: 0, deadFor: -1, dt, seated: true });
   }
 
   /** Vertical FOV while fully aimed (before the user's FOV scaling): recon scopes can zoom further. */
@@ -1619,7 +1897,7 @@ export class Game {
       magReload: w.def.reloadStyle === 'mag',
       drawProgress: p.alive && this.deployed ? 1 - w.drawTimer / DRAW_TIME : 0,
       // Scoped in, or down on the ground: no gun on screen.
-      hideForScope: (!!w.def.scope && w.adsBlend > 0.95) || this.playerDowned,
+      hideForScope: (!!w.def.scope && w.adsBlend > 0.95) || this.playerDowned || !!this.ride,
       meleeT: w.meleeProgress,
       inspectT: w.inspectProgress,
       tool: this.working,
@@ -1736,7 +2014,24 @@ export class Game {
     } else if (act?.kind === 'fort') {
       ({ prompt, touchLabel } = this.fortPrompt(act.job, act.station, act.note, key));
     }
-    const nearSpot = onField && !!this.fort?.anyNear(this.player.feet, 12);
+    if (onField && this.ride) {
+      const { v, seat } = this.ride;
+      const role = v.spec.seats[seat]!.role;
+      const n = v.seats.length;
+      const parts = [`${t(`vehicle.${v.kind}`)} · ${t(`seat.${role}`)}`];
+      if (v.overheated) parts.push(t('vehicle.overheat'));
+      parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
+      if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{n}', String(n)));
+      prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
+      touchLabel = t('touch.exitVehicle');
+    } else if (onField && !prompt && !this.buildMode) {
+      const near = this.vehicles?.nearest(this.player.feet);
+      if (near) {
+        prompt = { text: `${key(false)}${t('vehicle.enter')}: ${t(`vehicle.${near.kind}`)}`, progress: null };
+        touchLabel = t('vehicle.enter');
+      }
+    }
+    const nearSpot = onField && !this.ride && !!this.fort?.anyNear(this.player.feet, 12);
     if (onField && this.buildMode) {
       const tgt = this.buildTarget;
       const exit = t(this.touch ? 'build.exitTouch' : 'build.exit');

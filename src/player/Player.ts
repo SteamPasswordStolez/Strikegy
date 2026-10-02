@@ -87,6 +87,28 @@ export class Player {
     this.body.setTranslation(this.centerFromFeet(), true);
   }
 
+  /**
+   * Riding a vehicle: no capsule (the vehicle carries the player), feet put
+   * under the seat each step, moving with it.
+   */
+  ride(eye: THREE.Vector3, velocity: THREE.Vector3): void {
+    if (this.collider.isEnabled()) this.collider.setEnabled(false);
+    this.prevFeet.copy(this.feet);
+    this.feet.copy(eye).setY(eye.y - this.eyeHeight);
+    this.velocity.copy(velocity);
+    this.grounded = true;
+    this.sprinting = false;
+  }
+
+  /** Off the vehicle: capsule back, standing at `feet`. */
+  dismount(feet: THREE.Vector3): void {
+    this.collider.setEnabled(true);
+    const yaw = this.yaw;
+    const pitch = this.pitch;
+    this.teleport(feet, yaw);
+    this.pitch = pitch;
+  }
+
   /** Called every render frame with accumulated look deltas (radians). */
   applyLook(dYaw: number, dPitch: number): void {
     this.yaw = (this.yaw + dYaw) % (Math.PI * 2);

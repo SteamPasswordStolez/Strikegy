@@ -195,6 +195,8 @@ export interface SoldierPose {
   /** Seconds since death, or -1 while alive. */
   deadFor: number;
   dt: number;
+  /** Sitting (in a vehicle seat): thighs forward, knees bent, hips down. */
+  seated?: boolean;
 }
 
 export class SoldierModel {
@@ -280,6 +282,11 @@ export class SoldierModel {
     bones[B.Spine]!.rotation.set(-c * 0.25 + this.flinch * 0.2, 0, Math.sin(this.phase) * 0.04 * moving);
     bones[B.Aim]!.rotation.x = p.aimPitch + c * 0.25 + this.flinch * 0.15;
     bones[B.Head]!.rotation.x = p.aimPitch * 0.6 + c * 0.2;
+    if (p.seated) {
+      hips.position.y = JOINTS[B.Hips][1] - 0.45;
+      bones[B.ThighL]!.rotation.x = bones[B.ThighR]!.rotation.x = 1.45;
+      bones[B.ShinL]!.rotation.x = bones[B.ShinR]!.rotation.x = -1.4;
+    }
 
     const root = bones[B.Root]!;
     if (p.deadFor >= 0) {
