@@ -130,7 +130,7 @@ const terrain = {
 };
 
 // --- Roads -------------------------------------------------------------------
-const DIRT = '#b39a78';
+const DIRT = '#cbbba2';
 const at = (b, s) => [round(b.x + s * b.cx * (b.len / 2 + 1)), round(b.z + s * b.cz * (b.len / 2 + 1))];
 const [bW, bC, bE] = bridges;
 const roads = [

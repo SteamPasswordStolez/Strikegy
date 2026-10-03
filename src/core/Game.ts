@@ -11,11 +11,12 @@ import { SURFACE_KINDS, SurfaceLibrary } from '@/render/textures';
 import { ModelLibrary } from '@/render/models';
 import { Effects } from '@/render/Effects';
 import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
-import { SurfaceRegistry } from '@/physics/surfaces';
+import { SURFACE_FROM_MATERIAL, SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
 import { buildBlockout, hasTerrain, snapToTerrain, type BuiltMap } from '@/world/buildBlockout';
 import { Boundary, Terrain } from '@/world/terrain';
 import { buildingPadRadius } from '@/world/buildings';
+import { GROUND_COVER, GroundCover } from '@/world/groundCover';
 import { BACKDROP_MODELS, buildBackdrop, cullBackdropDetail } from '@/world/backdrop';
 import { createConiferKit } from '@/world/conifers';
 import { Forest } from '@/world/forest';
@@ -165,6 +166,8 @@ export class Game {
   private nav: NavWorld | null = null;
   private navExtra: { positions: number[]; indices: number[] } | null = null;
   private forest: Forest | null = null;
+  /** Grass tufts around the camera on open ground (grass / bare / sand maps). */
+  private groundCover: GroundCover | null = null;
   private snowfall: Snowfall | null = null;
   /** The player as seen by bots. */
   private playerCombatant!: Combatant;
@@ -400,6 +403,12 @@ export class Game {
       // Low quality (phones): 3D trees only close by, impostors beyond.
       this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
       r.scene.add(this.forest.group);
+    }
+    const coverStyle = GROUND_COVER[map.world.groundMaterial ?? 'ground'];
+    if (coverStyle && shaped && built.groundHandle !== null && r.preset !== 'low') {
+      const kind = map.world.groundMaterial ?? 'ground';
+      this.groundCover = new GroundCover(coverStyle, terrain.bounds(), this.physics, this.impacts, built.groundHandle, SURFACE_FROM_MATERIAL[kind], (x, y, z) => !!water && water.depthAt(x, y + 0.3, z) > 0, q.msaa);
+      r.scene.add(this.groundCover.mesh);
     }
     lap('water+forest');
     this.fitShadows(map, terrain, built.root, props);
@@ -2276,6 +2285,8 @@ export class Game {
     cam.updateMatrixWorld();
     this.atmosphere.update(cam.position, this.elapsed);
     this.forest?.update(cam.position);
+    // After the first physics step: scene queries only see the map colliders from then on.
+    if (this.simTime > 0) this.groundCover?.update(cam.position, this.elapsed);
     this.snowfall?.update(cam.position, this.elapsed, this.renderer.canvas.height);
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);

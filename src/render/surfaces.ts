@@ -243,8 +243,8 @@ function grassRecipe(n: TileNoise): SurfaceRecipe {
       const dry = smoothstep(0.55, 0.75, n.fbm(u + 0.31, v + 0.77, 5, 3));
       const bare = smoothstep(0.7, 0.8, n.fbm(u + 0.9, v + 0.4, 12, 2));
       let c = mixRgb(deep, fresh, clamp01(base * 1.2 + (blades - 0.5) * 0.9));
-      c = mixRgb(c, straw, dry * 0.7);
-      c = mixRgb(c, soil, bare * 0.65);
+      c = mixRgb(c, straw, dry * 0.45);
+      c = mixRgb(c, soil, bare * 0.25);
       o.color = c;
       o.height = 0.6 * blades + 0.3 * base - 0.3 * bare;
       o.rough = 0.95;

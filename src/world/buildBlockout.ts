@@ -25,7 +25,12 @@ interface Batch {
   castShadow: boolean;
   /** Per geometry tint, baked into vertex colours (vertex-tinted batches only). */
   tints?: THREE.Color[];
+  /** Darken tall pieces toward the ground (grime / contact shade, see GRIME). */
+  grime?: boolean;
 }
+
+/** Walls darken by up to `dark` toward the ground over their lowest `height` metres (baked into vertex colours). */
+const GRIME = { dark: 0.3, height: 2.6, minHeight: 1.2 };
 
 /**
  * Adds `geo` to the batch of its surface kind, its colour going into vertex
@@ -36,7 +41,7 @@ function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind:
   const key = `${kind}:${tag}:${castShadow ? 1 : 0}:v`;
   let batch = batches.get(key);
   if (!batch) {
-    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [] };
+    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [], grime: tag === '' };
     batches.set(key, batch);
   }
   batch.geometries.push(geo);
@@ -71,6 +76,8 @@ export interface BuiltMap {
   windows: WindowSpot[];
   /** Building footprints: centre, yaw (radians), half extents. */
   footprints: { x: number; z: number; yaw: number; hw: number; hd: number }[];
+  /** The terrain collider's handle (null on flat box maps). */
+  groundHandle: number | null;
 }
 
 /**
@@ -100,7 +107,7 @@ export function buildBlockout(
   const footprints: BuiltMap['footprints'] = [];
 
   if (terrain) {
-    const built = buildTerrain(terrain, surfaces.get(groundKind), physics, terrainStep);
+    const built = buildTerrain(terrain, surfaces.terrain(groundKind), physics, terrainStep);
     impacts.set(built.collider.handle, SURFACE_FROM_MATERIAL[groundKind]);
     groundHandle = built.collider.handle;
     built.mesh.matrixAutoUpdate = false;
@@ -162,13 +169,24 @@ export function buildBlockout(
   for (const b of batches.values()) {
     if (b.tints) {
       b.geometries.forEach((g, i) => {
-        const n = g.getAttribute('position').count;
+        const pos = g.getAttribute('position');
+        const n = pos.count;
         const col = new Float32Array(n * 3);
         const { r, g: gr, b: bl } = b.tints![i]!;
+        let grime = false;
+        if (b.grime) {
+          g.computeBoundingBox();
+          grime = g.boundingBox!.max.y - g.boundingBox!.min.y > GRIME.minHeight;
+        }
         for (let k = 0; k < n; k++) {
-          col[k * 3] = r;
-          col[k * 3 + 1] = gr;
-          col[k * 3 + 2] = bl;
+          let f = 1;
+          if (grime) {
+            const above = pos.getY(k) - (terrain ? terrain.heightAt(pos.getX(k), pos.getZ(k)) : 0);
+            f = 1 - GRIME.dark * (1 - Math.min(1, Math.max(0, above / GRIME.height)));
+          }
+          col[k * 3] = r * f;
+          col[k * 3 + 1] = gr * f;
+          col[k * 3 + 2] = bl * f;
         }
         g.setAttribute('color', new THREE.BufferAttribute(col, 3));
       });
@@ -184,7 +202,7 @@ export function buildBlockout(
   }
 
   scene.add(root);
-  return { root, navExtra, windows, footprints };
+  return { root, navExtra, windows, footprints, groundHandle };
 }
 
 /** Top of a thin snapped floor within this height of the terrain = paint on the ground (roads, pavements). */

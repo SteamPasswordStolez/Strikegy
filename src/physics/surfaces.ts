@@ -53,6 +53,11 @@ export class SurfaceRegistry {
     list.push({ x, z, cos: Math.cos(yaw), sin: Math.sin(yaw), hw: w / 2, hd: d / 2, surface });
   }
 
+  /** Painted patches on collider `handle` (roads and the like on the terrain), in painting order. */
+  patchesOf(handle: number): readonly Readonly<Patch>[] {
+    return this.patches.get(handle) ?? [];
+  }
+
   /** Surface of collider `handle`, at `at` when it has painted patches. */
   get(handle: number, at?: { x: number; z: number }): ImpactSurface {
     const list = at && this.patches.get(handle);

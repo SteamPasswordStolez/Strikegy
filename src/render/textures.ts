@@ -122,6 +122,18 @@ const SCANNED_TINT: Record<SurfaceMaterial, number> = {
 };
 
 /** Kinds with a scanned texture set in public/assets/textures (grass and sand are procedural only). */
+/** Terrain blends per ground: [surface, tint, amount] for the patches, [surface, tint] on steep slopes. */
+const TERRAIN_LAYERS: Partial<Record<SurfaceMaterial, { patch: [SurfaceMaterial, string, number]; steep: [SurfaceMaterial, string] }>> = {
+  // Meadows: bare earth worn through the grass, rock on the slopes.
+  grass: { patch: ['ground', '#b8a487', 0.6], steep: ['ground', '#a39c92'] },
+  // Snow: thin patches where the ground shows, dark rock on steep banks.
+  snow: { patch: ['ground', '#d8d4cc', 0.45], steep: ['ground', '#8e8a84'] },
+  // Desert: darker gravel flats, red-brown rock on the slopes.
+  sand: { patch: ['ground', '#d9c0a0', 0.6], steep: ['ground', '#b08a6a'] },
+  // Bare ground: grass coming through.
+  ground: { patch: ['grass', '#c8cca8', 0.55], steep: ['ground', '#9a948a'] },
+};
+
 export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow'];
 
 /** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */
@@ -230,6 +242,78 @@ export class SurfaceLibrary {
       addMacroVariation(mat, MACRO_STRENGTH[kind]);
       this.tints.set(key, mat);
     }
+    return mat;
+  }
+
+  /**
+   * Ground material for the terrain: the map's ground with a second surface
+   * in large world-space patches and a third on steep slopes (see
+   * TERRAIN_LAYERS), blended in the shader. Breaks the one-texture-everywhere
+   * look without new assets or geometry.
+   */
+  terrain(kind: SurfaceMaterial): THREE.MeshStandardMaterial {
+    const key = `${kind}:terrain`;
+    const hit = this.tints.get(key);
+    if (hit) return hit;
+    const layers = TERRAIN_LAYERS[kind];
+    const mat = this.get(kind).clone();
+    if (!layers) {
+      addMacroVariation(mat, MACRO_STRENGTH[kind]);
+      this.tints.set(key, mat);
+      return mat;
+    }
+    macroTex ??= macroNoiseTexture();
+    const tex = macroTex;
+    const patch = this.get(layers.patch[0]);
+    const steep = this.get(layers.steep[0]);
+    const strength = MACRO_STRENGTH[kind];
+    const uniforms = {
+      uMacro: { value: tex },
+      uMacroStrength: { value: strength },
+      uPatch: { value: patch.map },
+      uPatchRepeat: { value: patch.map!.repeat.x },
+      uPatchTint: { value: new THREE.Color(layers.patch[1]) },
+      uPatchAmount: { value: layers.patch[2] },
+      uSteep: { value: steep.map },
+      uSteepRepeat: { value: steep.map!.repeat.x },
+      uSteepTint: { value: new THREE.Color(layers.steep[1]) },
+    };
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vMacroWorld;\nvarying vec3 vGroundNormal;')
+        .replace(
+          '#include <project_vertex>',
+          '#include <project_vertex>\nvMacroWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvGroundNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vMacroWorld;
+          varying vec3 vGroundNormal;
+          uniform sampler2D uMacro, uPatch, uSteep;
+          uniform float uMacroStrength, uPatchRepeat, uSteepRepeat, uPatchAmount;
+          uniform vec3 uPatchTint, uSteepTint;`,
+        )
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          vec2 wuv = vec2(vMacroWorld.x, -vMacroWorld.z);
+          float m1 = texture2D(uMacro, wuv * 0.011).r;
+          float m2 = texture2D(uMacro, wuv * 0.047).g;
+          diffuseColor.rgb *= 1.0 + (mix(m1, m2, 0.4) - 0.5) * 2.0 * uMacroStrength;
+          // Patches: soft-edged blobs from two noise octaves, a ragged rim from a third.
+          float pn = texture2D(uMacro, wuv * 0.009 + 0.37).g + (texture2D(uMacro, wuv * 0.07).r - 0.5) * 0.3;
+          float pw = smoothstep(0.6, 0.7, pn) * uPatchAmount;
+          diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPatch, wuv * uPatchRepeat).rgb * uPatchTint, pw);
+          // Steep ground shows its rock.
+          float sw = smoothstep(0.2, 0.34, 1.0 - vGroundNormal.y + (m2 - 0.5) * 0.12);
+          diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uSteep, wuv * uSteepRepeat).rgb * uSteepTint, sw);`,
+        );
+    };
+    mat.customProgramCacheKey = () => `terrain-${kind}`;
+    this.tints.set(key, mat);
     return mat;
   }
 
