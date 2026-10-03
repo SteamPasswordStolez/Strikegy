@@ -12,6 +12,12 @@ import { Bot, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel, buildFarSoldier } from './SoldierModel';
+import { HumanModel, farHuman, soldierPack } from './HumanModel';
+
+/** The packed character when it loaded, else the procedural soldier. */
+function makeModel(team: Team, def: WeaponDef): SoldierModel | HumanModel {
+  return soldierPack() ? new HumanModel(team, def) : new SoldierModel(team, def);
+}
 import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
@@ -207,7 +213,7 @@ interface TeamState {
 
 interface BotEntry {
   bot: Bot;
-  model: SoldierModel;
+  model: SoldierModel | HumanModel;
   marker: THREE.Sprite | null;
   /** Stable offset around the squad objective, re-rolled each plan. */
   offset: THREE.Vector3;
@@ -337,7 +343,7 @@ export class BotManager implements BotServices {
     };
     this.teams = { blue: teamState('blue'), red: teamState('red') };
     // Build every soldier + weapon mesh now rather than hitching on first respawn.
-    SoldierModel.prewarm(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]));
+    if (!soldierPack()) SoldierModel.prewarm(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]));
 
     const add = (team: Team, n: number) => {
       for (let i = 0; i < n; i++) {
@@ -346,7 +352,7 @@ export class BotManager implements BotServices {
         const style = rollPersonality(Math.random, cls);
         const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(cls, style)], physics, registry, cls, style);
         this.respawn(bot);
-        const model = new SoldierModel(team, bot.def);
+        const model = makeModel(team, bot.def);
         scene.add(model.root);
         const marker = team === PLAYER_TEAM ? this.makeMarker('#4d8cff') : null;
         if (marker) scene.add(marker);
@@ -382,13 +388,23 @@ export class BotManager implements BotServices {
     this.markers = this.makeMarkerPoints(this.entries.length, false);
     this.crosses = this.makeMarkerPoints(this.entries.length, true);
     scene.add(this.markers, this.crosses);
+    const human = soldierPack();
     const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     for (const team of ['blue', 'red'] as const) {
-      const m = new THREE.InstancedMesh(buildFarSoldier(team), farMat, Math.max(1, this.entries.length));
-      m.count = 0;
-      m.frustumCulled = false;
-      this.far[team] = m;
-      scene.add(m);
+      // The packed character frozen standing (aiming) and mid-stride; else the box soldier.
+      const poses: [THREE.BufferGeometry, THREE.Material][] = human
+        ? [
+            [farHuman(human, 'aim', WEAPONS.ar1), human.materials[team]],
+            [farHuman(human, 'run_f', WEAPONS.ar1), human.materials[team]],
+          ]
+        : [[buildFarSoldier(team), farMat]];
+      this.far[team] = poses.map(([geo, mat]) => {
+        const m = new THREE.InstancedMesh(geo, mat, Math.max(1, this.entries.length));
+        m.count = 0;
+        m.frustumCulled = false;
+        scene.add(m);
+        return m;
+      });
     }
 
     bus.on('combat:kill', (e) => {
@@ -875,7 +891,7 @@ export class BotManager implements BotServices {
   /** New model on respawn (the bot may carry a different weapon). */
   private refreshModel(e: BotEntry): void {
     e.model.dispose();
-    e.model = new SoldierModel(e.bot.team, e.bot.def);
+    e.model = makeModel(e.bot.team, e.bot.def);
     this.scene.add(e.model.root);
   }
 
@@ -1876,7 +1892,10 @@ export class BotManager implements BotServices {
     const source: DamageSource = { pos: eye.clone(), name: bot.name, team: bot.team, weapon: def.name, id: bot.id };
     const e = this.entryOf(bot);
     // Hidden (off screen or drawn as the far model): the skinned model isn't posed, fire from the eye.
-    if (e.model.root.visible) e.model.muzzleWorld(this.muzzle);
+    if (e.model.root.visible) {
+      e.model.muzzleWorld(this.muzzle);
+      if (e.model instanceof HumanModel) e.model.onFire();
+    }
     else this.muzzle.copy(eye);
     for (let i = 0; i < pellets; i++) {
       const r = Math.tan(spread) * Math.sqrt(Math.random());
@@ -2101,7 +2120,8 @@ export class BotManager implements BotServices {
   private markerCount = 0;
   private crossCount = 0;
   /** Instanced far models, one per side. */
-  private readonly far: Partial<Record<Team, THREE.InstancedMesh>> = {};
+  /** Far crowd per side: [standing, running] (or one box model without the packed character). */
+  private readonly far: Partial<Record<Team, THREE.InstancedMesh[]>> = {};
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
   private readonly cullSphere = new THREE.Sphere();
@@ -2121,7 +2141,7 @@ export class BotManager implements BotServices {
     this.frustum.setFromProjectionMatrix(this.projView);
     const pos = this.tmp;
     let blobs = 0;
-    const farCount: Record<Team, number> = { blue: 0, red: 0 };
+    const farCount: Record<Team, [number, number]> = { blue: [0, 0], red: [0, 0] };
     this.markerCount = this.crossCount = 0;
     // Marker size: a fixed share of the screen height, as the sprites had.
     (this.markers.material as THREE.PointsMaterial).size = 0.022 * window.innerHeight;
@@ -2152,7 +2172,9 @@ export class BotManager implements BotServices {
           this.farQuat.setFromEuler(this.farEuler);
           this.farScale.set(1, lying ? 1 : b.crouching ? 0.72 : 1, 1);
           this.farMatrix.compose(lying ? pos.clone().setY(pos.y + 0.2) : pos, this.farQuat, this.farScale);
-          this.far[b.team]!.setMatrixAt(farCount[b.team]++, this.farMatrix);
+          const set = this.far[b.team]!;
+          const running = set.length > 1 && b.alive && b.horizontalSpeed > 1.2 && !b.crouching;
+          set[running ? 1 : 0]!.setMatrixAt(farCount[b.team][running ? 1 : 0]++, this.farMatrix);
         }
         continue;
       }
@@ -2164,6 +2186,10 @@ export class BotManager implements BotServices {
         deadFor: b.alive ? -1 : b.downed ? b.downTime : 10,
         dt,
         seated: !!seat && !standing,
+        moveYaw: Math.atan2(-(b.feet.x - b.prevFeet.x), -(b.feet.z - b.prevFeet.z)),
+        reloading: b.weapon.reloading,
+        firing: b.firingUntil > this.time,
+        distance: dist,
       });
       e.model.root.visible = true;
       if (!seat) {
@@ -2176,9 +2202,10 @@ export class BotManager implements BotServices {
     this.blobs.count = blobs;
     this.blobs.instanceMatrix.needsUpdate = true;
     for (const team of ['blue', 'red'] as const) {
-      const m = this.far[team]!;
-      m.count = farCount[team];
-      m.instanceMatrix.needsUpdate = true;
+      this.far[team]!.forEach((m, i) => {
+        m.count = farCount[team][i]!;
+        m.instanceMatrix.needsUpdate = true;
+      });
     }
     for (const [pts, n] of [[this.markers, this.markerCount], [this.crosses, this.crossCount]] as const) {
       pts.geometry.setDrawRange(0, n);

@@ -369,3 +369,29 @@ export class SoldierModel {
     this.root.removeFromParent();
   }
 }
+
+const botGunCache = new Map<string, { geo: THREE.BufferGeometry; muzzle: THREE.Vector3 }>();
+
+/**
+ * A bot's gun on its own: one vertex-coloured geometry with the grip at the
+ * origin and the barrel along -Z, and the muzzle point (for HumanModel, which
+ * puts it in the right hand of the skinned character).
+ */
+export function botGun(def: WeaponDef): { geo: THREE.BufferGeometry; muzzle: THREE.Vector3 } {
+  let hit = botGunCache.get(def.id);
+  if (hit) return hit;
+  const g = gunParts(def);
+  const parts = g.parts.map((p) => {
+    const geo = (p.geo.index ? p.geo.toNonIndexed() : p.geo.clone()).translate(-GRIP.x, -GRIP.y, -GRIP.z);
+    for (const k of Object.keys(geo.attributes)) if (k !== 'position' && k !== 'normal') geo.deleteAttribute(k);
+    const n = geo.getAttribute('position').count;
+    const c = new THREE.Color().setHex(p.color, THREE.SRGBColorSpace);
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) c.toArray(col, i * 3);
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return geo;
+  });
+  hit = { geo: mergeGeometries(parts, false)!, muzzle: g.muzzle.clone().sub(GRIP) };
+  botGunCache.set(def.id, hit);
+  return hit;
+}
