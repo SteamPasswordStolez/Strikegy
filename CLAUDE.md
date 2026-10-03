@@ -51,6 +51,14 @@ Performance work: measure first. A reliable CPU benchmark in a hidden/automated 
 - `src/audio/` — `AudioSystem` (samples + procedural fallbacks, world voice limits: 40 voices, HRTF for the nearest 10 within 30 m; keep these), `Ambience` / `ambienceDirector` (wind bed, birds, far-off fighting; levels from the visual profile or `world.ambience` in the map JSON). Samples come from `sounds.manifest.json` via `npm run sounds` (`-- --only id,...` builds just those; needs ffmpeg and 7z/unzip).
 - Physics layers in `src/physics/PhysicsWorld.ts` (WORLD, PLAYER, HITBOX, DEBRIS, BOT, BOUNDS).
 
+## Handoff (2026-10-03, end of the local session; everything is pushed, v2 = strikegy-v2 main = 01723a0)
+
+The "better looks and faster" plan (owner's order 2 -> 3 -> 4 -> 1) stands at:
+- 2 CPU pass: done. 3 looks without downloads: done (terrain blend, grass tufts, wall grime, rounder soldiers). 4 assets: Mixamo soldiers tried and reverted (see below); Sketchfab needs an Epic login the owner doesn't have now. GPU pass and far crowd: done.
+- **Open: step 1** — dynamic resolution reacts to the whole frame time (CPU stalls included) and saves the scale (`DynamicResolution`, `Renderer.adaptResolution`, `scaleKey` in localStorage), so CPU lag lowers the resolution for good; auto quality also picks low / medium too eagerly. Fix: decide from GPU time (timer queries) and don't persist a scale that came from CPU lag. Not started.
+- Owner's last reports to follow up: Lyon 12v12 on high dipped to 45-50 fps on the MX450 before the GPU pass (not re-measured on their PC since); sound dropping out now and then (not reproduced, no audio in automated browsers); first-person arms / guns "like real ones" wanted (no asset route yet).
+- GPU timing recipe that works in the desktop app's browser pane (it renders on this PC's Iris Xe): wrap `renderer.gl.render` (per pass) or `renderBufferDirect` (per draw) in `EXT_disjoint_timer_query_webgl2` queries while driving `g.frame(now)` by hand, collect results a few frames later. Cloud sessions likely have no GPU: leave GPU numbers to the owner (F3).
+
 ## Roadmap (state as of 2026-09-27)
 
 Milestones: M0 setup → M1 core → M2 combat → M3 bots → M4 modes/meta → M5 mobile → M6 campaign → M7 content.
