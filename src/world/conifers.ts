@@ -396,32 +396,65 @@ function impostorMaterial(atlas: THREE.Texture): THREE.MeshBasicMaterial {
   return mat;
 }
 
-/** Full 3D trees: one InstancedMesh per variant and material. */
-export function buildNearTrees(kit: ConiferKit, placements: { pos: THREE.Vector3; scale: number; yaw: number; variant: number; tint: number }[]): THREE.Group {
-  const group = new THREE.Group();
-  group.name = 'trees';
+export interface TreeBatch {
+  /** Foliage and trunk meshes (one draw call each). */
+  foliage: THREE.BatchedMesh;
+  trunk: THREE.BatchedMesh;
+  /** Shows or hides placement `i` (both parts). */
+  setVisible(i: number, visible: boolean): void;
+}
+
+/**
+ * Full 3D trees as two BatchedMeshes (foliage, trunks): every variant and
+ * every tree in one draw call each, with trees outside the view skipped per
+ * tree. Replaces an InstancedMesh per variant, material and chunk (~6 calls a
+ * forest chunk).
+ */
+export function buildTreeBatch(kit: ConiferKit, placements: { pos: THREE.Vector3; scale: number; yaw: number; variant: number; tint: number }[], visible = true): TreeBatch {
+  const make = (pick: (v: ConiferVariant) => THREE.BufferGeometry, mat: THREE.Material) => {
+    let verts = 0;
+    let index = 0;
+    for (const v of kit.variants) {
+      const g = pick(v);
+      verts += g.getAttribute('position').count;
+      index += g.index ? g.index.count : 0;
+    }
+    const mesh = new THREE.BatchedMesh(Math.max(1, placements.length), verts, index, mat);
+    mesh.sortObjects = false;
+    mesh.perObjectFrustumCulled = true;
+    const ids = kit.variants.map((v) => mesh.addGeometry(pick(v)));
+    return { mesh, ids };
+  };
+  const fol = make((v) => v.foliage, kit.foliageMaterial);
+  const tr = make((v) => v.trunk, kit.trunkMaterial);
   const q = new THREE.Quaternion();
   const s = new THREE.Vector3();
   const m = new THREE.Matrix4();
   const c = new THREE.Color();
-  kit.variants.forEach((v, vi) => {
-    const list = placements.filter((p) => p.variant === vi);
-    if (list.length === 0) return;
-    for (const [geo, mat] of [
-      [v.foliage, kit.foliageMaterial],
-      [v.trunk, kit.trunkMaterial],
-    ] as const) {
-      const inst = new THREE.InstancedMesh(geo, mat, list.length);
-      list.forEach((p, i) => {
-        q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, p.yaw);
-        s.set(p.scale, p.scale * (0.9 + (i % 5) * 0.05), p.scale);
-        inst.setMatrixAt(i, m.compose(p.pos, q, s));
-        if (mat === kit.foliageMaterial) inst.setColorAt(i, c.setScalar(p.tint));
-      });
-      inst.computeBoundingSphere();
-      group.add(inst);
-    }
+  const fIds: number[] = [];
+  const tIds: number[] = [];
+  placements.forEach((p, i) => {
+    q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, p.yaw);
+    s.set(p.scale, p.scale * (0.9 + (i % 5) * 0.05), p.scale);
+    m.compose(p.pos, q, s);
+    const f = fol.mesh.addInstance(fol.ids[p.variant]!);
+    fol.mesh.setMatrixAt(f, m);
+    fol.mesh.setColorAt(f, c.setScalar(p.tint));
+    fol.mesh.setVisibleAt(f, visible);
+    const t = tr.mesh.addInstance(tr.ids[p.variant]!);
+    tr.mesh.setMatrixAt(t, m);
+    tr.mesh.setVisibleAt(t, visible);
+    fIds.push(f);
+    tIds.push(t);
   });
-  return group;
+  fol.mesh.name = tr.mesh.name = 'trees';
+  return {
+    foliage: fol.mesh,
+    trunk: tr.mesh,
+    setVisible(i, v) {
+      fol.mesh.setVisibleAt(fIds[i]!, v);
+      tr.mesh.setVisibleAt(tIds[i]!, v);
+    },
+  };
 }
 

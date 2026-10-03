@@ -23,6 +23,24 @@ interface Batch {
   material: THREE.Material;
   geometries: THREE.BufferGeometry[];
   castShadow: boolean;
+  /** Per geometry tint, baked into vertex colours (vertex-tinted batches only). */
+  tints?: THREE.Color[];
+}
+
+/**
+ * Adds `geo` to the batch of its surface kind, its colour going into vertex
+ * colours: one draw call per surface instead of one per surface and colour
+ * (Ardennes had ~140 map batches, mostly tints of the same few surfaces).
+ */
+function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind: SurfaceMaterial, color: string | undefined, geo: THREE.BufferGeometry, tag: string, castShadow: boolean): void {
+  const key = `${kind}:${tag}:${castShadow ? 1 : 0}:v`;
+  let batch = batches.get(key);
+  if (!batch) {
+    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [] };
+    batches.set(key, batch);
+  }
+  batch.geometries.push(geo);
+  batch.tints!.push(color ? new THREE.Color(color) : surfaces.baseTint(kind));
 }
 
 /** True if the map shapes its ground (terrain / irregular boundary) instead of a flat box. */
@@ -134,20 +152,27 @@ export function buildBlockout(
     for (const sh of built.shapes) {
       // A plain 0..n-1 index lets gables and roofs merge into the boxes of their
       // wall colour (box geometry is indexed) instead of costing a batch of their own.
-      const material = surfaces.tinted(sh.material, sh.color);
       sh.geo.setIndex(Array.from({ length: sh.geo.getAttribute('position').count }, (_, i) => i));
-      let batch = batches.get(material.uuid);
-      if (!batch) {
-        batch = { material, geometries: [], castShadow: true };
-        batches.set(material.uuid, batch);
-      }
-      batch.geometries.push(sh.geo);
+      pushTinted(batches, surfaces, sh.material, sh.color, sh.geo, '', true);
     }
     windows.push(...built.windows);
     footprints.push({ x: b.pos[0], z: b.pos[1], yaw: ((b.rot ?? 0) * Math.PI) / 180, hw: b.size[0] / 2, hd: b.size[1] / 2 });
   }
 
   for (const b of batches.values()) {
+    if (b.tints) {
+      b.geometries.forEach((g, i) => {
+        const n = g.getAttribute('position').count;
+        const col = new Float32Array(n * 3);
+        const { r, g: gr, b: bl } = b.tints![i]!;
+        for (let k = 0; k < n; k++) {
+          col[k * 3] = r;
+          col[k * 3 + 1] = gr;
+          col[k * 3 + 2] = bl;
+        }
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      });
+    }
     const merged = mergeGeometries(b.geometries);
     for (const g of b.geometries) g.dispose();
     if (!merged) continue;
@@ -200,8 +225,7 @@ function faded(material: THREE.Material): THREE.Material {
 function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>, surfaces: SurfaceLibrary, extraLift = 0, fade = false): void {
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
-  const base = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
-  const material = fade ? faded(base) : base;
+
   // Keep the authored layering (pavement over road over pad) as the lift above the ground.
   const lift = Math.max(0.02, obj.pos[1] + h / 2 - terrain.heightAt(obj.pos[0], obj.pos[2])) + extraLift;
   const geo = new THREE.PlaneGeometry(w, d, Math.max(1, Math.ceil(w / DRAPE_STEP)), Math.max(1, Math.ceil(d / DRAPE_STEP)));
@@ -231,6 +255,11 @@ function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>
     geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
   }
   geo.computeVertexNormals();
+  if (!fade) {
+    pushTinted(batches, surfaces, kind, obj.color, geo, 'drape', false);
+    return;
+  }
+  const material = faded(obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind));
   const key = `${material.uuid}drape`;
   let batch = batches.get(key);
   if (!batch) {
@@ -291,6 +320,13 @@ function addModel(
   };
   for (const p of kit.pieces) {
     p.geo.applyMatrix4(toWorld);
+    // Surface pieces share per-surface batches (tint in vertex colours); the kit's own looks keep theirs.
+    const surface: [SurfaceMaterial, string | undefined] | null =
+      p.mat === 'body' ? [kind, color] : p.mat === 'trim' ? [kind, trim] : p.mat === 'metal' || p.mat === 'wood' || p.mat === 'concrete' ? [p.mat, undefined] : p.mat === 'dirt' ? ['ground', color ?? '#9c8a64'] : null;
+    if (surface) {
+      pushTinted(batches, surfaces, surface[0], surface[1], p.geo, 'kit', true);
+      continue;
+    }
     const material = materialFor(p.mat);
     const key = `${material.uuid}kit`;
     let batch = batches.get(key);
@@ -338,7 +374,6 @@ function addBox(
 ): void {
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
-  const material = obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind);
 
   const geo = new THREE.BoxGeometry(w, h, d);
   worldScaleBoxUVs(geo, w, h, d);
@@ -347,13 +382,7 @@ function addBox(
   tmpQuat.setFromEuler(tmpEuler);
   geo.applyMatrix4(tmpMatrix.compose(new THREE.Vector3(...obj.pos), tmpQuat, one));
 
-  const key = `${material.uuid}${batchTag}`;
-  let batch = batches.get(key);
-  if (!batch) {
-    batch = { material, geometries: [], castShadow: batchTag !== 'ground' };
-    batches.set(key, batch);
-  }
-  batch.geometries.push(geo);
+  pushTinted(batches, surfaces, kind, obj.color, geo, batchTag, batchTag !== 'ground');
   if (!collide) return;
 
   const collider = physics.addStaticBox(

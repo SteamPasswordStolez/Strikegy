@@ -216,6 +216,28 @@ export class SurfaceLibrary {
     return mat;
   }
 
+  /**
+   * The surface with its tint taken from vertex colours, so boxes of many
+   * colours share one merged mesh (one draw call) instead of one per colour.
+   */
+  vertexTinted(kind: SurfaceMaterial): THREE.MeshStandardMaterial {
+    const key = `${kind}:vertex`;
+    let mat = this.tints.get(key);
+    if (!mat) {
+      mat = this.get(kind).clone();
+      mat.vertexColors = true;
+      mat.color.setScalar(1);
+      addMacroVariation(mat, MACRO_STRENGTH[kind]);
+      this.tints.set(key, mat);
+    }
+    return mat;
+  }
+
+  /** Albedo multiplier of the untinted surface (the vertex colour of boxes without a colour of their own). */
+  baseTint(kind: SurfaceMaterial): THREE.Color {
+    return this.get(kind).color.clone();
+  }
+
   private tints = new Map<string, THREE.MeshStandardMaterial>();
 }
 

@@ -796,7 +796,7 @@ export class Game {
       this.lastAlpha = alpha;
       simMs = performance.now() - tSim;
       this.renderer.adaptResolution(dt * 1000, dt);
-      this.vehicles?.render(alpha);
+      this.vehicles?.render(alpha, this.renderer.camera.position);
       this.updateAirMarkers();
       this.renderRider(alpha, dt);
       if (this.chute) {

@@ -3,7 +3,7 @@ import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import { LAYER_BACKDROP } from '@/render/layers';
 import { makeRng } from '@/render/noise';
-import { buildImpostors, buildNearTrees, type ConiferKit } from './conifers';
+import { buildImpostors, buildTreeBatch, type ConiferKit, type TreeBatch } from './conifers';
 import type { Terrain } from './terrain';
 
 /** Side of a forest chunk (m); each chunk switches between 3D trees and impostors as a whole. */
@@ -16,8 +16,7 @@ const TRUNK_HEIGHT = 0.55;
 
 interface Chunk {
   box: THREE.Box3;
-  near: THREE.Group;
-  /** This chunk's trees in the shared impostor mesh: first instance and count. */
+  /** This chunk's trees in the shared impostor mesh and tree batch: first instance and count. */
   start: number;
   count: number;
   isNear: boolean;
@@ -38,6 +37,8 @@ export class Forest {
    */
   private readonly far: THREE.InstancedMesh | null = null;
   private readonly farMatrices: Float32Array | null = null;
+  /** 3D trees of every chunk in one batch per part; a chunk shows its own while near. */
+  private readonly nearTrees: TreeBatch | null = null;
 
   constructor(
     trees: readonly (readonly [number, number, number])[],
@@ -71,22 +72,20 @@ export class Forest {
     for (const list of cells.values()) {
       const start = all.length;
       all.push(...list);
-      const near = buildNearTrees(kit, list);
-      near.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          o.castShadow = true;
-          o.receiveShadow = true;
-          // Foliage skips the AO pass like the scenery forest; trunks keep contact shading.
-          if (o.material === kit.foliageMaterial) o.layers.set(LAYER_BACKDROP);
-        }
-      });
       const box = new THREE.Box3();
       for (const t of list) box.expandByPoint(t.pos);
-      near.visible = false;
-      this.group.add(near);
-      this.chunks.push({ box, near, start, count: list.length, isNear: false });
+      this.chunks.push({ box, start, count: list.length, isNear: false });
     }
     if (all.length) {
+      const batch = buildTreeBatch(kit, all, false);
+      for (const o of [batch.foliage, batch.trunk]) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+      // Foliage skips the AO pass like the scenery forest; trunks keep contact shading.
+      batch.foliage.layers.set(LAYER_BACKDROP);
+      this.group.add(batch.foliage, batch.trunk);
+      this.nearTrees = batch;
       const far = buildImpostors(gl, kit, scene.environment, scene.environmentIntensity, all);
       far.layers.set(LAYER_BACKDROP);
       this.group.add(far);
@@ -102,7 +101,7 @@ export class Forest {
       const near = c.isNear ? d < this.near + HYSTERESIS : d < this.near - HYSTERESIS;
       if (near === c.isNear) continue;
       c.isNear = near;
-      c.near.visible = near;
+      for (let i = c.start; i < c.start + c.count; i++) this.nearTrees?.setVisible(i, near);
       const far = this.far;
       if (!far) continue;
       const arr = far.instanceMatrix.array as Float32Array;

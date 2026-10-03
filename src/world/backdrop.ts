@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TileNoise, makeRng, smoothstep } from '@/render/noise';
 import type { ModelLibrary } from '@/render/models';
-import { buildImpostors, buildNearTrees, createConiferKit, type ConiferKit } from './conifers';
+import { buildImpostors, buildTreeBatch, createConiferKit, type ConiferKit } from './conifers';
 import { instanceModel } from './placeProps';
 import { LAYER_BACKDROP } from '@/render/layers';
 import { SCENERY_EXTENT, type Terrain } from './terrain';
@@ -175,7 +175,10 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   const sparse = desert ? 0.06 : 1;
   const near = scatter(Math.round((opts.lowDetail ? (opts.phone ? 60 : 90) : 300) * sparse), 4, nearOut, (x, z, d) => rng() < forest(x, z) + (desert ? 0.3 : d < 20 ? 0.6 : 0.1));
   const far = scatter(Math.round((opts.lowDetail ? 3700 : 7000) * sparse), opts.lowDetail ? 15 : 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
-  for (const chunk of bySector(near, (p) => p.pos)) group.add(buildNearTrees(kit, chunk));
+  if (near.length) {
+    const batch = buildTreeBatch(kit, near);
+    group.add(batch.foliage, batch.trunk);
+  }
   for (const chunk of bySector(far, (p) => p.pos)) group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, chunk));
 
   // --- Forest floor --------------------------------------------------------

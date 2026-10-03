@@ -285,9 +285,14 @@ export function polylineDistance(pts: readonly (readonly [number, number])[], x:
   return best;
 }
 
-/** Terrain render chunks: cells per side, and the distances (m) at which a chunk drops to 1/2 and 1/4 detail. */
-const CHUNK_CELLS = 64;
-const LOD_DISTANCES = [0, 150, 300];
+/**
+ * Terrain render chunks: cells per side, and the distances (m, camera to chunk
+ * centre) at which a chunk drops to 1/2 and 1/4 detail. 256 m chunks (was 128)
+ * cut ~46 terrain draw calls to ~12; the distances grew with them so the
+ * ground around the player stays at full detail.
+ */
+const CHUNK_CELLS = 128;
+const LOD_DISTANCES = [0, 290, 460];
 /** Skirts hang this far below chunk edges to hide cracks between detail levels (m). */
 const SKIRT = 1.5;
 

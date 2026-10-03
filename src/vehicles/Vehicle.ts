@@ -70,6 +70,8 @@ export class Vehicle implements Damageable {
   health: number;
   /** Destroyed: a burning wreck until `removeAt`. */
   wrecked = false;
+  /** Drawn with the merged far look (VehicleWorld.render). */
+  farLook = false;
   removeAt = Infinity;
   /** Last time anyone sat in it (abandoned vehicles are cleared away). */
   usedAt = 0;

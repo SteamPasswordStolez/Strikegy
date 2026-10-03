@@ -21,6 +21,11 @@ export interface VehicleModel {
   wheels: THREE.Object3D[];
   /** Gun pivots by seat (null for seats without a gun). */
   mounts: (MountNodes | null)[];
+  /**
+   * Far look: everything merged per material into the hull and each turret
+   * (wheels stop turning, barrels rest level), a few draw calls instead of ~14.
+   */
+  setFar?: (far: boolean) => void;
 }
 
 const mats = new Map<string, THREE.Material>();
@@ -98,7 +103,63 @@ export function buildVehicleModel(kind: VehicleKind, team: Team | null): Vehicle
   const pivots = new Set<THREE.Object3D>(m.wheels);
   for (const n of m.mounts) if (n) for (const o of [n.turret, n.gun, n.muzzle]) if (o) pivots.add(o);
   mergeTree(m.root, pivots);
+  m.setFar = buildFarLook(m);
   return m;
+}
+
+/**
+ * Builds the merged far look (hidden) and returns a switch between it and the
+ * detailed parts. Each mesh goes to the nearest turret above it, or the hull,
+ * in the pose the model was built in.
+ */
+function buildFarLook(m: VehicleModel): (far: boolean) => void {
+  const turrets = new Set<THREE.Object3D>();
+  for (const n of m.mounts) if (n?.turret) turrets.add(n.turret);
+  m.root.updateMatrixWorld(true);
+  const detail: THREE.Mesh[] = [];
+  const groups = new Map<THREE.Object3D, Map<THREE.Material, THREE.BufferGeometry[]>>();
+  const inv = new THREE.Matrix4();
+  m.root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+    detail.push(mesh);
+    let anchor: THREE.Object3D = m.root;
+    for (let p = mesh.parent; p && p !== m.root; p = p.parent) {
+      if (turrets.has(p)) {
+        anchor = p;
+        break;
+      }
+    }
+    inv.copy(anchor.matrixWorld).invert();
+    const g = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(inv.multiply(mesh.matrixWorld));
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') g.deleteAttribute(k);
+    if (!g.getAttribute('uv')) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
+    const byMat = groups.get(anchor) ?? new Map<THREE.Material, THREE.BufferGeometry[]>();
+    groups.set(anchor, byMat);
+    const list = byMat.get(mesh.material as THREE.Material) ?? [];
+    list.push(g);
+    byMat.set(mesh.material as THREE.Material, list);
+  });
+  const far: THREE.Mesh[] = [];
+  for (const [anchor, byMat] of groups) {
+    for (const [mt, geos] of byMat) {
+      const merged = mergeGeometries(geos);
+      for (const g of geos) g.dispose();
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, mt);
+      mesh.visible = false;
+      mesh.name = 'far';
+      anchor.add(mesh);
+      far.push(mesh);
+    }
+  }
+  let isFar = false;
+  return (want) => {
+    if (want === isFar) return;
+    isFar = want;
+    for (const d of detail) d.visible = !want;
+    for (const f of far) f.visible = want;
+  };
 }
 
 function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {

@@ -48,6 +48,8 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 const FIRST_ID = 50000;
 /** Seconds a wreck burns before it's cleared, and how long an empty vehicle may stand unused. */
 const WRECK_LIFE = 12;
+/** Vehicles further than this from the camera (m) draw their merged far look. */
+const FAR_LOOK = 45;
 const ABANDON = 150;
 
 /** How far a hull reaches from its centre on the ground (half its diagonal, m). */
@@ -207,8 +209,15 @@ export class VehicleWorld {
     for (const v of this.vehicles) v.afterStep();
   }
 
-  render(alpha: number): void {
-    for (const v of this.vehicles) v.syncModel(alpha);
+  render(alpha: number, eye?: THREE.Vector3): void {
+    for (const v of this.vehicles) {
+      v.syncModel(alpha);
+      if (!eye || !v.model.setFar) continue;
+      // Merged far look past FAR_LOOK (with a little hysteresis so it doesn't flicker).
+      const d2 = v.pos.distanceToSquared(eye);
+      v.farLook = v.farLook ? d2 > (FAR_LOOK - 5) ** 2 : d2 > (FAR_LOOK + 5) ** 2;
+      v.model.setFar(v.farLook);
+    }
   }
 
   private wreck(v: Vehicle): void {
