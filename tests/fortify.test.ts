@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SurfaceRegistry } from '@/physics/surfaces';
 import { NavWorld } from '@/ai/NavWorld';
-import { FORT, Fortifications, STATION, buildSpeed, canRefill, planFortifications, worldProbe, type PlanProbe } from '@/modes/fortify';
+import { FORT, FORT_WEIGHT, Fortifications, STATION, buildSpeed, canRefill, planFortifications, worldProbe, zoneWeight, type PlanProbe } from '@/modes/fortify';
 import { FortModels } from '@/world/fortModels';
 import type { WindowSpot } from '@/world/buildings';
 import { ScoreTracker } from '@/modes/scoreTracker';
@@ -40,6 +40,30 @@ describe('fortification planning', () => {
     const bags = plan.slots.filter((s) => s.zone === 'A');
     for (let i = 0; i < bags.length; i++) for (let j = i + 1; j < bags.length; j++) expect(Math.hypot(bags[i]!.pos[0] - bags[j]!.pos[0], bags[i]!.pos[2] - bags[j]!.pos[2])).toBeGreaterThan(4.5);
     expect(planFortifications(zones, [], [], flatProbe())).toEqual(plan);
+  });
+
+  it('builds far more at riverside and middle zones: double spots, a line along the banks, the bridge ends', () => {
+    // A north-south river through x = 0 (6 m bed, 4 m banks) with a bridge at z = 40; bases west and far east.
+    const rivers = [{ pts: [[0, -150], [0, 150]] as [number, number][], width: 6, bank: 4, crossings: [[0, 40]] as [number, number][] }];
+    const bases = [[-150, 0], [300, 0]] as [number, number][];
+    const riverZone = { id: 'R', pos: [-20, 0, 60] as [number, number, number], radius: 18 };
+    const dryZone = { id: 'D', pos: [200, 0, -60] as [number, number, number], radius: 18 };
+    expect(zoneWeight(riverZone, { rivers, bases })).toEqual({ weight: FORT_WEIGHT.river, river: true });
+    expect(zoneWeight(dryZone, { rivers, bases })).toEqual({ weight: 1, river: false });
+    // Halfway between the bases (and clear of the river): the middle bonus only.
+    expect(zoneWeight({ pos: [70, 0, 0], radius: 18 }, { rivers, bases }).weight).toBe(FORT_WEIGHT.middle);
+    // Water is not ground.
+    const probe: PlanProbe = { ground: (x, z) => (Math.abs(x) < 3 || Math.abs(x) > 400 || Math.abs(z) > 400 ? null : { y: 0, level: true }), clear: () => true };
+    const plan = planFortifications([riverZone, dryZone], [], [], probe, { rivers, bases });
+    const of = (id: string) => plan.slots.filter((s) => s.zone === id);
+    expect(of('R').length).toBeGreaterThan(of('D').length * 2);
+    // Bank positions on both banks just past the slope, facing the water; none in it.
+    const bank = of('R').filter((s) => Math.abs(s.pos[0]) < 9);
+    expect(bank.some((s) => s.pos[0] < 0) && bank.some((s) => s.pos[0] > 0)).toBe(true);
+    for (const s of bank) expect(Math.abs(s.pos[0])).toBeGreaterThan(3);
+    // Hedgehogs at the bridge ends.
+    expect(of('R').some((s) => s.kind === 'hedgehog' && Math.abs(s.pos[2] - 40) < 8)).toBe(true);
+    expect(planFortifications([riverZone, dryZone], [], [], probe, { rivers, bases })).toEqual(plan);
   });
 
   it('keeps clear of obstacles and building doors, and boards up nearby windows', () => {

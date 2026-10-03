@@ -2567,7 +2567,11 @@ export class Game {
       (x, z) => terrain.boundary.contains(x, z) && terrain.boundary.edgeDistance(x, z) > 3,
       (x, y, z) => !!water && water.depthAt(x, y, z) > 0.05,
     );
-    const plan = planFortifications(map.zones ?? [], built.windows, built.footprints, probe);
+    const bases = (['blue', 'red'] as const).map((team) => {
+      const c = this.baseCenter(team);
+      return [c.x, c.z] as const;
+    });
+    const plan = planFortifications(map.zones ?? [], built.windows, built.footprints, probe, { rivers: map.world.terrain?.rivers ?? [], bases });
     const fort = new Fortifications(plan, new FortModels(this.surfaces), this.physics, this.impacts, this.nav);
     fort.onChange = () => this.renderer.requestShadowUpdate();
     fort.onPoints = (id, points) => this.scores.award(id, points);

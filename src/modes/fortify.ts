@@ -178,6 +178,56 @@ const RECIPE_RADIUS = 18;
 export function fortScale(radius: number): number {
   return Math.min(1.75, Math.max(1, Math.pow(radius / RECIPE_RADIUS, 0.585)));
 }
+/**
+ * Zones by a river and zones in the contested middle are where the fighting
+ * is (owner, 2026-10-02: "far more building at the river zones and the
+ * important ones"): riverside zones get twice the spots, middle zones half as
+ * many again, and riverside zones also get a line of positions along the
+ * banks near them and at the bridge ends, facing across the water.
+ */
+export const FORT_WEIGHT = { river: 2, middle: 1.5, max: 2.5, riverReach: 40, middleBalance: 0.2, bankStep: 7, bankSpots: 16 };
+/** What the map adds to the plan: its rivers and its two bases (blue, red). */
+export interface PlanContext {
+  rivers?: readonly { pts: readonly (readonly [number, number])[]; width: number; bank?: number; crossings?: readonly (readonly [number, number])[] }[];
+  bases?: readonly (readonly [number, number])[];
+}
+
+/** Closest point of a polyline to (x, z), its distance and the line's unit direction there. */
+function nearestOnLine(pts: readonly (readonly [number, number])[], x: number, z: number): { x: number; z: number; d: number; tx: number; tz: number } {
+  let best = { x: pts[0]![0], z: pts[0]![1], d: Infinity, tx: 1, tz: 0 };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i]!;
+    const [bx, bz] = pts[i + 1]!;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2));
+    const qx = ax + dx * t;
+    const qz = az + dz * t;
+    const d = Math.hypot(qx - x, qz - z);
+    if (d < best.d) {
+      const L = Math.sqrt(L2);
+      best = { x: qx, z: qz, d, tx: dx / L, tz: dz / L };
+    }
+  }
+  return best;
+}
+
+/** How many times the RECIPE a zone gets for where it lies (see FORT_WEIGHT), and whether it is by a river. */
+export function zoneWeight(zone: { pos: readonly number[]; radius: number }, ctx: PlanContext): { weight: number; river: boolean } {
+  const [cx, , cz] = zone.pos as [number, number, number];
+  const river = (ctx.rivers ?? []).some((r) => r.pts.length > 1 && nearestOnLine(r.pts, cx, cz).d < zone.radius + FORT_WEIGHT.riverReach);
+  let middle = false;
+  if (ctx.bases?.length === 2) {
+    const [a, b] = ctx.bases as [readonly [number, number], readonly [number, number]];
+    const da = Math.hypot(cx - a[0], cz - a[1]);
+    const db = Math.hypot(cx - b[0], cz - b[1]);
+    middle = Math.abs(da - db) / Math.max(1, da + db) < FORT_WEIGHT.middleBalance;
+  }
+  const weight = Math.min(FORT_WEIGHT.max, (river ? FORT_WEIGHT.river : 1) * (middle ? FORT_WEIGHT.middle : 1));
+  return { weight, river };
+}
+
 /** 0..31 in bit-reversed order: consecutive picks land far apart round a circle. */
 const SPREAD = Array.from({ length: 32 }, (_, i) => parseInt(i.toString(2).padStart(5, '0').split('').reverse().join(''), 2));
 /** Standing eye height a barricade's slit is cut at, above the floor. */
@@ -208,15 +258,35 @@ function nearBuilding(footprints: readonly Footprint[], x: number, z: number, pa
  * Finds station and build spots around every zone. Deterministic for a given
  * map: the same spots on every load (and in every client, for multiplayer later).
  */
-export function planFortifications(zones: readonly ZoneDef[], windows: readonly WindowSpot[], footprints: readonly Footprint[], probe: PlanProbe): FortPlan {
+export function planFortifications(zones: readonly ZoneDef[], windows: readonly WindowSpot[], footprints: readonly Footprint[], probe: PlanProbe, ctx: PlanContext = {}): FortPlan {
   const plan: FortPlan = { slots: [], stations: [] };
   const used = new Set<WindowSpot>();
+  // Bank positions can belong to either of two zones on the same stretch: kept apart map-wide.
+  const banksTaken: { x: number; z: number; r: number }[] = [];
   for (const zone of zones) {
     const [cx, , cz] = zone.pos;
     const R = zone.radius;
-    const scale = fortScale(R);
+    const { weight, river } = zoneWeight(zone, ctx);
+    const scale = fortScale(R) * weight;
     const taken: { x: number; z: number; r: number }[] = [];
-    const free = (x: number, z: number, r: number) => taken.every((t) => Math.hypot(t.x - x, t.z - z) >= t.r + r);
+    const free = (x: number, z: number, r: number) => taken.every((t) => Math.hypot(t.x - x, t.z - z) >= t.r + r) && banksTaken.every((t) => Math.hypot(t.x - x, t.z - z) >= t.r + r);
+    /** A build spot at (x, z) whose front faces along (ox, oz), if the ground and the room behind allow. */
+    const trySlot = (kind: Exclude<FortKind, 'barricade'>, x: number, z: number, ox: number, oz: number, room: number, pad: number, list = taken): boolean => {
+      const size = FORT_SIZE[kind];
+      const g = probe.ground(x, z);
+      if (!g || nearBuilding(footprints, x, z, pad) || !free(x, z, room)) return false;
+      const yaw = Math.atan2(-ox, -oz);
+      if (!probe.clear(x, g.y, z, [size[0] + 0.4, size[1], size[2] + 0.4], yaw)) return false;
+      // Room behind it to stand and build.
+      const back = size[2] / 2 + 0.75;
+      const sx = x - ox * back;
+      const sz = z - oz * back;
+      const sg = probe.ground(sx, sz);
+      if (!sg || Math.abs(sg.y - g.y) > 0.6) return false;
+      plan.slots.push({ kind, zone: zone.id, pos: [x, g.y, z], yaw, stand: [sx, sg.y, sz] });
+      list.push({ x, z, r: room });
+      return true;
+    };
     const start = (hashId(zone.id) % 32) / 32;
     /** Candidate points on rings around the zone centre, spread round the circle. */
     function* ring(radii: number[], steps = 32): Generator<{ x: number; z: number; a: number }> {
@@ -251,26 +321,66 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
 
     // Build spots round the zone: front (-z) facing out, long side across the way in.
     for (const r of RECIPE) {
-      const size = FORT_SIZE[r.kind];
       const count = Math.round(r.count * scale);
       let n = 0;
       for (const p of ring(r.rings)) {
         if (n >= count) break;
-        const g = probe.ground(p.x, p.z);
-        if (!g || nearBuilding(footprints, p.x, p.z, r.pad) || !free(p.x, p.z, r.room)) continue;
-        const ox = Math.cos(p.a);
-        const oz = Math.sin(p.a);
-        const yaw = Math.atan2(-ox, -oz);
-        if (!probe.clear(p.x, g.y, p.z, [size[0] + 0.4, size[1], size[2] + 0.4], yaw)) continue;
-        // Room behind it to stand and build.
-        const back = size[2] / 2 + 0.75;
-        const sx = p.x - ox * back;
-        const sz = p.z - oz * back;
-        const sg = probe.ground(sx, sz);
-        if (!sg || Math.abs(sg.y - g.y) > 0.6) continue;
-        plan.slots.push({ kind: r.kind, zone: zone.id, pos: [p.x, g.y, p.z], yaw, stand: [sx, sg.y, sz] });
-        taken.push({ x: p.x, z: p.z, r: r.room });
-        n++;
+        if (trySlot(r.kind, p.x, p.z, Math.cos(p.a), Math.sin(p.a), r.room, r.pad)) n++;
+      }
+    }
+
+    // By a river: a line of positions along both banks near the zone, facing
+    // across the water (wire down the slope in front), and the bridge ends held.
+    if (river) {
+      const reach = R + FORT_WEIGHT.riverReach;
+      const BANK: Exclude<FortKind, 'barricade'>[] = ['sandbag', 'sandbagCorner', 'timber', 'nest', 'sandbag', 'sandbagLow'];
+      let n = 0;
+      for (const rv of ctx.rivers ?? []) {
+        const top = rv.width / 2 + (rv.bank ?? 5) + 1.5;
+        const crossings = rv.crossings ?? [];
+        // Points along the river every bankStep metres, nearest the zone first.
+        const along: { x: number; z: number; tx: number; tz: number; d: number }[] = [];
+        for (let i = 0; i < rv.pts.length - 1; i++) {
+          const [ax, az] = rv.pts[i]!;
+          const [bx, bz] = rv.pts[i + 1]!;
+          const L = Math.hypot(bx - ax, bz - az);
+          for (let u = 0; u < L; u += FORT_WEIGHT.bankStep) {
+            const x = ax + ((bx - ax) * u) / L;
+            const z = az + ((bz - az) * u) / L;
+            const d = Math.hypot(x - cx, z - cz);
+            if (d < reach) along.push({ x, z, tx: (bx - ax) / L, tz: (bz - az) / L, d });
+          }
+        }
+        along.sort((a, b) => a.d - b.d);
+        for (const p of along) {
+          if (n >= FORT_WEIGHT.bankSpots) break;
+          // Bridges keep their ends clear for the road; those get their own spots below.
+          if (crossings.some((c) => Math.hypot(c[0] - p.x, c[1] - p.z) < 10)) continue;
+          for (const side of [-1, 1]) {
+            const nx = -p.tz * side;
+            const nz = p.tx * side;
+            // Front toward the river (-n), standing on the bank top.
+            const kind = BANK[n % BANK.length]!;
+            if (trySlot(kind, p.x + nx * top, p.z + nz * top, -nx, -nz, 2.6, 2, banksTaken)) n++;
+            if (n % 3 === 0 && trySlot('wire', p.x + nx * (top - 2.2), p.z + nz * (top - 2.2), -nx, -nz, 2.4, 1.5, banksTaken)) n++;
+          }
+        }
+        // Bridge ends: hedgehogs and wire beside the road, a nest a little off it.
+        for (const [bx, bz] of crossings) {
+          if (Math.hypot(bx - cx, bz - cz) > reach) continue;
+          const at = nearestOnLine(rv.pts, bx, bz);
+          for (const side of [-1, 1]) {
+            const nx = -at.tz * side;
+            const nz = at.tx * side;
+            const ex = bx + nx * (top + 4);
+            const ez = bz + nz * (top + 4);
+            for (const lat of [-1, 1]) {
+              trySlot('hedgehog', ex + at.tx * lat * 5, ez + at.tz * lat * 5, -nx, -nz, 1.8, 1.5, banksTaken);
+              trySlot('nest', ex + at.tx * lat * 10 + nx * 3, ez + at.tz * lat * 10 + nz * 3, -nx, -nz, 3.2, 2.4, banksTaken);
+            }
+            trySlot('wire', ex + at.tx * 9, ez + at.tz * 9, -nx, -nz, 2.4, 1.5, banksTaken);
+          }
+        }
       }
     }
 
