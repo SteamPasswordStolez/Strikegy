@@ -1,3 +1,4 @@
+import { disposeTree } from '@/render/dispose';
 import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
@@ -230,6 +231,8 @@ export class VehicleWorld {
       this.registry.unregister(c.handle);
     }
     this.group.remove(v.model.root);
+    // Each vehicle merges its own geometry; the materials are shared (vehicleModels cache).
+    disposeTree(v.model.root);
     v.dispose();
     for (const p of this.pads) if (p.vehicle === v.id) this.leftPad(p);
     for (const b of this.bikes) if (b.vehicle === v.id) {

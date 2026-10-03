@@ -1,3 +1,4 @@
+import { disposeTree } from '@/render/dispose';
 import * as THREE from 'three';
 import type { HitPart } from '@/core/events';
 import type { DamageKind, DamageSource, Damageable, HitboxRegistry } from '@/combat/Hitboxes';
@@ -233,6 +234,7 @@ export class SupportWorld {
       if (c.uses > 0 && this.hooks.resupply(c.team, c.pos, SUPPLY.reach)) c.uses--;
       if (c.uses <= 0 || this.time > c.until) {
         this.group.remove(c.mesh);
+        disposeTree(c.mesh, true);
         this.crates.splice(i, 1);
       }
     }
@@ -240,6 +242,7 @@ export class SupportWorld {
       const m = this.markers[i]!;
       if (this.time > m.until) {
         this.group.remove(m.mesh);
+        disposeTree(m.mesh, true);
         this.markers.splice(i, 1);
       }
     }
@@ -248,8 +251,14 @@ export class SupportWorld {
   clear(): void {
     this.shells = [];
     for (const w of this.sweeps) this.dropSweep(w);
-    for (const c of this.crates) this.group.remove(c.mesh);
-    for (const m of this.markers) this.group.remove(m.mesh);
+    for (const c of this.crates) {
+      this.group.remove(c.mesh);
+      disposeTree(c.mesh, true);
+    }
+    for (const m of this.markers) {
+      this.group.remove(m.mesh);
+      disposeTree(m.mesh, true);
+    }
     this.sweeps = [];
     this.crates = [];
     this.markers = [];
@@ -310,6 +319,7 @@ export class SupportWorld {
 
   private dropSweep(w: Sweep): void {
     this.group.remove(w.plane);
+    disposeTree(w.plane, true);
     if (w.body) this.removeBody(w.body);
     w.body = null;
   }

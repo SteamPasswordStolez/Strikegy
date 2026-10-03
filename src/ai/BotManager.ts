@@ -1020,7 +1020,12 @@ export class BotManager implements BotServices {
       for (const e of this.entries) if (e.bot.team !== team) out.push(e.bot);
       if (this.player.team !== team) out.push(this.player);
     }
-    for (const cell of this.grid.values()) cell.length = 0;
+    // Drop cells nobody stood in last step: every cell ever visited used to stay,
+    // and clearing them all grew to ~29k cells (4 ms a step) over a long match.
+    for (const [key, cell] of this.grid) {
+      if (cell.length === 0) this.grid.delete(key);
+      else cell.length = 0;
+    }
     for (const e of this.entries) {
       if (!e.bot.alive) continue;
       const key = cellKey(e.bot.feet.x, e.bot.feet.z);

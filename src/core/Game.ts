@@ -1,3 +1,4 @@
+import { disposeTree } from '@/render/dispose';
 import * as THREE from 'three';
 import { EventBus } from './EventBus';
 import type { DamageCause, GameEvents, GrenadeOwner, HitPart } from './events';
@@ -1389,7 +1390,9 @@ export class Game {
   /** Shot down under the canopy (or respawning): straight onto the ground below, canopy gone. */
   private dropChute(): void {
     if (!this.chute) return;
-    this.chute.visible = false;
+    // A new canopy is built for every jump: free this one rather than leave it hidden in the scene.
+    this.renderer.scene.remove(this.chute);
+    disposeTree(this.chute, true);
     this.chute = null;
     const p = this.player;
     const down = this.physics.raycast(p.feet, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
