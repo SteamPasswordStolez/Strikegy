@@ -15,7 +15,8 @@ export interface ScoreboardRow {
 
 export interface ScoreboardSide {
   label: string;
-  tickets: number | null;
+  /** "Tickets 312" / "Points 240", or null. */
+  stat: string | null;
   kills: number;
   rows: ScoreboardRow[];
 }
@@ -61,7 +62,7 @@ export class Scoreboard {
   private side(s: ScoreboardSide, cls: 'ally' | 'enemy'): string {
     const head =
       `<div class="sb-head"><span class="sb-team">${esc(s.label)}</span>` +
-      (s.tickets !== null ? `<span class="sb-tickets">${t('hud.tickets')} ${s.tickets}</span>` : '') +
+      (s.stat !== null ? `<span class="sb-tickets">${esc(s.stat)}</span>` : '') +
       `<span class="sb-kills">${t('score.kills')} ${s.kills}</span></div>`;
     const cols =
       `<div class="sb-row sb-cols"><span class="sb-sq"></span><span class="sb-name">${t('score.name')}</span>` +

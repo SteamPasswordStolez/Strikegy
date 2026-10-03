@@ -3,6 +3,7 @@ import type { EventBus } from './EventBus';
 import type { GrenadeType } from '@/combat/explosions';
 import type { ImpactSurface } from '@/physics/surfaces';
 import type { Team } from '@/world/mapTypes';
+import type { ModeEvent } from '@/modes/matchRules';
 
 /** Who threw a grenade (damage attribution, friendly fire). */
 export interface GrenadeOwner {
@@ -71,6 +72,8 @@ export interface GameEvents {
   'zone:captured': { zone: string; team: Team };
   /** `team` lost the zone (it is neutral now). */
   'zone:neutralized': { zone: string; team: Team };
+  /** Mode news: a sector taken, a new attack, the attack timer moved, tickets added. */
+  'mode:event': ModeEvent;
   'match:ended': { winner: Team };
 }
 

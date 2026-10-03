@@ -3,10 +3,73 @@ import type { GameBus } from '@/core/events';
 import type { NavWorld } from '@/ai/NavWorld';
 import type { MapDef, SpawnPoint, Team } from '@/world/mapTypes';
 import { ZoneRules, type ZoneRulesOptions, type ZoneState } from './zoneRules';
+import { ConquestRules, DOMINATION, DominationRules, FrontlineRules, type MatchRules, type ModeKind } from './matchRules';
 
 const DEG = Math.PI / 180;
 /** Spawning at an owned zone that is being captured puts you this far out from its edge. */
 const CONTESTED_SPAWN_OFFSET: [number, number] = [12, 22];
+
+/**
+ * Tickets per soldier on a side [제안] (owner, 2026-10-03: "very generous", in
+ * Frontline and Conquest only). 12v12 bot matches lose about 5-7 soldiers a
+ * side a minute (measured on Ardennes / Iron Gate), so a Frontline side has
+ * well over what 25 minutes of fighting costs; the Conquest attackers start
+ * with `conquestStart` and get `conquestRefill` more for each sector taken.
+ */
+export const TICKETS = { frontline: 30, conquestStart: 15, conquestRefill: 10 };
+
+export interface ZoneModeOptions extends ZoneRulesOptions {
+  /** The mode asked for (the map's default when missing or not offered by the map). */
+  mode?: ModeKind;
+  /** Soldiers a side: tickets scale with it. */
+  teamSize?: Record<Team, number>;
+  /** Tickets for every side that has them, instead of the per-soldier numbers (?tickets=). */
+  tickets?: number;
+  rand?: () => number;
+}
+
+/** Modes `map` offers: Zone always, Frontline / Conquest when it sets them up. */
+export function modesOf(map: MapDef): ModeKind[] {
+  const out: ModeKind[] = ['zone'];
+  if (map.modes?.frontline) out.push('frontline');
+  if (map.modes?.conquest) out.push('conquest');
+  return out;
+}
+
+/** The mode a match on `map` plays: the one asked for if the map offers it, else its default. */
+export function pickMode(map: MapDef, asked?: ModeKind): ModeKind {
+  const offered = modesOf(map);
+  if (asked && offered.includes(asked)) return asked;
+  if (asked) console.warn(`[strikegy] ${map.meta.id} has no ${asked} mode; playing its default`);
+  const d = map.modes?.default;
+  return d && offered.includes(d) ? d : 'zone';
+}
+
+function createMatch(kind: ModeKind, map: MapDef, opts: ZoneModeOptions): MatchRules {
+  const size = opts.teamSize ?? { blue: 12, red: 12 };
+  const per = (n: number) => ({ blue: opts.tickets ?? Math.round(n * size.blue), red: opts.tickets ?? Math.round(n * size.red) });
+  const m = map.modes;
+  if (kind === 'frontline' && m?.frontline) {
+    return new FrontlineRules({
+      sectors: m.frontline.sectors,
+      tickets: per(TICKETS.frontline),
+      teamSize: (size.blue + size.red) / 2,
+      attackTime: m.frontline.attackTime,
+      matchTime: m.frontline.matchTime,
+      rand: opts.rand,
+    });
+  }
+  if (kind === 'conquest' && m?.conquest) {
+    const a = m.conquest.attacker;
+    return new ConquestRules({
+      attacker: a,
+      sectors: m.conquest.sectors,
+      tickets: per(TICKETS.conquestStart)[a],
+      refill: Math.round(TICKETS.conquestRefill * size[a]),
+    });
+  }
+  return new DominationRules(m?.zone?.target ?? DOMINATION.target);
+}
 
 export interface SpawnOption {
   /** 'base' or a zone id. */
@@ -32,12 +95,14 @@ interface Presence {
 }
 
 /**
- * Zone mode at runtime: counts who stands in each zone, advances capture,
- * tracks tickets (deaths only), and answers where a team may respawn and
- * which zones its bots should go for.
+ * A zone match at runtime (any of the three modes): counts who stands in each
+ * zone, advances capture, runs the mode's rules (`match`), and answers where
+ * a team may respawn and which zones its bots should go for.
  */
 export class ZoneMode {
   readonly rules: ZoneRules;
+  readonly kind: ModeKind;
+  readonly match: MatchRules;
   private readonly bases: Record<Team, SpawnPoint[]>;
   private readonly baseCenter: Record<Team, THREE.Vector3>;
   private readonly counts = new Map<ZoneState, { blue: number; red: number }>();
@@ -45,9 +110,16 @@ export class ZoneMode {
   constructor(
     map: MapDef,
     private readonly bus: GameBus,
-    opts: ZoneRulesOptions = {},
+    opts: ZoneModeOptions = {},
   ) {
     this.rules = new ZoneRules(map.zones ?? [], opts);
+    this.kind = pickMode(map, opts.mode);
+    this.match = createMatch(this.kind, map, opts);
+    this.match.start(this.rules);
+    // Who went down, for the Frontline attack timer.
+    bus.on('combat:kill', (e) => {
+      if (e.victimTeam) this.match.onDown(e.victimTeam);
+    });
     const own = (team: Team) => map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
     this.bases = { blue: own('blue'), red: own('red') };
     const center = (list: SpawnPoint[]) =>
@@ -60,18 +132,18 @@ export class ZoneMode {
   }
 
   get ended(): boolean {
-    return this.rules.ended;
+    return this.match.ended;
   }
 
   /** A member of `team` died. */
   onDeath(team: Team): void {
-    if (this.rules.ended) return;
-    this.rules.onDeath(team);
-    if (this.rules.winner) this.bus.emit('match:ended', { winner: this.rules.winner });
+    if (this.match.ended) return;
+    this.match.onDeath(team);
+    if (this.match.winner) this.bus.emit('match:ended', { winner: this.match.winner });
   }
 
   step(dt: number, everyone: Iterable<Presence>): void {
-    if (this.rules.ended) return;
+    if (this.match.ended) return;
     const list = [...everyone].filter((p) => p.alive);
     const events = this.rules.update(dt, (z) => {
       let c = this.counts.get(z);
@@ -84,6 +156,19 @@ export class ZoneMode {
       if (e.type === 'captured') this.bus.emit('zone:captured', { zone: e.zone, team: e.team });
       else this.bus.emit('zone:neutralized', { zone: e.zone, team: e.team });
     }
+    for (const e of this.match.step(dt, this.rules, events)) this.bus.emit('mode:event', e);
+    if (this.match.winner) this.bus.emit('match:ended', { winner: this.match.winner });
+  }
+
+  /** Zone ids as the HUD lists them for `team`: its side of the map first (Zone mode: by id). */
+  order(team: Team): string[] {
+    const o = this.match.order(team);
+    return o.length ? o : this.rules.zones.map((z) => z.id);
+  }
+
+  /** Base centre of `team` (spawn points' middle). */
+  base(team: Team): THREE.Vector3 {
+    return this.baseCenter[team];
   }
 
   zone(id: string): ZoneState | undefined {
@@ -95,9 +180,14 @@ export class ZoneMode {
     return this.rules.zones.find((z) => ZoneRules.inside(z, p)) ?? null;
   }
 
-  /** Base first, then owned zones in id order. */
+  /**
+   * Base first, then owned zones in id order. With one sector open
+   * (frontline / conquest) nobody spawns in it: the defenders come from the
+   * sectors behind, the attackers from what they hold.
+   */
   spawnOptions(team: Team): SpawnOption[] {
-    return [{ id: 'base', underAttack: false }, ...this.rules.owned(team).map((z) => ({ id: z.id, underAttack: ZoneRules.underAttack(z) }))];
+    const zones = this.rules.owned(team).filter((z) => this.kind === 'zone' || z.locked);
+    return [{ id: 'base', underAttack: false }, ...zones.map((z) => ({ id: z.id, underAttack: ZoneRules.underAttack(z) }))];
   }
 
   /**
@@ -107,7 +197,7 @@ export class ZoneMode {
   spawnPoint(team: Team, choice: string, nav: NavWorld | null, rand = Math.random): { pos: THREE.Vector3; yaw: number } {
     const z = choice === 'base' ? undefined : this.zone(choice);
     let pos: THREE.Vector3;
-    if (!z || z.owner !== team) {
+    if (!z || z.owner !== team || (this.kind !== 'zone' && !z.locked)) {
       const list = this.bases[team];
       const sp = list[Math.floor(rand() * list.length)];
       pos = sp ? new THREE.Vector3(...sp.pos) : this.baseCenter[team].clone();
@@ -137,8 +227,9 @@ export class ZoneMode {
   private faceYaw(team: Team, from: THREE.Vector3): number {
     let target: THREE.Vector3 | null = null;
     let best = Infinity;
+    const open = this.rules.zones.some((z) => !z.locked && z.owner !== team);
     for (const z of this.rules.zones) {
-      if (z.owner === team) continue;
+      if (z.owner === team || (open && z.locked)) continue;
       const d = Math.hypot(z.x - from.x, z.z - from.z);
       if (d > 3 && d < best) {
         best = d;
@@ -151,11 +242,15 @@ export class ZoneMode {
 
   /**
    * Zones worth going for, best first: owned zones under attack, then neutral,
-   * then enemy zones; nearer to this team's base ranks higher.
+   * then enemy zones; nearer to this team's base ranks higher. Locked zones
+   * (frontline / conquest: everything but the sector fought over) are not.
    */
   objectives(team: Team): Objective[] {
     const base = this.baseCenter[team];
+    // With one sector in play, its zones (also while it waits to open).
+    const focus = this.match.focus();
     const scored = this.rules.zones
+      .filter((z) => (focus ? focus.includes(z.id) : !z.locked))
       .map((z) => {
         const d = Math.hypot(z.x - base.x, z.z - base.z);
         let s: number;
@@ -165,7 +260,8 @@ export class ZoneMode {
         else s = 1.6;
         return { z, s: s - d / 400 };
       })
-      .filter((e) => e.s > -0.5)
+      // Zone mode drops far-off quiet held zones; with one sector open, every open zone counts.
+      .filter((e) => e.s > -0.5 || this.kind !== 'zone')
       .sort((a, b) => b.s - a.s);
     const enemy = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
     return scored.map(({ z }) => ({

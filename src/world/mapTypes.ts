@@ -131,6 +131,17 @@ export interface TargetDef {
   yaw?: number;
 }
 
+/** Sectors are lists of zone ids; a sector is held when one side holds all of its zones. */
+export interface MapModes {
+  /** The mode a bot match starts in when none is asked for (default zone). */
+  default?: 'zone' | 'frontline' | 'conquest';
+  zone?: { target?: number };
+  /** Sectors from the blue base to the red one; attack timer and match clock in seconds. */
+  frontline?: { sectors: string[][]; attackTime?: number; matchTime?: number };
+  /** Sectors in attack order. */
+  conquest?: { attacker: Team; sectors: string[][] };
+}
+
 export interface MapDef {
   meta: { id: string; name: string; version: 2 };
   world: {
@@ -150,6 +161,8 @@ export interface MapDef {
   };
   spawns: SpawnPoint[];
   zones?: ZoneDef[];
+  /** Which modes the map plays and their numbers (see modes/matchRules.ts); without it: Zone only. */
+  modes?: MapModes;
   objects: MapObject[];
   buildings?: BuildingDef[];
   props?: PropDef[];

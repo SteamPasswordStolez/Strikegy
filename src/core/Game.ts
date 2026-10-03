@@ -59,6 +59,7 @@ import { HUD } from '@/ui/HUD';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
 import { ZoneMode } from '@/modes/ZoneMode';
+import { ConquestRules, DominationRules, FrontlineRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
 import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
@@ -113,9 +114,9 @@ export interface GameOptions {
   viewModels?: string[];
   /** Bot match settings; null = practice range (targets only). */
   bots?: BotOptions | null;
-  /** Game mode; 'auto' = Zone when the map has zones and there are bots. */
-  mode?: 'auto' | 'zone' | 'skirmish';
-  /** Zone mode ticket count per team. */
+  /** Game mode; 'auto' = the map's default zone mode when it has zones and there are bots. */
+  mode?: 'auto' | ModeKind | 'skirmish';
+  /** Tickets for every side that has them (Frontline, Conquest attackers) instead of the per-soldier numbers. */
   tickets?: number;
   /** Carry `loadout` (every weapon, for testing) instead of the class loadout picked on the deploy screen. */
   sandbox?: boolean;
@@ -489,8 +490,8 @@ export class Game {
     this.mapImage = paintMap(map, terrain.boundary, 2048);
     this.minimap = new Minimap(this.hud.root, this.mapImage);
     const mode = this.options.mode ?? 'auto';
-    if ((mode === 'zone' || (mode === 'auto' && this.bots)) && (map.zones?.length ?? 0) > 0) {
-      this.setupZoneMode(map, terrain);
+    if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
+      this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
       this.setupFortifications(map, terrain, water, built);
       if (this.bots && !this.options.sandbox) this.setupVehicles(map);
     }
@@ -2588,9 +2589,14 @@ export class Game {
   // ---------------------------------------------------------------------------
   // Zone mode
 
-  private setupZoneMode(map: MapDef, terrain: Terrain): void {
-    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets });
+  private setupZoneMode(map: MapDef, terrain: Terrain, mode: ModeKind | undefined): void {
+    const b = this.options.bots;
+    const teamSize = { blue: 0, red: 0 };
+    teamSize[PLAYER_TEAM] = (b?.allies ?? 0) + 1;
+    teamSize[otherTeam(PLAYER_TEAM)] = b?.enemies ?? 1;
+    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize });
     this.zoneMode = zm;
+    if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
     const side = (team: Team): Side => (team === PLAYER_TEAM ? 'ally' : 'enemy');
     this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
@@ -2609,6 +2615,7 @@ export class Game {
       this.bots?.replan('blue');
       this.bots?.replan('red');
     });
+    this.bus.on('mode:event', (e) => this.onModeEvent(e));
     this.bus.on('match:ended', (e) => this.endMatch(e.winner));
 
     // Scoreboard stats.
@@ -2702,12 +2709,12 @@ export class Game {
   }
 
   private fillScoreboard(): void {
-    const tickets = this.zoneMode?.rules.tickets;
+    const zm = this.zoneMode;
     const alive = new Map<number, boolean>();
     for (const c of this.combatants()) alive.set(c.id, c.alive);
     const side = (team: Team): ScoreboardSide => ({
       label: t(team === PLAYER_TEAM ? 'hud.allies' : 'hud.enemies'),
-      tickets: tickets ? tickets[team] : null,
+      stat: zm ? this.modeScoreLine(team) : null,
       kills: this.scores.totals(team).kills,
       rows: this.scores.table(team).map((r) => ({
         name: r.name,
@@ -2755,6 +2762,8 @@ export class Game {
       spawnAt: (bot, objective) => this.spawnFor(bot.team, this.botSpawnKey(bot, objective), bot.id),
       revivePlayer: (by, health) => this.revivePlayer(by.name, health),
     };
+    // One sector open: start on what each side holds nearest the fight (the base can be far from it).
+    if (zm && zm.kind !== 'zone') bots.redeployAll();
     this.bus.on('combatant:resupplied', (e) => this.scores.resupply(e.byId));
     // Revives: points to the reviver, a line in the feed for the player's side.
     this.bus.on('combatant:revived', (e) => {
@@ -3044,7 +3053,7 @@ export class Game {
       wait: Math.max(0, this.respawnTimer),
       note: this.squadWiped ? t('squad.wiped') : null,
       title: `${t('deploy.title')} · ${this.mapName}`,
-      tickets: zm ? { allies: zm.rules.tickets[PLAYER_TEAM], enemies: zm.rules.tickets[otherTeam(PLAYER_TEAM)] } : null,
+      matchLine: zm ? this.deployMatchLine() : null,
       zones: zm ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: tone(z.owner), pushing: z.pushing !== null })) : [],
       enemyBase: (() => {
         const b = this.baseCenter(otherTeam(PLAYER_TEAM));
@@ -3063,7 +3072,10 @@ export class Game {
     const zm = this.zoneMode;
     if (!zm) return null;
     const side = (team: Team | null): Side | null => (team === null ? null : team === PLAYER_TEAM ? 'ally' : 'enemy');
-    const zones = zm.zones.map((z) => ({ id: z.id, owner: side(z.owner), progress: ZoneRules.progress(z), pushing: side(z.pushing), contested: z.contested }));
+    const zones = zm.order(PLAYER_TEAM).map((id) => {
+      const z = zm.zone(id)!;
+      return { id: z.id, owner: side(z.owner), progress: ZoneRules.progress(z), pushing: side(z.pushing), contested: z.contested, locked: z.locked };
+    });
     let here: ZoneHud['here'] = null;
     const inZone = this.player.alive ? zm.zoneAt(this.player.feet) : null;
     if (inZone) {
@@ -3082,20 +3094,116 @@ export class Game {
       const lean = PLAYER_TEAM === 'blue' ? inZone.control : -inZone.control;
       here = { id: inZone.id, text, progress: (lean + 1) / 2, tone };
     }
-    return { tickets: { allies: zm.rules.tickets[PLAYER_TEAM], enemies: zm.rules.tickets[otherTeam(PLAYER_TEAM)] }, zones, here };
+    return { score: { allies: this.modeScore(PLAYER_TEAM), enemies: this.modeScore(otherTeam(PLAYER_TEAM)) }, zones, status: this.modeStatus(), here };
+  }
+
+  /** The number beside the zone bar: domination points, tickets, or ∞ for a side without tickets. */
+  private modeScore(team: Team): string {
+    const m = this.zoneMode!.match;
+    if (m instanceof DominationRules) return String(m.points[team]);
+    const tk = m.tickets[team];
+    return tk === null ? '∞' : String(tk);
+  }
+
+  /** "Tickets 312" / "Points 240" for the scoreboard. */
+  private modeScoreLine(team: Team): string | null {
+    const m = this.zoneMode!.match;
+    if (m instanceof DominationRules) return `${t('hud.points')} ${m.points[team]}`;
+    const tk = m.tickets[team];
+    return tk === null ? null : `${t('hud.tickets')} ${tk}`;
+  }
+
+  /** The mode line under the zone bar: target, attack timer, sector. */
+  private modeStatus(): ZoneHud['status'] {
+    const m = this.zoneMode!.match;
+    const mode = t(`mode.${m.kind}`);
+    if (m instanceof DominationRules) return { text: `${mode} · ${t('mode.target').replace('{n}', String(m.target))}`, tone: 'neutral', urgent: false };
+    if (m instanceof FrontlineRules) {
+      const clock = t('mode.clock').replace('{t}', clockText(m.clock));
+      if (!m.attacker) return { text: `${mode} · ${t('mode.opening')} ${clockText(m.timeLeft)} · ${clock}`, tone: 'neutral', urgent: false };
+      const ours = m.attacker === PLAYER_TEAM;
+      return {
+        text: `${t(ours ? 'mode.attack' : 'mode.defend')} ${clockText(m.timeLeft)} · ${clock}`,
+        tone: ours ? 'ally' : 'enemy',
+        urgent: m.timeLeft < 30,
+      };
+    }
+    if (m instanceof ConquestRules) {
+      const ours = m.attacker === PLAYER_TEAM;
+      const sector = t('mode.sector').replace('{n}', String(Math.min(m.active + 1, m.sectors.length))).replace('{total}', String(m.sectors.length));
+      if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${sector}`, tone: 'neutral', urgent: false };
+      return { text: `${mode} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${sector}`, tone: ours ? 'ally' : 'enemy', urgent: false };
+    }
+    return null;
+  }
+
+  /** The deploy screen's line: mode and score both sides. */
+  private deployMatchLine(): string {
+    const s = this.modeStatus();
+    const score = `${t('hud.allies')} ${this.modeScore(PLAYER_TEAM)}  ·  ${this.modeScore(otherTeam(PLAYER_TEAM))} ${t('hud.enemies')}`;
+    return s ? `${s.text}  ·  ${score}` : score;
+  }
+
+  /** Mode news on screen, and bots re-plan when the fight moves. */
+  private onModeEvent(e: ModeEvent): void {
+    const zm = this.zoneMode!;
+    const ours = (team: Team) => team === PLAYER_TEAM;
+    const m = zm.match;
+    if (e.type === 'time') {
+      const up = e.delta > 0;
+      const text = t(up ? 'mode.timeUp' : 'mode.timeDown').replace('{n}', String(Math.abs(e.delta)));
+      // Good news for whoever it helps.
+      this.hud.notify(text, up === ours(e.attacker) ? 'ally' : 'enemy');
+      return;
+    }
+    if (e.type === 'refill') {
+      this.hud.notify(t('mode.refill').replace('{n}', String(e.tickets)), ours(e.team) ? 'ally' : 'enemy');
+      return;
+    }
+    if (e.type === 'attack' && m instanceof ConquestRules && e.reason === 'opening') {
+      this.hud.notify(t(ours(e.attacker) ? 'mode.goAttack' : 'mode.goDefend'), ours(e.attacker) ? 'ally' : 'enemy');
+      this.audio.zoneCue(ours(e.attacker));
+    } else if (e.type === 'sector') {
+      if (m instanceof ConquestRules) {
+        const n = String(e.sector + 1);
+        this.hud.notify(t(ours(e.team) ? 'mode.breakthrough' : 'mode.breached').replace('{n}', n), ours(e.team) ? 'ally' : 'enemy');
+        this.audio.zoneCue(ours(e.team));
+      }
+    } else if (m instanceof FrontlineRules) {
+      // A new attack: say who attacks and why.
+      const weAttack = ours(e.attacker);
+      const key =
+        e.reason === 'opening' ? (weAttack ? 'mode.openingLost' : 'mode.openingWon')
+        : e.reason === 'captured' ? (weAttack ? 'mode.sectorLost' : 'mode.sectorWon')
+        : weAttack ? 'mode.heldUs' : 'mode.heldThem';
+      this.hud.notify(t(key), weAttack === (e.reason === 'held') ? 'ally' : 'enemy');
+      this.audio.zoneCue(weAttack === (e.reason === 'held'));
+    }
+    if (this.spawnKey.startsWith('zone:') && zm.zone(this.spawnKey.slice(5))?.owner !== PLAYER_TEAM) this.spawnKey = 'base';
+    this.bots?.replan('blue');
+    this.bots?.replan('red');
+  }
+
+  /** The result screen's second line. */
+  private resultLine(): string {
+    const m = this.zoneMode!.match;
+    const us = PLAYER_TEAM;
+    const them = otherTeam(us);
+    const reason = t(`match.reason.${m.reason ?? 'tickets'}`);
+    if (m instanceof DominationRules) return `${reason} · ${t('hud.points')} ${m.points[us]} : ${m.points[them]}`;
+    const tk = (team: Team) => (m.tickets[team] === null ? '∞' : String(m.tickets[team]));
+    return `${reason} · ${t('match.tickets')} ${tk(us)} : ${tk(them)}`;
   }
 
   private endMatch(winner: Team): void {
     if (this.matchOver) return;
     this.matchOver = true;
-    const zm = this.zoneMode!;
     const won = winner === PLAYER_TEAM;
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      const tk = zm.rules.tickets;
-      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), `${t('match.tickets')} ${tk[PLAYER_TEAM]} : ${tk[otherTeam(PLAYER_TEAM)]}`, t('match.again'));
+      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'));
       // Final standings under the result.
       if (this.bots) {
         this.fillScoreboard();
@@ -3140,6 +3248,12 @@ export class Game {
  * bots leave a freed slot alone for `playerFirst` s.
  */
 const BOT_JETS = { first: 12, every: 4, nearBase: 90, respawn: 0.6, playerFirst: 15 };
+/** m:ss for the mode timers. */
+function clockText(sec: number): string {
+  const s = Math.max(0, Math.ceil(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 /** Seconds a jet that just came in can't be locked by missiles. */
 const JET_LOCK_GRACE = 10;
 /** Player jet cannon: fires at the crosshair within this angle of the nose (rad), onto an enemy aircraft this close to the crosshair. */

@@ -15,11 +15,10 @@ function run(rules: ZoneRules, seconds: number, blue: number, red: number, zone 
 }
 
 describe('ZoneRules', () => {
-  it('orders zones by id and starts neutral with full tickets', () => {
-    const r = new ZoneRules(defs, { tickets: 50 });
+  it('orders zones by id and starts neutral and open', () => {
+    const r = new ZoneRules(defs);
     expect(r.zones.map((z) => z.id)).toEqual(['A', 'B']);
-    expect(r.zones.every((z) => z.owner === null && z.control === 0)).toBe(true);
-    expect(r.tickets).toEqual({ blue: 50, red: 50 });
+    expect(r.zones.every((z) => z.owner === null && z.control === 0 && !z.locked)).toBe(true);
   });
 
   it('captures a neutral zone in stepSec when uncontested', () => {
@@ -58,14 +57,15 @@ describe('ZoneRules', () => {
     expect(ZoneRules.progress(a)).toBeCloseTo(0.25, 1);
   });
 
-  it('ends when a team runs out of tickets (deaths only)', () => {
-    const r = new ZoneRules(defs, { tickets: 2 });
-    r.onDeath('red');
-    expect(r.ended).toBe(false);
-    r.onDeath('red');
-    expect(r.winner).toBe('blue');
-    r.onDeath('blue');
-    expect(r.tickets.blue).toBe(2);
+  it("doesn't move a locked zone but still counts who stands in it", () => {
+    const r = new ZoneRules(defs, { stepSec: 8 });
+    ZoneRules.force(r.zones[0]!, 'red');
+    r.zones[0]!.locked = true;
+    expect(run(r, 20, 3, 0)).toEqual([]);
+    expect(r.zones[0]!.control).toBe(-1);
+    expect(r.zones[0]!.blue).toBe(3);
+    expect(r.zones[0]!.pushing).toBeNull();
+    expect(r.zones[0]!.contested).toBe(false);
   });
 
   it('checks the capture area in 2D with a height limit', () => {

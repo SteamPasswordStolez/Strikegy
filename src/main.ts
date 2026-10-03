@@ -11,8 +11,8 @@ const botsParam = params.get('bots') ?? '4v5';
 const botMatch = /^(\d+)v(\d+)$/.exec(botsParam);
 const difficulty = (['easy', 'normal', 'hard'] as const).find((d) => d === params.get('difficulty')) ?? 'normal';
 const bots = botMatch ? { allies: Number(botMatch[1]), enemies: Number(botMatch[2]), difficulty } : null;
-// ?mode=zone|skirmish (default: Zone on maps with zones); ?tickets=200
-const mode = (['zone', 'skirmish'] as const).find((m) => m === params.get('mode')) ?? 'auto';
+// ?mode=zone|frontline|conquest|skirmish (default: the map's own mode on maps with zones); ?tickets=300
+const mode = (['zone', 'frontline', 'conquest', 'skirmish'] as const).find((m) => m === params.get('mode')) ?? 'auto';
 const tickets = Number(params.get('tickets')) || undefined;
 
 Game.create(container, {

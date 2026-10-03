@@ -38,7 +38,7 @@ export interface HudFrame {
   killedBy: string | null;
   /** Team kill counts (bot matches), or null on the range. */
   score: { allies: number; enemies: number } | null;
-  /** Zone mode: tickets and zone states from the player's point of view. */
+  /** Zone modes: score, zone states and the mode line from the player's point of view. */
   zone: ZoneHud | null;
   /** The player's squad (bot matches). */
   squad: SquadHud | null;
@@ -55,8 +55,12 @@ export interface HudFrame {
 export type Side = 'ally' | 'enemy';
 
 export interface ZoneHud {
-  tickets: { allies: number; enemies: number };
-  zones: { id: string; owner: Side | null; progress: number; pushing: Side | null; contested: boolean }[];
+  /** Beside the bar: domination points or tickets ('∞' for a side without). */
+  score: { allies: string; enemies: string };
+  /** Our side of the map first; locked zones can't be taken right now. */
+  zones: { id: string; owner: Side | null; progress: number; pushing: Side | null; contested: boolean; locked: boolean }[];
+  /** Under the bar: the mode, its target or attack timer. */
+  status: { text: string; tone: Side | 'neutral'; urgent: boolean } | null;
   /** The zone the player stands in, with a status line. */
   here: { id: string; text: string; progress: number; tone: Side | 'neutral' } | null;
 }
@@ -418,20 +422,23 @@ export class HUD {
   }
 
   private updateZone(z: ZoneHud | null, dead: boolean): void {
+    const st = z?.status ?? null;
     const barKey = z
-      ? `${z.tickets.allies}|${z.tickets.enemies}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${Math.round(s.progress * 20)}`).join()}`
+      ? `${z.score.allies}|${z.score.enemies}|${st ? `${st.text}${st.tone}${st.urgent}` : ''}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${s.locked}${Math.round(s.progress * 20)}`).join()}`
       : '';
     this.set('zoneBar', barKey, () => {
       this.zoneBar.style.display = z ? 'flex' : 'none';
+      this.root.classList.toggle('has-zone-status', !!st);
       if (!z) return;
       this.zoneBar.replaceChildren();
-      el('div', 'zb-tickets zb-ally', this.zoneBar).textContent = String(z.tickets.allies);
+      el('div', 'zb-tickets zb-ally', this.zoneBar).textContent = z.score.allies;
       for (const s of z.zones) {
-        const cell = el('div', `zb-zone own-${s.owner ?? 'none'}${s.contested ? ' contested' : ''}`, this.zoneBar);
+        const cell = el('div', `zb-zone own-${s.owner ?? 'none'}${s.contested ? ' contested' : ''}${s.locked ? ' locked' : ''}`, this.zoneBar);
         if (s.pushing) el('div', `zb-fill push-${s.pushing}`, cell).style.height = `${Math.round(s.progress * 100)}%`;
         el('span', 'zb-id', cell).textContent = s.id;
       }
-      el('div', 'zb-tickets zb-enemy', this.zoneBar).textContent = String(z.tickets.enemies);
+      el('div', 'zb-tickets zb-enemy', this.zoneBar).textContent = z.score.enemies;
+      if (st) el('div', `zb-status tone-${st.tone}${st.urgent ? ' urgent' : ''}`, this.zoneBar).textContent = st.text;
     });
     const here = z?.here && !dead ? z.here : null;
     const hereKey = here ? `${here.id}|${here.text}|${here.tone}|${Math.round(here.progress * 100)}` : '';

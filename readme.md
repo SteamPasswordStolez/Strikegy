@@ -7,7 +7,8 @@
 ```bash
 npm install
 npm run dev        # http://localhost:5173  (?map=sandbox&bots=4v5&difficulty=normal, ?bots=0 = 사격장)
-                   # Zone: ?map=iron_gate&bots=12v12 (&tickets=200, &mode=skirmish = 거점 없이 교전만)
+                   # 모드: ?map=iron_gate&bots=12v12 (&mode=zone|frontline|conquest, 없으면 맵 기본값;
+                   #   &tickets=300 = 티켓 직접 지정, &mode=skirmish = 거점 없이 교전만)
                    # 맵: iron_gate, ardennes(겨울 숲), lyon(초원 10v10), bilbao(시가지, 정복전용), persia(사막 1v1~2v2)
 npm run maps       # scripts/maps/*.mjs로 생성형 맵 JSON 다시 만들기
 npm test           # Vitest 단위 테스트
@@ -78,7 +79,7 @@ src/
   ai/        NavWorld(recast navmesh), Bot(인지·판단·이동·사격), brain(utility AI), aim·difficulty, BotManager(분대·엄폐·사격 판정), SoldierModel(절차적 스킨 메시)
   render/    Renderer, PostFX(후처리), visualProfiles(하늘/IBL/태양), surfaces·textures(절차적 PBR), Effects
   world/     mapTypes(맵 스키마 v2), validateMap, buildBlockout, terrain(지형·다각형 경계), buildings(진입 가능한 건물 생성), backdrop(원경 지형·나무)
-  modes/     zoneRules(티켓·점령 순수 로직), ZoneMode(스폰·봇 목표), zoneVisuals(거점 표시)
+  modes/     zoneRules(점령 순수 로직), matchRules(Zone 점수·Frontline·Conquest 규칙), ZoneMode(모드 선택·스폰·봇 목표), zoneVisuals(거점 표시)
   audio/     AudioSystem(임시 합성 SFX)
   ui/        HUD, Overlay
   i18n/      ko.json / en.json

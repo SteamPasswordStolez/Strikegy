@@ -495,6 +495,8 @@ const map = {
   },
   spawns,
   zones,
+  // Modes (owner, 2026-10-03): the Conquest map — red attacks from the east, A -> B -> C.
+  modes: { default: 'conquest', zone: { target: 300 }, conquest: { attacker: 'red', sectors: [['A'], ['B'], ['C']] } },
   objects,
   buildings,
   props,

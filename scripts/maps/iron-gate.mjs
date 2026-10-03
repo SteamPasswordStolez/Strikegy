@@ -840,6 +840,9 @@ const map = {
   },
   spawns,
   zones,
+  // Modes (owner, 2026-10-03): Frontline D -> A -> B -> C -> E (A, B and C sit about
+  // level between the bases; ordered by how much nearer the blue base they are); Zone to 500.
+  modes: { zone: { target: 500 }, frontline: { sectors: [['D'], ['A'], ['B'], ['C'], ['E']] } },
   objects,
   buildings,
   props,

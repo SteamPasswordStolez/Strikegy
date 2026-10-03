@@ -24,7 +24,8 @@ export interface DeployState {
   /** Extra text under the countdown (e.g. squad wiped). */
   note: string | null;
   title: string;
-  tickets: { allies: number; enemies: number } | null;
+  /** Mode, its state and the score both sides, or null outside a zone match. */
+  matchLine: string | null;
   zones: { id: string; x: number; z: number; r: number; owner: Tone; pushing: boolean }[];
   /** Enemy base marker (not a spawn option). */
   enemyBase: { x: number; z: number } | null;
@@ -152,7 +153,7 @@ export class DeployScreen {
     this.state = s;
     if (!this.visible) return;
     this.title.textContent = s.title;
-    this.tickets.textContent = s.tickets ? `${t('hud.allies')} ${s.tickets.allies}  ·  ${s.tickets.enemies} ${t('hud.enemies')}` : '';
+    this.tickets.textContent = s.matchLine ?? '';
     this.note.textContent = s.note ?? '';
     const ready = s.wait <= 0;
     this.button.disabled = !ready;

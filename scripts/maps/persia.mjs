@@ -458,6 +458,8 @@ const map = {
   },
   spawns,
   zones,
+  // Modes (owner, 2026-10-03): Frontline A -> B -> C (B starts neutral); Zone to 200.
+  modes: { zone: { target: 200 }, frontline: { sectors: [['A'], ['B'], ['C']], matchTime: 900, attackTime: 180 } },
   objects,
   buildings,
   props,

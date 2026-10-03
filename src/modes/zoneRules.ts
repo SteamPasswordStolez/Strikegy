@@ -1,14 +1,14 @@
 import type { Team, ZoneDef } from '@/world/mapTypes';
 
 /**
- * Zone mode rules (pure logic, no rendering).
+ * Zone capture (pure logic, no rendering); how a match is won is up to the
+ * mode on top (`matchRules.ts`).
  *
- * - Each team starts with a ticket pool; every death costs one ticket and the
- *   team that runs out loses. Holding zones does not drain tickets: owning a
- *   zone lets the team respawn there.
  * - Zones start neutral. Capturing is two-step like p1: an enemy zone is first
  *   neutralized, then taken. Speed scales with the head-count advantage inside
  *   the zone; a full step takes `stepSec` seconds when only one team is present.
+ * - A locked zone can't be taken (frontline / conquest: only the sector fought
+ *   over is open); who stands in it is still counted.
  */
 
 export interface ZoneState {
@@ -27,6 +27,8 @@ export interface ZoneState {
   contested: boolean;
   blue: number;
   red: number;
+  /** Can't be taken right now. */
+  locked: boolean;
 }
 
 export interface ZoneEvent {
@@ -37,11 +39,10 @@ export interface ZoneEvent {
 }
 
 export interface ZoneRulesOptions {
-  tickets?: number;
   stepSec?: number;
 }
 
-export const ZONE_DEFAULTS = { tickets: 200, stepSec: 8 };
+export const ZONE_DEFAULTS = { stepSec: 8 };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
 /**
@@ -53,15 +54,10 @@ export const ZONE_HEIGHT = 12;
 
 export class ZoneRules {
   readonly zones: ZoneState[];
-  readonly tickets: Record<Team, number>;
-  readonly startTickets: number;
-  winner: Team | null = null;
   private readonly stepSec: number;
 
   constructor(defs: readonly ZoneDef[], opts: ZoneRulesOptions = {}) {
-    this.startTickets = opts.tickets ?? ZONE_DEFAULTS.tickets;
     this.stepSec = opts.stepSec ?? ZONE_DEFAULTS.stepSec;
-    this.tickets = { blue: this.startTickets, red: this.startTickets };
     this.zones = [...defs]
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((d) => ({
@@ -76,18 +72,15 @@ export class ZoneRules {
         contested: false,
         blue: 0,
         red: 0,
+        locked: false,
       }));
   }
 
-  get ended(): boolean {
-    return this.winner !== null;
-  }
-
-  /** A member of `team` died. */
-  onDeath(team: Team): void {
-    if (this.ended) return;
-    this.tickets[team] = Math.max(0, this.tickets[team] - 1);
-    if (this.tickets[team] === 0) this.winner = team === 'blue' ? 'red' : 'blue';
+  /** Sets a zone's owner outright (full control, nobody pushing; no events). */
+  static force(zone: ZoneState, owner: Team | null): void {
+    zone.owner = owner;
+    zone.control = owner ? SIGN[owner] : 0;
+    zone.pushing = null;
   }
 
   /** Is `p` (feet position) inside the zone's capture area? */
@@ -103,14 +96,13 @@ export class ZoneRules {
    */
   update(dt: number, counts: (zone: ZoneState) => { blue: number; red: number }): ZoneEvent[] {
     const events: ZoneEvent[] = [];
-    if (this.ended) return events;
     for (const z of this.zones) {
       const { blue, red } = counts(z);
       z.blue = blue;
       z.red = red;
-      z.contested = blue > 0 && blue === red;
+      z.contested = !z.locked && blue > 0 && blue === red;
       z.pushing = null;
-      if (blue === red) continue;
+      if (blue === red || z.locked) continue;
       const adv: Team = blue > red ? 'blue' : 'red';
       // Where this team is taking the zone: neutral first if an enemy owns it.
       const target = z.owner === null || z.owner === adv ? SIGN[adv] : 0;

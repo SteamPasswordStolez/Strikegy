@@ -543,6 +543,8 @@ const map = {
   },
   spawns,
   zones,
+  // Modes (owner, 2026-10-03): Zone to 300 (no clear front line: all three zones lie along the creek).
+  modes: { zone: { target: 300 } },
   objects,
   buildings,
   props,

@@ -668,6 +668,9 @@ const map = {
   },
   spawns,
   zones,
+  // Modes (owner, 2026-10-03): Frontline by rows — west bank A, E / the river B, D, F /
+  // east bank C, G (the river row starts neutral); Zone to 700.
+  modes: { zone: { target: 700 }, frontline: { sectors: [['A', 'E'], ['B', 'D', 'F'], ['C', 'G']] } },
   objects,
   buildings,
   props,

@@ -62,20 +62,20 @@ export class ZoneVisuals {
       // The flag rises with control; neutral zones fly a pale flag at the bottom.
       const leaning: Team | null = z.control > 0.001 ? 'blue' : z.control < -0.001 ? 'red' : null;
       const colorTeam = z.owner ?? leaning;
-      const key = `${z.owner}|${leaning}|${Math.round(progress * 40)}|${z.contested}`;
+      const key = `${z.owner}|${leaning}|${Math.round(progress * 40)}|${z.contested}|${z.locked}`;
       if (key !== m.key) {
         m.key = key;
         m.flag.position.y = (m.flag.userData.base as number) + 1.2 + (POLE_H - 2) * progress;
         (m.flag.material as THREE.MeshStandardMaterial).color.setHex(colorTeam ? COLORS[colorTeam] : COLORS.neutral);
         (m.ring.material as THREE.MeshBasicMaterial).color.setHex(z.owner ? COLORS[z.owner] : COLORS.neutral);
-        drawLabel(m.labelCanvas, z.id, z.owner ? COLORS[z.owner] : COLORS.neutral, z.contested);
+        drawLabel(m.labelCanvas, z.id, z.owner ? COLORS[z.owner] : COLORS.neutral, z.contested, z.locked);
         ((m.label.material as THREE.SpriteMaterial).map as THREE.CanvasTexture).needsUpdate = true;
       }
       // Flutter.
       m.flag.rotation.y = Math.sin(time * 2.1 + z.x) * 0.25;
-      // Ring pulses while the zone is being taken.
+      // Ring pulses while the zone is being taken; faint while it is locked (not in play).
       const mat = m.ring.material as THREE.MeshBasicMaterial;
-      mat.opacity = z.pushing ? 0.45 + 0.25 * Math.sin(time * 6) : 0.4;
+      mat.opacity = z.locked ? 0.14 : z.pushing ? 0.45 + 0.25 * Math.sin(time * 6) : 0.4;
       // Labels of zones far away shrink a little so close ones stand out.
       const d = Math.hypot(viewer.x - z.x, viewer.z - z.z);
       const s = d < 30 ? 0.06 : 0.048;
@@ -119,9 +119,10 @@ function ringMesh(zone: ZoneState, groundAt: (x: number, z: number) => number): 
   return mesh;
 }
 
-function drawLabel(c: HTMLCanvasElement, id: string, color: number, contested: boolean): void {
+function drawLabel(c: HTMLCanvasElement, id: string, color: number, contested: boolean, locked: boolean): void {
   const g = c.getContext('2d')!;
   g.clearRect(0, 0, 64, 64);
+  g.globalAlpha = locked ? 0.45 : 1;
   g.beginPath();
   g.arc(32, 32, 26, 0, Math.PI * 2);
   g.fillStyle = 'rgba(10,12,14,0.55)';

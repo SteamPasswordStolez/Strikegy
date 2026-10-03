@@ -867,6 +867,11 @@ export class BotManager implements BotServices {
     bot.spawn(pos, Math.atan2(ex, ez), loadout(bot));
   }
 
+  /** Everyone alive back onto a spawn the mode picks (once at the start, when the mode's hooks are in). */
+  redeployAll(): void {
+    for (const e of this.entries) if (e.bot.alive && !e.bot.riding) this.respawn(e.bot);
+  }
+
   /** New model on respawn (the bot may carry a different weapon). */
   private refreshModel(e: BotEntry): void {
     e.model.dispose();
