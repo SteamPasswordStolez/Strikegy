@@ -55,8 +55,8 @@ export interface HudFrame {
 export type Side = 'ally' | 'enemy';
 
 export interface ZoneHud {
-  /** Beside the bar: domination points or tickets ('∞' for a side without). */
-  score: { allies: string; enemies: string };
+  /** Beside the bar: domination points or tickets ('∞' for a side without), and how full each side's gauge is (0..1). */
+  score: { allies: string; enemies: string; fill: { allies: number; enemies: number } };
   /** Our side of the map first; locked zones can't be taken right now. */
   zones: { id: string; owner: Side | null; progress: number; pushing: Side | null; contested: boolean; locked: boolean }[];
   /** Under the bar: the mode, its target or attack timer. */
@@ -86,6 +86,14 @@ interface DamageArc {
   life: number;
 }
 
+/** An equipment chip: [key] name ×count (no cap on touch screens). */
+function chip(box: HTMLElement, key: string, label: string, count: number | string): void {
+  box.replaceChildren();
+  if (key) el('span', 'keycap', box).textContent = key;
+  el('span', 'chip-label', box).textContent = label;
+  el('span', 'chip-count', box).textContent = typeof count === 'number' ? `×${count}` : count;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   e.className = cls;
@@ -103,12 +111,14 @@ export class HUD {
   private crosshair: HTMLDivElement;
   private hitmarker: HTMLDivElement;
   private ammo: HTMLDivElement;
+  private ammoMag: HTMLSpanElement;
+  private ammoRes: HTMLSpanElement;
   private weapon: HTMLDivElement;
   private grenade: HTMLDivElement;
   private gadgetEl: HTMLDivElement;
   private rpEl: HTMLDivElement;
-  private reloadBar: HTMLDivElement;
-  private reloadFill: HTMLDivElement;
+  private magBar: HTMLDivElement;
+  private magFill: HTMLDivElement;
   private health: HTMLDivElement;
   private healthFill: HTMLDivElement;
   private fps: HTMLDivElement;
@@ -166,20 +176,27 @@ export class HUD {
     this.damageRing = el('div', 'damage-ring', this.root);
     this.feed = el('div', 'killfeed', this.root);
 
+    // Weapon block: name, magazine over reserve, a magazine gauge (reload
+    // progress while reloading), then the throwables / gadget as key chips.
     const bottomRight = el('div', 'hud-br', this.root);
     this.weapon = el('div', 'hud-weapon', bottomRight);
     this.ammo = el('div', 'hud-ammo', bottomRight);
-    this.reloadBar = el('div', 'hud-reload', bottomRight);
-    this.reloadFill = el('div', 'hud-reload-fill', this.reloadBar);
-    this.grenade = el('div', 'hud-grenade', bottomRight);
-    this.gadgetEl = el('div', 'hud-grenade hud-gadget', bottomRight);
-    this.rpEl = el('div', 'hud-grenade hud-rp', bottomRight);
+    this.ammoMag = el('span', 'ammo-mag', this.ammo);
+    this.ammoRes = el('span', 'ammo-res', this.ammo);
+    this.magBar = el('div', 'hud-magbar', bottomRight);
+    this.magFill = el('div', 'hud-magbar-fill', this.magBar);
+    const kit = el('div', 'hud-kit', bottomRight);
+    this.gadgetEl = el('div', 'hud-chip hud-gadget', kit);
+    this.grenade = el('div', 'hud-chip hud-grenade', kit);
+    this.rpEl = el('div', 'hud-rp', bottomRight);
 
+    // Soldier block: squad, health number and bar, medkit.
     const bottomLeft = el('div', 'hud-bl', this.root);
-    this.health = el('div', 'hud-health', bottomLeft);
-    const bar = el('div', 'hud-healthbar', bottomLeft);
+    const vitals = el('div', 'hud-vitals', bottomLeft);
+    this.health = el('div', 'hud-health', vitals);
+    const bar = el('div', 'hud-healthbar', vitals);
     this.healthFill = el('div', 'hud-healthbar-fill', bar);
-    this.medkit = el('div', 'hud-medkit', bottomLeft);
+    this.medkit = el('div', 'hud-chip hud-medkit', bottomLeft);
     this.fps = el('div', 'hud-fps', this.root);
     this.death = el('div', 'hud-death', this.root);
     this.score = el('div', 'hud-score', this.root);
@@ -226,7 +243,9 @@ export class HUD {
     const cls = (name: string, team?: 'blue' | 'red' | null) => (name === 'You' ? 'kf-you' : team ? `kf-name kf-${team}` : 'kf-name');
     const a = el('span', cls(k.attacker, k.attackerTeam), row);
     a.textContent = k.attacker === 'You' ? t('feed.you') : k.attacker;
-    if (k.weapon || k.headshot) el('span', 'kf-weapon', row).textContent = `${k.weapon ? `[${k.weapon}]` : ''}${k.headshot ? ' ◎' : ''}`;
+    if (k.attacker === 'You' || k.victim === 'You') row.classList.add('mine');
+    if (k.weapon) el('span', 'kf-weapon', row).textContent = k.weapon;
+    if (k.headshot) el('span', 'kf-hs', row).textContent = '◎';
     el('span', cls(k.victim, k.victimTeam), row).textContent = k.victim === 'You' ? t('feed.you') : k.victim;
     this.feedItems.push({ el: row, life: FEED_LIFE });
     while (this.feedItems.length > FEED_MAX) this.feedItems.shift()!.el.remove();
@@ -291,37 +310,51 @@ export class HUD {
     });
 
     this.set('weapon', f.weaponName, () => (this.weapon.textContent = f.weaponName));
-    const ammoText = f.ammo === 0 && f.reserve === 0 ? t('hud.noAmmo') : `${f.ammo} / ${Number.isFinite(f.reserve) ? f.reserve : '∞'}`;
-    this.set('ammo', ammoText, () => {
-      this.ammo.textContent = ammoText;
+    const empty = f.ammo === 0 && f.reserve === 0;
+    const reserve = Number.isFinite(f.reserve) ? String(f.reserve) : '∞';
+    const ammoKey = empty ? 'empty' : `${f.ammo}/${reserve}`;
+    this.set('ammo', ammoKey, () => {
+      this.ammoMag.textContent = empty ? t('hud.noAmmo') : String(f.ammo);
+      this.ammoRes.textContent = empty ? '' : reserve;
       this.ammo.classList.toggle('low', f.ammo <= Math.ceil(f.magSize * 0.25));
+      this.ammo.classList.toggle('empty', empty);
     });
-    this.set('reloading', String(f.reloading), () => this.reloadBar.classList.toggle('on', f.reloading));
-    if (f.reloading) this.reloadFill.style.width = `${Math.round(f.reloadProgress * 100)}%`;
-    const gText = `${f.grenadeLabel} ×${f.grenadeCount}`;
-    this.set('grenade', gText, () => {
-      this.grenade.textContent = gText;
+    // The gauge: rounds left in the magazine, or the reload's progress.
+    const gauge = f.reloading ? f.reloadProgress : f.magSize > 0 ? f.ammo / f.magSize : 0;
+    this.set('magbar', `${f.reloading}:${Math.round(gauge * 60)}`, () => {
+      this.magBar.classList.toggle('reloading', f.reloading);
+      this.magFill.style.width = `${Math.round(gauge * 100)}%`;
+    });
+    this.set('grenade', `${f.grenadeLabel}:${f.grenadeCount}`, () => {
+      chip(this.grenade, this.touch ? '' : 'G', f.grenadeLabel, f.grenadeCount);
       this.grenade.classList.toggle('empty', f.grenadeCount === 0);
     });
     const gd = f.gadget;
-    const gdText = gd ? `${gd.key}${gd.label} ×${gd.count}` : '';
-    this.set('gadget', `${gdText}:${gd?.out}`, () => {
-      this.gadgetEl.textContent = gdText;
+    this.set('gadget', gd ? `${gd.key}${gd.label}:${gd.count}:${gd.out}` : '', () => {
       this.gadgetEl.style.display = gd ? '' : 'none';
-      this.gadgetEl.classList.toggle('empty', !!gd && gd.count === 0);
-      this.gadgetEl.classList.toggle('on', !!gd?.out);
+      if (!gd) return;
+      chip(this.gadgetEl, gd.key.replace(/\s*·\s*$/, ''), gd.label, gd.count);
+      this.gadgetEl.classList.toggle('empty', gd.count === 0);
+      this.gadgetEl.classList.toggle('on', gd.out);
     });
 
     this.set('rp', f.rp ?? '', () => {
-      this.rpEl.textContent = f.rp ?? '';
       this.rpEl.style.display = f.rp ? '' : 'none';
+      this.rpEl.replaceChildren();
+      if (!f.rp) return;
+      // "Squad RP 550 · B": the key goes in a cap.
+      const m = /^(.*) · (\S+)$/.exec(f.rp);
+      el('span', 'rp-text', this.rpEl).textContent = m ? m[1]! : f.rp;
+      if (m) el('span', 'keycap', this.rpEl).textContent = m[2]!;
     });
 
     const hp = Math.ceil(f.health);
     this.set('hp', String(hp), () => {
-      this.health.textContent = `${t('hud.hp')} ${hp}`;
+      this.health.replaceChildren();
+      el('span', 'hp-num', this.health).textContent = String(hp);
+      el('span', 'hp-label', this.health).textContent = t('hud.hp');
       this.healthFill.style.width = `${hp}%`;
-      this.healthFill.classList.toggle('low', hp <= 35);
+      this.root.classList.toggle('hp-low', hp <= 35);
     });
 
     // Hurt vignette: persistent with low health plus a pulse on each hit.
@@ -368,7 +401,7 @@ export class HUD {
     this.set('medkit', kitKey, () => {
       this.medkit.style.display = f.medkit ? '' : 'none';
       if (!f.medkit) return;
-      this.medkit.textContent = `✚ ${f.medkit.text}`;
+      chip(this.medkit, this.touch ? '' : 'Q', '✚', f.medkit.text);
       this.medkit.classList.toggle('ready', f.medkit.ready);
     });
     const pr = f.prompt;
@@ -376,7 +409,11 @@ export class HUD {
     this.set('prompt', prKey, () => {
       this.promptEl.classList.toggle('on', !!pr);
       if (!pr) return;
-      this.promptText.textContent = pr.text;
+      // "E · Get in: jeep" / "E (hold) · Revive ...": the key in a cap.
+      this.promptText.replaceChildren();
+      const keyed = [t('act.holdE'), t('act.pressE')].find((k) => pr.text.startsWith(`${k} · `));
+      if (keyed) el('span', 'keycap', this.promptText).textContent = keyed;
+      el('span', 'prompt-what', this.promptText).textContent = keyed ? pr.text.slice(keyed.length + 3) : pr.text;
       this.promptEl.classList.toggle('holding', pr.progress !== null);
       this.promptFill.style.width = `${Math.round((pr.progress ?? 0) * 100)}%`;
     });
@@ -424,20 +461,27 @@ export class HUD {
   private updateZone(z: ZoneHud | null, dead: boolean): void {
     const st = z?.status ?? null;
     const barKey = z
-      ? `${z.score.allies}|${z.score.enemies}|${st ? `${st.text}${st.tone}${st.urgent}` : ''}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${s.locked}${Math.round(s.progress * 20)}`).join()}`
+      ? `${z.score.allies}|${z.score.enemies}|${Math.round(z.score.fill.allies * 100)}|${Math.round(z.score.fill.enemies * 100)}|${st ? `${st.text}${st.tone}${st.urgent}` : ''}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${s.locked}${Math.round(s.progress * 20)}`).join()}`
       : '';
     this.set('zoneBar', barKey, () => {
       this.zoneBar.style.display = z ? 'flex' : 'none';
       this.root.classList.toggle('has-zone-status', !!st);
       if (!z) return;
       this.zoneBar.replaceChildren();
-      el('div', 'zb-tickets zb-ally', this.zoneBar).textContent = z.score.allies;
+      // Score blocks: the number over a gauge that drains (tickets) or fills (points) toward the middle.
+      const score = (side: 'ally' | 'enemy', text: string, fill: number) => {
+        const box = el('div', `zb-tickets zb-${side}`, this.zoneBar);
+        el('div', 'zb-num', box).textContent = text;
+        el('i', '', el('div', 'zb-gauge', box)).style.width = `${Math.round(Math.max(0, Math.min(1, fill)) * 100)}%`;
+      };
+      score('ally', z.score.allies, z.score.fill.allies);
+      const zones = el('div', 'zb-zones', this.zoneBar);
       for (const s of z.zones) {
-        const cell = el('div', `zb-zone own-${s.owner ?? 'none'}${s.contested ? ' contested' : ''}${s.locked ? ' locked' : ''}`, this.zoneBar);
+        const cell = el('div', `zb-zone own-${s.owner ?? 'none'}${s.contested ? ' contested' : ''}${s.locked ? ' locked' : ''}${s.pushing ? ` pushing push-by-${s.pushing}` : ''}`, zones);
         if (s.pushing) el('div', `zb-fill push-${s.pushing}`, cell).style.height = `${Math.round(s.progress * 100)}%`;
         el('span', 'zb-id', cell).textContent = s.id;
       }
-      el('div', 'zb-tickets zb-enemy', this.zoneBar).textContent = z.score.enemies;
+      score('enemy', z.score.enemies, z.score.fill.enemies);
       if (st) el('div', `zb-status tone-${st.tone}${st.urgent ? ' urgent' : ''}`, this.zoneBar).textContent = st.text;
     });
     const here = z?.here && !dead ? z.here : null;

@@ -527,7 +527,8 @@ export class Game {
     this.physics.step();
 
     const touch = !!this.touch;
-    this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? t('start.hintTouch') : t('start.hint'));
+    this.overlay.setContext(this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName);
+    this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? t('start.hintTouch') : t('start.hint'), 'menu');
     this.overlay.root.addEventListener('click', () => this.resume());
     document.addEventListener('pointerlockchange', () => {
       if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
@@ -735,10 +736,11 @@ export class Game {
   }
 
   private pause(): void {
-    if (!this.started) return;
+    // Not over the result screen: ending the match lets go of the mouse, which used to pause.
+    if (!this.started || this.matchOver) return;
     this.running = false;
     this.touch?.setVisible(false);
-    this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? t('start.hintTouch') : t('start.hint'));
+    this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? t('start.hintTouch') : t('start.hint'), 'menu');
     if (this.touch) this.overlay.setExtra(this.layoutButton());
   }
 
@@ -3094,7 +3096,27 @@ export class Game {
       const lean = PLAYER_TEAM === 'blue' ? inZone.control : -inZone.control;
       here = { id: inZone.id, text, progress: (lean + 1) / 2, tone };
     }
-    return { score: { allies: this.modeScore(PLAYER_TEAM), enemies: this.modeScore(otherTeam(PLAYER_TEAM)) }, zones, status: this.modeStatus(), here };
+    const us = PLAYER_TEAM;
+    const them = otherTeam(us);
+    return {
+      score: { allies: this.modeScore(us), enemies: this.modeScore(them), fill: { allies: this.modeFill(us), enemies: this.modeFill(them) } },
+      zones,
+      status: this.modeStatus(),
+      here,
+    };
+  }
+
+  /** Most tickets each side has had (the gauge's full mark; Conquest refills can raise it). */
+  private readonly ticketPeak: Record<Team, number> = { blue: 1, red: 1 };
+
+  /** How full a side's score gauge is: points toward the target, or tickets left. */
+  private modeFill(team: Team): number {
+    const m = this.zoneMode!.match;
+    if (m instanceof DominationRules) return m.points[team] / m.target;
+    const tk = m.tickets[team];
+    if (tk === null) return 1;
+    this.ticketPeak[team] = Math.max(this.ticketPeak[team], tk);
+    return tk / this.ticketPeak[team];
   }
 
   /** The number beside the zone bar: domination points, tickets, or ∞ for a side without tickets. */
@@ -3198,12 +3220,13 @@ export class Game {
   private endMatch(winner: Team): void {
     if (this.matchOver) return;
     this.matchOver = true;
+    this.touch?.setVisible(false);
     const won = winner === PLAYER_TEAM;
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'));
+      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'), won ? 'win' : 'loss');
       // Final standings under the result.
       if (this.bots) {
         this.fillScoreboard();
