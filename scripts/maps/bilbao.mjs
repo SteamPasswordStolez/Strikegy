@@ -261,6 +261,85 @@ const barricade = (x, z, yaw) => {
   sandbags(ax + 4, az - 2, 4, 0);
 }
 
+// --- Second pass (2026-10-02, owner: "a bit dull") --------------------------------------
+// Height and interiors over the square (a 5-floor block and an office block,
+// placed before the street fill so they get their room), burnt buses half
+// across the main streets (one lane left for vehicles), a wreck on the quay,
+// sandbags at the bridgehead, carts in the alley quarter.
+/** Nearest point on a street's centre line and the street's direction there. */
+const streetAt = (st, x, z) => {
+  let best = Infinity;
+  let out = null;
+  for (let i = 0; i < st.pts.length - 1; i++) {
+    const [ax, az] = st.pts[i];
+    const [bx, bz] = st.pts[i + 1];
+    const dx = bx - ax;
+    const dz = bz - az;
+    const L = Math.hypot(dx, dz) || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (L * L)));
+    const d = Math.hypot(ax + dx * t - x, az + dz * t - z);
+    if (d < best) {
+      best = d;
+      out = { x: ax + dx * t, z: az + dz * t, tx: dx / L, tz: dz / L };
+    }
+  }
+  return out;
+};
+/** A big building facing `toward` from about `dist` away, the first angle with room for it. */
+const landmark = ([cx, cz], dist, w, d, extra) => {
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2;
+    for (const r of [dist, dist + 6, dist + 12]) {
+      const x = cx + Math.cos(a) * r;
+      const z = cz + Math.sin(a) * r;
+      const yaw = (Math.atan2(Math.cos(a), Math.sin(a)) * 180) / Math.PI;
+      if (!inMap(x, z, Math.hypot(w, d) / 2 + 2) || nearStreet(x, z, Math.min(w, d) / 2 + 0.5) || nearRiver(x, z, 6) || nearRail(x, z, Math.hypot(w, d) / 2)) continue;
+      if (!roomFor(x, z, w, d, yaw, 3) || !free(x, z, Math.min(w, d) / 2, false)) continue;
+      if (Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < Math.min(w, d) / 2 + 12)) continue;
+      addBuilding({ pos: [round(x), round(z)], size: [w, d], rot: round(yaw, 1), ...extra });
+      return true;
+    }
+  }
+  return false;
+};
+landmark(Z.B, 26, 22, 14, { style: 'tower', floors: 5, doors: 'sn' });
+landmark([(Z.A[0] + Z.B[0]) / 2, (Z.A[1] + Z.B[1]) / 2], 14, 24, 14, { style: 'office', floors: 3, doors: 'sn' });
+/** A burnt bus along one side of a street, leaving the other lane open. */
+const busBlock = (st, x, z, side = 1) => {
+  const p = streetAt(st, x, z);
+  if (!p) return;
+  const off = (st.w / 2 - 1.6) * side;
+  const bx = p.x - p.tz * off;
+  const bz = p.z + p.tx * off;
+  if (!free(bx, bz, 3)) return;
+  const yaw = round((Math.atan2(p.tx, p.tz) * 180) / Math.PI + 12 * side, 1);
+  obj(block(bx, bz, 2.55, 3.1, 12, { yaw, type: 'wall', material: 'metal', color: '#4a3b30', model: 'bus' }), 3);
+  sandbags(bx + p.tx * 8, bz + p.tz * 8, 3, yaw + 90);
+};
+busBlock(streets[0], ...P(940, 680), 1);
+busBlock(streets[1], ...P(790, 360), -1);
+busBlock(streets[0], ...P(560, 640), -1);
+// Quay: a tank that got as far as the river; sandbags at the bridge's north end.
+{
+  const x = BRIDGE_X + 22;
+  const z = quayZ(x) - 9;
+  if (free(x, z, 4)) obj(block(x, z, 3.6, 2.6, 7.4, { yaw: 80, material: 'metal', color: '#4c5243', model: 'tankWreck' }), 4);
+  for (const side of [-1, 1]) {
+    const sx = BRIDGE_X + side * 8;
+    const sz = quayZ(sx) - 7;
+    if (free(sx, sz, 2.5)) sandbags(sx, sz, 4, 0);
+  }
+}
+// Carts and crates in the alley quarter's lanes.
+for (const [st, q] of [[streets[7], P(740, 425)], [streets[7], P(900, 418)], [streets[8], P(688, 320)]]) {
+  const p = streetAt(st, q[0], q[1]);
+  if (!p) continue;
+  const x = p.x - p.tz * (st.w / 2 + 0.6);
+  const z = p.z + p.tx * (st.w / 2 + 0.6);
+  if (!free(x, z, 2)) continue;
+  obj(block(x, z, 1.8, 1.7, 4.2, { yaw: round((Math.atan2(p.tx, p.tz) * 180) / Math.PI + 8, 1), material: 'wood', color: '#6e543a', model: 'cart' }), 2);
+}
+
 // --- Gun battery on the west hill ---------------------------------------------------
 {
   const [hx, hz] = HILL;
@@ -384,9 +463,10 @@ for (let i = 0; i < 6; i++) {
   spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 4), 0.1, round(RED[1] + Math.sin(a) * 5)], yaw: -90 });
 }
 const zones = [
-  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 16 },
-  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 15 },
-  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 16 },
+  // About 1.4x the first pass (owner, 2026-10-02: bigger zones), as far as the streets allow.
+  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 24 },
+  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 22 },
+  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 22 },
 ];
 
 let area = 0;

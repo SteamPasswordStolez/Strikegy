@@ -305,6 +305,80 @@ const mudWall = (pts, gaps = [], height = 1.4, thick = 0.5) => {
   reserve(fx, fz, 7);
 }
 
+// --- Second pass (2026-10-02, owner: "a bit dull"): more to fight over and around ---
+// The invasion's wrecks, a ruined caravanserai by the oasis, carts in the market,
+// broken walls along the approaches so nobody crosses open sand for long.
+const spot = (x, z, r, roadPad = 1.2) => inMap(x, z, 2) && !nearRoad(x, z, roadPad) && !nearRiver(x, z, 0.8) && free(x, z, r);
+/** The free spot nearest (x, z) within `reach` (rings of 1.5 m), or null. */
+const near = (x, z, r, reach = 9, roadPad = 1.2) => {
+  for (let d = 0; d <= reach; d += 1.5) {
+    for (let k = 0; k < Math.max(1, Math.round(d * 2)); k++) {
+      const a = (k / Math.max(1, Math.round(d * 2))) * Math.PI * 2;
+      if (spot(x + Math.cos(a) * d, z + Math.sin(a) * d, r, roadPad)) return [x + Math.cos(a) * d, z + Math.sin(a) * d];
+    }
+  }
+  return null;
+};
+const wreck = (x, z, yaw) => {
+  const p = near(x, z, 4);
+  if (p) obj(block(p[0], p[1], 3.6, 2.6, 7.4, { yaw, material: 'metal', color: '#5e5a48', model: 'tankWreck' }), 4);
+};
+const cart = (x, z, yaw) => {
+  const p = near(x, z, 2, 6, 0.5);
+  if (p) obj(block(p[0], p[1], 1.8, 1.7, 4.2, { yaw, material: 'wood', color: '#8a6a48', model: 'cart' }), 2);
+};
+{
+  // Oasis, west bank: the caravanserai, roofless, its walls breached; a well in the yard.
+  const [bx, bz] = Z.B;
+  // Clear of the village's outer houses (its walls would shut their doors).
+  const [kx, kz] = near(bx - 26, bz - 14, 10.5, 14, 1.5) ?? [bx - 26, bz + 22];
+  const yard = [[kx - 8, kz - 7], [kx + 8, kz - 7], [kx + 8, kz + 7], [kx - 8, kz + 7], [kx - 8, kz - 7]];
+  mudWall(yard, [[5, 8.5], [19, 22], [37, 40], [50, 53]], 2.6, 0.7);
+  obj(block(kx, kz, 1.6, 1.4, 1.6, { material: 'concrete', color: '#cdb998', model: 'pump' }), 1.5);
+  stall(kx - 4, kz + 3, 90);
+  stall(kx + 4, kz - 3, 270);
+  reserve(kx, kz, 9);
+  // East bank: the column that tried the bridge first.
+  wreck(bx + 25, bz + 9, -75);
+  const tp = near(bx + 15, bz + 15, 3.5);
+  if (tp) obj(block(tp[0], tp[1], 2.4, 2.6, 5, { yaw: 35, material: 'metal', color: '#4a4538', model: 'truck' }), 3.5);
+  cart(bx - 9, bz + 16, 60);
+  // Low walls on both banks to fight the bridge from.
+  mudWall([[bx - 14, bz + 2], [bx - 18, bz + 8]], [], 1.2);
+  mudWall([[bx + 13, bz - 3], [bx + 17, bz - 9]], [], 1.2);
+}
+{
+  // Village: carts in the market lanes, rubble walls on the way in.
+  const [ax, az] = Z.A;
+  for (const [dx, dz, yaw] of [[-27, 9, 10], [-16, 1, 80], [10, 13, 140], [12, -12, 30]]) cart(ax + dx, az + dz, yaw);
+  mudWall([[ax + 22, az + 8], [ax + 26, az + 12]], [], 1.1);
+  mudWall([[ax + 4, az + 30], [ax - 3, az + 33]], [], 1.1);
+}
+{
+  // Fort: the tank that broke the north wall, stopped in the breach.
+  const [cx, cz] = Z.C;
+  wreck(cx + 5, cz - 27, 8);
+  wreck(cx - 30, cz + 12, 100);
+  cart(cx - 26, cz - 6, 20);
+}
+// Broken walls along the roads between the zones (cover every 20-30 m of open sand).
+for (const [x, z, yaw, len] of [
+  [...P(560, 400), 30, 5],
+  [...P(600, 480), -20, 4],
+  [...P(880, 590), 80, 5],
+  [...P(960, 650), 0, 4],
+  [...P(600, 180), 60, 4],
+  [...P(930, 205), -10, 5],
+  [...P(1120, 740), 45, 4],
+  [...P(380, 250), 20, 4],
+]) {
+  if (!spot(x, z, len / 2 + 0.5, 1.5)) continue;
+  const c = Math.cos((yaw * Math.PI) / 180);
+  const s = Math.sin((yaw * Math.PI) / 180);
+  mudWall([[x - (c * len) / 2, z + (s * len) / 2], [x + (c * len) / 2, z - (s * len) / 2]], [], 1.2);
+  reserve(x, z, len / 2 + 0.5);
+}
+
 // --- Rocks ---------------------------------------------------------------------
 // Boulders in the canyon and on the slopes, along the wadi.
 const rockSpots = [];
@@ -351,9 +425,10 @@ for (let i = 0; i < 4; i++) {
   spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 3), 0.1, round(RED[1] + Math.sin(a) * 3)], yaw: -60 });
 }
 const zones = [
-  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 12 },
-  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 10 },
-  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 12 },
+  // About 1.5x the first pass (owner, 2026-10-02: bigger zones); the map itself is small.
+  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 18 },
+  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 15 },
+  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 18 },
 ];
 
 let area = 0;

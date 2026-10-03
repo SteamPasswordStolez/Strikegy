@@ -263,7 +263,7 @@ const inField = (x, z, pad = 0) =>
   addBuilding({ pos: [ax - 22, az + 12], size: [11, 8], style: 'house', floors: 1, doors: 'ne', rot: -8, material: 'concrete', color: '#a99c86' });
   addBuilding({ pos: [ax + 22, az + 15], size: [10, 8], style: 'house', floors: 2, doors: 'nw', rot: 10, material: 'concrete', color: '#bcae95' });
   addBuilding({ pos: [ax + 2, az - 30], size: [9, 7], style: 'shed', doors: 's', rot: 0 });
-  addBuilding({ pos: [ax + 8, az + 32], size: [9, 7], style: 'shed', doors: 'n', rot: 5 });
+  addBuilding({ pos: [ax + 8, az + 32], size: [9, 7], style: 'shed', doors: 'ns', rot: 5 });
   // Ruined outbuilding: broken walls round an open floor.
   objects.push(...wallLine([[ax - 6, az + 20], [ax - 14, az + 20], [ax - 14, az + 27]], { height: 2.2, thick: 0.5, material: 'concrete', color: '#9d9483', gaps: [[4, 5.5]] }));
   // Farmyard wall with gates on the lanes.
@@ -365,6 +365,90 @@ for (let i = 0; i < 12; i++) {
   for (const [dx, dz, yaw] of [[18, -22, 0], [-18, -22, 0]]) sandbags(rx + dx, rz + dz, 5, yaw);
 }
 
+// --- Second pass (2026-10-02, owner: "a bit dull") --------------------------------------
+// A front line along the creek's north bank (blue dug in at each bridgehead),
+// tanks knocked out crossing the southern fields, a watermill by the east bridge,
+// a hamlet with an inn on the northern road, carts at the farms.
+const spot = (x, z, r, roadPad = 1.5) => inMap(x, z, 3) && !nearRoad(x, z, roadPad) && !nearRiver(x, z, 1) && free(x, z, r);
+/** The free spot nearest (x, z) within `reach`, or null. */
+const near = (x, z, r, reach = 12, roadPad = 1.5) => {
+  for (let d = 0; d <= reach; d += 1.5) {
+    const n = Math.max(1, Math.round(d * 2));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      if (spot(x + Math.cos(a) * d, z + Math.sin(a) * d, r, roadPad)) return [x + Math.cos(a) * d, z + Math.sin(a) * d];
+    }
+  }
+  return null;
+};
+const wreck = (x, z, yaw) => {
+  const p = near(x, z, 4.2);
+  if (p) obj(block(p[0], p[1], 3.6, 2.6, 7.4, { yaw, material: 'metal', color: '#4f5640', model: 'tankWreck' }), 4.2);
+};
+const cart = (x, z, yaw) => {
+  const p = near(x, z, 2.2, 8, 0.8);
+  if (p) obj(block(p[0], p[1], 1.8, 1.7, 4.2, { yaw, material: 'wood', color: '#7a5a3c', model: 'cart' }), 2.2);
+};
+// Bridgehead positions on the north bank: sandbag arcs either side of the road, facing south.
+for (const b of bridges) {
+  const north = b.cz < 0 ? 1 : -1; // the crossing direction that points north (-z)
+  const [hx, hz] = [b.x - north * b.cx * (b.len / 2 + 9), b.z - north * b.cz * (b.len / 2 + 9)];
+  const [tx, tz] = riverDir(b.x, b.z);
+  const yaw = (Math.atan2(-tx, -tz) * 180) / Math.PI + 90;
+  for (const side of [-1, 1]) {
+    const p = near(hx + tx * side * 9, hz + tz * side * 9, 2.5, 6, 1);
+    if (p) sandbags(p[0], p[1], 4, yaw);
+    const q = near(hx + tx * side * 17, hz + tz * side * 17, 2.5, 6, 1);
+    if (q) sandbags(q[0], q[1], 3, yaw + side * 25);
+  }
+}
+// Tanks that didn't make it across, and one that did.
+wreck(...P(700, 790), 20);
+wreck(...P(980, 760), -35);
+wreck(...P(460, 700), 60);
+wreck(...P(860, 420), 160);
+// Carts at the farms.
+for (const [dx, dz, yaw] of [[14, 8, 30], [-10, 18, 110]]) cart(Z.A[0] + dx, Z.A[1] + dz, yaw);
+for (const [dx, dz, yaw] of [[8, 10, 70], [-6, -14, 10]]) cart(Z.B[0] + dx, Z.B[1] + dz, yaw);
+cart(Z.C[0] - 14, Z.C[1] + 10, 45);
+// Watermill on the north bank between the middle and east bridges, its wheel on the river side.
+{
+  const [rx, rz] = onRiver(...P(940, 625));
+  const [tx, tz] = riverDir(rx, rz);
+  const n = tz > 0 ? [tz, -tx] : [-tz, tx]; // the bank-normal that points north (-z)
+  const off = RIVER_CLEAR + 5.5;
+  const [mx, mz] = [rx + n[0] * off, rz + n[1] * off];
+  const rot = round((Math.atan2(-tz, tx) * 180) / Math.PI, 1);
+  if (free(mx, mz, 6)) {
+    addBuilding({ pos: [round(mx), round(mz)], size: [12, 9], style: 'mill', floors: 2, doors: 'ew', rot, material: 'concrete', color: '#b1a48e' });
+    // The wheel against the river-side wall: kit -x side to the wall, so its +x points at the river.
+    const [wx, wz] = [mx - n[0] * (4.5 + 0.8), mz - n[1] * (4.5 + 0.8)];
+    const wyaw = round((Math.atan2(n[1], -n[0]) * 180) / Math.PI, 1);
+    objects.push(block(wx, wz, 1.4, 6, 6, { yaw: wyaw, type: 'wall', material: 'wood', color: '#5e4a36', model: 'millWheel', sink: 1.2 }));
+    hay(mx + tx * 9, mz + tz * 9, 20);
+    cart(mx - tx * 9 + n[0] * 3, mz - tz * 9 + n[1] * 3, rot + 90);
+  }
+}
+// Hamlet on the northern road between the farm and the orchard: an inn at the crossroads, two houses, a well.
+{
+  const [hx, hz] = P(1000, 262);
+  const homes = [
+    [0, 0, 16, 10, 'inn', 2, 'sw', 0],
+    [-20, 6, 9, 8, 'house', 2, 'e', 12],
+    [18, 10, 9, 8, 'house', 1, 'w', -10],
+  ];
+  for (const [dx, dz, w, d, style, floors, doors, rot] of homes) {
+    const x = hx + dx;
+    const z = hz + dz;
+    if (!inMap(x, z, 6) || nearRoad(x, z, Math.min(w, d) / 2 + 1) || !free(x, z, Math.hypot(w, d) / 2)) continue;
+    addBuilding({ pos: [round(x), round(z)], size: [w, d], style, floors, doors, rot, ...(style === 'house' || style === 'inn' ? { material: 'concrete', color: '#bfb196' } : {}) });
+  }
+  const wp = near(hx - 6, hz + 14, 1.2, 6, 1);
+  if (wp) obj(block(wp[0], wp[1], 1.6, 1.4, 1.6, { material: 'concrete', color: '#8f8a80', model: 'pump' }), 1.5);
+  cart(hx + 10, hz - 4, 80);
+  stoneWall([[hx - 30, hz + 22], [hx - 8, hz + 26], [hx + 14, hz + 28]], [[10, 13]]);
+}
+
 // Crates and barrels around the zones.
 const crateModels = ['wooden_military_crate', 'old_military_crate', 'barrel_03', 'ammo_box'];
 for (const [zx, zz] of Object.values(Z)) {
@@ -428,9 +512,10 @@ for (let i = 0; i < 6; i++) {
   spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 6), 0.1, round(RED[1] - 4 + Math.sin(a) * 4)], yaw: 0 });
 }
 const zones = [
-  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 20 },
-  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 18 },
-  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 18 },
+  // About 1.5x the first pass (owner, 2026-10-02: bigger zones).
+  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 30 },
+  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 27 },
+  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 27 },
 ];
 
 let area = 0;
