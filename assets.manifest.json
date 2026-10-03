@@ -1,5 +1,5 @@
 {
-  "source": "Poly Haven (https://polyhaven.com) — all assets CC0",
+  "source": "Poly Haven (https://polyhaven.com) \u2014 all assets CC0",
   "textures": {
     "rocky_trail": {
       "res": "1k",
@@ -104,10 +104,5 @@
       "error": 0.01,
       "texSize": 512
     }
-  },
-  "mixamo": {
-    "source": "Mixamo (Adobe, https://www.mixamo.com), downloaded by the owner 2026-10-03; Adobe's terms allow use inside a game, not redistribution of the raw files",
-    "raw": "assets-src/mixamo (git-ignored, never published): Swat.fbx (character, T-pose, with skin), Pro Rifle Pack.zip (49 rifle locomotion / death clips + X Bot), Reloading.fbx, Firing Rifle.fbx, Hit Reaction.fbx (FBX Binary, 30 fps, no keyframe reduction)",
-    "built": "public/assets/soldier/soldier.bin by scripts/assets/build-soldier.mjs: the game's own packed format (merged mesh, 2 LODs, texture atlas inside the file, quantised clips)"
   }
 }

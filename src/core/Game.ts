@@ -44,7 +44,6 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
-import { HumanModel, loadSoldierPack, soldierPack } from '@/ai/HumanModel';
 import { wishDirection } from '@/player/movement';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
@@ -275,7 +274,7 @@ export class Game {
   private chute: THREE.Group | null = null;
   private readonly chuteVel = new THREE.Vector3();
   /** The player's own body, seen from the driver's third-person view. */
-  private rider: SoldierModel | HumanModel | null = null;
+  private rider: SoldierModel | null = null;
   /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
   private gadget: GadgetId | null = null;
   private gadgetCount = 0;
@@ -355,8 +354,6 @@ export class Game {
       this.surfaces.preload(SURFACE_KINDS, ASSET_BASE),
       this.audio.preload(`${ASSET_BASE}sounds/`),
       this.models.load(this.options.viewModels ?? []),
-      // Bots wear the packed character when it loads; otherwise the procedural soldier.
-      this.options.bots ? loadSoldierPack(`${ASSET_BASE}soldier/soldier.bin`) : null,
     ]);
     try {
       [this.physics, map] = await Promise.all([PhysicsWorld.create(), fetchMap(this.options.mapUrl)]);
@@ -2332,7 +2329,7 @@ export class Game {
       return;
     }
     if (!this.rider) {
-      this.rider = soldierPack() ? new HumanModel(PLAYER_TEAM, this.weapons.def) : new SoldierModel(PLAYER_TEAM, this.weapons.def);
+      this.rider = new SoldierModel(PLAYER_TEAM, this.weapons.def);
       this.renderer.scene.add(this.rider.root);
     }
     const eye = r.v.seatEye(r.seat, new THREE.Vector3(), alpha);
