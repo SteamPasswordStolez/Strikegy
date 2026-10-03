@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Team } from '@/world/mapTypes';
-import type { WeaponDef } from '@/weapons/weaponData';
+import { WEAPONS, type WeaponDef } from '@/weapons/weaponData';
 import { buildGun } from '@/weapons/gunModels';
 
 /**
@@ -65,33 +65,6 @@ const PALETTES: Record<Team, Palette> = {
   red: { uniform: 0x444a37, uniformDark: 0x33382b, gear: 0x2f3228, helmet: 0x363a29, skin: 0x9c7458, boots: 0x231f1a, glove: 0x23211d, mark: 0xc9402f },
 };
 
-/**
- * A distant soldier: a few coloured boxes (legs, torso, arms with a rifle,
- * helmeted head) in one geometry, drawn instanced for everyone far away of
- * a side (no skinning, one draw call). Feet at 0, facing -Z.
- */
-export function buildFarSoldier(team: Team): THREE.BufferGeometry {
-  const pal = PALETTES[team];
-  const parts: [THREE.BufferGeometry, number][] = [
-    [box(0.36, 0.86, 0.22, 0, 0.43, 0), pal.uniformDark],
-    [box(0.46, 0.62, 0.28, 0, 1.18, 0), pal.uniform],
-    [box(0.5, 0.2, 0.3, 0, 1.38, -0.02), pal.gear],
-    [box(0.12, 0.5, 0.12, -0.28, 1.15, -0.12), pal.uniform],
-    [box(0.12, 0.5, 0.12, 0.28, 1.15, -0.12), pal.uniform],
-    [box(0.06, 0.08, 0.8, 0.12, 1.32, -0.45), 0x222222],
-    [box(0.2, 0.22, 0.22, 0, 1.62, 0), pal.skin],
-    [box(0.28, 0.12, 0.3, 0, 1.76, 0), pal.helmet],
-  ];
-  const geos = parts.map(([g, color]) => {
-    const c = new THREE.Color(color);
-    const n = g.getAttribute('position').count;
-    const cols = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) cols.set([c.r, c.g, c.b], i * 3);
-    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-    return g.toNonIndexed();
-  });
-  return mergeGeometries(geos)!;
-}
 
 /** Where the gun's grip (trigger origin) sits in model space. */
 const GRIP = new THREE.Vector3(0.09, 1.4, -0.12);
@@ -103,7 +76,13 @@ function box(w: number, h: number, d: number, x: number, y: number, z: number): 
 }
 
 /** Soft-edged box for the near model: cloth and pouches, not crates (radius scales with the smallest side). */
+/** Building the far crowd's model: fewer segments, square boxes (see buildFarSoldierPose). */
+let lowDetail = false;
+/** Segment count: halved (at least 4) for the far crowd. */
+const seg = (n: number): number => (lowDetail ? Math.max(4, Math.round(n / 2)) : n);
+
 function rbox(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
+  if (lowDetail) return box(w, h, d, x, y, z);
   const r = Math.min(0.035, Math.min(w, h, d) * 0.3);
   return new RoundedBoxGeometry(w, h, d, 2, r).translate(x, y, z);
 }
@@ -111,7 +90,7 @@ function rbox(w: number, h: number, d: number, x: number, y: number, z: number):
 function capsule(r: number, from: THREE.Vector3, to: THREE.Vector3): THREE.BufferGeometry {
   const dir = to.clone().sub(from);
   const len = dir.length();
-  const g = new THREE.CapsuleGeometry(r, Math.max(0.01, len - 2 * r), 3, 8);
+  const g = new THREE.CapsuleGeometry(r, Math.max(0.01, len - 2 * r), lowDetail ? 1 : 3, lowDetail ? 6 : 8);
   g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
   g.translate((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2);
   return g;
@@ -135,37 +114,37 @@ function bodyParts(p: Palette, gunParts: Part[], support: THREE.Vector3): Part[]
     // Boot: rounded upper, a darker sole and a toe cap.
     add(rbox(0.12, 0.13, 0.24, x, 0.075, -0.025), shin, p.boots);
     add(rbox(0.125, 0.035, 0.29, x, 0.018, -0.045), shin, 0x1a1714);
-    add(new THREE.CylinderGeometry(0.075, 0.072, 0.07, 10).translate(x, 0.17, 0.01), shin, p.uniformDark); // trouser cuff
+    add(new THREE.CylinderGeometry(0.075, 0.072, 0.07, seg(10)).translate(x, 0.17, 0.01), shin, p.uniformDark); // trouser cuff
   }
   add(rbox(0.36, 0.18, 0.22, 0, 0.94, 0), B.Hips, p.uniformDark);
   add(rbox(0.38, 0.05, 0.24, 0, 1.02, 0), B.Hips, p.gear); // belt
   add(rbox(0.06, 0.05, 0.03, 0, 1.02, -0.125), B.Hips, 0x6b6656); // buckle
 
   // Torso (a rounded chest), plate carrier with pouches, collar, small pack.
-  add(new THREE.SphereGeometry(0.2, 14, 10).scale(1, 1.18, 0.62).translate(0, 1.28, 0), B.Spine, p.uniform);
+  add(new THREE.SphereGeometry(0.2, seg(14), seg(10)).scale(1, 1.18, 0.62).translate(0, 1.28, 0), B.Spine, p.uniform);
   add(rbox(0.41, 0.34, 0.29, 0, 1.26, 0), B.Spine, p.gear);
   for (const x of [-0.12, 0, 0.12]) add(rbox(0.1, 0.13, 0.07, x, 1.14, -0.17), B.Spine, p.gear);
   for (const x of [-0.12, 0.12]) add(rbox(0.07, 0.25, 0.035, x, 1.33, -0.16), B.Spine, p.uniformDark); // straps
-  add(new THREE.TorusGeometry(0.075, 0.025, 6, 12).rotateX(Math.PI / 2).translate(0, 1.5, 0), B.Spine, p.uniform); // collar
+  add(new THREE.TorusGeometry(0.075, 0.025, seg(6), seg(12)).rotateX(Math.PI / 2).translate(0, 1.5, 0), B.Spine, p.uniform); // collar
   add(rbox(0.3, 0.32, 0.14, 0, 1.28, 0.2), B.Spine, p.uniformDark);
   add(rbox(0.08, 0.14, 0.05, 0.13, 1.4, 0.26), B.Spine, p.gear); // radio
-  add(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 4).translate(0.15, 1.56, 0.27), B.Spine, 0x1a1a1a); // antenna
+  add(new THREE.CylinderGeometry(0.006, 0.006, 0.22, seg(4)).translate(0.15, 1.56, 0.27), B.Spine, 0x1a1a1a); // antenna
 
   // Head: neck, face with eyes, nose, ears and a chin strap; helmet with a brim and cover band.
-  add(new THREE.CylinderGeometry(0.055, 0.06, 0.1, 8).translate(0, 1.53, 0), B.Head, p.skin);
-  add(new THREE.SphereGeometry(0.105, 14, 12).scale(0.92, 1.1, 1).translate(0, 1.63, 0), B.Head, p.skin);
-  add(new THREE.SphereGeometry(0.06, 10, 8).scale(1, 0.75, 0.9).translate(0, 1.565, -0.045), B.Head, p.skin); // jaw
-  add(new THREE.SphereGeometry(0.1, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62).scale(0.97, 0.95, 0.98).rotateX(Math.PI * 0.62).translate(0, 1.62, 0.012), B.Head, 0x2c241d); // hair under the helmet, at the back
+  add(new THREE.CylinderGeometry(0.055, 0.06, 0.1, seg(8)).translate(0, 1.53, 0), B.Head, p.skin);
+  add(new THREE.SphereGeometry(0.105, seg(14), seg(12)).scale(0.92, 1.1, 1).translate(0, 1.63, 0), B.Head, p.skin);
+  add(new THREE.SphereGeometry(0.06, seg(10), seg(8)).scale(1, 0.75, 0.9).translate(0, 1.565, -0.045), B.Head, p.skin); // jaw
+  add(new THREE.SphereGeometry(0.1, seg(12), seg(8), 0, Math.PI * 2, 0, Math.PI * 0.62).scale(0.97, 0.95, 0.98).rotateX(Math.PI * 0.62).translate(0, 1.62, 0.012), B.Head, 0x2c241d); // hair under the helmet, at the back
   add(new THREE.ConeGeometry(0.018, 0.045, 6).rotateX(-Math.PI / 2 - 0.25).translate(0, 1.618, -0.112), B.Head, p.skin); // nose
   for (const s of [-1, 1]) {
-    add(new THREE.SphereGeometry(0.013, 6, 5).translate(s * 0.036, 1.645, -0.092), B.Head, 0x1c1814); // eye
+    add(new THREE.SphereGeometry(0.013, seg(6), seg(5)).translate(s * 0.036, 1.645, -0.092), B.Head, 0x1c1814); // eye
     add(rbox(0.035, 0.008, 0.012, s * 0.036, 1.668, -0.096), B.Head, 0x3a2c22); // brow
-    add(new THREE.SphereGeometry(0.024, 6, 5).scale(0.45, 1, 0.8).translate(s * 0.1, 1.625, 0.005), B.Head, p.skin); // ear
+    add(new THREE.SphereGeometry(0.024, seg(6), seg(5)).scale(0.45, 1, 0.8).translate(s * 0.1, 1.625, 0.005), B.Head, p.skin); // ear
     add(rbox(0.012, 0.11, 0.014, s * 0.095, 1.585, -0.02), B.Head, 0x1d1b17); // chin strap
   }
-  add(new THREE.SphereGeometry(0.128, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.95, 1.08).translate(0, 1.65, 0), B.Head, p.helmet);
-  add(new THREE.CylinderGeometry(0.138, 0.142, 0.018, 16, 1, true).translate(0, 1.652, 0.004), B.Head, p.helmet); // brim
-  add(new THREE.CylinderGeometry(0.131, 0.131, 0.025, 16, 1, true).translate(0, 1.68, 0), B.Head, p.mark);
+  add(new THREE.SphereGeometry(0.128, seg(16), seg(8), 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.95, 1.08).translate(0, 1.65, 0), B.Head, p.helmet);
+  add(new THREE.CylinderGeometry(0.138, 0.142, 0.018, seg(16), 1, true).translate(0, 1.652, 0.004), B.Head, p.helmet); // brim
+  add(new THREE.CylinderGeometry(0.131, 0.131, 0.025, seg(16), 1, true).translate(0, 1.68, 0), B.Head, p.mark);
   add(rbox(0.16, 0.05, 0.05, 0, 1.72, -0.07), B.Head, 0x1a1a1a); // goggles pushed up on the helmet
 
   // Arms on the aim bone: right hand on the grip, left hand at the support point.
@@ -179,9 +158,9 @@ function bodyParts(p: Palette, gunParts: Part[], support: THREE.Vector3): Part[]
   add(capsule(0.052, elbowR, handR), B.Aim, p.uniform);
   add(capsule(0.06, shoulderL, elbowL), B.Aim, p.uniform);
   add(capsule(0.052, elbowL, support), B.Aim, p.uniform);
-  add(new THREE.CylinderGeometry(0.063, 0.063, 0.05, 10).translate(-0.21, 1.34, 0), B.Aim, p.mark); // armband
-  add(new THREE.SphereGeometry(0.045, 8, 6).translate(handR.x, handR.y, handR.z), B.Aim, p.glove);
-  add(new THREE.SphereGeometry(0.045, 8, 6).translate(support.x, support.y, support.z), B.Aim, p.glove);
+  add(new THREE.CylinderGeometry(0.063, 0.063, 0.05, seg(10)).translate(-0.21, 1.34, 0), B.Aim, p.mark); // armband
+  add(new THREE.SphereGeometry(0.045, seg(8), seg(6)).translate(handR.x, handR.y, handR.z), B.Aim, p.glove);
+  add(new THREE.SphereGeometry(0.045, seg(8), seg(6)).translate(support.x, support.y, support.z), B.Aim, p.glove);
   return parts.concat(gunParts);
 }
 
@@ -356,6 +335,13 @@ export class SoldierModel {
     }
   }
 
+  /** Skinning matrices of the current pose (bone world x bind inverse), for baking. */
+  boneMatrices(): THREE.Matrix4[] {
+    this.root.updateMatrixWorld(true);
+    const inv = this.mesh.skeleton.boneInverses;
+    return this.bones.map((b, i) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, inv[i]!));
+  }
+
   /** Muzzle position in world space (after update). */
   muzzleWorld(out: THREE.Vector3): THREE.Vector3 {
     const aim = this.bones[B.Aim]!;
@@ -368,4 +354,61 @@ export class SoldierModel {
   dispose(): void {
     this.root.removeFromParent();
   }
+}
+
+/** A plain rifle for the far crowd: stock, receiver, grip, magazine, handguard and barrel on the aim bone. */
+function farGunParts(): { parts: Part[]; support: THREE.Vector3 } {
+  const dark = 0x23262a;
+  const g = GRIP;
+  const parts: Part[] = [
+    { geo: box(0.05, 0.08, 0.26, g.x, g.y + 0.02, g.z + 0.16), bone: B.Aim, color: dark }, // stock
+    { geo: box(0.05, 0.07, 0.3, g.x, g.y + 0.04, g.z - 0.1), bone: B.Aim, color: dark }, // receiver
+    { geo: box(0.03, 0.09, 0.04, g.x, g.y - 0.03, g.z), bone: B.Aim, color: dark }, // grip
+    { geo: box(0.03, 0.12, 0.05, g.x, g.y - 0.03, g.z - 0.14), bone: B.Aim, color: dark }, // magazine
+    { geo: box(0.05, 0.06, 0.2, g.x, g.y + 0.04, g.z - 0.34), bone: B.Aim, color: 0x34372f }, // handguard
+    { geo: box(0.02, 0.02, 0.2, g.x, g.y + 0.05, g.z - 0.54), bone: B.Aim, color: dark }, // barrel
+  ];
+  return { parts, support: V(g.x - 0.004, g.y + 0.02, g.z - 0.32) };
+}
+
+/** Parts too small to see from the far crowd's distance (eyes, buckles, straps...). */
+function tiny(geo: THREE.BufferGeometry): boolean {
+  geo.computeBoundingSphere();
+  return geo.boundingSphere!.radius < 0.035;
+}
+
+/**
+ * The far crowd's soldier: the near model with fewer segments, no small
+ * details and a plain rifle, frozen in one pose and baked into a static,
+ * vertex-coloured geometry (feet at 0, facing -Z) drawn instanced.
+ */
+export function buildFarSoldierPose(team: Team, pose: 'stand' | 'run' | 'crouch'): THREE.BufferGeometry {
+  // Posed by a normal soldier (same skeleton and animation code).
+  const poser = new SoldierModel(team, WEAPONS.ar1);
+  const p: SoldierPose = { speed: pose === 'run' ? 6 : 0, crouch: pose === 'crouch' ? 1 : 0, yaw: 0, aimPitch: 0, deadFor: -1, dt: 0 };
+  // Mid-stride: the walk phase advances by dt * (4 + speed * 1.6).
+  if (pose === 'run') poser.update(new THREE.Vector3(), { ...p, dt: Math.PI / 2 / (4 + 6 * 1.6) });
+  poser.update(new THREE.Vector3(), p);
+  const skin = poser.boneMatrices();
+  poser.dispose();
+
+  lowDetail = true;
+  const gun = farGunParts();
+  const parts = bodyParts(PALETTES[team], gun.parts, gun.support).filter((q) => !tiny(q.geo));
+  lowDetail = false;
+  const c = new THREE.Color();
+  const geos = parts.map(({ geo, bone, color }) => {
+    const g = (geo.index ? geo.toNonIndexed() : geo).applyMatrix4(skin[bone]!);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    const n = g.getAttribute('position').count;
+    const col = new Float32Array(n * 3);
+    c.setHex(color, THREE.SRGBColorSpace);
+    for (let i = 0; i < n; i++) c.toArray(col, i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  });
+  const merged = mergeGeometries(geos, false)!;
+  geos.forEach((g) => g.dispose());
+  merged.computeBoundingSphere();
+  return merged;
 }

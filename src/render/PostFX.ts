@@ -75,6 +75,9 @@ export class PostFX {
 
     if (opts.ao) {
       const ao = new HalfResGTAOPass(scene, camera, size.x / 2, size.y / 2);
+      // Read the world pass's depth (normals rebuilt from it) instead of drawing
+      // the whole scene again at half size for a depth / normal buffer.
+      ao.setGBuffer(target.depthTexture!, undefined);
       ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 8 });
       ao.updatePdMaterial({ samples: 5, rings: 2, radius: 6 });
       ao.blendIntensity = 0.85;

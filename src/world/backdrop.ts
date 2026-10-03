@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { TileNoise, makeRng, smoothstep } from '@/render/noise';
 import type { ModelLibrary } from '@/render/models';
-import { buildImpostors, buildTreeBatch, createConiferKit, type ConiferKit } from './conifers';
+import { buildImpostors, createConiferKit, type ConiferKit } from './conifers';
+import { Forest } from './forest';
 import { instanceModel } from './placeProps';
 import { LAYER_BACKDROP } from '@/render/layers';
 import { SCENERY_EXTENT, type Terrain } from './terrain';
@@ -46,6 +47,7 @@ function byCell<T>(items: T[], pos: (t: T) => THREE.Vector3): T[][] {
 
 /** Shows backdrop clutter near the camera only (call every frame or so). */
 export function cullBackdropDetail(backdrop: THREE.Object3D, camera: THREE.Vector3): void {
+  (backdrop.userData.trees as Forest | undefined)?.update(camera);
   const list = backdrop.userData.detail as THREE.Mesh[] | undefined;
   if (!list) return;
   for (const m of list) {
@@ -176,8 +178,11 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   const near = scatter(Math.round((opts.lowDetail ? (opts.phone ? 60 : 90) : 300) * sparse), 4, nearOut, (x, z, d) => rng() < forest(x, z) + (desert ? 0.3 : d < 20 ? 0.6 : 0.1));
   const far = scatter(Math.round((opts.lowDetail ? 3700 : 7000) * sparse), opts.lowDetail ? 15 : 42, 520, (x, z) => rng() < forest(x, z) * 1.2);
   if (near.length) {
-    const batch = buildTreeBatch(kit, near);
-    group.add(batch.foliage, batch.trunk);
+    // The tree line just outside the map: 3D close to the camera, impostors further off
+    // (they were all 3D, ~300 trees x 5k triangles, mostly far across the map).
+    const trees = new Forest(near, kit, opts.gl, scene, opts.lowDetail ? 70 : 110);
+    group.add(trees.group);
+    group.userData.trees = trees;
   }
   for (const chunk of bySector(far, (p) => p.pos)) group.add(buildImpostors(opts.gl, kit, scene.environment, scene.environmentIntensity, chunk));
 

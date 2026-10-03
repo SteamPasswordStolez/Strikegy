@@ -205,14 +205,21 @@ export class Atmosphere {
     this.staticShadows = true;
   }
 
-  /** Keeps the shadow frustum centered on the viewer, snapped to texels to avoid shimmering. */
-  update(focus: THREE.Vector3, time: number): void {
+  /**
+   * Keeps the shadow frustum around the viewer. Only static scenery casts
+   * shadows (soldiers and vehicles use blobs / none), so the map only needs
+   * redrawing when the frustum moves: it re-centres in steps of a quarter of
+   * its reach (snapped to texels), not every frame. Returns true when it moved.
+   */
+  update(focus: THREE.Vector3, time: number): boolean {
     if (this.sky) this.sky.material.uniforms.time!.value = time;
-    if (!this.sun || this.staticShadows) return;
-    const t = this.texel;
-    const fx = Math.round(focus.x / t) * t;
-    const fz = Math.round(focus.z / t) * t;
+    if (!this.sun || this.staticShadows) return false;
+    const step = Math.max(this.texel, Math.round((this.opts.shadowExtent * 0.25) / this.texel) * this.texel);
+    const fx = Math.round(focus.x / step) * step;
+    const fz = Math.round(focus.z / step) * step;
+    if (fx === this.sun.target.position.x && fz === this.sun.target.position.z) return false;
     this.sun.target.position.set(fx, 0, fz);
     this.sun.position.set(fx + this.sunDir.x * 200, this.sunDir.y * 200, fz + this.sunDir.z * 200);
+    return true;
   }
 }

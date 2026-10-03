@@ -229,7 +229,8 @@ export class Renderer {
     if (this.quality.shadows) {
       // The first frame must render shadows: materials sample the shadow map from the start.
       const due = this.frameIndex === 1 || this.frameIndex % this.quality.shadowInterval === 0;
-      if (this.staticShadows ? this.shadowDirty && due : due) {
+      // Redrawn only when something asks (the frustum moved, scenery changed): only static scenery casts shadows.
+      if (this.shadowDirty && due) {
         this.gl.shadowMap.needsUpdate = true;
         this.shadowDirty = false;
         shadow = true;

@@ -401,7 +401,7 @@ export class Game {
     const kit = outdoor ? createConiferKit(q.msaa, winter, map.world.flora) : null;
     if (kit && map.trees?.length) {
       // Low quality (phones): 3D trees only close by, impostors beyond.
-      this.forest = new Forest(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
+      this.forest = Forest.ofMap(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
       r.scene.add(this.forest.group);
     }
     const coverStyle = GROUND_COVER[map.world.groundMaterial ?? 'ground'];
@@ -2283,8 +2283,10 @@ export class Game {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
-    this.atmosphere.update(cam.position, this.elapsed);
-    this.forest?.update(cam.position);
+    if (this.atmosphere.update(cam.position, this.elapsed)) this.renderer.requestShadowUpdate();
+    if (this.forest?.update(cam.position)) this.renderer.requestShadowUpdate();
+    // Scenery clutter near the camera only, and the outer tree line's 3D / impostor switch.
+    if (this.backdrop) cullBackdropDetail(this.backdrop, cam.position);
     // After the first physics step: scene queries only see the map colliders from then on.
     if (this.simTime > 0) this.groundCover?.update(cam.position, this.elapsed);
     this.snowfall?.update(cam.position, this.elapsed, this.renderer.canvas.height);

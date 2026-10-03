@@ -11,7 +11,7 @@ import { WEAPONS, damageAtDistance, type WeaponDef } from '@/weapons/weaponData'
 import { Bot, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
-import { SoldierModel, buildFarSoldier } from './SoldierModel';
+import { SoldierModel, buildFarSoldierPose } from './SoldierModel';
 import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
@@ -81,6 +81,8 @@ const FAR_SQ = 60 * 60;
  * vehicle; their capsules (only the player bumps into them) update within
  * CAPSULE_RANGE.
  */
+/** Far crowd poses, in the order of `far` meshes. */
+const FAR_POSES = ['stand', 'run', 'crouch'] as const;
 const LOD_MID_SQ = 90 * 90;
 const LOD_FAR_SQ = 160 * 160;
 const CAPSULE_RANGE_SQ = 45 * 45;
@@ -384,11 +386,14 @@ export class BotManager implements BotServices {
     scene.add(this.markers, this.crosses);
     const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     for (const team of ['blue', 'red'] as const) {
-      const m = new THREE.InstancedMesh(buildFarSoldier(team), farMat, Math.max(1, this.entries.length));
-      m.count = 0;
-      m.frustumCulled = false;
-      this.far[team] = m;
-      scene.add(m);
+      // The near soldier, simplified and frozen in each pose: standing, mid-stride, crouched.
+      this.far[team] = FAR_POSES.map((pose) => {
+        const m = new THREE.InstancedMesh(buildFarSoldierPose(team, pose), farMat, Math.max(1, this.entries.length));
+        m.count = 0;
+        m.frustumCulled = false;
+        scene.add(m);
+        return m;
+      });
     }
 
     bus.on('combat:kill', (e) => {
@@ -2101,7 +2106,8 @@ export class BotManager implements BotServices {
   private markerCount = 0;
   private crossCount = 0;
   /** Instanced far models, one per side. */
-  private readonly far: Partial<Record<Team, THREE.InstancedMesh>> = {};
+  /** Far crowd per side, one instanced mesh per pose (FAR_POSES). */
+  private readonly far: Partial<Record<Team, THREE.InstancedMesh[]>> = {};
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
   private readonly cullSphere = new THREE.Sphere();
@@ -2121,7 +2127,7 @@ export class BotManager implements BotServices {
     this.frustum.setFromProjectionMatrix(this.projView);
     const pos = this.tmp;
     let blobs = 0;
-    const farCount: Record<Team, number> = { blue: 0, red: 0 };
+    const farCount: Record<Team, number[]> = { blue: [0, 0, 0], red: [0, 0, 0] };
     this.markerCount = this.crossCount = 0;
     // Marker size: a fixed share of the screen height, as the sprites had.
     (this.markers.material as THREE.PointsMaterial).size = 0.022 * window.innerHeight;
@@ -2150,9 +2156,10 @@ export class BotManager implements BotServices {
           const lying = !b.alive;
           this.farEuler.set(lying ? -Math.PI / 2 : 0, b.yaw, 0, 'YXZ');
           this.farQuat.setFromEuler(this.farEuler);
-          this.farScale.set(1, lying ? 1 : b.crouching ? 0.72 : 1, 1);
+          this.farScale.set(1, 1, 1);
           this.farMatrix.compose(lying ? pos.clone().setY(pos.y + 0.2) : pos, this.farQuat, this.farScale);
-          this.far[b.team]!.setMatrixAt(farCount[b.team]++, this.farMatrix);
+          const pose = lying ? 0 : b.crouching ? 2 : b.horizontalSpeed > 1.2 ? 1 : 0;
+          this.far[b.team]![pose]!.setMatrixAt(farCount[b.team][pose]!++, this.farMatrix);
         }
         continue;
       }
@@ -2176,9 +2183,10 @@ export class BotManager implements BotServices {
     this.blobs.count = blobs;
     this.blobs.instanceMatrix.needsUpdate = true;
     for (const team of ['blue', 'red'] as const) {
-      const m = this.far[team]!;
-      m.count = farCount[team];
-      m.instanceMatrix.needsUpdate = true;
+      this.far[team]!.forEach((m, i) => {
+        m.count = farCount[team][i]!;
+        m.instanceMatrix.needsUpdate = true;
+      });
     }
     for (const [pts, n] of [[this.markers, this.markerCount], [this.crosses, this.crossCount]] as const) {
       pts.geometry.setDrawRange(0, n);

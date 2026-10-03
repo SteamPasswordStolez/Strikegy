@@ -14,6 +14,14 @@ const HYSTERESIS = 12;
 /** Trunk collider height as a fraction of the tree (bullets and bodies; the crown is open). */
 const TRUNK_HEIGHT = 0.55;
 
+export interface TreeSpot {
+  pos: THREE.Vector3;
+  scale: number;
+  yaw: number;
+  variant: number;
+  tint: number;
+}
+
 interface Chunk {
   box: THREE.Box3;
   /** This chunk's trees in the shared impostor mesh and tree batch: first instance and count. */
@@ -40,7 +48,8 @@ export class Forest {
   /** 3D trees of every chunk in one batch per part; a chunk shows its own while near. */
   private readonly nearTrees: TreeBatch | null = null;
 
-  constructor(
+  /** The map's own trees: trunks collide (bullets, bodies, bots' paths) and cast shadows. */
+  static ofMap(
     trees: readonly (readonly [number, number, number])[],
     terrain: Terrain,
     physics: PhysicsWorld,
@@ -48,25 +57,45 @@ export class Forest {
     kit: ConiferKit,
     gl: THREE.WebGLRenderer,
     scene: THREE.Scene,
-    /** Distance (m) within which chunks draw full 3D trees (lower on weak devices). */
-    private readonly near = NEAR,
-  ) {
-    this.group.name = 'forest';
+    near = NEAR,
+  ): Forest {
     const rng = makeRng(31);
-    type Spot = { pos: THREE.Vector3; scale: number; yaw: number; variant: number; tint: number };
-    const cells = new Map<string, Spot[]>();
+    const spots: TreeSpot[] = [];
     for (const [x, z, s] of trees) {
       const y = terrain.heightAt(x, z);
-      const spot: Spot = { pos: new THREE.Vector3(x, y - 0.2, z), scale: s, yaw: rng() * Math.PI * 2, variant: Math.floor(rng() * kit.variants.length), tint: 0.8 + rng() * 0.3 };
-      const key = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
-      let list = cells.get(key);
-      if (!list) cells.set(key, (list = []));
-      list.push(spot);
+      spots.push({ pos: new THREE.Vector3(x, y - 0.2, z), scale: s, yaw: rng() * Math.PI * 2, variant: Math.floor(rng() * kit.variants.length), tint: 0.8 + rng() * 0.3 });
       // Trunk: a slim box from just below the ground up into the crown.
       const h = 18 * s * TRUNK_HEIGHT;
       const r = 0.26 * s + 0.06;
       const c = physics.addStaticBox({ x, y: y + h / 2 - 0.5, z }, { x: r, y: h / 2 + 0.5, z: r }, undefined, Layer.WORLD);
       impacts.set(c.handle, 'wood');
+    }
+    const f = new Forest(spots, kit, gl, scene, near, true);
+    f.group.name = 'forest';
+    return f;
+  }
+
+  /**
+   * Trees in chunks that draw 3D close by and impostors further off. `shadows`:
+   * the 3D trees cast shadows (the map's own; the scenery forest outside doesn't).
+   */
+  constructor(
+    spots: readonly TreeSpot[],
+    kit: ConiferKit,
+    gl: THREE.WebGLRenderer,
+    scene: THREE.Scene,
+    /** Distance (m) within which chunks draw full 3D trees (lower on weak devices). */
+    private readonly near = NEAR,
+    shadows = false,
+  ) {
+    this.group.name = 'trees';
+    type Spot = TreeSpot;
+    const cells = new Map<string, Spot[]>();
+    for (const spot of spots) {
+      const key = `${Math.floor(spot.pos.x / CHUNK)},${Math.floor(spot.pos.z / CHUNK)}`;
+      let list = cells.get(key);
+      if (!list) cells.set(key, (list = []));
+      list.push(spot);
     }
     const all: Spot[] = [];
     for (const list of cells.values()) {
@@ -79,7 +108,7 @@ export class Forest {
     if (all.length) {
       const batch = buildTreeBatch(kit, all, false);
       for (const o of [batch.foliage, batch.trunk]) {
-        o.castShadow = true;
+        o.castShadow = shadows;
         o.receiveShadow = true;
       }
       // Foliage skips the AO pass like the scenery forest; trunks keep contact shading.
@@ -94,13 +123,15 @@ export class Forest {
     }
   }
 
-  /** Swaps chunks between 3D trees and impostors by their distance to the camera. */
-  update(camera: THREE.Vector3): void {
+  /** Swaps chunks between 3D trees and impostors by their distance to the camera; true if any switched (shadow casters changed). */
+  update(camera: THREE.Vector3): boolean {
+    let changed = false;
     for (const c of this.chunks) {
       const d = c.box.distanceToPoint(camera);
       const near = c.isNear ? d < this.near + HYSTERESIS : d < this.near - HYSTERESIS;
       if (near === c.isNear) continue;
       c.isNear = near;
+      changed = true;
       for (let i = c.start; i < c.start + c.count; i++) this.nearTrees?.setVisible(i, near);
       const far = this.far;
       if (!far) continue;
@@ -112,6 +143,7 @@ export class Forest {
       far.instanceMatrix.addUpdateRange(a, b - a);
       far.instanceMatrix.needsUpdate = true;
     }
+    return changed;
   }
 
   /** Number of chunks currently drawing full trees (perf panel / tests). */
