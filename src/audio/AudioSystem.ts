@@ -657,6 +657,16 @@ export class AudioSystem {
     this.noiseBurst(out, t + 0.02, 0.07, 0.04 + 0.08 * k, { type: 'bandpass', freq: 2400, q: 1.2 });
   }
 
+  /** Sliding: a drop onto the hip, then a scuff that fades as the slide slows. */
+  bodySlide(surface?: ImpactSurface): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0.05);
+    if (surface) this.sample(STEP_SAMPLE[surface], out, t, 0.22, rand(0.7, 0.78));
+    this.noiseBurst(out, t + 0.03, 0.75, 0.16, { type: 'bandpass', freq: surface === 'snow' ? 900 : 1500, q: 0.8, endFreq: 500 });
+    this.noiseBurst(out, t, 0.1, 0.1, { type: 'lowpass', freq: 600 });
+  }
+
   // ---------- grenades ----------
 
   /** Medkit: a zip, a tear and the syringe click. */

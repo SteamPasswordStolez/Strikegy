@@ -58,6 +58,8 @@ export interface GameEvents {
   'grenade:bounce': { type: GrenadeType; point: THREE.Vector3; speed: number };
   'grenade:detonate': { type: GrenadeType; point: THREE.Vector3; owner: GrenadeOwner };
   'player:landed': { impactSpeed: number; surface?: ImpactSurface };
+  /** Started a slide (sprint, then crouch). */
+  'player:slide': { surface?: ImpactSurface; point: THREE.Vector3 };
   'player:footstep': { surface: ImpactSurface; sprinting: boolean; point: THREE.Vector3 };
   'player:damaged': { amount: number; from: THREE.Vector3 | null; cause: DamageCause };
   'player:flashed': { intensity: number; duration: number };

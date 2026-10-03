@@ -666,6 +666,10 @@ export class Game {
       this.audio.footstep(e.surface, e.sprinting);
       this.bots?.alert(e.point, e.sprinting ? HEAR_STEP_SPRINT : HEAR_STEP, this.playerCombatant, 'step');
     });
+    bus.on('player:slide', (e) => {
+      this.audio.bodySlide(e.surface);
+      this.bots?.alert(e.point, HEAR_STEP_SPRINT, this.playerCombatant, 'step');
+    });
     bus.on('player:landed', (e) => {
       this.audio.land(e.impactSpeed, e.surface);
       this.viewModel.onLand(e.impactSpeed);

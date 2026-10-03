@@ -2,7 +2,7 @@
   "title": "STRIKEGY",
   "start.click": "Click to start",
   "start.tap": "Tap to start",
-  "start.hint": "WASD move · Shift sprint · Ctrl crouch · Space jump · LMB fire · RMB aim · R reload · 1/2/3 or wheel weapons · G throw · Q medkit · E (hold) revive / resupply · T build mode · V melee · Z (hold) scoreboard · ~ inspect · F3 FPS",
+  "start.hint": "WASD move · Shift sprint · Ctrl crouch (toggle, slide from a sprint) · Space jump · LMB fire · RMB aim · R reload · 1/2/3 or wheel weapons · G throw · Q medkit · E (hold) revive / resupply · T build mode · V melee · Z (hold) scoreboard · ~ inspect · F3 FPS",
   "start.hintTouch": "Left drag: move (push all the way to sprint) · Right drag: look · Drag while holding fire to aim · Tap the ammo counter: inspect · Tap the zone bar: scoreboard · Hold the middle button next to a downed mate: revive · Build button: build mode (hold fire to build)",
   "paused": "Paused",
   "loading": "Loading...",

@@ -23,6 +23,22 @@ export const MOVE = {
   crouchTransitionSpeed: 8,
 } as const;
 
+/** Sliding: sprint, then crouch. */
+export const SLIDE = {
+  /** Minimum speed to start one (m/s; a sprint is 6.8). */
+  minSpeed: 5.6,
+  /** Speed it starts at (or the current speed, if higher). */
+  speed: 9,
+  /** Slows by this much per second (m/s²). */
+  friction: 7,
+  /** Longest slide (s). */
+  time: 1.0,
+  /** How fast it can be steered toward the stick (m/s²). */
+  steer: 6,
+  /** Ends below this speed. */
+  endSpeed: MOVE.crouchSpeed + 0.4,
+} as const;
+
 export interface MoveIntent {
   moveX: number;
   moveY: number;

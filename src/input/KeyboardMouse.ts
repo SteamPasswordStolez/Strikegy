@@ -21,6 +21,7 @@ export class KeyboardMouse implements InputSource {
   private inspectQueued = false;
   private supportQueued = false;
   private viewQueued = false;
+  private crouchQueued = false;
   private disposers: (() => void)[] = [];
 
   constructor(
@@ -40,6 +41,7 @@ export class KeyboardMouse implements InputSource {
       if (e.code === 'KeyV') this.meleeQueued = true;
       if (e.code === 'KeyB') this.supportQueued = true;
       if (e.code === 'KeyC') this.viewQueued = true;
+      if (e.code === 'KeyC' || e.code === 'ControlLeft') this.crouchQueued = true;
       if (e.code === 'Backquote') this.inspectQueued = true;
       const digit = /^Digit([1-9])$/.exec(e.code);
       if (digit) this.slotQueued = Number(digit[1]) - 1;
@@ -109,7 +111,8 @@ export class KeyboardMouse implements InputSource {
     this.fireQueued = false;
     s.ads ||= this.buttons.has(2);
     s.sprint ||= k.has('ShiftLeft');
-    s.crouch ||= k.has('ControlLeft') || k.has('KeyC');
+    s.crouchToggle ||= this.crouchQueued;
+    this.crouchQueued = false;
     s.scoreboard ||= k.has('KeyZ');
     s.jump ||= this.jumpQueued;
     s.reload ||= this.reloadQueued;

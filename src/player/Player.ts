@@ -10,6 +10,7 @@ import {
   capsuleHalfHeight,
   targetSpeed,
   wishDirection,
+  SLIDE,
 } from './movement';
 import { WADE_DEPTH, WADE_SPEED, type WaterMap } from '@/world/water';
 
@@ -30,6 +31,12 @@ export class Player {
   readonly velocity = new THREE.Vector3();
   grounded = false;
   crouching = false;
+  /** Crouch toggled on from the keyboard (Ctrl / C); touch sends its own toggle state. */
+  private crouchLatched = false;
+  /** Time left in a slide (s); 0 = not sliding. */
+  private slideLeft = 0;
+  /** Sprint key held last step (a fresh press stands up from a crouch; holding it through a slide doesn't). */
+  private sprintHeld = false;
   sprinting = false;
   /** Rivers on the map (wading slows the player), set by the game. */
   water: WaterMap | null = null;
@@ -82,6 +89,8 @@ export class Player {
     this.feet.copy(feet).setY(feet.y + 0.05);
     this.prevFeet.copy(this.feet);
     this.velocity.set(0, 0, 0);
+    this.crouchLatched = false;
+    this.slideLeft = 0;
     this.yaw = yaw;
     this.pitch = 0;
     this.body.setTranslation(this.centerFromFeet(), true);
@@ -117,7 +126,23 @@ export class Player {
 
   step(dt: number, input: InputState, ads: boolean, firing: boolean): void {
     this.prevFeet.copy(this.feet);
-    this.updateCrouch(input.crouch);
+    const wasSprinting = this.sprinting;
+    if (input.crouchToggle) this.crouchLatched = !this.crouchLatched;
+    let jump = input.jump;
+    if (this.crouchLatched && !this.sliding) {
+      // Sprinting or jumping from a crouch stands up first (the jump press only stands).
+      if (input.sprint && !this.sprintHeld && input.moveY > 0.5 && !input.crouchToggle) this.crouchLatched = false;
+      if (jump) {
+        this.crouchLatched = false;
+        jump = false;
+      }
+    }
+    this.sprintHeld = input.sprint;
+    const wantCrouch = this.crouchLatched || input.crouch;
+    // Crouching out of a sprint slides.
+    if (wantCrouch && !this.crouching && wasSprinting && this.grounded && this.horizontalSpeed() > SLIDE.minSpeed) this.startSlide();
+    this.updateCrouch(wantCrouch);
+    if (this.sliding && (!this.crouching || !wantCrouch)) this.slideLeft = 0;
 
     const moving = input.moveX !== 0 || input.moveY !== 0;
     this.sprinting = input.sprint && input.moveY > 0.5 && !ads && !firing && !this.crouching;
@@ -135,11 +160,14 @@ export class Player {
     const braking = !moving || wx * this.velocity.x + wz * this.velocity.z < 0;
     const accel = this.grounded ? (braking ? MOVE.groundDecel : MOVE.groundAccel) : MOVE.airAccel;
     const top = speed * this.speedBonus * (wading ? 1 - (1 - WADE_SPEED) * this.wadePenalty : 1);
-    const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * top, wz * top, accel, dt);
-    this.velocity.x = vx;
-    this.velocity.z = vz;
+    if (this.sliding) this.stepSlide(dt, wx, wz);
+    else {
+      const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * top, wz * top, accel, dt);
+      this.velocity.x = vx;
+      this.velocity.z = vz;
+    }
 
-    if (input.jump) this.jumpBuffered = MOVE.jumpBuffer;
+    if (jump) this.jumpBuffered = MOVE.jumpBuffer;
     this.jumpBuffered = Math.max(0, this.jumpBuffered - dt);
     this.sinceGrounded = this.grounded ? 0 : this.sinceGrounded + dt;
     const canJump = this.sinceGrounded <= MOVE.coyoteTime && this.velocity.y <= 0.1;
@@ -183,6 +211,37 @@ export class Player {
     this.body.setNextKinematicTranslation(this.centerFromFeet());
     this.health.step(dt);
     this.stepFootsteps(Math.hypot(moved.x, moved.z));
+  }
+
+  /** In a slide (sprint, then crouch). */
+  get sliding(): boolean {
+    return this.slideLeft > 0;
+  }
+
+  private startSlide(): void {
+    const v = this.horizontalSpeed();
+    const k = Math.max(v, SLIDE.speed) / v;
+    this.velocity.x *= k;
+    this.velocity.z *= k;
+    this.slideLeft = SLIDE.time;
+    this.bus.emit('player:slide', { surface: this.groundSurface(), point: this.feet.clone() });
+  }
+
+  /** Glides on, slowing down, steering a little toward the stick. */
+  private stepSlide(dt: number, wx: number, wz: number): void {
+    this.slideLeft = Math.max(0, this.slideLeft - dt);
+    const v = this.horizontalSpeed();
+    const slower = Math.max(0, v - (this.grounded ? SLIDE.friction : SLIDE.friction * 0.3) * dt);
+    if (slower < SLIDE.endSpeed) this.slideLeft = 0;
+    const k = v > 1e-3 ? slower / v : 0;
+    this.velocity.x = this.velocity.x * k + wx * SLIDE.steer * dt;
+    this.velocity.z = this.velocity.z * k + wz * SLIDE.steer * dt;
+    // Steering turns the slide; it doesn't speed it up.
+    const after = this.horizontalSpeed();
+    if (after > slower && after > 1e-3) {
+      this.velocity.x *= slower / after;
+      this.velocity.z *= slower / after;
+    }
   }
 
   /** Lost most of the horizontal move while only touching floor-like surfaces. */

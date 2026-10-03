@@ -15,7 +15,10 @@ export interface InputState {
   firePressed: boolean;
   ads: boolean;
   sprint: boolean;
+  /** Held: crouch (touch: its toggle button's state). */
   crouch: boolean;
+  /** Pulse: crouch key pressed (keyboard: Ctrl / C toggle crouching; sprinting into it slides). */
+  crouchToggle: boolean;
   jump: boolean;
   reload: boolean;
   /** Pulse: -1 / +1 to cycle weapons, 0 = none. */
@@ -61,6 +64,7 @@ export function createInputState(): InputState {
     ads: false,
     sprint: false,
     crouch: false,
+    crouchToggle: false,
     jump: false,
     reload: false,
     weaponCycle: 0,
@@ -84,6 +88,7 @@ export function createInputState(): InputState {
 /** Clears one-shot pulses after a simulation step has consumed them. */
 export function consumePulses(s: InputState): void {
   s.jump = false;
+  s.crouchToggle = false;
   s.firePressed = false;
   s.reload = false;
   s.weaponCycle = 0;
