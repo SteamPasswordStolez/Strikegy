@@ -4,6 +4,13 @@
  */
 export type OverlayKind = 'menu' | 'win' | 'loss' | 'info';
 
+/** A button on the overlay (back to the lobby, play again). */
+export interface OverlayAction {
+  label: string;
+  primary?: boolean;
+  onClick: () => void;
+}
+
 /** Full-screen message layer used for start / pause / result / error states. */
 export class Overlay {
   readonly root: HTMLDivElement;
@@ -12,6 +19,7 @@ export class Overlay {
   private titleEl: HTMLDivElement;
   private subEl: HTMLDivElement;
   private hintEl: HTMLDivElement;
+  private actionsEl: HTMLDivElement;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -28,7 +36,9 @@ export class Overlay {
     this.subEl.className = 'overlay-sub';
     this.hintEl = document.createElement('div');
     this.hintEl.className = 'overlay-hint';
-    this.panel.append(this.contextEl, this.titleEl, rule, this.subEl, this.hintEl);
+    this.actionsEl = document.createElement('div');
+    this.actionsEl.className = 'ov-actions';
+    this.panel.append(this.contextEl, this.titleEl, rule, this.subEl, this.hintEl, this.actionsEl);
     this.root.appendChild(this.panel);
     parent.appendChild(this.root);
   }
@@ -48,7 +58,24 @@ export class Overlay {
     this.panel.insertBefore(box, this.hintEl);
   }
 
+  /** Buttons under everything else (cleared by every `show`). A click on one doesn't reach the overlay. */
+  setActions(actions: readonly OverlayAction[]): void {
+    this.actionsEl.replaceChildren();
+    for (const a of actions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ov-action${a.primary ? ' primary' : ''}`;
+      b.textContent = a.label;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        a.onClick();
+      });
+      this.actionsEl.appendChild(b);
+    }
+  }
+
   show(title: string, sub = '', hint = '', kind: OverlayKind = 'info'): void {
+    this.setActions([]);
     this.root.className = `overlay kind-${kind}`;
     this.titleEl.textContent = title;
     this.subEl.textContent = sub;

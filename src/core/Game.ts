@@ -539,6 +539,7 @@ export class Game {
     const touch = !!this.touch;
     this.overlay.setContext(this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName);
     this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? t('start.hintTouch') : t('start.hint'), 'menu');
+    this.overlay.setActions([{ label: t('lobby.back'), onClick: toLobby }]);
     this.overlay.root.addEventListener('click', () => this.resume());
     document.addEventListener('pointerlockchange', () => {
       if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
@@ -755,6 +756,7 @@ export class Game {
     this.running = false;
     this.touch?.setVisible(false);
     this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? t('start.hintTouch') : t('start.hint'), 'menu');
+    this.overlay.setActions([{ label: t('lobby.back'), onClick: toLobby }]);
     if (this.touch) this.overlay.setExtra(this.layoutButton());
   }
 
@@ -3251,6 +3253,10 @@ export class Game {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
       this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'), won ? 'win' : 'loss');
+      this.overlay.setActions([
+        { label: t('lobby.again'), primary: true, onClick: () => location.reload() },
+        { label: t('lobby.back'), onClick: toLobby },
+      ]);
       // Final standings under the result.
       if (this.bots) {
         this.fillScoreboard();
@@ -3295,6 +3301,11 @@ export class Game {
  * bots leave a freed slot alone for `playerFirst` s.
  */
 const BOT_JETS = { first: 12, every: 4, nearBase: 90, respawn: 0.6, playerFirst: 15 };
+/** Back to the lobby: the page without a map in its address. */
+function toLobby(): void {
+  location.href = location.pathname;
+}
+
 /** m:ss for the mode timers. */
 function clockText(sec: number): string {
   const s = Math.max(0, Math.ceil(sec));

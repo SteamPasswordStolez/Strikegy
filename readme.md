@@ -6,7 +6,8 @@
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173  (?map=sandbox&bots=4v5&difficulty=normal, ?bots=0 = 사격장)
+npm run dev        # http://localhost:5173  주소에 맵이 없으면 로비 (맵·모드·인원·난이도·설정)
+                   # 바로 시작: ?map=sandbox&bots=4v5&difficulty=normal, ?bots=0 = 사격장
                    # 모드: ?map=iron_gate&bots=12v12 (&mode=zone|frontline|conquest, 없으면 맵 기본값;
                    #   &tickets=300 = 티켓 직접 지정, &mode=skirmish = 거점 없이 교전만)
                    # 맵: iron_gate, ardennes(겨울 숲), lyon(초원 10v10), bilbao(시가지, 정복전용), persia(사막 1v1~2v2)

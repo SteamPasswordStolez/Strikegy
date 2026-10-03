@@ -15,7 +15,8 @@ export interface MapImage {
 
 const PAD = 24;
 
-export function paintMap(map: MapDef, boundary: Boundary, maxPx = 1400): MapImage {
+/** Only the outline's points are used (the lobby passes a plain outline, without the terrain module). */
+export function paintMap(map: MapDef, boundary: Pick<Boundary, 'points'>, maxPx = 1400): MapImage {
   const xs = boundary.points.map((p) => p[0]);
   const zs = boundary.points.map((p) => p[1]);
   const minX = Math.min(...xs);
