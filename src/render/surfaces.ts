@@ -242,8 +242,9 @@ function grassRecipe(n: TileNoise): SurfaceRecipe {
       const blades = n.fbm(u * 3, v, 96, 2);
       const dry = smoothstep(0.55, 0.75, n.fbm(u + 0.31, v + 0.77, 5, 3));
       const bare = smoothstep(0.7, 0.8, n.fbm(u + 0.9, v + 0.4, 12, 2));
-      let c = mixRgb(deep, fresh, clamp01(base * 1.2 + (blades - 0.5) * 0.9));
-      c = mixRgb(c, straw, dry * 0.45);
+      // Low-frequency shading kept weak: it repeats every tile; the macro noise varies the field instead.
+      let c = mixRgb(deep, fresh, clamp01(0.55 + (base - 0.5) * 0.45 + (blades - 0.5) * 0.9));
+      c = mixRgb(c, straw, dry * 0.22);
       c = mixRgb(c, soil, bare * 0.25);
       o.color = c;
       o.height = 0.6 * blades + 0.3 * base - 0.3 * bare;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Team } from '@/world/mapTypes';
 import type { WeaponDef } from '@/weapons/weaponData';
 import { buildGun } from '@/weapons/gunModels';
@@ -60,8 +61,8 @@ interface Palette {
 }
 
 const PALETTES: Record<Team, Palette> = {
-  blue: { uniform: 0x5e5a48, uniformDark: 0x4a4636, gear: 0x403e33, helmet: 0x4a4836, skin: 0xc79a7a, boots: 0x2b241d, glove: 0x2a2620, mark: 0x3f7bd9 },
-  red: { uniform: 0x444a37, uniformDark: 0x33382b, gear: 0x2f3228, helmet: 0x363a29, skin: 0xb08566, boots: 0x231f1a, glove: 0x23211d, mark: 0xc9402f },
+  blue: { uniform: 0x5e5a48, uniformDark: 0x4a4636, gear: 0x403e33, helmet: 0x4a4836, skin: 0xb3876a, boots: 0x2b241d, glove: 0x2a2620, mark: 0x3f7bd9 },
+  red: { uniform: 0x444a37, uniformDark: 0x33382b, gear: 0x2f3228, helmet: 0x363a29, skin: 0x9c7458, boots: 0x231f1a, glove: 0x23211d, mark: 0xc9402f },
 };
 
 /**
@@ -101,6 +102,12 @@ function box(w: number, h: number, d: number, x: number, y: number, z: number): 
   return new THREE.BoxGeometry(w, h, d).translate(x, y, z);
 }
 
+/** Soft-edged box for the near model: cloth and pouches, not crates (radius scales with the smallest side). */
+function rbox(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
+  const r = Math.min(0.035, Math.min(w, h, d) * 0.3);
+  return new RoundedBoxGeometry(w, h, d, 2, r).translate(x, y, z);
+}
+
 function capsule(r: number, from: THREE.Vector3, to: THREE.Vector3): THREE.BufferGeometry {
   const dir = to.clone().sub(from);
   const len = dir.length();
@@ -122,27 +129,44 @@ function bodyParts(p: Palette, gunParts: Part[], support: THREE.Vector3): Part[]
   ] as const) {
     const x = side * 0.1;
     add(capsule(0.085, V(x, 0.92, 0), V(x, 0.5, 0.01)), thigh, p.uniform);
-    add(box(0.13, 0.12, 0.1, x + side * 0.05, 0.72, 0), thigh, p.gear); // thigh pocket
+    add(rbox(0.13, 0.12, 0.1, x + side * 0.05, 0.72, 0), thigh, p.gear); // thigh pocket
     add(capsule(0.07, V(x, 0.5, 0.01), V(x, 0.12, 0.02)), shin, p.uniform);
-    add(box(0.12, 0.12, 0.05, x, 0.5, -0.07), shin, p.gear); // knee pad
-    add(box(0.12, 0.11, 0.28, x, 0.055, -0.04), shin, p.boots);
+    add(rbox(0.12, 0.12, 0.05, x, 0.5, -0.07), shin, p.gear); // knee pad
+    // Boot: rounded upper, a darker sole and a toe cap.
+    add(rbox(0.12, 0.13, 0.24, x, 0.075, -0.025), shin, p.boots);
+    add(rbox(0.125, 0.035, 0.29, x, 0.018, -0.045), shin, 0x1a1714);
+    add(new THREE.CylinderGeometry(0.075, 0.072, 0.07, 10).translate(x, 0.17, 0.01), shin, p.uniformDark); // trouser cuff
   }
-  add(box(0.36, 0.18, 0.22, 0, 0.94, 0), B.Hips, p.uniformDark);
-  add(box(0.38, 0.05, 0.24, 0, 1.02, 0), B.Hips, p.gear); // belt
+  add(rbox(0.36, 0.18, 0.22, 0, 0.94, 0), B.Hips, p.uniformDark);
+  add(rbox(0.38, 0.05, 0.24, 0, 1.02, 0), B.Hips, p.gear); // belt
+  add(rbox(0.06, 0.05, 0.03, 0, 1.02, -0.125), B.Hips, 0x6b6656); // buckle
 
-  // Torso, plate carrier with pouches, small pack.
-  add(box(0.38, 0.44, 0.22, 0, 1.28, 0), B.Spine, p.uniform);
-  add(box(0.41, 0.34, 0.29, 0, 1.26, 0), B.Spine, p.gear);
-  for (const x of [-0.12, 0, 0.12]) add(box(0.1, 0.13, 0.06, x, 1.14, -0.17), B.Spine, p.gear);
-  add(box(0.3, 0.32, 0.14, 0, 1.28, 0.2), B.Spine, p.uniformDark);
-  add(box(0.08, 0.14, 0.05, 0.13, 1.4, 0.26), B.Spine, p.gear); // radio
+  // Torso (a rounded chest), plate carrier with pouches, collar, small pack.
+  add(new THREE.SphereGeometry(0.2, 14, 10).scale(1, 1.18, 0.62).translate(0, 1.28, 0), B.Spine, p.uniform);
+  add(rbox(0.41, 0.34, 0.29, 0, 1.26, 0), B.Spine, p.gear);
+  for (const x of [-0.12, 0, 0.12]) add(rbox(0.1, 0.13, 0.07, x, 1.14, -0.17), B.Spine, p.gear);
+  for (const x of [-0.12, 0.12]) add(rbox(0.07, 0.25, 0.035, x, 1.33, -0.16), B.Spine, p.uniformDark); // straps
+  add(new THREE.TorusGeometry(0.075, 0.025, 6, 12).rotateX(Math.PI / 2).translate(0, 1.5, 0), B.Spine, p.uniform); // collar
+  add(rbox(0.3, 0.32, 0.14, 0, 1.28, 0.2), B.Spine, p.uniformDark);
+  add(rbox(0.08, 0.14, 0.05, 0.13, 1.4, 0.26), B.Spine, p.gear); // radio
+  add(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 4).translate(0.15, 1.56, 0.27), B.Spine, 0x1a1a1a); // antenna
 
-  // Head and helmet.
+  // Head: neck, face with eyes, nose, ears and a chin strap; helmet with a brim and cover band.
   add(new THREE.CylinderGeometry(0.055, 0.06, 0.1, 8).translate(0, 1.53, 0), B.Head, p.skin);
-  add(new THREE.SphereGeometry(0.105, 12, 10).scale(0.95, 1.08, 1).translate(0, 1.63, 0), B.Head, p.skin);
-  add(new THREE.SphereGeometry(0.128, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.95, 1.08).translate(0, 1.65, 0), B.Head, p.helmet);
-  add(new THREE.CylinderGeometry(0.13, 0.13, 0.025, 14, 1, true).translate(0, 1.66, 0), B.Head, p.mark);
-  add(box(0.16, 0.05, 0.05, 0, 1.64, -0.1), B.Head, 0x1a1a1a); // goggles
+  add(new THREE.SphereGeometry(0.105, 14, 12).scale(0.92, 1.1, 1).translate(0, 1.63, 0), B.Head, p.skin);
+  add(new THREE.SphereGeometry(0.06, 10, 8).scale(1, 0.75, 0.9).translate(0, 1.565, -0.045), B.Head, p.skin); // jaw
+  add(new THREE.SphereGeometry(0.1, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62).scale(0.97, 0.95, 0.98).rotateX(Math.PI * 0.62).translate(0, 1.62, 0.012), B.Head, 0x2c241d); // hair under the helmet, at the back
+  add(new THREE.ConeGeometry(0.018, 0.045, 6).rotateX(-Math.PI / 2 - 0.25).translate(0, 1.618, -0.112), B.Head, p.skin); // nose
+  for (const s of [-1, 1]) {
+    add(new THREE.SphereGeometry(0.013, 6, 5).translate(s * 0.036, 1.645, -0.092), B.Head, 0x1c1814); // eye
+    add(rbox(0.035, 0.008, 0.012, s * 0.036, 1.668, -0.096), B.Head, 0x3a2c22); // brow
+    add(new THREE.SphereGeometry(0.024, 6, 5).scale(0.45, 1, 0.8).translate(s * 0.1, 1.625, 0.005), B.Head, p.skin); // ear
+    add(rbox(0.012, 0.11, 0.014, s * 0.095, 1.585, -0.02), B.Head, 0x1d1b17); // chin strap
+  }
+  add(new THREE.SphereGeometry(0.128, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.95, 1.08).translate(0, 1.65, 0), B.Head, p.helmet);
+  add(new THREE.CylinderGeometry(0.138, 0.142, 0.018, 16, 1, true).translate(0, 1.652, 0.004), B.Head, p.helmet); // brim
+  add(new THREE.CylinderGeometry(0.131, 0.131, 0.025, 16, 1, true).translate(0, 1.68, 0), B.Head, p.mark);
+  add(rbox(0.16, 0.05, 0.05, 0, 1.72, -0.07), B.Head, 0x1a1a1a); // goggles pushed up on the helmet
 
   // Arms on the aim bone: right hand on the grip, left hand at the support point.
   const shoulderR = V(0.21, 1.43, 0);
