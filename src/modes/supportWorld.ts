@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
+import type { HitPart } from '@/core/events';
+import type { DamageKind, DamageSource, Damageable, HitboxRegistry } from '@/combat/Hitboxes';
+import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
 import { RECON, SUPPLY, SUPPORT, barrageOffsets, type SupportId } from '@/data/support';
 import type { GadgetOwner } from './gadgetWorld';
@@ -19,7 +21,18 @@ export interface SupportHooks {
   landed?(pos: THREE.Vector3): void;
   /** Rocket tank: bring one out for the caller; false when there's nowhere to put it. */
   vehicle?(owner: GadgetOwner, near: THREE.Vector3): boolean;
+  /** A recon plane was shot down at `pos` (by `by`). */
+  planeDown?(pos: THREE.Vector3, team: Team, by: DamageSource | null): void;
 }
+
+/**
+ * Recon planes can be shot down (owner, 2026-10-02: players took them for
+ * enemy jets and emptied guns into them for nothing): this much damage
+ * (people's damage units; rifle rounds count half), then a burning dive.
+ */
+export const RECON_PLANE = { health: 260, bulletMult: 0.5, fall: 3.5, half: [5.5, 0.8, 3.6] as const };
+/** Ids for the planes' hitboxes, clear of combatants (0-~400) and vehicles (50000+). */
+let nextPlaneId = 60000;
 
 interface Shell {
   kind: 'smoke' | 'mortar' | 'artillery';
@@ -36,6 +49,15 @@ interface Sweep {
   next: number;
   plane: THREE.Object3D;
   angle: number;
+  /** Its hitbox (a kinematic box following the plane) and what it can still take. */
+  hit: Damageable & { health: number; down: number };
+  body: RAPIER.RigidBody | null;
+}
+
+/** An aircraft in the sky for the IFF markers: where, whose. */
+export interface PlaneInfo {
+  pos: THREE.Vector3;
+  team: Team;
 }
 
 interface Crate {
@@ -80,7 +102,16 @@ export class SupportWorld {
     private readonly physics: PhysicsWorld,
     private readonly hooks: SupportHooks,
     private readonly rand: () => number = Math.random,
+    /** Recon planes register their hitbox here (none: they can't be hit). */
+    private readonly registry: HitboxRegistry | null = null,
   ) {}
+
+  /** Recon planes still flying (for the IFF markers and air-to-air aim). */
+  planes(out: PlaneInfo[] = []): PlaneInfo[] {
+    out.length = 0;
+    for (const w of this.sweeps) if (w.hit.down < 0) out.push({ pos: w.plane.position, team: w.team });
+    return out;
+  }
 
   spent(squad: string): number {
     return this.spentBy.get(squad) ?? 0;
@@ -108,9 +139,9 @@ export class SupportWorld {
         this.shells.push({ kind, at: this.time + spec.delay + i * spec.interval * (0.8 + this.rand() * 0.4), point: p, owner, warned: false });
       });
     } else if (kind === 'recon') {
-      const plane = this.buildPlane();
+      const plane = this.buildPlane(owner.team);
       this.group.add(plane);
-      this.sweeps.push({ team: owner.team, center: point.clone(), until: this.time + spec.delay + RECON.duration, next: this.time + spec.delay, plane, angle: this.rand() * Math.PI * 2 });
+      this.sweeps.push(this.sweep(owner.team, point, plane, this.time + spec.delay));
     } else if (kind === 'supply') {
       const mesh = this.buildCrate();
       const land = this.ground(point.x, point.z, point.y);
@@ -153,18 +184,35 @@ export class SupportWorld {
     }
     for (let i = this.sweeps.length - 1; i >= 0; i--) {
       const w = this.sweeps[i]!;
+      const p = w.plane;
+      if (w.hit.down >= 0) {
+        // Shot down: a burning dive, then gone.
+        w.hit.down += dt;
+        p.position.y -= dt * (20 + w.hit.down * 25);
+        p.rotation.z += dt * 2.2;
+        p.rotation.x = Math.min(0.9, p.rotation.x + dt * 0.5);
+        if (w.hit.down > RECON_PLANE.fall) {
+          this.dropSweep(w);
+          this.sweeps.splice(i, 1);
+        }
+        continue;
+      }
       // The plane circles the spot (in from afar during the delay).
       w.angle += dt * 0.45;
       const r = 130;
-      const p = w.plane;
       p.position.set(w.center.x + Math.cos(w.angle) * r, w.center.y + 140, w.center.z + Math.sin(w.angle) * r);
       p.rotation.set(0, -w.angle, -0.35);
+      if (w.body) {
+        p.updateMatrix();
+        w.body.setNextKinematicTranslation(p.position);
+        w.body.setNextKinematicRotation(p.quaternion);
+      }
       if (this.time >= w.next && this.time < w.until) {
         w.next = this.time + RECON.sweep;
         this.hooks.reveal(w.team, w.center, SUPPORT.recon.spread);
       }
       if (this.time >= w.until) {
-        this.group.remove(p);
+        this.dropSweep(w);
         this.sweeps.splice(i, 1);
       }
     }
@@ -199,7 +247,7 @@ export class SupportWorld {
 
   clear(): void {
     this.shells = [];
-    for (const w of this.sweeps) this.group.remove(w.plane);
+    for (const w of this.sweeps) this.dropSweep(w);
     for (const c of this.crates) this.group.remove(c.mesh);
     for (const m of this.markers) this.group.remove(m.mesh);
     this.sweeps = [];
@@ -221,10 +269,56 @@ export class SupportWorld {
     this.markers.push({ mesh, until: this.time + life });
   }
 
-  /** A small high-wing spotter plane. */
-  private buildPlane(): THREE.Group {
+  /** A circling recon plane with a hitbox that follows it. */
+  private sweep(team: Team, point: THREE.Vector3, plane: THREE.Object3D, from: number): Sweep {
+    const hit: Sweep['hit'] = {
+      id: nextPlaneId++,
+      name: 'recon',
+      team,
+      health: RECON_PLANE.health,
+      down: -1,
+      get alive() {
+        return this.down < 0;
+      },
+      applyDamage: (amount: number, _part: HitPart, source?: DamageSource, kind: DamageKind = 'bullet'): boolean => {
+        if (hit.down >= 0) return false;
+        hit.health -= amount * (kind === 'bullet' ? RECON_PLANE.bulletMult : 1);
+        if (hit.health <= 0) {
+          hit.down = 0;
+          this.hooks.planeDown?.(plane.position.clone(), team, source ?? null);
+          if (body) this.removeBody(body);
+          sw.body = null;
+        }
+        // Not a combatant: no kill to report.
+        return false;
+      },
+    };
+    let body: RAPIER.RigidBody | null = null;
+    if (this.registry) {
+      body = this.physics.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(point.x, point.y + 140, point.z));
+      const c = this.physics.world.createCollider(RAPIER.ColliderDesc.cuboid(...RECON_PLANE.half).setCollisionGroups(groups(Layer.HITBOX, Layer.HITBOX)), body);
+      this.registry.register(c.handle, hit, 'body');
+    }
+    const sw: Sweep = { team, center: point.clone(), until: from + RECON.duration, next: from, plane, angle: this.rand() * Math.PI * 2, hit, body };
+    return sw;
+  }
+
+  private removeBody(body: RAPIER.RigidBody): void {
+    for (let i = 0; i < body.numColliders(); i++) this.registry?.unregister(body.collider(i).handle);
+    this.physics.world.removeRigidBody(body);
+  }
+
+  private dropSweep(w: Sweep): void {
+    this.group.remove(w.plane);
+    if (w.body) this.removeBody(w.body);
+    w.body = null;
+  }
+
+  /** A small high-wing spotter plane in its side's colours (blue-grey or rust red), a white stripe round the fuselage. */
+  private buildPlane(team: Team): THREE.Group {
     const g = new THREE.Group();
-    const body = new THREE.MeshStandardMaterial({ color: 0x5d6650, roughness: 0.7 });
+    const body = new THREE.MeshStandardMaterial({ color: team === 'blue' ? 0x50687f : 0x86493b, roughness: 0.7 });
+    const stripe = new THREE.MeshStandardMaterial({ color: 0xe8e4d8, roughness: 0.6 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.6 });
     const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.25, 7, 10).rotateZ(Math.PI / 2), body);
     const wing = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 11), body);
@@ -235,7 +329,9 @@ export class SupportWorld {
     fin.position.set(-3.2, 0.6, 0);
     const prop = new THREE.Mesh(new THREE.BoxGeometry(0.06, 2, 0.12), dark);
     prop.position.set(3.55, 0, 0);
-    g.add(fus, wing, tail, fin, prop);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.42, 0.5, 10).rotateZ(Math.PI / 2), stripe);
+    band.position.set(-1.2, 0, 0);
+    g.add(fus, wing, tail, fin, prop, band);
     // Built nose along +x: turn so it flies along the circle (tangent).
     const holder = new THREE.Group();
     g.rotation.y = -Math.PI / 2;

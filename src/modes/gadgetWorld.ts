@@ -53,6 +53,8 @@ interface Shot {
   gun?: string;
   /** Missiles: where the target is now (null: lost it, flies straight). */
   homing?: () => THREE.Vector3 | null;
+  /** The vehicle that fired it: its own shells fly out of its hitbox. */
+  ignore?: RAPIER.RigidBody;
 }
 
 export interface Beacon {
@@ -120,12 +122,12 @@ export class GadgetWorld {
   }
 
   /** A vehicle gun shell with its own velocity and drop (`gun`: which gun, for the hooks). */
-  fireShell(origin: THREE.Vector3, vel: THREE.Vector3, gravity: number, owner: GadgetOwner, gun: string, homing?: () => THREE.Vector3 | null): void {
+  fireShell(origin: THREE.Vector3, vel: THREE.Vector3, gravity: number, owner: GadgetOwner, gun: string, homing?: () => THREE.Vector3 | null, ignore?: RAPIER.RigidBody): void {
     const mesh = (homing ? this.models.rocket : this.models.shell).clone();
     if (homing) mesh.scale.setScalar(2.2);
     mesh.position.copy(origin);
     this.group.add(mesh);
-    this.shots.push({ kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: homing ? 8 : 14, mesh, gun, homing });
+    this.shots.push({ kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: homing ? 8 : 14, mesh, gun, homing, ignore });
   }
 
   /** Puts a beacon down (replacing the owner's earlier one). */
@@ -201,7 +203,7 @@ export class GadgetWorld {
       }
       const d = this.seg.copy(s.vel).multiplyScalar(dt);
       const len = d.length();
-      const hit = len > 0 ? this.physics.raycast(s.pos, d.divideScalar(len), len, SHOT_MASK) : null;
+      const hit = len > 0 ? this.physics.raycast(s.pos, d.divideScalar(len), len, SHOT_MASK, undefined, s.ignore) : null;
       if (hit || s.life <= 0) {
         const at = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : s.pos.clone();
         // Back off the surface so the blast isn't buried in it.

@@ -26,6 +26,7 @@ import type { MapDef, SpawnPoint } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource, type InputState } from '@/input/InputState';
 import { KeyboardMouse } from '@/input/KeyboardMouse';
 import { TouchControls } from '@/input/Touch';
+import { AirMarkers, type AirMark } from '@/render/airMarkers';
 import { Player } from '@/player/Player';
 import { fallDamage } from '@/player/health';
 import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
@@ -130,6 +131,9 @@ export class Game {
   private readonly kbm: KeyboardMouse;
   private readonly touch: TouchControls | null = null;
   private readonly registry = new HitboxRegistry();
+  /** Friend-or-foe marks over jets and recon planes, and the list reused each frame. */
+  private readonly airMarkers = new AirMarkers();
+  private readonly airMarks: AirMark[] = [];
   private readonly impacts = new SurfaceRegistry();
   private readonly hud: HUD;
   private readonly perf: PerfPanel;
@@ -425,8 +429,14 @@ export class Game {
       resupply: (team, pos, reach) => this.crateResupply(team, pos, reach),
       landed: (pos) => this.audio.gadget('place', pos),
       vehicle: (owner, near) => this.callRocketTank(owner, near),
-    });
+      planeDown: (pos, team, by) => {
+        this.effects.explosion(pos);
+        this.audio.explosion(pos, this.renderer.camera.position.distanceTo(pos));
+        if (by) this.hud.addKill({ attacker: by.id === PLAYER_ID ? t('feed.you') : by.name, victim: t('support.recon'), weapon: by.weapon, headshot: false, attackerTeam: by.team ?? otherTeam(team), victimTeam: team });
+      },
+    }, Math.random, this.registry);
     r.scene.add(this.support.group);
+    r.scene.add(this.airMarkers.group);
     this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
     this.spawn =map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
     this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
@@ -783,6 +793,7 @@ export class Game {
       simMs = performance.now() - tSim;
       this.renderer.adaptResolution(dt * 1000, dt);
       this.vehicles?.render(alpha);
+      this.updateAirMarkers();
       this.renderRider(alpha, dt);
       if (this.chute) {
         const p = this.player;
@@ -1127,6 +1138,38 @@ export class Game {
     return v.seats.filter((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.bots?.claimedSeat(v.id, i)).length;
   }
 
+  /**
+   * Where the player's jet cannon fires (owner, 2026-10-02: "you can empty it
+   * into them and nothing dies"): it used to fire along the nose while the
+   * crosshair (the view, which the plane turns toward a moment later) led it,
+   * so the rounds went wide. Now: at the crosshair while that is within
+   * `JET_GUN.cone` of the nose (else along the nose: null), and onto an enemy
+   * aircraft (jet or recon plane) within `JET_GUN.assist` of the crosshair.
+   */
+  private jetGunAim(v: Vehicle, seat: number): THREE.Vector3 | null {
+    const view = new THREE.Vector3(0, 0, -1).applyQuaternion(this.renderer.camera.quaternion);
+    const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
+    if (view.angleTo(nose) > JET_GUN.cone) return null;
+    const muzzle = v.muzzleOf(seat, new THREE.Vector3());
+    const range = v.mounts[seat]!.gun.range;
+    let best: THREE.Vector3 | null = null;
+    let bestA = JET_GUN.assist;
+    const consider = (p: THREE.Vector3, team: Team | null): void => {
+      if (team === PLAYER_TEAM) return;
+      const to = p.clone().sub(muzzle);
+      const d = to.length();
+      if (d < 5 || d > range) return;
+      const a = to.angleTo(view);
+      if (a < bestA) {
+        bestA = a;
+        best = p;
+      }
+    };
+    for (const o of this.vehicles?.vehicles ?? []) if (o.flight && !o.wrecked && o !== v) consider(o.pos, o.team ?? o.home);
+    for (const p of this.support.planes()) consider(p.pos, p.team);
+    return best ? (best as THREE.Vector3).clone() : muzzle.addScaledVector(view, range);
+  }
+
   /** Missile lock: the nearest enemy aircraft within 25° of the nose and in range. */
   private lockTarget(v: Vehicle, team: Team): Vehicle | null {
     const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
@@ -1134,6 +1177,8 @@ export class Game {
     let bestD = 1500;
     for (const o of this.vehicles?.vehicles ?? []) {
       if (o === v || !o.flight || o.wrecked || o.home === team) continue;
+      // Just in off the edge: not yet (they were shot down seconds after arriving).
+      if (this.simTime - o.arrivedAt < JET_LOCK_GRACE) continue;
       const to = o.pos.clone().sub(v.pos);
       const d = to.length();
       if (d < bestD && to.normalize().dot(nose) > Math.cos(0.44)) {
@@ -1156,25 +1201,48 @@ export class Game {
     const at = c.clone().addScaledVector(out, VehicleClass.airRadius + 200).setY(c.y + AIRSPACE.startAlt + Math.random() * 40);
     at.addScaledVector(new THREE.Vector3(-out.z, 0, out.x), (Math.random() - 0.5) * 200);
     const yaw = Math.atan2(out.x, out.z);
-    return vw.spawnJet(kind, team, at, yaw);
+    const v = vw.spawnJet(kind, team, at, yaw);
+    if (v) v.arrivedAt = this.simTime;
+    return v;
   }
 
-  /** Bots fly jets as well: a side under its jet limit now and then sends a bot from its base up. */
+  /**
+   * Bots fly jets as well (owner, 2026-10-03: "bots hardly fly"): a side with
+   * a free jet slot sends a bot from near its base up, or the next bot to
+   * respawn takes it (`botSpawnKey`).
+   */
   private botJets(): void {
     const vw = this.vehicles;
     const bots = this.bots;
-    if (!vw || !bots || this.simTime < this.botJetAt) return;
-    this.botJetAt = this.simTime + 8;
+    if (!vw || !bots) return;
+    for (const team of ['blue', 'red'] as const) this.trackJetSlot(team);
+    if (this.simTime < this.botJetAt) return;
+    this.botJetAt = this.simTime + BOT_JETS.every;
     for (const team of ['blue', 'red'] as const) {
-      if (vw.jets(team) >= vw.jetLimit() || Math.random() < 0.5) continue;
+      if (!this.botJetSlot(team)) continue;
       const base = this.baseCenter(team);
-      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && b.feet.distanceTo(base) < 50 && !b.inCombat(bots.time));
+      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && b.feet.distanceTo(base) < BOT_JETS.nearBase && !b.inCombat(bots.time));
       if (!bot) continue;
       const v = this.spawnJet(JET_KINDS[Math.floor(Math.random() * JET_KINDS.length)]!, team);
       if (v) bots.seatBot(bot, v, 0);
     }
   }
-  private botJetAt = 30;
+  private botJetAt = BOT_JETS.first;
+  /** Since when each side has had a free jet slot (-1: none free). */
+  private readonly jetFreeSince: Record<Team, number> = { blue: -1, red: -1 };
+
+  private trackJetSlot(team: Team): void {
+    const vw = this.vehicles!;
+    if (vw.jets(team) >= vw.jetLimit()) this.jetFreeSince[team] = -1;
+    else if (this.jetFreeSince[team] < 0) this.jetFreeSince[team] = this.simTime;
+  }
+
+  /** A free jet slot bots may take: on the player's side only after the player had a while to pick it on the deploy screen. */
+  private botJetSlot(team: Team): boolean {
+    const free = this.jetFreeSince[team];
+    if (free < 0) return false;
+    return team !== PLAYER_TEAM || this.simTime - free > BOT_JETS.playerFirst;
+  }
 
   /** Bots that deployed into a vehicle seat this step (bot id -> vehicle id). */
   private readonly pendingSeats = new Map<number, number>();
@@ -1287,6 +1355,22 @@ export class Game {
     this.player.ride(eye, v.velocity);
   }
 
+  /** Diamonds over jets, rings over recon planes: blue ours, red theirs (not the one the player is in). */
+  private updateAirMarkers(): void {
+    const marks = this.airMarks;
+    let n = 0;
+    const mark = (pos: THREE.Vector3, team: Team | null, recon: boolean): void => {
+      const m = (marks[n++] ??= { pos: new THREE.Vector3(), friendly: false, recon: false });
+      m.pos.copy(pos);
+      m.friendly = team === PLAYER_TEAM;
+      m.recon = recon;
+    };
+    for (const v of this.vehicles?.vehicles ?? []) if (v.flight && !v.wrecked && v !== this.ride?.v) mark(v.model.root.position, v.team ?? v.home, false);
+    for (const p of this.support.planes()) mark(p.pos, p.team, true);
+    marks.length = n;
+    this.airMarkers.update(marks, this.renderer.camera.position, !!this.ride?.v.flight);
+  }
+
   /** Out of a plane at `at`: a canopy opens, drifting down from there (keeping some of the plane's speed at first). */
   private openChute(at: THREE.Vector3, carry: THREE.Vector3): void {
     if (!this.chute) {
@@ -1341,16 +1425,16 @@ export class Game {
     const p = this.player;
     v.aimMount(seat, p.yaw, p.pitch);
     if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
-    // Aircraft guns point along the plane (the pilot's seat).
+    // Aircraft guns (the pilot's seat): where the crosshair points, near the nose.
     if (v.flight && v.spec.seats[seat]!.role === 'driver') {
-      this.fireMount(v, seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, null);
+      this.fireMount(v, seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, this.jetGunAim(v, seat));
       return;
     }
     // Aim: what the view centre points at.
     const cam = this.renderer.camera;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     const range = v.mounts[seat]!.gun.range;
-    const look = this.physics.raycast(cam.position, fwd, range, Layer.WORLD | Layer.HITBOX, v.collider);
+    const look = this.physics.raycast(cam.position, fwd, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
     const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, range);
     this.fireMount(v, seat, { id: PLAYER_ID, name: t('feed.you'), team: PLAYER_TEAM }, aim);
   }
@@ -1372,7 +1456,7 @@ export class Game {
     if (gun.homing) {
       const lock = this.lockTarget(v, shooter.team);
       const vel = nose.clone().multiplyScalar(gun.shell!.speed).add(v.velocity);
-      this.gadgets.fireShell(muzzle.clone().addScaledVector(nose, 4), vel, 0, { ...shooter, squad: null }, m.id, lock ? () => (lock.wrecked ? null : lock.pos) : undefined);
+      this.gadgets.fireShell(muzzle.clone().addScaledVector(nose, 4), vel, 0, { ...shooter, squad: null }, m.id, lock ? () => (lock.wrecked ? null : lock.pos) : undefined, v.body);
       this.audio.gadget('rocket', byPlayer ? null : muzzle);
       return;
     }
@@ -1396,13 +1480,14 @@ export class Game {
         vel = new THREE.Vector3(d.x / time, d.y / time + 0.5 * sh.gravity * time, d.z / time);
         vel.addScaledVector(right, (Math.random() - 0.5) * flat * gun.spread * DEG);
       } else vel = dir.clone().multiplyScalar(sh.speed).add(v.flight ? v.velocity : new THREE.Vector3());
-      this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id);
+      this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id, undefined, v.body);
       if (m.id === 'rockets') this.audio.gadget('rocket', byPlayer ? null : muzzle);
       else this.audio.explosion(muzzle, Math.max(30, listenerDist));
       if (byPlayer) this.shake = Math.min(0.06, this.shake + 0.035);
       return;
     }
-    const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, v.collider);
+    // Not its own hull or wings.
+    const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
     const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, gun.range);
     const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
     if (target && target.owner.alive && target.owner.team !== shooter.team) {
@@ -1444,7 +1529,8 @@ export class Game {
           bot.killOutright(source);
           this.bus.emit('combat:hit', { targetId: bot.id, part, damage: 999, killed: true, point: point.clone(), byPlayer: owner.id === PLAYER_ID });
           this.reportKill(owner, bot.id, bot.name, bot.team, name);
-        }
+        } else if (!bot) target.applyDamage(spec.vsVehicle, part, source, 'at'); // a recon plane
+
       }
     }
     const kind = gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : gun === 'aam' ? 'missile' : 'shell';
@@ -2751,6 +2837,14 @@ export class Game {
         return this.spawnFor(team, 'base', selfId);
       }
     }
+    // A bot respawning into a new jet: seated right after (see `seatPending`), at its base meanwhile.
+    if (kind === 'jet' && selfId !== PLAYER_ID) {
+      const v = this.spawnJet(JET_KINDS[Math.floor(Math.random() * JET_KINDS.length)]!, team);
+      if (v) {
+        this.pendingSeats.set(selfId, v.id);
+        return this.spawnFor(team, 'base', selfId);
+      }
+    }
     if (kind === 'beacon') {
       const b = this.gadgets.beaconsFor(team, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
       if (b) {
@@ -2798,6 +2892,10 @@ export class Game {
     const sq = this.squads.find((s) => s.team === bot.team && s.has(bot.id));
     const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, now, this.riding(m.id))) : [];
     if (sq === this.playerSquad && mates.some((m) => m.id === PLAYER_ID)) return `mate:${PLAYER_ID}`;
+    // Now and then straight into a new jet while the side is short of its limit
+    // (owner, 2026-10-02: bots hardly flew; jets went only to bots back at their base).
+    const vw = this.vehicles;
+    if (vw && this.botJetSlot(bot.team) && Math.random() < BOT_JETS.respawn) return 'jet';
     const target = objective ?? this.baseCenter(otherTeam(bot.team));
     const cands: { key: string; x: number; z: number }[] = [];
     const base = this.baseCenter(bot.team);
@@ -3035,6 +3133,17 @@ export class Game {
   }
 }
 
+/**
+ * Bots and jets: a side with a free jet slot checks every `every` s for a bot
+ * near its base (`nearBase` m) to send up, from `first` s into the match; a
+ * respawning bot takes the slot with chance `respawn`. On the player's side
+ * bots leave a freed slot alone for `playerFirst` s.
+ */
+const BOT_JETS = { first: 12, every: 4, nearBase: 90, respawn: 0.6, playerFirst: 15 };
+/** Seconds a jet that just came in can't be locked by missiles. */
+const JET_LOCK_GRACE = 10;
+/** Player jet cannon: fires at the crosshair within this angle of the nose (rad), onto an enemy aircraft this close to the crosshair. */
+const JET_GUN = { cone: 0.21, assist: 0.031 };
 /** Parachute: falling speed and how fast it can be steered sideways (m/s). */
 const CHUTE = { fall: 8, steer: 4.5 };
 

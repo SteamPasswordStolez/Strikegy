@@ -58,6 +58,8 @@ export class Vehicle implements Damageable {
   readonly model: VehicleModel;
   readonly body: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
+  /** Aircraft: a second hitbox across the wings. */
+  readonly wingCollider: RAPIER.Collider | null = null;
   private readonly controller: RAPIER.DynamicRayCastVehicleController | null = null;
   /** Aircraft only. */
   readonly flight: Flight | null = null;
@@ -71,6 +73,8 @@ export class Vehicle implements Damageable {
   removeAt = Infinity;
   /** Last time anyone sat in it (abandoned vehicles are cleared away). */
   usedAt = 0;
+  /** Jets: game time it came in off the edge (missiles can't lock it for a moment). */
+  arrivedAt = -Infinity;
   /** Only this combatant may take the driver's seat (a called-in rocket tank: its squad leader), or null. */
   driverOnly: number | null = null;
   /** Guns by seat (null for seats without one), and second weapons (missiles, rocket pods). */
@@ -108,7 +112,10 @@ export class Vehicle implements Damageable {
       // Aircraft: a kinematic body flown by `fly`; its box is a hitbox only.
       this.flight = { yaw, pitch: 0, roll: 0, speed: (spec.flight.minSpeed + spec.flight.maxSpeed) / 2, throttle: 0.6, turningBack: false };
       this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(pos.x, pos.y, pos.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
-      this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(...spec.half).setCollisionGroups(groups(Layer.HITBOX, 0)), this.body);
+      // Its filter must name HITBOX too: with 0 no ray (bullets, cannon, rockets) could ever hit it (jets took only blast damage).
+      this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(...spec.half).setCollisionGroups(groups(Layer.HITBOX, Layer.HITBOX)), this.body);
+      const w = spec.flight.wings;
+      this.wingCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(...w.half).setTranslation(0, 0, w.z).setCollisionGroups(groups(Layer.HITBOX, Layer.HITBOX)), this.body);
       this.model = buildVehicleModel(kind, home);
       this.readBody();
       this.prevPos.copy(this.pos);

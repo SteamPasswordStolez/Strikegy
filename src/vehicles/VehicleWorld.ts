@@ -134,8 +134,11 @@ export class VehicleWorld {
     const v = new Vehicle(this.nextId++, kind, this.physics, pos, yaw, home);
     v.usedAt = this.time;
     this.vehicles.push(v);
-    this.byHandle.set(v.collider.handle, v);
-    this.registry.register(v.collider.handle, v, 'body');
+    for (const c of [v.collider, v.wingCollider]) {
+      if (!c) continue;
+      this.byHandle.set(c.handle, v);
+      this.registry.register(c.handle, v, 'body');
+    }
     this.group.add(v.model.root);
     return v;
   }
@@ -221,8 +224,11 @@ export class VehicleWorld {
 
   private remove(v: Vehicle): void {
     this.vehicles.splice(this.vehicles.indexOf(v), 1);
-    this.byHandle.delete(v.collider.handle);
-    this.registry.unregister(v.collider.handle);
+    for (const c of [v.collider, v.wingCollider]) {
+      if (!c) continue;
+      this.byHandle.delete(c.handle);
+      this.registry.unregister(c.handle);
+    }
     this.group.remove(v.model.root);
     v.dispose();
     for (const p of this.pads) if (p.vehicle === v.id) this.leftPad(p);

@@ -84,6 +84,8 @@ export interface FlightSpec {
   maxSpeed: number;
   turn: number;
   accel: number;
+  /** Wing hitbox: half sizes and centre along the body's z (the hull box alone missed every shot at the wings). */
+  wings: { half: readonly [number, number, number]; z: number };
 }
 
 /**
@@ -297,7 +299,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     // short burst from a fighter's cannon (8 hits) or one missile brings it down.
     health: 280,
     mult: { bullet: 0.35, heavy: 1.6, explosive: 1.2, at: 1.6 },
-    flight: { minSpeed: 55, maxSpeed: 125, turn: 1.05, accel: 14 },
+    flight: { minSpeed: 55, maxSpeed: 125, turn: 1.05, accel: 14, wings: { half: [5.3, 0.3, 2.4], z: 0.9 } },
   },
   cas: {
     kind: 'cas',
@@ -320,7 +322,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     // Tougher than the fighter, still down to about 12 cannon hits or one missile.
     health: 380,
     mult: { bullet: 0.3, heavy: 1.3, explosive: 1.1, at: 1.4 },
-    flight: { minSpeed: 45, maxSpeed: 100, turn: 0.85, accel: 10 },
+    flight: { minSpeed: 45, maxSpeed: 100, turn: 0.85, accel: 10, wings: { half: [8.8, 0.35, 1.5], z: 0 } },
   },
   bike: {
     kind: 'bike',
@@ -389,8 +391,8 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   // Rocket tank launcher: a salvo of 12 lobbed onto the aim point, then 20 s to reload.
   rockets: { rpm: 400, damage: 999, spread: 1.6, range: 900, vsVehicle: 200, blast: 7, burst: 12, cool: 20, shell: { speed: 90, gravity: 9.8, lob: true } },
   // Jets. Fighter cannon, CAS 30 mm, air-to-air missiles, rocket pods.
-  jetcannon: { rpm: 1100, damage: 45, spread: 0.6, range: 1000, vsVehicle: 22, blast: 0, burst: 120, cool: 4 },
-  gau: { rpm: 900, damage: 80, spread: 0.7, range: 900, vsVehicle: 45, blast: 1.8, burst: 90, cool: 5 },
+  jetcannon: { rpm: 1100, damage: 45, spread: 0.45, range: 1000, vsVehicle: 22, blast: 0, burst: 120, cool: 4 },
+  gau: { rpm: 900, damage: 80, spread: 0.55, range: 900, vsVehicle: 45, blast: 1.8, burst: 90, cool: 5 },
   aam: { rpm: 60, damage: 999, spread: 0, range: 1500, vsVehicle: 320, blast: 4, burst: 2, cool: 14, shell: { speed: 260, gravity: 0 }, homing: true },
   jetrockets: { rpm: 600, damage: 999, spread: 0.9, range: 1000, vsVehicle: 220, blast: 5, burst: 14, cool: 12, shell: { speed: 230, gravity: 2 } },
 };
