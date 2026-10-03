@@ -2554,10 +2554,11 @@ export class Game {
         dark: this.player.alive ? this.breath.dark : 0,
         rp: supportState ? `${t('support.hud')} ${supportState.rp}${this.touch ? '' : ' · B'}` : null,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
+        grenadeType: sel,
         grenadeCount: this.grenades.count,
         gadget:
           this.gadget && this.deployed
-            ? { key: this.touch ? '' : '4 · ', label: t(`gadgetName.${this.gadget}`), count: this.gadgetCount, out: this.gadgetOut }
+            ? { id: this.gadget, key: this.touch ? '' : '4 · ', label: t(`gadgetName.${this.gadget}`), count: this.gadgetCount, out: this.gadgetOut }
             : null,
         flash,
         respawnIn: this.player.alive || this.playerDowned ? null : Math.max(0, this.respawnTimer),
@@ -2620,7 +2621,10 @@ export class Game {
     this.bus.on('mode:event', (e) => this.onModeEvent(e));
     this.bus.on('match:ended', (e) => this.endMatch(e.winner));
 
-    // Scoreboard stats.
+    // Scoreboard stats; the player's own points pop up under the crosshair.
+    this.scores.onPoints = (id, points, reason) => {
+      if (id === PLAYER_ID) this.hud.scorePopup(points, t(`points.${reason}`));
+    };
     this.bus.on('combat:kill', (e) => this.scores.kill(e.attackerId, e.victimId, e.headshot));
     this.bus.on('combatant:died', (e) => this.scores.death(e.id));
     // Credit for zones goes to the side's soldiers standing in the zone at that moment.
@@ -3054,7 +3058,7 @@ export class Game {
       selected: sel,
       wait: Math.max(0, this.respawnTimer),
       note: this.squadWiped ? t('squad.wiped') : null,
-      title: `${t('deploy.title')} · ${this.mapName}`,
+      title: this.mapName,
       matchLine: zm ? this.deployMatchLine() : null,
       zones: zm ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: tone(z.owner), pushing: z.pushing !== null })) : [],
       enemyBase: (() => {

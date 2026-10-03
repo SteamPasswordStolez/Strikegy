@@ -76,8 +76,13 @@ export class Minimap {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, S, S);
     g.save();
-    g.beginPath();
-    g.arc(R, R, R - 1, 0, Math.PI * 2);
+    // A square with rounded corners (Modern Warfare style).
+    const corner = S * 0.05;
+    const frame = () => {
+      g.beginPath();
+      g.roundRect(1, 1, S - 2, S - 2, corner);
+    };
+    frame();
     g.clip();
     g.fillStyle = '#1b211d';
     g.fillRect(0, 0, S, S);
@@ -102,8 +107,9 @@ export class Minimap {
     for (const z of f.zones) {
       const color = z.contested && blink ? '#ffb347' : z.owner ? COLORS[z.owner] : COLORS.neutral;
       let [zx, zy] = at(z.x, z.z);
-      const off = Math.hypot(zx - R, zy - R);
+      // Off the map: pinned to the frame along the way to it.
       const edge = R - S * 0.07;
+      const off = Math.max(Math.abs(zx - R), Math.abs(zy - R));
       if (off > edge) {
         zx = R + ((zx - R) / off) * edge;
         zy = R + ((zy - R) / off) * edge;
@@ -126,7 +132,7 @@ export class Minimap {
 
     const dot = (x: number, z: number, color: string, r: number) => {
       const [a, b] = at(x, z);
-      if (Math.hypot(a - R, b - R) > R) return;
+      if (Math.abs(a - R) > R || Math.abs(b - R) > R) return;
       g.beginPath();
       g.arc(a, b, r, 0, Math.PI * 2);
       g.fillStyle = color;
@@ -153,16 +159,18 @@ export class Minimap {
     g.stroke();
     g.restore();
 
-    // Rim and a north tick.
-    g.beginPath();
-    g.arc(R, R, R - 1.5, 0, Math.PI * 2);
-    g.strokeStyle = 'rgba(230, 232, 228, 0.55)';
+    // Frame and a north mark on it.
+    frame();
+    g.strokeStyle = 'rgba(230, 232, 228, 0.5)';
     g.lineWidth = 2;
     g.stroke();
     const north = at(f.x, f.z - RANGE);
-    const na = Math.atan2(north[1] - R, north[0] - R);
+    const nx = north[0] - R;
+    const ny = north[1] - R;
+    const nm = Math.max(Math.abs(nx), Math.abs(ny)) || 1;
+    const ne = R - S * 0.06;
     g.fillStyle = '#e8e8e0';
     g.font = `700 ${Math.round(S * 0.07)}px system-ui, sans-serif`;
-    g.fillText('N', R + Math.cos(na) * (R - S * 0.06), R + Math.sin(na) * (R - S * 0.06));
+    g.fillText('N', R + (nx / nm) * ne, R + (ny / nm) * ne);
   }
 }

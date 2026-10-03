@@ -14,9 +14,14 @@ export interface ScoreRow {
   score: number;
 }
 
+/** What a score popup says the points were for. */
+export type PointsReason = 'kill' | 'headshot' | 'capture' | 'neutralize' | 'revive' | 'resupply';
+
 /** Per-combatant match stats, fed from game events. Render-independent. */
 export class ScoreTracker {
   private readonly rows = new Map<number, ScoreRow>();
+  /** Points just earned (the player's become popups on the HUD; building points don't). */
+  onPoints: ((id: number, points: number, reason: PointsReason) => void) | null = null;
 
   add(id: number, name: string, team: Team): void {
     if (!this.rows.has(id)) this.rows.set(id, { id, name, team, kills: 0, deaths: 0, captures: 0, score: 0 });
@@ -34,6 +39,8 @@ export class ScoreTracker {
     if (v && (v === a || v.team === a.team)) return;
     a.kills++;
     a.score += POINTS.kill + (headshot ? POINTS.headshot : 0);
+    this.onPoints?.(a.id, POINTS.kill, 'kill');
+    if (headshot) this.onPoints?.(a.id, POINTS.headshot, 'headshot');
   }
 
   death(id: number): void {
@@ -44,13 +51,18 @@ export class ScoreTracker {
   /** Got a downed teammate back up (medics earn more for it). */
   revive(id: number, medic: boolean): void {
     const r = this.rows.get(id);
-    if (r) r.score += medic ? POINTS.reviveMedic : POINTS.revive;
+    if (!r) return;
+    const pts = medic ? POINTS.reviveMedic : POINTS.revive;
+    r.score += pts;
+    this.onPoints?.(id, pts, 'revive');
   }
 
   /** Handed a teammate a medkit or ammo. */
   resupply(id: number): void {
     const r = this.rows.get(id);
-    if (r) r.score += POINTS.resupply;
+    if (!r) return;
+    r.score += POINTS.resupply;
+    this.onPoints?.(id, POINTS.resupply, 'resupply');
   }
 
   /** Points for building and refilling stations (fractions carry over). */
@@ -71,7 +83,9 @@ export class ScoreTracker {
       const r = this.rows.get(id);
       if (!r) continue;
       if (kind === 'capture') r.captures++;
-      r.score += kind === 'capture' ? POINTS.capture : POINTS.neutralize;
+      const pts = kind === 'capture' ? POINTS.capture : POINTS.neutralize;
+      r.score += pts;
+      this.onPoints?.(id, pts, kind);
     }
   }
 

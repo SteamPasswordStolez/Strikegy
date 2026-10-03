@@ -276,5 +276,15 @@
   "match.reason.sectors": "모든 섹터 돌파",
   "mode.setup": "공격 준비",
   "mode.goAttack": "공격 개시 — 첫 섹터를 빼앗으세요",
-  "mode.goDefend": "적이 공격을 시작했습니다 — 첫 섹터를 지키세요"
+  "mode.goDefend": "적이 공격을 시작했습니다 — 첫 섹터를 지키세요",
+  "deploy.mapHint": "지도에서 부활 위치를 클릭하세요",
+  "deploy.mapHintTouch": "지도에서 부활 위치를 탭하세요",
+  "deploy.at": "배치 위치",
+  "deploy.onMate": "옆에 배치",
+  "points.kill": "처치",
+  "points.headshot": "헤드샷",
+  "points.capture": "거점 점령",
+  "points.neutralize": "거점 무력화",
+  "points.revive": "부활",
+  "points.resupply": "보급"
 }

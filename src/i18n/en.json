@@ -276,5 +276,15 @@
   "match.reason.sectors": "Every sector taken",
   "mode.setup": "Attack in",
   "mode.goAttack": "Attack — take the first sector",
-  "mode.goDefend": "The attack has begun — hold the first sector"
+  "mode.goDefend": "The attack has begun — hold the first sector",
+  "deploy.mapHint": "Click a spawn point on the map",
+  "deploy.mapHintTouch": "Tap a spawn point on the map",
+  "deploy.at": "Deploying at",
+  "deploy.onMate": "Spawn on",
+  "points.kill": "Kill",
+  "points.headshot": "Headshot",
+  "points.capture": "Zone captured",
+  "points.neutralize": "Zone neutralized",
+  "points.revive": "Revive",
+  "points.resupply": "Resupply"
 }
