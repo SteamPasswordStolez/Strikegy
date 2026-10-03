@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { exportTileCache, importTileCache, init, NavMeshQuery, type NavMesh, type Obstacle, type TileCache } from 'recast-navigation';
+import { exportNavMesh, exportTileCache, importNavMesh, importTileCache, init, NavMeshQuery, type NavMesh, type Obstacle, type TileCache } from 'recast-navigation';
 import { hashNavInput, loadNav, saveNav } from './navCache';
-import { createDefaultTileCacheMeshProcess, generateTileCache } from 'recast-navigation/generators';
+import { createDefaultTileCacheMeshProcess, generateTileCache, generateTiledNavMesh } from 'recast-navigation/generators';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
 
@@ -376,6 +376,89 @@ export class NavWorld {
     this.query.destroy();
     this.tileCache.destroy();
     this.navMesh.destroy();
+  }
+}
+
+/**
+ * Where vehicles can drive (owner, 2026-10-02: bots kept wedging tanks and
+ * APCs into walls): a second, coarse navmesh for an agent as wide as a tank,
+ * so paths keep to roads, fields and gaps a hull fits through, never alleys,
+ * doorways or fence gaps. A plain tiled navmesh (no obstacles; sandbags built
+ * later are just bumped into), which unlike the tile cache links bridge decks
+ * and ramps within a tile. Cached like the people's mesh.
+ */
+const VEHICLE_NAV = {
+  cs: 0.5,
+  ch: 0.25,
+  /** Half a tank's width plus a margin (m), its height, the kerb it climbs. */
+  radius: 2.0,
+  height: 2.75,
+  climb: 0.75,
+  slope: 32,
+};
+
+export class VehicleNav {
+  private readonly query: NavMeshQuery;
+
+  private constructor(readonly navMesh: NavMesh) {
+    this.query = new NavMeshQuery(navMesh);
+  }
+
+  static async build(physics: PhysicsWorld, extra?: { positions: number[]; indices: number[] }): Promise<VehicleNav | null> {
+    recastReady ??= init();
+    await recastReady;
+    const { positions, indices } = collectNavInput(physics, extra);
+    if (indices.length === 0) return null;
+    const c = VEHICLE_NAV;
+    const config = {
+      cs: c.cs,
+      ch: c.ch,
+      walkableRadius: Math.ceil(c.radius / c.cs),
+      walkableHeight: Math.ceil(c.height / c.ch),
+      walkableClimb: Math.floor(c.climb / c.ch),
+      walkableSlopeAngle: c.slope,
+      minRegionArea: 64,
+      mergeRegionArea: 400,
+      maxSimplificationError: 1.5,
+      maxEdgeLen: 24,
+      detailSampleDist: 6,
+      detailSampleMaxError: 1,
+      tileSize: 64,
+    };
+    const key = hashNavInput(positions, indices, `veh1${JSON.stringify(config)}`);
+    const cached = skipCache() ? null : await loadNav(key);
+    if (cached) {
+      try {
+        return new VehicleNav(importNavMesh(cached).navMesh);
+      } catch (err) {
+        console.warn('[nav] cached vehicle navmesh unusable, rebuilding', err);
+      }
+    }
+    const result = generateTiledNavMesh(positions, indices, config);
+    if (!result.success) {
+      console.warn('[nav] vehicle navmesh generation failed:', result.error);
+      return null;
+    }
+    void saveNav(key, exportNavMesh(result.navMesh));
+    return new VehicleNav(result.navMesh);
+  }
+
+  /**
+   * Corner points of a drivable route from `from` (a vehicle) toward `to`
+   * (the goal may stand where no hull fits, e.g. a zone in a dense town: the
+   * route then ends at the nearest drivable point). False when there's none.
+   */
+  path(from: V3, to: V3, out: THREE.Vector3[]): boolean {
+    out.length = 0;
+    const a = this.query.findClosestPoint(from, { halfExtents: { x: 4, y: 6, z: 4 } });
+    if (!a.success || !a.polyRef) return false;
+    let b = this.query.findClosestPoint(to, { halfExtents: { x: 12, y: 8, z: 12 } });
+    if (!b.success || !b.polyRef) b = this.query.findClosestPoint(to, { halfExtents: { x: 45, y: 15, z: 45 } });
+    if (!b.success || !b.polyRef) return false;
+    const res = this.query.computePath(a.point, b.point, { halfExtents: { x: 1, y: 2, z: 1 }, maxPathPolys: PATH_POLYS });
+    if (!res.success || res.path.length === 0) return false;
+    for (const p of res.path) out.push(new THREE.Vector3(p.x, p.y, p.z));
+    return true;
   }
 }
 

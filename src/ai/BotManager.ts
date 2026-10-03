@@ -9,7 +9,7 @@ import { LAYER_FX } from '@/render/layers';
 import type { SpawnPoint, Team } from '@/world/mapTypes';
 import { WEAPONS, damageAtDistance, type WeaponDef } from '@/weapons/weaponData';
 import { Bot, type BotServices } from './Bot';
-import type { NavWorld } from './NavWorld';
+import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel, buildFarSoldier } from './SoldierModel';
 import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
@@ -98,6 +98,13 @@ const NEAR_MISS = 2.5;
 const NEAR_MISS_AMOUNT = 0.22;
 /** Frag blasts suppress everyone within this radius (m). */
 const BLAST_SUPPRESS = 14;
+/**
+ * Bot drivers: aim this far down the route (m, plus 0.7 s of speed), stuck
+ * after this long pushing at under 0.8 m/s, back up this long (plus 0.3 s a
+ * try), give up after this many tries in a row, and getting this far from
+ * the last stuck spot clears the count; wait at most `yield` s for a vehicle ahead.
+ */
+const DRIVE = { look: 6, stuck: 1.8, back: 1.3, giveUp: 7, clear: 15, yield: 4 };
 /** Mates within this distance of a killed bot learn where the killer was. */
 const KILL_INTEL_RANGE = 35;
 /** Enemies noticed by a bot stay on the team's minimap this long (s). */
@@ -219,7 +226,7 @@ interface BotEntry {
   /** Walking to a vehicle seat (claimed until `until`). */
   board: { vehicle: number; seat: number; until: number } | null;
   /** Driving: the path being followed and stuck handling. */
-  drive: { path: THREE.Vector3[]; at: number; repathAt: number; waitUntil: number; stuckFor: number; backUntil: number; tries: number } | null;
+  drive: { path: THREE.Vector3[]; at: number; repathAt: number; waitUntil: number; stuckFor: number; backUntil: number; tries: number; backSteer?: number; stuckAt?: THREE.Vector3; yieldSince?: number } | null;
   /** Riding without a driver since (gunners hold on a little). */
   alone?: number;
   /** Bot pilots: what they're going after, and a pull-up after an attack run. */
@@ -292,6 +299,8 @@ export class BotManager implements BotServices {
   private readonly squadCallAt = new Map<string, number>();
   /** Vehicles, the drive inputs the game hands to them this step, and helpers from the game. */
   vehicles: VehicleWorld | null = null;
+  /** Where hulls fit (see VehicleNav); drivers fall back to the people's mesh without it. */
+  vehicleNav: VehicleNav | null = null;
   driveInputs = new Map<number, DriveInput>();
   playerRiding: (() => boolean) | null = null;
   /** Fires one round from a vehicle's seat gun at a point (the game's shared vehicle gun code). */
@@ -1556,9 +1565,15 @@ export class BotManager implements BotServices {
   }
 
   /**
-   * Driving to the squad objective along the navmesh path: steer at the
-   * next corner a few metres ahead, slow for sharp turns, brake near the end;
-   * stuck for a moment, back up turning the other way; stuck too often, park.
+   * Driving to the squad objective (owner, 2026-10-02: "bots can't drive
+   * tanks, a wall and they're stuck for good"): the route comes from the
+   * vehicle navmesh (wide enough for a hull), followed by aiming at a point
+   * a speed-dependent distance ahead; three feelers at bumper height steer
+   * off walls and slow for what's in front; tracked hulls turn on the spot
+   * for sharp corners. Stuck: back up, the wheels turned toward the way on,
+   * then plan again; it only gives up after many tries without getting
+   * anywhere (getting 15 m clear wipes the count). At the end of the route
+   * (the goal itself may stand where no hull fits) everyone gets out.
    */
   private autopilot(e: BotEntry, v: Vehicle, dt: number): void {
     const d = e.drive!;
@@ -1570,51 +1585,102 @@ export class BotManager implements BotServices {
       return;
     }
     const goal = e.objective?.pos;
-    if (!goal) {
+    if (!goal || goal.distanceTo(v.pos) < VEHICLE_DROP) {
       out.brake = true;
       return;
     }
-    if (goal.distanceTo(v.pos) < VEHICLE_DROP) {
-      out.brake = true;
-      return;
-    }
-    if (this.time > d.repathAt || d.at >= d.path.length) {
-      d.repathAt = this.time + 6;
-      d.path.length = 0;
-      d.at = 0;
-      if (!this.nav.path(v.pos, goal, d.path)) d.path.push(goal.clone());
-    }
-    // Next corner more than a few metres ahead.
-    while (d.at < d.path.length - 1 && d.path[d.at]!.distanceTo(v.pos) < 7) d.at++;
-    const to = d.path[d.at]!;
-    const want = Math.atan2(-(to.x - v.pos.x), -(to.z - v.pos.z));
-    let diff = want - v.yaw;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
     const speed = v.forwardSpeed();
-    if (this.time < d.backUntil) {
-      out.throttle = -1;
-      out.steer = diff > 0 ? 1 : -1;
-      return;
-    }
-    // Positive diff = target to the left (yaw grows turning left); steer +1 is right.
-    out.steer = THREE.MathUtils.clamp(-diff * 1.8, -1, 1);
-    const sharp = Math.abs(diff);
-    out.throttle = sharp > 1.2 ? 0.35 : sharp > 0.6 ? 0.6 : 1;
-    if (sharp > 1.2 && speed > 7) out.brake = true;
-    // Stuck: pushing without getting anywhere.
-    if (Math.abs(speed) < 1) d.stuckFor += dt;
-    else d.stuckFor = Math.max(0, d.stuckFor - dt);
-    if (d.stuckFor > 2.5) {
-      d.stuckFor = 0;
-      d.backUntil = this.time + 1.6;
-      d.repathAt = this.time + 1.7;
-      if (++d.tries > 4) d.waitUntil = Infinity;
-    }
-    if (d.tries > 4) {
-      // Gave up: park and get out (they'll walk).
+    const getOut = (): void => {
       out.throttle = 0;
       out.brake = true;
       if (Math.abs(speed) < 1.5) for (const x of this.entries) if (x.bot.riding?.vehicle === v.id) this.alightBot(x);
+    };
+    if (d.tries > DRIVE.giveUp) return getOut();
+    if (this.time > d.repathAt || d.at >= d.path.length) {
+      d.repathAt = this.time + 8;
+      d.path.length = 0;
+      d.at = 0;
+      const routed = this.vehicleNav ? this.vehicleNav.path(v.pos, goal, d.path) : this.nav.path(v.pos, goal, d.path);
+      if (!routed) d.path.push(goal.clone());
+    }
+    // Aim at the route a little ahead (further when fast) rather than at its next corner.
+    const look = DRIVE.look + Math.abs(speed) * 0.7;
+    while (d.at < d.path.length - 1 && Math.hypot(d.path[d.at]!.x - v.pos.x, d.path[d.at]!.z - v.pos.z) < look) d.at++;
+    const to = d.path[d.at]!;
+    const toDist = Math.hypot(to.x - v.pos.x, to.z - v.pos.z);
+    if (d.at === d.path.length - 1 && toDist < 8) return getOut();
+    const want = Math.atan2(-(to.x - v.pos.x), -(to.z - v.pos.z));
+    const diff = Math.atan2(Math.sin(want - v.yaw), Math.cos(want - v.yaw));
+    if (this.time < d.backUntil) {
+      out.throttle = -1;
+      out.steer = d.backSteer ?? (diff > 0 ? 1 : -1);
+      return;
+    }
+    // Feelers: straight ahead and either corner of the bumper.
+    const yaw = v.yaw;
+    const fx = -Math.sin(yaw);
+    const fz = -Math.cos(yaw);
+    const half = v.spec.half;
+    // Another vehicle just ahead that is moving (or goes first, lower id): wait
+    // for it a few seconds rather than shove into it (columns leaving a base jammed).
+    let ahead2: Vehicle | null = null;
+    for (const o of this.vehicles?.vehicles ?? []) {
+      if (o === v || o.flight || o.wrecked) continue;
+      const dx = o.pos.x - v.pos.x;
+      const dz = o.pos.z - v.pos.z;
+      const along = dx * fx + dz * fz;
+      if (along <= 0 || along > half[2] + o.spec.half[2] + 6) continue;
+      if (Math.abs(dx * -fz + dz * fx) < half[0] + o.spec.half[0] + 0.8) {
+        ahead2 = o;
+        break;
+      }
+    }
+    if (ahead2 && (ahead2.velocity.length() > 1 || ahead2.id < v.id) && this.time - (d.yieldSince ??= this.time) < DRIVE.yield) {
+      out.brake = true;
+      d.stuckFor = 0;
+      return;
+    }
+    if (!ahead2) d.yieldSince = undefined;
+    const reach = half[2] + 2.5 + Math.max(0, speed) * 0.6;
+    const feel = (side: number): number => {
+      const ox = v.pos.x + fz * -side * half[0] * 0.9;
+      const oz = v.pos.z + fx * side * half[0] * 0.9;
+      // Low on the hull, where kerbs, sandbags and low walls catch it.
+      const hit = this.physics.raycast({ x: ox, y: v.pos.y - half[1] + 0.45, z: oz }, { x: fx, y: 0, z: fz }, reach, Layer.WORLD, v.collider);
+      // Rising ground ahead is a slope to climb, not a wall.
+      return hit && hit.normal.y < 0.6 ? hit.distance / reach : 1;
+    };
+    const left = feel(-1);
+    const right = feel(1);
+    const ahead = feel(0);
+    const sharp = Math.abs(diff);
+    // Positive diff = target to the left (yaw grows turning left); steer +1 is right.
+    // A wall near one corner pushes the steering toward the other side.
+    out.steer = THREE.MathUtils.clamp(-diff * 1.8 + (1 - left) * 1.4 - (1 - right) * 1.4, -1, 1);
+    const pivot = !!v.spec.turnRate && sharp > 0.7;
+    if (pivot) {
+      // Tracks: turn on the spot toward the route.
+      out.throttle = 0;
+      out.steer = diff > 0 ? -1 : 1;
+    } else {
+      out.throttle = sharp > 1.2 ? 0.35 : sharp > 0.6 ? 0.6 : 1;
+      if (ahead < 0.5) out.throttle = Math.min(out.throttle, 0.3);
+      if ((sharp > 1.2 || ahead < 0.35) && speed > 6) out.brake = true;
+    }
+    // Stuck: pushing without getting anywhere (turning on the spot counts as getting somewhere while the hull turns).
+    const blocked = pivot ? Math.abs(v.body.angvel().y) < 0.12 : Math.abs(speed) < 0.8 && out.throttle > 0.1;
+    if (blocked) d.stuckFor += dt;
+    else d.stuckFor = Math.max(0, d.stuckFor - dt * 2);
+    if (d.stuckAt && d.stuckAt.distanceTo(v.pos) > DRIVE.clear) d.tries = 0;
+    if (d.stuckFor > DRIVE.stuck) {
+      d.stuckFor = 0;
+      d.tries++;
+      d.stuckAt = v.pos.clone();
+      const back = DRIVE.back + d.tries * 0.3;
+      d.backUntil = this.time + back;
+      // Backing with the wheels turned toward the way on swings the nose round to it; every other try the other way.
+      d.backSteer = (diff > 0 ? 1 : -1) * (d.tries % 3 === 2 ? -1 : 1);
+      d.repathAt = this.time + back + 0.1;
     }
   }
 

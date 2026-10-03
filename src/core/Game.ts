@@ -30,7 +30,7 @@ import { Player } from '@/player/Player';
 import { fallDamage } from '@/player/health';
 import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
-import { NavWorld } from '@/ai/NavWorld';
+import { NavWorld, VehicleNav } from '@/ai/NavWorld';
 import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
@@ -468,6 +468,12 @@ export class Game {
         if (water) this.bots.setWater(water);
         const bots = this.bots;
         this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, PLAYER_TEAM, hitId, pellet ? 0.35 : 1);
+        // Vehicles come with zone matches: their drivers route on a mesh as wide as a tank.
+        if ((map.zones?.length ?? 0) > 0 && !this.options.sandbox) {
+          const tVeh = performance.now();
+          bots.vehicleNav = await VehicleNav.build(this.physics, this.navExtra ?? undefined);
+          if (import.meta.env.DEV) console.info(`[strikegy] vehicle navmesh built in ${Math.round(performance.now() - tVeh)} ms`);
+        }
       }
     }
     this.mapImage = paintMap(map, terrain.boundary, 2048);

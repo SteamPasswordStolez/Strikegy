@@ -403,8 +403,9 @@ const BASE_WALL = [[141.5, -117.6], [160, -150], [190, -160], [220, -146], [234,
   truck(...fE(20, -3.5), fE.deg - 90, '#4d5a3c');
   scatter(...Z.E, 6, 24, 7);
   // Outside the gate: a staggered roadblock, wrecks, hesco wings and a dead tank in the field.
-  barriers(...fE(-40, -6), fE.deg + 90, 4);
-  barriers(...fE(-48, 6), fE.deg + 90, 4);
+  // Staggered, but with a straight lane a tank fits through (bot drivers kept wedging in a tighter one).
+  barriers(...fE(-40, -7.2), fE.deg + 90, 3);
+  barriers(...fE(-48, 7.2), fE.deg + 90, 3);
   hesco([fE(-33, -12), fE(-33, -22)]);
   hesco([fE(-33, 12), fE(-33, 22)]);
   car(...fE(-37, 11), fE.deg + 70, pick(WRECK));
@@ -681,17 +682,21 @@ for (const r of [M1W, M1E, BA, BC, STREETS[0], STREETS[1]]) {
     }
   }
 }
-/** A roadblock across a road at distance s: wrecks askew, sandbags, barriers, a lane left open. */
+/**
+ * A roadblock across a road at distance s: a wreck, sandbags and barriers
+ * closing one side, the other side left open wide enough for a tank (5 m;
+ * a slalom of wrecks across the whole road stopped every bot-driven hull).
+ */
 function roadblock(r, s, opts = {}) {
   const p = along(r.pts, s);
   const nx = -p.tz;
   const nz = p.tx;
   const half = r.w / 2;
   const at = (k, f = 0) => [p.x + nx * k + p.tx * f, p.z + nz * k + p.tz * f];
-  car(...at(-half + 1.6, 0.5), p.yaw + 70 + (R() - 0.5) * 20, pick(WRECK));
-  if (opts.both !== false) car(...at(half - 1.4, -2.5), p.yaw - 60 + (R() - 0.5) * 20, pick(WRECK));
+  car(...at(-half + 1.2, 0.5), p.yaw + 15 + (R() - 0.5) * 10, pick(WRECK));
+  if (opts.both !== false) car(...at(-half + 1.2, -7), p.yaw - 10 + (R() - 0.5) * 10, pick(WRECK));
   sandbags(...at(-half - 0.2, -4), 3.2, p.yaw + 90 + 90);
-  barriers(...at(half * 0.3, 3.5), p.yaw + 90, 2);
+  barriers(...at(-half * 0.45, 3.5), p.yaw + 90, 2);
 }
 roadblock(M1W, sAtX(M1W.pts, -63), {});
 roadblock(M1E, sAtX(M1E.pts, 58), {});
