@@ -1,0 +1,21 @@
+# The Strikegy game server as a systemd service (see docs/server-setup.md).
+# Copy to /etc/systemd/system/strikegy.service, set User and WorkingDirectory,
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now strikegy
+[Unit]
+Description=Strikegy game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=steampasswordstolen
+WorkingDirectory=/home/steampasswordstolen/strikegy
+Environment=PORT=8787
+# Bundle the server from the checkout, then run it.
+ExecStartPre=/usr/bin/npm run server:build
+ExecStart=/usr/bin/node dist-server/main.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
