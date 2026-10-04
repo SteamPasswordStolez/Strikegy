@@ -9,6 +9,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { sanitizeLoadout, type ClassId, type Loadout } from '../src/data/classes.ts';
+import { STATION } from '../src/modes/fortify.ts';
 import { createInputState, type InputState } from '../src/input/InputState.ts';
 import type { MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
 import {
@@ -194,7 +195,7 @@ export class MatchRoom {
     if (!seat || this.over) return;
     const kit = cleanKit(rawKit);
     const s = seat.soldier;
-    const at = this.sim.deploy(s.id, /^(base|zone:[\w-]{1,8})$/.test(key) ? key : 'base', kit);
+    const at = this.sim.deploy(s.id, /^(base|zone:[\w-]{1,8}|beacon:\d{1,6})$/.test(key) ? key : 'base', kit);
     if (!at) return;
     seat.kit = kit;
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
@@ -283,7 +284,9 @@ export class MatchRoom {
     const list: NetSoldier[] = [];
     for (const seat of this.seats.values()) list.push(netSoldier(seat));
     const shared = encodeSoldiers(list);
-    const things = encodeThings([...this.sim.throwables.all()].map((g) => ({ id: g.id, kind: THING[g.type], x: g.x, y: g.y, z: g.z })));
+    const list2 = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
+    for (const g of this.sim.gadgets.things()) list2.push({ id: 0x8000 | (g.id & 0x7fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
+    const things = encodeThings(list2);
     for (const seat of this.seats.values()) {
       if (!seat.conn || !seat.ready) continue;
       const s = seat.soldier;
@@ -315,11 +318,19 @@ export class MatchRoom {
   private sendState(seat: Seat): void {
     if (!seat.conn || !seat.ready) return;
     const zm = this.sim.zoneMode;
+    const fort = this.sim.fort;
     seat.conn.text({
       t: 'mstate',
       zones: zm ? zm.rules.zones : [],
       rules: zm ? rulesState(zm.match) : null,
       scores: this.scoreRows(),
+      fort: fort
+        ? {
+            slots: fort.slots.filter((s) => s.built || s.work > 0).map((s) => [s.id, Math.round(s.work * 100) / 100, s.built ? 1 : 0]),
+            stations: fort.stations.filter((s) => s.uses < STATION.uses).map((s) => [s.id, s.uses]),
+          }
+        : undefined,
+      beacons: this.sim.gadgets.beacons.map((b) => ({ id: b.id, team: b.owner.team, owner: b.owner.name, uses: b.uses, pos: [b.pos.x, b.pos.y, b.pos.z] })),
     });
   }
 
@@ -361,6 +372,12 @@ export class MatchRoom {
 
   private wire(): void {
     const bus = this.sim.bus;
+    this.sim.onBoom = (kind, p) => this.broadcastEvents.push({ k: 'boom', type: kind, pos: [p.x, p.y, p.z], tick: this.sim.tick });
+    this.sim.onGive = (by, to, kind) => {
+      const ev: MatchEvent = { k: 'given', kind, by: by.id, to: to.id };
+      this.byId.get(by.id)?.events.push(ev);
+      this.byId.get(to.id)?.events.push(ev);
+    };
     bus.on('combat:kill', (e) => {
       this.broadcastEvents.push({
         k: 'kill',
@@ -381,7 +398,6 @@ export class MatchRoom {
     bus.on('zone:captured', (e) => this.broadcastEvents.push({ k: 'zone', type: 'captured', zone: e.zone, team: e.team }));
     bus.on('zone:neutralized', (e) => this.broadcastEvents.push({ k: 'zone', type: 'neutralized', zone: e.zone, team: e.team }));
     bus.on('mode:event', (e) => this.broadcastEvents.push({ k: 'mode', e }));
-    bus.on('grenade:detonate', (e) => this.broadcastEvents.push({ k: 'boom', type: e.type, pos: [e.point.x, e.point.y, e.point.z], tick: this.sim.tick }));
     bus.on('combatant:revived', (e) => this.broadcastEvents.push({ k: 'revived', id: e.id, by: e.byName, byId: e.byId }));
     bus.on('match:ended', (e) => {
       if (this.over) return;
@@ -422,6 +438,8 @@ function netSoldier(seat: Seat): NetSoldier {
   if (p.sprinting) flags |= SF.sprint;
   if (p.grounded) flags |= SF.grounded;
   if (w.state.reloading) flags |= SF.reloading;
+  if (s.cls !== 'medic' && s.medkits === 0) flags |= SF.needMedkit;
+  if (w.needsAmmo) flags |= SF.needAmmo;
   return { id: s.id, flags, x: p.feet.x, y: p.feet.y, z: p.feet.z, yaw: p.yaw, pitch: p.pitch, weapon: w.def.id as WeaponId, health: p.health.value, shots: w.shots & 0xff };
 }
 

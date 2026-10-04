@@ -19,6 +19,7 @@ import type { InputState } from '@/input/InputState';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
 import type { Effects } from '@/render/Effects';
+import { gadgetModel } from '@/modes/gadgetWorld';
 import type { Soldier } from '@/sim/Soldier';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import type { Team } from '@/world/mapTypes';
@@ -53,6 +54,7 @@ interface Sample {
   shots: number;
 }
 
+const UP = new THREE.Vector3(0, 1, 0);
 /** Samples kept per soldier (a second and a half at 20 Hz). */
 const KEEP = 30;
 /** A corpse stays this long after the soldier left the field (s). */
@@ -114,6 +116,11 @@ class Remote {
   /** Down and waiting for a revive, in the moment drawn. */
   get downed(): boolean {
     return this.downFor >= 0;
+  }
+
+  /** The newest flags (what the soldier could use from a mate). */
+  get flags(): number {
+    return this.samples[this.samples.length - 1]?.flags ?? 0;
   }
 
   add(s: Sample): void {
@@ -228,7 +235,7 @@ class Remote {
 interface Thing {
   kind: number;
   samples: { tick: number; x: number; y: number; z: number }[];
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   /** Last snapshot tick it was in. */
   seen: number;
 }
@@ -237,9 +244,20 @@ const THING_COLOR: Record<number, number> = { [THING.frag]: 0x3f4a33, [THING.fla
 const thingGeometry = new THREE.CapsuleGeometry(0.036, 0.045, 4, 10);
 const thingMaterials = new Map<number, THREE.Material>();
 
+/** The model for a kind of thing: grenades as small capsules, gadgets as their own models. */
+function thingMesh(kind: number): THREE.Object3D {
+  const gadget = { [THING.rocket]: 'rocket', [THING.riflesmoke]: 'rifleGrenade', [THING.shell]: 'shell', [THING.beacon]: 'beacon', [THING.mine]: 'mine' } as const;
+  const g = gadget[kind as keyof typeof gadget];
+  if (g) return gadgetModel(g);
+  let mat = thingMaterials.get(kind);
+  if (!mat) thingMaterials.set(kind, (mat = new THREE.MeshStandardMaterial({ color: THING_COLOR[kind] ?? 0x555555, roughness: 0.6, metalness: 0.3 })));
+  return new THREE.Mesh(thingGeometry, mat);
+}
+
 export class NetMatch {
   readonly roster = new Map<number, MatchSoldierInfo>();
   private readonly things = new Map<number, Thing>();
+  private readonly dir = new THREE.Vector3();
   /** Explosions waiting for the moment drawn to reach them. */
   private readonly booms: Extract<MatchEvent, { k: 'boom' }>[] = [];
   /** A grenade went off where (and when) this browser draws things. */
@@ -298,8 +316,8 @@ export class NetMatch {
   }
 
   /** Everyone else this browser draws (minimap, deploy screen). */
-  *others(): Iterable<{ id: number; team: Team; name: string; alive: boolean; downed: boolean; feet: THREE.Vector3 }> {
-    for (const r of this.remotes.values()) if (r.visible) yield { id: r.id, team: r.team, name: r.name, alive: r.alive, downed: r.downed, feet: r.feet };
+  *others(): Iterable<{ id: number; team: Team; name: string; alive: boolean; downed: boolean; feet: THREE.Vector3; flags: number }> {
+    for (const r of this.remotes.values()) if (r.visible) yield { id: r.id, team: r.team, name: r.name, alive: r.alive, downed: r.downed, feet: r.feet, flags: r.flags };
   }
 
   nameOf(id: number): string {
@@ -405,9 +423,7 @@ export class NetMatch {
       let th = this.things.get(t.id);
       if (!th || th.kind !== t.kind) {
         if (th) th.mesh.removeFromParent();
-        let mat = thingMaterials.get(t.kind);
-        if (!mat) thingMaterials.set(t.kind, (mat = new THREE.MeshStandardMaterial({ color: THING_COLOR[t.kind] ?? 0x555555, roughness: 0.6, metalness: 0.3 })));
-        th = { kind: t.kind, samples: [], mesh: new THREE.Mesh(thingGeometry, mat), seen: snap.tick };
+        th = { kind: t.kind, samples: [], mesh: thingMesh(t.kind), seen: snap.tick };
         this.things.set(t.id, th);
       }
       th.seen = snap.tick;
@@ -471,7 +487,8 @@ export class NetMatch {
       }
       const f = b.tick > a.tick ? Math.min(1, (tick - a.tick) / (b.tick - a.tick)) : 0;
       th.mesh.position.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
-      th.mesh.rotation.x += dt * 9;
+      if (th.kind <= THING.smoke) th.mesh.rotation.x += dt * 9;
+      else if (th.kind <= THING.shell && b !== a) th.mesh.quaternion.setFromUnitVectors(UP, this.dir.set(b.x - a.x, b.y - a.y, b.z - a.z).normalize());
       if (!th.mesh.parent) this.view.scene.add(th.mesh);
     }
     while (this.booms.length && this.booms[0]!.tick <= tick) this.onBoom(this.booms.shift()!);

@@ -5,6 +5,7 @@ import { yawPitchOf } from '@/ai/aim';
 import { createInputState } from '@/input/InputState';
 import { Layer } from '@/physics/PhysicsWorld';
 import { MatchSim, type SoldierInput } from '@/sim/MatchSim';
+import { defaultLoadout } from '@/data/classes';
 import { parseMap } from '@/world/validateMap';
 
 const lyon = () => parseMap(JSON.parse(readFileSync('public/maps/lyon.json', 'utf8')));
@@ -146,6 +147,56 @@ describe('a match on the game server (no view)', () => {
     expect(b.downed).toBe(false);
     expect(b.alive).toBe(true);
     expect(sim.scores.get(3)!.score).toBeGreaterThan(0);
+    sim.dispose();
+  });
+
+  it('kit on the server: build mode builds a spot, a panzerfaust kills, an ammo station restocks', async () => {
+    const sim = await MatchSim.create(lyon());
+    const a = sim.addSoldier(1, 'blue', 'alpha', { ...defaultLoadout('support') });
+    const b = sim.addSoldier(2, 'red', 'bravo');
+    sim.deploy(1, 'base', defaultLoadout('support'));
+    sim.deploy(2);
+    const fort = sim.fort!;
+    // A sandbag spot: stand where its builder stands, look at it, T then hold the trigger.
+    const slot = fort.slots.find((s) => s.kind === 'sandbag')!;
+    a.player.teleport(slot.stand.clone(), 0);
+    run(sim, 0.3);
+    const eye = a.player.feet.clone().setY(a.player.feet.y + a.player.eyeHeight);
+    const [yaw, pitch] = yawPitchOf(slot.center.x - eye.x, slot.center.y - eye.y, slot.center.z - eye.z);
+    const t = createInputState();
+    t.buildMode = true;
+    sim.step((id) => (id === 1 ? { state: t, yaw, pitch } : null));
+    expect(a.buildMode).toBe(true);
+    const work = createInputState();
+    work.fire = true;
+    for (let i = 0; i < 60 * 12 && !slot.built; i++) sim.step((id) => (id === 1 ? { state: work, yaw, pitch } : null));
+    expect(slot.built).toBe(true);
+    expect(sim.scores.get(1)!.score).toBeGreaterThan(0);
+
+    // An assault puts a rocket into bravo's chest from 15 m.
+    const c = sim.addSoldier(3, 'blue', 'charlie');
+    sim.deploy(3);
+    const at = ground(sim, 60, -90);
+    c.player.teleport(at, 0);
+    b.player.teleport(ground(sim, at.x, at.z - 15), 0);
+    run(sim, 0.3);
+    const ce = c.player.feet.clone().setY(c.player.feet.y + c.player.eyeHeight);
+    const bc = b.player.feet.clone().setY(b.player.feet.y + 1.2);
+    const [y2, p2] = yawPitchOf(bc.x - ce.x, bc.y - ce.y, bc.z - ce.z);
+    const four = createInputState();
+    four.gadget = true;
+    sim.step((id) => (id === 3 ? { state: four, yaw: y2, pitch: p2 } : null));
+    expect(c.gadgetOut).toBe(true);
+    const shoot = createInputState();
+    shoot.fire = true;
+    shoot.firePressed = true;
+    const booms: string[] = [];
+    sim.onBoom = (k) => booms.push(k);
+    sim.step((id) => (id === 3 ? { state: shoot, yaw: y2, pitch: p2 } : null));
+    expect(c.gadgetCount).toBe(1);
+    run(sim, 1);
+    expect(booms).toContain('rocket');
+    expect(b.downed).toBe(true);
     sim.dispose();
   });
 });

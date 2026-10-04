@@ -186,6 +186,9 @@ export const SF = {
   sprint: 32,
   grounded: 64,
   reloading: 128,
+  /** Out of medkits (a medic could hand one over) / short of ammo (a support could). */
+  needMedkit: 256,
+  needAmmo: 512,
 } as const;
 
 /** One soldier as everyone sees it. */
@@ -220,7 +223,7 @@ export interface NetSelf {
 }
 
 /** Kinds of moving things other than soldiers in a snapshot. */
-export const THING = { frag: 1, flash: 2, smoke: 3 } as const;
+export const THING = { frag: 1, flash: 2, smoke: 3, rocket: 4, riflesmoke: 5, shell: 6, beacon: 7, mine: 8 } as const;
 
 /** A moving thing (a grenade in the air; rockets and the like later). */
 export interface NetThing {

@@ -11,6 +11,7 @@ import { Player } from '@/player/Player';
 import { fallDamage } from '@/player/health';
 import { GrenadeInventory } from '@/weapons/Throwables';
 import type { GrenadeType } from '@/combat/explosions';
+import { GADGETS, classGadget, type GadgetId } from '@/data/gadgets';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import type { WeaponId } from '@/weapons/weaponData';
 import type { Team } from '@/world/mapTypes';
@@ -119,6 +120,15 @@ export class Soldier {
   /** The downed mate being revived (holding E) and for how long (s). */
   reviveOf: number | null = null;
   reviveProgress = 0;
+  /** The class gadget of this life, how many are left, whether it's in hand (4) and the wait before the next use. */
+  gadget: GadgetId | null = null;
+  gadgetCount = 0;
+  gadgetOut = false;
+  gadgetBusy = 0;
+  /** Build mode (T): the hammer out. */
+  buildMode = false;
+  /** Seconds of hands-on work (building, restocking) going on now, or -1. */
+  working = -1;
   private readonly now: () => number;
   private readonly combatClock: () => number;
   private readonly bus: GameBus;
@@ -383,6 +393,12 @@ export class Soldier {
     this.throwBlock = this.throwCooldown = 0;
     this.reviveOf = null;
     this.reviveProgress = 0;
+    this.gadget = classGadget(kit.cls, kit.reconGadget);
+    this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
+    this.gadgetOut = false;
+    this.gadgetBusy = 0;
+    this.buildMode = false;
+    this.working = -1;
     this.weapons.sway.pitch = this.weapons.sway.yaw = 0;
     this.bus.emit('player:respawned', {});
   }

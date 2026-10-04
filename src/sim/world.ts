@@ -8,6 +8,7 @@ import { propColliders } from '@/world/placeProps';
 import { Boundary, Terrain } from '@/world/terrain';
 import { WaterMap } from '@/world/water';
 import type { SurfaceLibrary } from '@/render/textures';
+import { planFortifications, worldProbe, type FortPlan } from '@/modes/fortify';
 import type * as THREE from 'three';
 
 /**
@@ -48,3 +49,30 @@ export function buildWorld(map: MapDef, physics: PhysicsWorld, impacts: SurfaceR
   return { map, terrain, shaped, water, built };
 }
 
+/**
+ * Where a zone match's supply stations and build spots go: worked out from
+ * the map and its colliders the same way on the game server and in the
+ * browser (the same plan, the same ids). Run before anything moves in.
+ */
+export function fortPlanFor(sw: SimWorld, physics: PhysicsWorld): FortPlan {
+  const { map, terrain, water, built } = sw;
+  physics.step();
+  const probe = worldProbe(
+    physics,
+    (x, z) => terrain.heightAt(x, z),
+    (x, z) => terrain.boundary.contains(x, z) && terrain.boundary.edgeDistance(x, z) > 3,
+    (x, y, z) => !!water && water.depthAt(x, y, z) > 0.05,
+  );
+  const bases = (['blue', 'red'] as const).map((team) => {
+    const own = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
+    let x = 0;
+    let z = 0;
+    for (const s of own) {
+      x += s.pos[0];
+      z += s.pos[2];
+    }
+    const n = Math.max(1, own.length);
+    return [x / n, z / n] as const;
+  });
+  return planFortifications(map.zones ?? [], built.windows, built.footprints, probe, { rivers: map.world.terrain?.rivers ?? [], bases });
+}

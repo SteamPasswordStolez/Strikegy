@@ -42,6 +42,7 @@ export interface GadgetHooks {
 type ShotKind = 'rocket' | 'riflesmoke' | 'shell';
 
 interface Shot {
+  id: number;
   kind: ShotKind;
   owner: GadgetOwner;
   pos: THREE.Vector3;
@@ -118,7 +119,7 @@ export class GadgetWorld {
     const mesh = (kind === 'rocket' ? this.models.rocket : this.models.rifleGrenade).clone();
     mesh.position.copy(origin);
     this.group.add(mesh);
-    this.shots.push({ kind, owner, pos: origin.clone(), vel, gravity: spec.gravity, life: spec.life, mesh });
+    this.shots.push({ id: this.nextId++, kind, owner, pos: origin.clone(), vel, gravity: spec.gravity, life: spec.life, mesh });
   }
 
   /** A vehicle gun shell with its own velocity and drop (`gun`: which gun, for the hooks). */
@@ -127,7 +128,14 @@ export class GadgetWorld {
     if (homing) mesh.scale.setScalar(2.2);
     mesh.position.copy(origin);
     this.group.add(mesh);
-    this.shots.push({ kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: homing ? 8 : 14, mesh, gun, homing, ignore });
+    this.shots.push({ id: this.nextId++, kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: homing ? 8 : 14, mesh, gun, homing, ignore });
+  }
+
+  /** Everything in flight or placed, for the game server to send (ids shared by shots, beacons and mines). */
+  *things(): Generator<{ id: number; kind: ShotKind | 'beacon' | 'mine'; pos: THREE.Vector3 }> {
+    for (const s of this.shots) yield { id: s.id, kind: s.kind, pos: s.pos };
+    for (const b of this.beacons) yield { id: b.id, kind: 'beacon', pos: b.pos };
+    for (const m of this.mines) yield { id: m.id, kind: 'mine', pos: m.pos };
   }
 
   /** Puts a beacon down (replacing the owner's earlier one). */
@@ -324,6 +332,11 @@ export class GadgetWorld {
 // Models (shared geometry, cloned per object).
 
 let cachedModels: ReturnType<typeof buildModels> | null = null;
+
+/** A copy of a gadget's model (a browser drawing the game server's rockets, beacons and mines). */
+export function gadgetModel(kind: 'rocket' | 'rifleGrenade' | 'beacon' | 'mine' | 'shell'): THREE.Group {
+  return gadgetModels()[kind].clone();
+}
 
 function gadgetModels(): ReturnType<typeof buildModels> {
   return (cachedModels ??= buildModels());

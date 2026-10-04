@@ -9,6 +9,13 @@ import type { GrenadeOwner } from '@/core/events';
 import { CLASSES, REVIVE_RANGE, defaultLoadout, loadoutWeapons, type Loadout } from '@/data/classes';
 import { t } from '@/i18n';
 import { Throwables } from '@/weapons/Throwables';
+import { ROCKET } from '@/data/gadgets';
+import { Fortifications } from '@/modes/fortify';
+import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
+import { FortModels } from '@/world/fortModels';
+import type { Damageable } from '@/combat/Hitboxes';
+import type { HitPart } from '@/core/events';
+import { kitToggles, stepFort, stepGadget, stepGive, type GiveClock, type KitWorld } from './kit';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
 import { ZoneMode } from '@/modes/ZoneMode';
 import type { ModeKind } from '@/modes/matchRules';
@@ -19,7 +26,7 @@ import { SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, Team } from '@/world/mapTypes';
 import { Soldier } from './Soldier';
 import type { ShotCaster } from '@/weapons/WeaponController';
-import { buildWorld, type SimWorld } from './world';
+import { buildWorld, fortPlanFor, type SimWorld } from './world';
 
 const DEG = Math.PI / 180;
 /** The game server's fixed step (s); the browser runs the same. */
@@ -70,6 +77,9 @@ export function seeded(seed: number): () => number {
   };
 }
 
+/** What goes off where everyone should see it. */
+export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke';
+
 /** Where a deployed soldier came out and the seed of its spread for this life. */
 export interface Deployed {
   pos: THREE.Vector3;
@@ -92,6 +102,16 @@ export class MatchSim {
   readonly zoneMode: ZoneMode | null;
   /** Grenades in the world (their meshes go into a scene nobody draws). */
   readonly throwables: Throwables;
+  /** Zone supply stations and build spots (zone matches). */
+  readonly fort: Fortifications | null;
+  /** Rockets, rifle grenades, beacons and mines. */
+  readonly gadgets: GadgetWorld;
+  /** Something went off where everyone should see it (grenades, rockets, mines, rifle smoke). */
+  onBoom: (kind: BoomKind, point: THREE.Vector3) => void = () => {};
+  /** A mate handed `to` a medkit or ammo. */
+  onGive: (by: Soldier, to: Soldier, kind: 'medkit' | 'ammo') => void = () => {};
+  private readonly kit: KitWorld;
+  private readonly giveClock: GiveClock = new Map();
   /** Sim clock (s). */
   time = 0;
   /** Steps run so far. */
@@ -111,6 +131,28 @@ export class MatchSim {
     this.throwables = new Throwables(new THREE.Scene(), physics, this.bus);
     const map = world.map;
     this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize }) : null;
+    this.fort = this.zoneMode ? new Fortifications(fortPlanFor(world, physics), new FortModels(null), physics, impacts, null) : null;
+    this.gadgets = new GadgetWorld(physics, this.registry, {
+      explode: (kind, point, owner) => {
+        this.blast(kind, point, owner, t(kind === 'rocket' ? 'gadget.assault' : 'gadget.mine'));
+        this.onBoom(kind, point);
+      },
+      directHit: (target, part, point, owner) => this.rocketHit(target, part, point, owner),
+      smoke: (point) => this.onBoom('riflesmoke', point),
+    });
+    const fort = this.fort;
+    this.kit = {
+      physics,
+      fort,
+      gadgets: this.gadgets,
+      zoneOwner: (id) => this.zoneMode?.zone(id)?.owner ?? null,
+      inTheWay: (slot) => {
+        for (const o of this.soldiers.values()) if (o.deployed && (o.alive || o.downed) && fort?.occupies(slot, o.player.feet)) return true;
+        return false;
+      },
+      owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: null }),
+      points: (id, p) => this.scores.award(id, p),
+    };
     this.wire();
     // Colliders into the broadphase before the first query.
     physics.step();
@@ -134,6 +176,7 @@ export class MatchSim {
     bus.on('match:ended', (e) => (this.winner = e.winner));
     bus.on('grenade:detonate', (e) => {
       if (e.type === 'frag') this.blast('frag', e.point, e.owner, t('grenade.frag'));
+      this.onBoom(e.type, e.point);
     });
     bus.on('combatant:revived', (e) => this.scores.revive(e.byId, e.medic));
     if (!zm) return;
@@ -196,7 +239,13 @@ export class MatchSim {
     const s = this.soldiers.get(id);
     if (!s || s.deployed || s.respawnTimer > 0 || this.winner) return null;
     const [kind, zone] = key.split(':');
-    const at = this.zoneMode ? this.zoneMode.spawnPoint(s.team, kind === 'zone' ? zone! : 'base', null) : this.base(s.team);
+    let at = this.zoneMode ? this.zoneMode.spawnPoint(s.team, kind === 'zone' ? zone! : 'base', null) : this.base(s.team);
+    // A spawn beacon of the side (in a match on the server any of the side's, squads aside).
+    const beacon = kind === 'beacon' ? this.gadgets.beacons.find((b) => String(b.id) === zone && b.owner.team === s.team) : undefined;
+    if (beacon) {
+      this.gadgets.useBeacon(beacon);
+      at = { pos: beacon.pos.clone(), yaw: beacon.mesh.rotation.y };
+    }
     s.deployed = true;
     s.spawn(this.clearSpot(at.pos, s), at.yaw, kit);
     s.weapons.rand = seeded(seed);
@@ -266,15 +315,30 @@ export class MatchSim {
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
     if (s.alive && s.deployed) {
+      // In the order the browser predicts it (Game.netStep).
       s.stepTimers(dt);
+      kitToggles(s, input, !!this.fort);
+      stepGadget(s, input, dt, this.kit);
+      if (s.buildMode || s.gadgetOut) {
+        input.ads = false;
+        input.reload = false;
+      }
       if (input.medkit) s.useMedkit();
       s.stepMedkit(dt);
       const reviving = this.stepRevive(s, input.interact, dt);
+      const gave = reviving ? null : stepGive(s, input, this.soldiers.values(), this.time, this.giveClock);
+      if (gave) {
+        this.scores.resupply(s.id);
+        this.onGive(s, gave.mate, gave.kind);
+      }
+      if (reviving || gave) s.working = -1;
+      else stepFort(s, input, dt, this.kit);
       if (input.throwGrenade) {
         const owner: GrenadeOwner = { id: s.id, name: s.combatant.name, team: s.team };
         s.throwGrenade((type, origin, dir, carry) => this.throwables.throw(type, origin, dir, carry, owner));
       }
-      s.stepOnFoot(dt, input, s.throwBlock > 0 || s.medkitUse > 0 || reviving);
+      const busy = s.throwBlock > 0 || s.medkitUse > 0 || reviving || s.working >= 0 || s.buildMode || s.gadgetOut;
+      s.stepOnFoot(dt, input, busy, this.fort?.slowAt(s.player.feet) ?? 1);
       // The eye follows crouching as the browser's view does (shots start there).
       s.player.eyePosition(1, dt, this.eyeTmp);
     } else if (s.downed) s.stepDowned(dt, input.jumpHeld);
@@ -290,7 +354,28 @@ export class MatchSim {
     }
     this.zoneMode?.step(dt, [...this.soldiers.values()].map((s) => s.combatant));
     this.throwables.step(dt);
+    this.gadgets.step(dt, this.mineWalkers());
     this.physics.step();
+  }
+
+  private *mineWalkers(): Iterable<MineWalker> {
+    for (const s of this.soldiers.values()) {
+      if (!s.deployed) continue;
+      const p = s.player;
+      yield { id: s.id, team: s.team, alive: p.alive, downed: s.downed, feet: p.feet, velocity: p.velocity, eyeHeight: p.eyeHeight };
+    }
+  }
+
+  /** A rocket striking someone: a kill (or down) for anyone but a teammate. */
+  private rocketHit(target: Damageable, part: HitPart, point: THREE.Vector3, owner: GadgetOwner): void {
+    if (target.team === owner.team || target.id < 0) return;
+    const weapon = t('gadget.assault');
+    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
+    const killed = target.applyDamage(ROCKET.directDamage, part, source, 'at');
+    this.bus.emit('combat:hit', { targetId: target.id, part, damage: ROCKET.directDamage, killed, point: point.clone(), byPlayer: false, attackerId: owner.id });
+    if (killed) {
+      this.bus.emit('combat:kill', { attacker: owner.name, victim: target.name, weapon, headshot: false, byPlayer: false, attackerTeam: owner.team, victimTeam: target.team ?? null, attackerId: owner.id, victimId: target.id });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -340,6 +425,9 @@ export class MatchSim {
    */
   blast(kind: BlastKind, point: THREE.Vector3, owner: GrenadeOwner, weapon: string): void {
     const spec = BLASTS[kind];
+    // Fortifications in the blast take damage; a frag sets off mines and breaks beacons near it.
+    this.fort?.blast(point, spec.radius, (d) => fragDamage(spec, d, false) * spec.fortMult);
+    if (kind === 'frag') this.gadgets.blast(point, spec.radius * 0.6);
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
     const probe = { x: point.x, y: point.y + 0.25, z: point.z };
     for (const s of this.soldiers.values()) {

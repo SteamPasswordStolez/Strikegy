@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -139,7 +139,9 @@ export type MatchEvent =
   | { k: 'zone'; type: 'captured' | 'neutralized'; zone: string; team: Side }
   | { k: 'mode'; e: unknown }
   /** A grenade went off at tick `tick` (browsers show it when they draw that moment). */
-  | { k: 'boom'; type: 'frag' | 'flash' | 'smoke'; pos: [number, number, number]; tick: number }
+  | { k: 'boom'; type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke'; pos: [number, number, number]; tick: number }
+  /** A mate handed `to` a medkit or ammo (to both of them). */
+  | { k: 'given'; kind: 'medkit' | 'ammo'; by: number; to: number }
   /** To the earner: points popping up under the crosshair. */
   | { k: 'points'; points: number; reason: string }
   | { k: 'end'; winner: Side };
@@ -184,8 +186,19 @@ export type ServerMsg =
   | { t: 'match'; match: MatchStart }
   | { t: 'roster'; roster: MatchSoldierInfo[] }
   | { t: 'ev'; ev: MatchEvent[] }
-  /** The zones and the mode's rules as the server has them, and the score table (a few times a second). */
-  | { t: 'mstate'; zones: unknown; rules: unknown; scores: ScoreRowMsg[] };
+  /**
+   * The zones and the mode's rules as the server has them, the score table,
+   * build spots begun or built (`[id, work, built]`), stations not full
+   * (`[id, uses]`) and the spawn beacons (a few times a second).
+   */
+  | {
+      t: 'mstate';
+      zones: unknown;
+      rules: unknown;
+      scores: ScoreRowMsg[];
+      fort?: { slots: [number, number, number][]; stations: [number, number][] };
+      beacons?: { id: number; team: Side; owner: string; uses: number; pos: [number, number, number] }[];
+    };
 
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
 const INPUTS: readonly InputRule[] = ['all', 'desktop', 'mobile'];

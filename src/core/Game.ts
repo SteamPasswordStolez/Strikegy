@@ -15,7 +15,8 @@ import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
 import type { BuiltMap } from '@/world/buildBlockout';
-import { buildWorld } from '@/sim/world';
+import { buildWorld, fortPlanFor } from '@/sim/world';
+import { kitToggles, stepFort, stepGadget, type KitWorld } from '@/sim/kit';
 import { Soldier, type SoldierHooks } from '@/sim/Soldier';
 import type { Terrain } from '@/world/terrain';
 import { GROUND_COVER, GroundCover } from '@/world/groundCover';
@@ -93,11 +94,12 @@ import {
 } from '@/data/classes';
 import { LoadoutStore } from '@/data/loadoutStore';
 import { LoadoutPanel } from '@/ui/LoadoutPanel';
-import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, planFortifications, worldProbe, type FortJob, type FortSlot, type Station } from '@/modes/fortify';
+import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Station } from '@/modes/fortify';
 import { FortModels } from '@/world/fortModels';
 import { NetMatch, type NetOptions } from '@/net/NetMatch';
 import { seeded } from '@/sim/MatchSim';
 import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
+import { SF } from '@/net/matchProtocol';
 import { sanitizeLoadout, type Loadout } from '@/data/classes';
 
 const DEG = Math.PI / 180;
@@ -140,6 +142,8 @@ export class Game {
   private net: NetMatch | null = null;
   /** Asked the server to deploy; waiting for the spawn. */
   private netDeploying = false;
+  /** The side's spawn beacons in a match on the game server. */
+  private netBeacons: NonNullable<Extract<ServerMsg, { t: 'mstate' }>['beacons']> = [];
   private readonly renderer: Renderer;
   private readonly loop = new FixedStepLoop(1 / SIM_HZ);
   private readonly input = createInputState();
@@ -235,13 +239,13 @@ export class Game {
     | { kind: 'fort'; job: FortJob | null; station: Station | null; note: string | null }
     /** A downed mate in a match on the game server (the server does the reviving). */
     | { kind: 'reviveMate'; name: string }
+    /** A mate in a match there who could use a medkit / ammo from this medic / support. */
+    | { kind: 'giveMate'; name: string; what: 'medkit' | 'ammo' }
     | null = null;
   /** Zone supply stations and build spots. */
   private fort: Fortifications | null = null;
   /** Holding E at a build spot or station (hands busy, hammer out) and for how long. */
-  private working = -1;
   /** Build mode (T): the hammer is out, build spots show clearly, the trigger builds the one aimed at. */
-  private buildMode = false;
   /** Rockets, rifle grenades, beacons and mines in the world. */
   private gadgets!: GadgetWorld;
   /** Squad call-ins (B): barrages, recon planes, supply drops; the menu and the call being aimed. */
@@ -268,11 +272,7 @@ export class Game {
   /** The player's own body, seen from the driver's third-person view. */
   private rider: SoldierModel | null = null;
   /** The class gadget carried this life, how many are left, and whether it is in hand (key 4). */
-  private gadget: GadgetId | null = null;
-  private gadgetCount = 0;
-  private gadgetOut = false;
   /** Seconds before the gadget can be used again (the next tube coming up, placing). */
-  private gadgetBusy = 0;
   /** Sim time of the last use (view model: recoil / placing motion). */
   private gadgetUsedAt = -10;
   private buildTarget: FortSlot | null = null;
@@ -281,6 +281,42 @@ export class Game {
   private readonly giveReady = new Map<string, number>();
 
   // The local soldier's state, kept under its old names while the rest of the game moves to `me`.
+  private get working(): number {
+    return this.me.working;
+  }
+  private set working(v: number) {
+    this.me.working = v;
+  }
+  private get buildMode(): boolean {
+    return this.me.buildMode;
+  }
+  private set buildMode(v: boolean) {
+    this.me.buildMode = v;
+  }
+  private get gadget(): GadgetId | null {
+    return this.me.gadget;
+  }
+  private set gadget(v: GadgetId | null) {
+    this.me.gadget = v;
+  }
+  private get gadgetCount(): number {
+    return this.me.gadgetCount;
+  }
+  private set gadgetCount(v: number) {
+    this.me.gadgetCount = v;
+  }
+  private get gadgetOut(): boolean {
+    return this.me.gadgetOut;
+  }
+  private set gadgetOut(v: boolean) {
+    this.me.gadgetOut = v;
+  }
+  private get gadgetBusy(): number {
+    return this.me.gadgetBusy;
+  }
+  private set gadgetBusy(v: number) {
+    this.me.gadgetBusy = v;
+  }
   private get player(): Player {
     return this.me.player;
   }
@@ -571,8 +607,7 @@ export class Game {
     const mode = this.options.mode ?? 'auto';
     if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
-      // Fortifications aren't run by the game server yet.
-      if (!this.options.net) this.setupFortifications(map, terrain, water, built);
+      this.setupFortifications(map, terrain, water, built);
       if (this.bots && !this.options.sandbox) this.setupVehicles(map);
     }
     if (this.options.net) await this.setupNet(map, terrain);
@@ -1143,6 +1178,11 @@ export class Game {
     const w = this.weapons;
     this.simTime += dt;
     if (input.firePressed) input.fire = true;
+    // Recon: the wheel changes scope power while aiming (before packing: the server mustn't switch weapons).
+    if (this.cls === 'recon' && w.def.scope && w.adsBlend > 0.5 && input.weaponCycle !== 0) {
+      this.reconZoom = !this.reconZoom;
+      input.weaponCycle = 0;
+    }
     const n = net.pack(input, p.yaw, p.pitch, w.sway.yaw, w.sway.pitch);
     p.yaw = n.yaw;
     p.pitch = n.pitch;
@@ -1151,13 +1191,28 @@ export class Game {
     const me = this.me;
     if (p.alive && this.deployed) {
       // In the order the server steps a soldier (MatchSim.stepSoldier).
+      const kit = this.netKit();
       me.stepTimers(dt);
+      kitToggles(me, input, !!this.fort);
+      stepGadget(me, input, dt, kit);
+      if (me.buildMode || me.gadgetOut) {
+        input.ads = false;
+        input.reload = false;
+      }
       if (input.medkit) me.useMedkit();
       me.stepMedkit(dt);
       const reviving = this.netRevive(net, input.interact, dt);
+      this.buildTarget = null;
+      if (reviving || this.interact) me.working = -1;
+      else {
+        const view = stepFort(me, input, dt, kit);
+        this.buildTarget = view.target;
+        if (view.station) this.interact = { kind: 'fort', job: view.job, station: view.station, note: view.note ? t(view.note as MessageKey) : null };
+      }
       // The server throws it; here only the hands move.
       if (input.throwGrenade) me.throwGrenade(null);
-      me.stepOnFoot(dt, input, me.throwBlock > 0 || this.medkitUse > 0 || reviving);
+      const busy = me.throwBlock > 0 || this.medkitUse > 0 || reviving || me.working >= 0 || me.buildMode || me.gadgetOut;
+      me.stepOnFoot(dt, input, busy, this.fort?.slowAt(p.feet) ?? 1);
       this.stepSway(dt, input.holdBreath);
       net.stepped(n.seq, p.feet);
     } else if (this.playerDowned) this.me.stepDowned(dt, input.jumpHeld);
@@ -1187,6 +1242,16 @@ export class Game {
       }
     }
     this.interact = mate ? { kind: 'reviveMate', name: mate.name } : null;
+    // Nobody down here: a mate a medic or support could hand something to (the server does the handing).
+    if (!mate && (this.cls === 'medic' || this.cls === 'support')) {
+      const need = this.cls === 'medic' ? SF.needMedkit : SF.needAmmo;
+      for (const o of net.others()) {
+        if (o.team === this.myTeam && o.alive && o.flags & need && o.feet.distanceTo(feet) < GIVE_RANGE) {
+          this.interact = { kind: 'giveMate', name: o.name, what: this.cls === 'medic' ? 'medkit' : 'ammo' };
+          break;
+        }
+      }
+    }
     if (!mate || !holding) {
       me.reviveOf = null;
       me.reviveProgress = 0;
@@ -1204,9 +1269,46 @@ export class Game {
     return true;
   }
 
-  /** A grenade going off in a match on the game server: what it looks and sounds like here (the server did the damage). */
-  private netBoom(type: GrenadeType, point: THREE.Vector3): void {
-    if (type === 'frag') {
+  /** What the kit acts on when this browser predicts its soldier in a match on the game server. */
+  private netKitWorld: KitWorld | null = null;
+  private netKit(): KitWorld {
+    return (this.netKitWorld ??= {
+      physics: this.physics,
+      fort: this.fort,
+      // The server fires and places gadgets, judges who is in the way and keeps the score.
+      gadgets: null,
+      zoneOwner: (id) => this.zoneMode?.zone(id)?.owner ?? null,
+      inTheWay: () => false,
+      owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: null }),
+      points: () => {},
+      feedback: {
+        gadgetUsed: (g, left) => {
+          if (g === 'panzerfaust' || g === 'riflesmoke') this.audio.gadget(g === 'panzerfaust' ? 'rocket' : 'rifle', null);
+          else this.audio.gadget('place', null);
+          if (g === 'panzerfaust') {
+            this.shake = Math.min(0.05, this.shake + 0.03);
+            if (left > 0) this.audio.launcherReload();
+          }
+          this.gadgetUsedAt = this.simTime;
+        },
+        stocked: () => this.audio.resupply(),
+        refilled: () => this.audio.resupply(),
+        built: (slot) => {
+          this.hud.notify(`${t(`fort.${slot.kind}` as MessageKey)} ${t('fort.built')}`, 'ally');
+          this.audio.resupply();
+        },
+      },
+    });
+  }
+
+  /** Something going off in a match on the game server: what it looks and sounds like here (the server did the damage). */
+  private netBoom(type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke', point: THREE.Vector3): void {
+    if (type === 'riflesmoke') {
+      this.effects.smoke(point, GRENADES.smoke.duration ?? 20, GRENADES.smoke.radius);
+      this.audio.smokePop(point, GRENADES.smoke.duration ?? 20);
+      return;
+    }
+    if (type === 'frag' || type === 'rocket' || type === 'mine') {
       const dist = this.renderer.camera.position.distanceTo(point);
       this.effects.explosion(point);
       this.audio.explosion(point, dist);
@@ -2591,6 +2693,10 @@ export class Game {
     } else if (act?.kind === 'reviveMate') {
       prompt = { text: `${key(true)}${t('act.revive')} ${act.name}`, progress: me.reviveProgress > 0 ? me.reviveProgress / CLASSES[this.cls].reviveTime : null };
       touchLabel = t('act.revive');
+    } else if (act?.kind === 'giveMate') {
+      const label = t(act.what === 'medkit' ? 'act.giveMedkit' : 'act.giveAmmo');
+      prompt = { text: `${key(false)}${label} → ${act.name}`, progress: null };
+      touchLabel = label;
     } else if (act?.kind === 'medkit') {
       prompt = { text: `${key(false)}${t('act.giveMedkit')} → ${act.bot.name}`, progress: null };
       touchLabel = t('act.giveMedkit');
@@ -2795,18 +2901,7 @@ export class Game {
   /** Supply stations and build spots at every zone, found on the loaded world. */
   private setupFortifications(map: MapDef, terrain: Terrain, water: WaterMap | null, built: BuiltMap): void {
     const t0 = performance.now();
-    this.physics.step();
-    const probe = worldProbe(
-      this.physics,
-      (x, z) => terrain.heightAt(x, z),
-      (x, z) => terrain.boundary.contains(x, z) && terrain.boundary.edgeDistance(x, z) > 3,
-      (x, y, z) => !!water && water.depthAt(x, y, z) > 0.05,
-    );
-    const bases = (['blue', 'red'] as const).map((team) => {
-      const c = this.baseCenter(team);
-      return [c.x, c.z] as const;
-    });
-    const plan = planFortifications(map.zones ?? [], built.windows, built.footprints, probe, { rivers: map.world.terrain?.rivers ?? [], bases });
+    const plan = fortPlanFor({ map, terrain, water, built, shaped: true }, this.physics);
     const fort = new Fortifications(plan, new FortModels(this.surfaces), this.physics, this.impacts, this.nav);
     fort.onChange = () => this.renderer.requestShadowUpdate();
     fort.onPoints = (id, points) => this.scores.award(id, points);
@@ -3095,6 +3190,11 @@ export class Game {
       if (o.id === 'base') continue;
       const z = zm!.zone(o.id)!;
       out.push({ key: `zone:${o.id}`, kind: 'zone', label: `${t('spawn.zone')} ${o.id}`, x: z.x, z: z.z, blocked: null, warn: o.underAttack ? t('deploy.underAttack') : null });
+    }
+    // In a match on the game server: the side's beacons as the server has them.
+    for (const b of this.net ? this.netBeacons : []) {
+      if (b.team !== this.myTeam) continue;
+      out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${b.owner}) ×${b.uses}`, x: b.pos[0], z: b.pos[2], blocked: null, warn: null });
     }
     // Spawn beacons the squad's recons put down.
     for (const b of this.gadgets.beaconsFor(this.myTeam, this.squadKeyOf(this.myTeam, this.myId))) {
@@ -3514,6 +3614,15 @@ export class Game {
         case 'points':
           this.hud.scorePopup(e.points, t(`points.${e.reason}` as MessageKey));
           break;
+        case 'given':
+          if (e.to === this.myId) {
+            // The server already did it; this browser's copy follows.
+            if (e.kind === 'medkit') me.medkits = MEDKIT.carried;
+            else me.weapons.refillReserve();
+            this.hud.notify(`${t(e.kind === 'medkit' ? 'notify.gotMedkit' : 'notify.gotAmmo')} — ${this.net?.nameOf(e.by) ?? ''}`, 'ally');
+          } else this.hud.notify(`${t(e.kind === 'medkit' ? 'act.giveMedkit' : 'act.giveAmmo')} → ${this.net?.nameOf(e.to) ?? ''}`, 'ally');
+          this.audio.resupply();
+          break;
         case 'end':
           this.bus.emit('match:ended', { winner: e.winner });
           break;
@@ -3544,6 +3653,17 @@ export class Game {
     }
     if (zm && m.rules && typeof m.rules === 'object') assignDeep(zm.match as unknown as Record<string, unknown>, m.rules as Record<string, unknown>);
     this.scores.load(m.scores);
+    const fort = this.fort;
+    if (fort && m.fort) {
+      const slots = new Map(m.fort.slots.map(([id, work, built]) => [id, { work, built: built === 1 }]));
+      for (const s of fort.slots) {
+        const st = slots.get(s.id);
+        fort.apply(s, st?.work ?? 0, st?.built ?? false);
+      }
+      const uses = new Map(m.fort.stations);
+      for (const s of fort.stations) s.uses = uses.get(s.id) ?? STATION.uses;
+    }
+    this.netBeacons = m.beacons ?? [];
   }
 
   /** Dev-only inspection handle (see main.ts). */

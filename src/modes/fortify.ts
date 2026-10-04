@@ -736,6 +736,21 @@ export class Fortifications {
     this.onChange?.();
   }
 
+  /**
+   * A spot's state as the game server has it (a browser in a match there):
+   * built or knocked down, or how far the building has got.
+   */
+  apply(slot: FortSlot, work: number, built: boolean): void {
+    if (built) {
+      this.complete(slot);
+      return;
+    }
+    if (slot.built) this.destroy(slot);
+    if (slot.work === work) return;
+    slot.work = work;
+    this.showProgress(slot);
+  }
+
   /** A station use: true if there was one left. */
   use(station: Station): boolean {
     if (station.uses <= 0) return false;
