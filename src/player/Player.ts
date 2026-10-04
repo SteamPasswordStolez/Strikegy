@@ -47,6 +47,8 @@ export class Player {
   private strideLeft: number = STRIDE.walk / 2;
   private jumpBuffered = 0;
   private sinceGrounded = 0;
+  /** Called on a hard landing with the impact speed (m/s); the soldier takes fall damage from it. */
+  onLanded: ((impactSpeed: number) => void) | null = null;
   /** Smoothed eye height above feet (render side). */
   eyeHeight: number = MOVE.standHeight - MOVE.eyeInset;
 
@@ -77,6 +79,13 @@ export class Player {
     this.controller.setMinSlopeSlideAngle((55 * Math.PI) / 180);
     this.controller.setApplyImpulsesToDynamicBodies(true);
     this.teleport(spawn, yaw);
+  }
+
+  /** Takes the capsule out of the world (a player left). */
+  dispose(): void {
+    const world = this.physics.world;
+    world.removeCharacterController(this.controller);
+    world.removeRigidBody(this.body);
   }
 
   get alive(): boolean {
@@ -199,6 +208,7 @@ export class Player {
     if (this.grounded && this.velocity.y < 0) {
       if (!wasGrounded && this.velocity.y < -7) {
         this.bus.emit('player:landed', { impactSpeed: -this.velocity.y, surface: this.groundSurface() });
+        this.onLanded?.(-this.velocity.y);
       }
       this.velocity.y = 0;
     } else if (desired.y > 0 && moved.y < desired.y * 0.5) {

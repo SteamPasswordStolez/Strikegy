@@ -32,7 +32,6 @@ import { KeyboardMouse } from '@/input/KeyboardMouse';
 import { TouchControls } from '@/input/Touch';
 import { AirMarkers, type AirMark } from '@/render/airMarkers';
 import { Player } from '@/player/Player';
-import { fallDamage } from '@/player/health';
 import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import { NavWorld, VehicleNav } from '@/ai/NavWorld';
@@ -777,8 +776,6 @@ export class Game {
       this.audio.land(e.impactSpeed, e.surface);
       this.viewModel.onLand(e.impactSpeed);
       this.shake = Math.min(0.03, this.shake + e.impactSpeed * 0.0008);
-      const dmg = fallDamage(e.impactSpeed);
-      if (dmg > 0) this.damagePlayer(dmg, null, 'fall');
     });
   }
 

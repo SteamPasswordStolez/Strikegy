@@ -8,6 +8,7 @@ import type { InputState } from '@/input/InputState';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import { Player } from '@/player/Player';
+import { fallDamage } from '@/player/health';
 import { GrenadeInventory } from '@/weapons/Throwables';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import type { WeaponId } from '@/weapons/weaponData';
@@ -166,10 +167,20 @@ export class Soldier {
     this.boxes = new CharacterHitboxes(o.physics, o.registry, this.target);
     this.boxes.place(this.player.feet, this.player.yaw);
     this.weapons.ignoreBody = this.boxes.body;
+    this.player.onLanded = (speed) => {
+      const dmg = fallDamage(speed);
+      if (dmg > 0) this.damage(dmg, null, 'fall');
+    };
   }
 
   get alive(): boolean {
     return this.player.alive;
+  }
+
+  /** Out of the world for good (the person left): capsule and hitboxes go. */
+  dispose(): void {
+    this.player.dispose();
+    this.boxes.dispose();
   }
 
   // ---------------------------------------------------------------------------
