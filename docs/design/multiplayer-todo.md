@@ -1,7 +1,7 @@
 # 멀티플레이 TODO
 
 설계: `multiplayer.md`. 표시: `[x]` 끝남, `[~]` 진행 중, `[ ]` 아직.
-실행: `npm run signal`(연결 설정 서버, 기본 포트 8787; `CF_TURN_KEY_ID` / `CF_TURN_API_TOKEN`이 있으면 TURN) + `npm run dev`. 개발 빌드는 `servers.json`이 비어 있으면 같은 PC의 8787에 붙습니다.
+배포된 연결 설정 서버: Cloudflare Workers `wss://strikegy-signal.ijaeyong46.workers.dev/signal` (`npm run signal:deploy`; 오너 개인 계정, 전용 계정으로 옮길 예정). 로컬: `npm run signal`(포트 8787) + `npm run dev`; 개발 빌드는 `servers.json`이 비어 있을 때만 같은 PC의 8787에 붙으므로, 로컬 서버로 시험하려면 `servers.json`을 잠시 비웁니다. 테스트 빌드: https://steampasswordstolez.github.io/strikegy-v2/exp/
 
 발견(2026-10-04): 오너 회선에서 UDP 53번 포트로 가는 STUN이 연결을 막아서, 서버가 Cloudflare의 :53 주소를 빼고 줍니다(`withoutPort53`).
 
@@ -61,7 +61,8 @@
 ## 7. 실측 / 배포
 - [ ] 방장 PC 사람 상한(연결 수), 300명 방
 - [ ] TURN 사용량 로그
-- [ ] 연결 설정 서버 배포(도메인, Cloudflare Tunnel 또는 포트포워딩, systemd)
+- [x] 연결 설정 서버 배포: Cloudflare Workers + Durable Object(잠든 뒤 복원 확인)
+- [ ] 전용 Cloudflare 계정으로 옮기기, TURN 키 넣기
 
 ## 안티치트 (나중에)
 - [ ] 주요 이벤트 기록(설정 서버), 강퇴 투표, 신고

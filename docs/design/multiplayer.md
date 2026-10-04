@@ -6,7 +6,7 @@
 - **[제안]** Claude의 제안입니다. 오너가 바꿀 수 있습니다.
 - **[질문]** 아직 답이 필요한 것입니다.
 
-2026-10-04 개정: 오너 노트북 전용 서버 방식에서 **WebRTC P2P(방장 PC가 서버)** 방식으로 바꿨습니다. 오너 노트북은 이제 방 목록과 연결 설정만 맡습니다.
+2026-10-04 개정: 오너 노트북 전용 서버 방식에서 **WebRTC P2P(방장 PC가 서버)** 방식으로 바꿨습니다. 같은 날 다시 개정: 목표는 **브라우저만 있으면 되는 것**이라, 방 목록과 연결 설정도 오너 기기가 아니라 **Cloudflare Workers**(무료 플랜)에서 돕니다. 오너 노트북은 쓰지 않습니다.
 
 ---
 
@@ -22,14 +22,15 @@
 - **[확정]** 모바일도 멀티에 들어올 수 있게 합니다.
 - **[확정]** 이미 진행 중인 방에 중간 참가할 수 있게 합니다.
 - **[확정]** 봇 계산은 같은 팀 참가자 PC들이 나눠 맡습니다(Arma식). 기본으로 켜져 있고, 방 설정에서 끌 수 있습니다.
-- **[확정]** strikegy.org는 곧 만료되므로 쓰지 않습니다. 연결 설정 서버 주소(도메인)는 오너가 나중에 알려 줍니다.
-- **[확정]** 오너 노트북: Intel i3-5005U, DDR3 16 GB, Ubuntu Server LTS, 24시간 가동. 집 인터넷은 기가 인터넷이고, 100 GB를 쓰면 100 Mbps로 제한됩니다. (P2P에서는 연결 설정 서버만 돌리므로 거의 쓰지 않습니다.)
+- **[확정]** 플레이어도 오너도 **브라우저만 있으면** 됩니다(오너, 2026-10-04). 연결 설정 서버는 Cloudflare Workers + Durable Objects에 둡니다(오너 선택). 지금은 오너의 개인 Cloudflare 계정(`strikegy-signal.ijaeyong46.workers.dev`)에 있고, 오너가 곧 전용 계정을 새로 만들어 옮깁니다.
+- **[확정]** strikegy.org는 곧 만료되므로 쓰지 않습니다.
+- (참고) 오너 노트북(i3-5005U, Ubuntu Server, 24시간)은 Workers로 옮긴 뒤로 쓰지 않습니다.
 
 ## 전체 구조 [제안]
 
 ```
           (방 목록, 연결 설정, TURN 인증 발급)
-        ┌──── 연결 설정 서버: 오너 노트북, wss ────┐
+        ┌── 연결 설정 서버: Cloudflare Workers, wss ──┐
         │              │               │           │
      참가자 A ◀══▶ 방장 PC ◀══▶ 참가자 B     참가자 C (휴대폰)
                      ▲                          │
@@ -40,7 +41,7 @@
 - **방장 중심(스타형)**: 참가자는 방장 PC에만 연결합니다. 모두가 서로 연결하는 메시는 쓰지 않습니다(사람이 n명이면 연결이 n² 개). 예외는 예비 방장으로, 모두가 미리 연결해 둡니다(아래 "방장 이전").
 - **방장 PC가 판정합니다.** 물리, 규칙, 피해, 점령은 방장 PC가 계산하고, 참가자는 입력을 보내고 상태를 받아 그립니다. 같은 TypeScript 시뮬 코드를 씁니다.
 - **방장의 시뮬은 Web Worker에서 돕니다.** 방장도 게임을 하므로 화면 그리기와 서버 계산이 서로를 막지 않게 합니다. Rapier와 recast는 WASM이라 Worker에서도 돕니다. 탭이 백그라운드로 가면 `requestAnimationFrame`이 멈추므로, 시뮬 틱은 Worker의 타이머로 돌립니다. 열린 데이터 채널이 있는 페이지는 Chrome의 강한 타이머 제한(1분에 한 번)에서 빠지지만, 백그라운드에서 30 Hz가 유지되는지는 실측합니다.
-- **연결 설정 서버**(오너 노트북, Node + WebSocket): 이름, 방 목록, 비밀번호 확인, WebRTC 연결 정보(SDP/ICE) 전달, 방장 선정 결과 기록, TURN 인증 발급. 경기 데이터는 지나가지 않아서 i3로 충분합니다. 공개는 도메인이 정해지면 Cloudflare Tunnel 또는 포트포워딩 + DDNS + Let's Encrypt로 합니다. 게임 페이지가 https라서 wss여야 합니다.
+- **연결 설정 서버**(Cloudflare Worker + Durable Object `SignalHub`, `server/worker.ts`): 이름, 방 목록, 비밀번호 확인, WebRTC 연결 정보(SDP/ICE) 전달, 방장 선정, TURN 인증 발급. 경기 데이터는 지나가지 않아서 무료 플랜으로 충분합니다(요청 하루 10만 건, 웹소켓 메시지 20개 = 1건, 잠든 시간은 과금 안 됨). 사람이 없을 때 잠들고, 깨어나면 저장해 둔 방 목록을 복원합니다. 같은 로직(`server/core.ts`)이 Node(`npm run signal`)에서도 돌아 로컬 개발과 테스트에 씁니다.
 - **서버 주소는 설정 파일에서 읽습니다** (예: `public/servers.json`). 도메인이 바뀌어도 그 파일만 고치면 됩니다.
 - 지금의 "플레이"(혼자, 봇전)는 그대로 두고 메인 메뉴에 "멀티플레이"를 추가합니다.
 
@@ -52,7 +53,7 @@
 - **직접 연결이 안 되는 경우**: 일반 인터넷에서 직접 연결은 대략 75~80 %가 성공하고, 나머지는 TURN 중계가 필요합니다. 한국 이동통신망(LTE/5G)은 전부 통신사 NAT(CGNAT) 뒤라서 휴대폰은 거의 항상 TURN을 탑니다. 유선 가정망은 대개 직접 연결됩니다.
 - **Cloudflare TURN** [확정]
   - 요금: SFU와 합쳐 월 1,000 GB 무료, 그 뒤 GB당 $0.05.
-  - 인증: 연결 설정 서버가 Cloudflare API(`POST https://rtc.live.cloudflare.com/v1/turn/keys/<키 ID>/credentials/generate-ice-servers`, `ttl` 초)로 짧게 쓰는 인증을 받아 참가자에게 줍니다. API 토큰은 노트북에만 두고 브라우저에는 절대 넣지 않습니다. 인증 유효 시간은 경기 길이를 넘게(예: 3시간) 잡습니다.
+  - 인증: 연결 설정 서버(Worker)가 Cloudflare API(`POST https://rtc.live.cloudflare.com/v1/turn/keys/<키 ID>/credentials/generate-ice-servers`, `ttl` 초)로 짧게 쓰는 인증을 받아 참가자에게 줍니다. API 토큰은 Worker 비밀값(`wrangler secret put CF_TURN_KEY_ID` / `CF_TURN_API_TOKEN`)에만 두고 브라우저에는 절대 넣지 않습니다. 인증 유효 시간은 경기 길이를 넘게(예: 3시간) 잡습니다.
   - STUN도 Cloudflare 것(`stun.cloudflare.com`)을 씁니다.
   - 사용량 추정: 중계되는 사람 한 명이 시간당 약 50~70 MB(받고 보내기 합). 월 1,000 GB면 약 15,000 "중계된 사람·시간"입니다. 연결 설정 서버가 TURN을 쓴 연결 수를 세어 로그에 남깁니다.
   - 방장 자신이 TURN으로만 연결되면 모든 데이터가 중계를 거칩니다. 그래서 그런 PC는 방장으로 뽑지 않습니다.
@@ -151,14 +152,22 @@ P2P에서는 방장 PC가 판정을 하므로, 방장은 개발자 도구로 판
 
 0. 이름 정하기 + 메인 메뉴에 이름 표시 (작음)
 1. 시뮬과 화면 분리: `Game.ts`(3,400줄), `BotManager`, `buildBlockout`이 메시와 충돌체를 같이 만드는데, 방장 Worker는 충돌체만 필요합니다. 가장 큰 작업입니다. 시뮬이 Worker에서 돌게 하는 것까지 포함합니다.
-2. 같은 PC의 두 탭으로 방장 1 + 참가자 1, 보병만. 예측, 보간, 지연 보상. 연결 설정 서버는 localhost.
+2. 같은 PC의 두 탭으로 방장 1 + 참가자 1, 보병만. 예측, 보간, 지연 보상. 연결 설정 서버는 localhost(`npm run signal`) 또는 Workers.
 3. 방 목록, 만들기, 참가, 비밀번호, 방 설정, 대결 구도. 방장 고르기와 TURN(Cloudflare) 연결.
 4. 방장 이전, 중간 참가, 재접속.
 5. 차량, 비행기, 건설, 콜인, 봇 계산 분산.
 6. 실측: 방장 PC의 사람 상한(연결 수), 300명 방, 백그라운드 탭에서의 틱 유지, TURN 사용량.
-7. 배포: 도메인이 정해지면 연결 설정 서버를 Cloudflare Tunnel 또는 포트포워딩으로 공개, systemd 자동 재시작.
+7. 배포: 연결 설정 서버는 `npm run signal:deploy`(Workers). 전용 Cloudflare 계정으로 옮기기.
 
 ## 질문
 
-- **[질문]** 연결 설정 서버 주소(도메인): 오너가 나중에 알려 줍니다.
-- **[질문]** Cloudflare 계정에서 TURN 키를 만들어야 합니다. 구현 3단계에서 키 ID와 API 토큰을 오너 노트북에만 넣어 주세요(저장소에는 넣지 않음).
+- **[질문]** 전용 Cloudflare 계정: 오너가 새로 만들면 옮깁니다(아래 "계정 옮기기").
+- **[질문]** Cloudflare 계정에서 TURN 키를 만들어야 합니다(대시보드 → Realtime → TURN). 키 ID와 API 토큰은 Worker 비밀값으로만 넣습니다(저장소에는 넣지 않음).
+
+## 계정 옮기기
+
+1. `npx wrangler logout`, 새 계정으로 `npx wrangler login --device`.
+2. `npm run signal:deploy` → 새 주소 `https://strikegy-signal.<새 계정>.workers.dev`.
+3. (TURN을 쓰면) 새 계정에서 TURN 키를 만들고 `npx wrangler secret put CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN`.
+4. `public/servers.json`의 주소를 `wss://strikegy-signal.<새 계정>.workers.dev/signal`로 바꿔 푸시.
+5. 옛 계정의 Worker 삭제(`npx wrangler delete`를 옛 계정 로그인 상태에서).
