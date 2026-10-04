@@ -143,6 +143,11 @@ export interface BotServices {
 
 let nextBotId = 1;
 
+/** Where the next bots' ids start (the game server keeps them clear of people's ids, per room). */
+export function setNextBotId(id: number): void {
+  nextBotId = id;
+}
+
 /** Half the view's height (deg) above / below where a bot looks: what it can notice without looking up. */
 const VIEW_UP = 50;
 
@@ -203,6 +208,10 @@ export class Bot implements Damageable, Combatant {
   private kit: [number, number, number] = [0, 0, 0];
   /** Extra respawn wait (squad wiped out); cleared on spawn. */
   respawnPenalty = 0;
+  /** Rounds fired, counting up (the game server sends it: shots heard and seen). */
+  shots = 0;
+  /** Off the field for a person who took this bot's place (game server rooms with bots). */
+  benched = false;
   action: BotAction = 'advance';
   /** Current enemy being fought (visible and noticed). */
   target: Combatant | null = null;
@@ -213,6 +222,11 @@ export class Bot implements Damageable, Combatant {
   private readonly body: RAPIER.RigidBody;
   private readonly capsule: RAPIER.Collider;
   private height: number = MOVE.standHeight;
+
+  /** Body height now (lower crouched): where its hitboxes stand. */
+  get bodyHeight(): number {
+    return this.height;
+  }
 
   // Perception / memory
   private perceiveTimer: number;
@@ -495,6 +509,27 @@ export class Bot implements Damageable, Combatant {
       this.goDown();
     }
     this.finish();
+  }
+
+  /** Off the field without a death (a person takes the place): no events, no respawn until `unbench`. */
+  bench(): void {
+    this.benched = true;
+    this.health.value = 0;
+    this.downed = false;
+    this.dead = true;
+    this.deadTime = 0;
+    this.riding = null;
+    this.target = null;
+    this.reviveOf = null;
+    this.job = null;
+    this.capsule.setEnabled(false);
+    this.hitboxes.setEnabled(false);
+  }
+
+  /** Back in (the person left): respawns at the next chance. */
+  unbench(): void {
+    this.benched = false;
+    this.deadTime = Infinity;
   }
 
   /** Bled out or gave up: dead for good until the respawn. */

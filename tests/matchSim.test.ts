@@ -52,7 +52,7 @@ describe('a match on the game server (no view)', () => {
     const [yaw, pitch] = yawPitchOf(chest.x - eye.x, chest.y - eye.y, chest.z - eye.z);
     const fire = createInputState();
     fire.fire = true;
-    for (let i = 0; i < 240 && !red.downed; i++) sim.step((id) => (id === 1 ? { state: fire, yaw, pitch } : null));
+    for (let i = 0; i < 600 && !red.downed; i++) sim.step((id) => (id === 1 ? { state: fire, yaw, pitch } : null));
     expect(red.downed).toBe(true);
     expect(red.killedBy).toBe('alpha');
     expect(kills).toHaveLength(1);

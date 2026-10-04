@@ -8,11 +8,14 @@
  * out and comes back within the grace time gets the same soldier back.
  */
 import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import * as THREE from 'three';
+import type { Bot } from '../src/ai/Bot.ts';
+import { setNavFiles } from '../src/ai/navCache.ts';
 import { sanitizeLoadout, type ClassId, type Loadout } from '../src/data/classes.ts';
 import { STATION } from '../src/modes/fortify.ts';
 import { createInputState, type InputState } from '../src/input/InputState.ts';
-import type { MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
+import type { Lineup, MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
 import {
   REWIND_MAX,
   SF,
@@ -33,6 +36,18 @@ import type { Soldier } from '../src/sim/Soldier.ts';
 import type { WeaponId } from '../src/weapons/weaponData.ts';
 import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
+
+// Navmeshes baked ahead of time (`npm run nav`) come from the checkout's disk.
+setNavFiles(async (key) => {
+  try {
+    return new Uint8Array(gunzipSync(readFileSync(`public/nav/${key}.bin.gz`)));
+  } catch {
+    return null;
+  }
+});
+
+/** People's soldier ids start here (bots count up from 1 in each room). */
+const FIRST_PERSON_ID = 1000;
 
 /** How a match talks to one player's connection. */
 export interface MatchConn {
@@ -70,6 +85,11 @@ export interface MatchRoomOptions {
   room: string;
   map: string;
   mode: string;
+  /** People only, people with bots filling the room, or people (all on blue) against bots. */
+  lineup?: Lineup;
+  /** Soldiers in the room, bots included (half a side). */
+  size?: number;
+  difficulty?: 'easy' | 'normal' | 'hard';
   log?: (line: string) => void;
   /** Called once when the match has a winner. */
   ended?: (winner: Team) => void;
@@ -81,7 +101,7 @@ export class MatchRoom {
   readonly sim: MatchSim;
   private readonly seats = new Map<string, Seat>();
   private readonly byId = new Map<number, Seat>();
-  private nextId = 1;
+  private nextId = FIRST_PERSON_ID;
   private timer: ReturnType<typeof setInterval> | null = null;
   private last = 0;
   private acc = 0;
@@ -103,7 +123,10 @@ export class MatchRoom {
     if (!/^[\w-]+$/.test(opts.map)) throw new Error(`bad map id ${opts.map}`);
     const map: MapDef = parseMap(JSON.parse(readFileSync(`${dir}/${opts.map}.json`, 'utf8')));
     const mode = (['zone', 'frontline', 'conquest'] as const).find((m) => m === opts.mode) as ModeKind | undefined;
-    const sim = await MatchSim.create(map, { mode });
+    const lineup = opts.lineup ?? 'users';
+    const side = Math.max(1, Math.floor((opts.size ?? 24) / 2));
+    const bots = lineup === 'users' ? null : { blue: side, red: side, difficulty: opts.difficulty ?? 'normal' };
+    const sim = await MatchSim.create(map, { mode, bots, teamSize: { blue: side, red: side } });
     return new MatchRoom(sim, opts);
   }
 
@@ -284,6 +307,7 @@ export class MatchRoom {
   private sendSnapshots(): void {
     const list: NetSoldier[] = [];
     for (const seat of this.seats.values()) list.push(netSoldier(seat));
+    for (const b of this.sim.bots?.bots ?? []) if (!b.benched) list.push(netBot(b));
     const shared = encodeSoldiers(list);
     const list2 = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
     for (const g of this.sim.gadgets.things()) list2.push({ id: 0x8000 | (g.id & 0x3fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
@@ -350,7 +374,9 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    return [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
+    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
+    for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0 });
+    return out;
   }
 
   /** A squad leader's call-in. */
@@ -366,6 +392,8 @@ export class MatchRoom {
   }
 
   private smallerTeam(): Team {
+    // People together against the bots.
+    if (this.opts.lineup === 'coop') return 'blue';
     let blue = 0;
     let red = 0;
     for (const s of this.seats.values()) {
@@ -380,6 +408,7 @@ export class MatchRoom {
 
   private wire(): void {
     const bus = this.sim.bus;
+    this.sim.onRoster = () => this.sendRoster();
     this.sim.onBoom = (kind, p) => this.broadcastEvents.push({ k: 'boom', type: kind, pos: [p.x, p.y, p.z], tick: this.sim.tick });
     this.sim.onGive = (by, to, kind) => {
       const ev: MatchEvent = { k: 'given', kind, by: by?.id ?? -1, to: to.id };
@@ -454,6 +483,19 @@ function netSoldier(seat: Seat): NetSoldier {
   if (s.cls !== 'medic' && s.medkits === 0) flags |= SF.needMedkit;
   if (w.needsAmmo) flags |= SF.needAmmo;
   return { id: s.id, flags, x: p.feet.x, y: p.feet.y, z: p.feet.z, yaw: p.yaw, pitch: p.pitch, weapon: w.def.id as WeaponId, health: p.health.value, shots: w.shots & 0xff };
+}
+
+/** A bot as everyone sees it. */
+function netBot(b: Bot): NetSoldier {
+  let flags = 0;
+  if (b.alive || b.downed) flags |= SF.deployed;
+  if (b.alive) flags |= SF.alive;
+  if (b.downed) flags |= SF.downed;
+  if (b.crouching) flags |= SF.crouch;
+  if (b.horizontalSpeed > 5) flags |= SF.sprint;
+  if (b.grounded) flags |= SF.grounded;
+  if (b.medkits === 0 && b.cls !== 'medic') flags |= SF.needMedkit;
+  return { id: b.id, flags, x: b.feet.x, y: b.feet.y, z: b.feet.z, yaw: b.aimYaw, pitch: b.aimPitch, weapon: b.def.id as WeaponId, health: b.health.value, shots: b.shots & 0xff };
 }
 
 /** A kit from a browser, made safe (unknown class: assault). */

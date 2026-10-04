@@ -152,7 +152,7 @@ export interface BotModeHooks {
   /** Respawn position for a bot (given the squad objective it is assigned to). */
   spawnAt(bot: Bot, objective: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
   /** A bot revived the downed player. */
-  revivePlayer?(by: Bot, health: number): void;
+  revivePlayer?(by: Bot, health: number, who: Combatant): void;
 }
 
 /** A squad as the bots see it: members and, for the player's squad, the leader to follow. */
@@ -253,6 +253,13 @@ export class BotManager implements BotServices {
   private readonly teams: Record<Team, TeamState>;
   private readonly damageScale: number;
   private readonly listener = new THREE.Vector3();
+  /** The soldiers people play (one solo; everyone in a room on the game server). */
+  private readonly humans: () => Iterable<Combatant>;
+  /**
+   * Where people are, for thinking less far from all of them (the game
+   * server; null: the camera, as drawn last).
+   */
+  viewers: (() => Iterable<THREE.Vector3>) | null = null;
   private readonly enemies: Record<Team, Combatant[]> = { blue: [], red: [] };
   private readonly grid = new Map<number, Bot[]>();
   private readonly contacts = new Map<string, SquadContact>();
@@ -313,10 +320,12 @@ export class BotManager implements BotServices {
     private readonly bus: GameBus,
     private readonly audio: AudioSystem,
     private readonly effects: Effects,
-    private readonly player: Combatant,
+    /** The person playing (solo), or everyone people play (the game server). */
+    player: Combatant | (() => Iterable<Combatant>),
     spawns: SpawnPoint[],
     opts: BotOptions,
   ) {
+    this.humans = typeof player === 'function' ? player : () => [player];
     this.skill = SKILLS[opts.difficulty];
     this.damageScale = DAMAGE_SCALE[opts.difficulty];
     const teamState = (team: Team): TeamState => {
@@ -429,9 +438,15 @@ export class BotManager implements BotServices {
     for (const team of ['blue', 'red'] as const) this.considerSupport(team);
     this.considerVehicles();
     this.stepCount++;
+    const viewers = this.viewers ? [...this.viewers()] : null;
     for (const e of this.entries) {
       const b = e.bot;
-      const d2 = b.feet.distanceToSquared(this.listener);
+      if (b.benched) continue;
+      let d2 = b.feet.distanceToSquared(this.listener);
+      if (viewers) {
+        d2 = Infinity;
+        for (const v of viewers) d2 = Math.min(d2, b.feet.distanceToSquared(v));
+      }
       b.far = d2 > FAR_SQ && !b.inCombat(this.time);
       const near = d2 < CAPSULE_RANGE_SQ;
       if (near && !b.nearViewer) b.syncCapsule();
@@ -494,7 +509,7 @@ export class BotManager implements BotServices {
       bestD = d;
     };
     for (const e of this.entries) consider(e.bot);
-    consider(this.player);
+    for (const h of this.humans()) consider(h);
     if (best) this.revivers.set((best as Combatant).id, { bot, target: best });
     return best;
   }
@@ -510,8 +525,8 @@ export class BotManager implements BotServices {
   revive(bot: Bot, c: Combatant): void {
     if (!c.downed) return;
     const health = CLASSES[bot.cls].reviveHealth;
-    if (c.id === PLAYER_ID) this.hooks?.revivePlayer?.(bot, health);
-    else (c as Bot).revive(health, this.time);
+    if (c instanceof Bot) c.revive(health, this.time);
+    else this.hooks?.revivePlayer?.(bot, health, c);
     this.bus.emit('combatant:revived', { team: c.team, id: c.id, name: c.name, byId: bot.id, byName: bot.name, medic: bot.cls === 'medic' });
   }
 
@@ -595,12 +610,29 @@ export class BotManager implements BotServices {
     return st.uses < STATION.uses;
   }
 
-  /** The player revived a bot. */
-  revivedByPlayer(b: Bot, health: number, byName: string, medic: boolean): void {
+  /** A person revived a bot. */
+  revivedByPlayer(b: Bot, health: number, byName: string, medic: boolean, byId = PLAYER_ID): void {
     if (!b.downed) return;
     this.releaseRevive(b);
     b.revive(health, this.time);
-    this.bus.emit('combatant:revived', { team: b.team, id: b.id, name: b.name, byId: PLAYER_ID, byName, medic });
+    this.bus.emit('combatant:revived', { team: b.team, id: b.id, name: b.name, byId, byName, medic });
+  }
+
+  /** A person takes a bot's place (game server rooms with bots): off the field without a death. */
+  bench(bot: Bot): void {
+    const e = this.entryOf(bot);
+    this.alightBot(e);
+    this.release(e);
+    this.releaseRevive(bot);
+    this.releaseWork(bot);
+    bot.bench();
+    e.simAlive = false;
+    e.simDead = true;
+  }
+
+  /** The place is free again: the bot comes back at the next respawn. */
+  unbench(bot: Bot): void {
+    bot.unbench();
   }
 
   /** Mates near a fallen bot learn where the fatal shot came from. */
@@ -1011,8 +1043,8 @@ export class BotManager implements BotServices {
     for (const team of ['blue', 'red'] as const) {
       const out = this.enemies[team];
       out.length = 0;
-      for (const e of this.entries) if (e.bot.team !== team) out.push(e.bot);
-      if (this.player.team !== team) out.push(this.player);
+      for (const e of this.entries) if (e.bot.team !== team && !e.bot.benched) out.push(e.bot);
+      for (const h of this.humans()) if (h.team !== team) out.push(h);
     }
     // Drop cells nobody stood in last step: every cell ever visited used to stay,
     // and clearing them all grew to ~29k cells (4 ms a step) over a long match.
@@ -1263,7 +1295,7 @@ export class BotManager implements BotServices {
   alliesNear(team: Team, pos: THREE.Vector3, radius: number): number {
     let n = 0;
     for (const e of this.entries) if (e.bot.team === team && e.bot.alive && e.bot.feet.distanceTo(pos) < radius) n++;
-    if (this.player.team === team && this.player.alive && this.player.feet.distanceTo(pos) < radius) n++;
+    for (const h of this.humans()) if (h.team === team && h.alive && h.feet.distanceTo(pos) < radius) n++;
     return n;
   }
 
@@ -1394,7 +1426,7 @@ export class BotManager implements BotServices {
   }
 
   inVehicle(c: Combatant): boolean {
-    if (c.id === PLAYER_ID) return this.playerRiding?.() ?? false;
+    if (!(c instanceof Bot)) return this.playerRiding?.() ?? false;
     return !!this.entries.find((x) => x.bot.id === c.id)?.bot.riding;
   }
 
@@ -1807,11 +1839,13 @@ export class BotManager implements BotServices {
     }
   }
 
-  /** The player spotted / was shot by an enemy at `pos`: tell the player's team and squad. */
-  playerContact(pos: THREE.Vector3): void {
-    this.noteSighting(this.player.team, pos);
-    const e = this.entries.find((x) => x.leader === this.player);
-    if (e) this.noteContact(this.player.team, e.squad, pos);
+  /** A person spotted / was shot by an enemy at `pos`: tell their team and the squad they lead. */
+  playerContact(pos: THREE.Vector3, who?: Combatant): void {
+    const p = who ?? [...this.humans()][0];
+    if (!p) return;
+    this.noteSighting(p.team, pos);
+    const e = this.entries.find((x) => x.leader === p);
+    if (e) this.noteContact(p.team, e.squad, pos);
   }
 
   /** No regrouping on the player either (see `followPoint`). */
@@ -1861,6 +1895,7 @@ export class BotManager implements BotServices {
 
   fire(bot: Bot, dir: THREE.Vector3): void {
     const def = bot.def;
+    bot.shots = (bot.shots + 1) & 0xffff;
     const eye = bot.eyePos(new THREE.Vector3());
     const moving = Math.min(1, bot.horizontalSpeed / 4.6);
     const spread = (def.spreadAds + (def.spreadHip - def.spreadAds) * (bot.crouching ? 0.1 : 0.35) + moving * 1.2) * DEG;
@@ -1887,7 +1922,7 @@ export class BotManager implements BotServices {
         if (owner.alive && owner.team !== bot.team) {
           const dmg = computeDamage(damageAtDistance(def, hit.distance), target.part, def.headshotMult) * this.damageScale;
           const killed = owner.applyDamage(dmg, target.part, source);
-          this.bus.emit('combat:hit', { targetId: owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: false });
+          this.bus.emit('combat:hit', { targetId: owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: false, attackerId: bot.id });
           if (killed) {
             this.bus.emit('combat:kill', {
               attacker: bot.name,
@@ -1940,8 +1975,8 @@ export class BotManager implements BotServices {
         for (const o of cell) if (o !== bot) this.repel(bot, o, 1, out, wx, wz, speed);
       }
     }
-    // Bots walk on the navmesh without colliding: keep them off the player too.
-    this.repel(bot, this.player, 1.2, out, wx, wz, speed);
+    // Bots walk on the navmesh without colliding: keep them off people too.
+    for (const h of this.humans()) this.repel(bot, h, 1.2, out, wx, wz, speed);
     if (this.steer !== 0) {
       // Step around whoever is in the way (to the right of the walking direction is (-wz, wx)).
       const k = THREE.MathUtils.clamp(this.steer, -1, 1) * speed * 0.9;
@@ -2228,18 +2263,23 @@ export class BotManager implements BotServices {
   }
 
   private makeBlobs(n: number): THREE.InstancedMesh {
-    const c = document.createElement('canvas');
-    c.width = c.height = 64;
-    const g = c.getContext('2d')!;
-    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, 'rgba(0,0,0,0.55)');
-    grad.addColorStop(0.5, 'rgba(0,0,0,0.3)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 64, 64);
+    // The game server draws nothing (no canvas in Node).
+    let map: THREE.Texture | null = null;
+    if (typeof document !== 'undefined') {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+      grad.addColorStop(0.5, 'rgba(0,0,0,0.3)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+      map = new THREE.CanvasTexture(c);
+    }
     const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({
-      map: new THREE.CanvasTexture(c),
+      map,
       transparent: true,
       depthWrite: false,
       polygonOffset: true,
@@ -2263,6 +2303,7 @@ export class BotManager implements BotServices {
 
   /** Green cross over downed allies (seen through walls). */
   private reviveMarker(): THREE.SpriteMaterial {
+    if (!this.downMaterial && typeof document === 'undefined') this.downMaterial = new THREE.SpriteMaterial({ color: 0x6bdc6b });
     if (!this.downMaterial) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;
@@ -2284,6 +2325,8 @@ export class BotManager implements BotServices {
 
   private markerMaterial(color: string): THREE.SpriteMaterial {
     let mat = this.markerMaterials.get(color);
+    // The game server draws nothing (no canvas in Node).
+    if (!mat && typeof document === 'undefined') this.markerMaterials.set(color, (mat = new THREE.SpriteMaterial({ color })));
     if (!mat) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;

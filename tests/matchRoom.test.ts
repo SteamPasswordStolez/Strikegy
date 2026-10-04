@@ -66,8 +66,8 @@ describe('a match room on the game server', () => {
     const spawn = a.events().find((e) => e.k === 'spawn');
     expect(spawn).toMatchObject({ k: 'spawn', kit: { cls: 'assault' } });
 
-    const sa = room.sim.soldiers.get(1)!;
-    const sb = room.sim.soldiers.get(2)!;
+    const sa = room.sim.soldiers.get(1000)!;
+    const sb = room.sim.soldiers.get(1001)!;
     // Somewhere open, face to face 12 m apart.
     const sim = room.sim;
     let x = 60;
@@ -121,11 +121,47 @@ describe('a match room on the game server', () => {
     expect(sb.player.health.value).toBeLessThan(100);
     // Snapshots carry both soldiers and alpha's own state with its last stepped input.
     const last = a.snaps.at(-1)!;
-    expect(last.soldiers.map((s) => s.id).sort()).toEqual([1, 2]);
+    expect(last.soldiers.map((s) => s.id).sort()).toEqual([1000, 1001]);
     expect(last.self!.ack).toBeGreaterThan(0);
     expect(last.self!.ack).toBeLessThanOrEqual(seqA);
     room.dispose();
   });
+});
+
+describe('a room with bots', () => {
+  it('fills both sides with bots; a person takes a bot\'s place; bots move, fight and capture', async () => {
+    const room = await MatchRoom.create({ room: 'rb', map: 'lyon', mode: 'zone', lineup: 'usersBots', size: 8 });
+    const sim = room.sim;
+    expect(sim.bots!.bots).toHaveLength(8);
+    const a = line();
+    room.join('ua', 'alpha', a.line);
+    room.ready('ua');
+    const benched = sim.bots!.bots.filter((b) => b.benched);
+    expect(benched).toHaveLength(1);
+    expect(benched[0]!.team).toBe('blue');
+    // The person sits where the bot was in its squad, and leads it.
+    const sq = sim.squadOf(1000)!;
+    expect(sq.members).toHaveLength(4);
+    const roster = a.texts.filter((m) => m.t === 'roster').at(-1);
+    expect(roster && roster.t === 'roster' && roster.roster.length).toBe(8);
+
+    const start = new Map(sim.bots!.bots.map((b) => [b.id, b.feet.clone()]));
+    const kills: string[] = [];
+    sim.bus.on('combat:kill', (e) => kills.push(`${e.attacker}>${e.victim}`));
+    // Fights start after 15-30 s; up to four minutes of sim for the first kills.
+    for (let i = 0; i < 60 * 240 && kills.length < 2; i++) room.tick();
+    const moved = sim.bots!.bots.filter((b) => !b.benched && b.feet.distanceTo(start.get(b.id)!) > 20);
+    expect(moved.length).toBeGreaterThan(2);
+    expect(kills.length).toBeGreaterThan(0);
+    // Snapshots carry the bots (the benched one not).
+    const snap = a.snaps.at(-1)!;
+    expect(snap.soldiers.length).toBe(8);
+
+    // The person leaves: the bot comes back.
+    room.leave('ua');
+    expect(sim.bots!.bots.filter((b) => b.benched)).toHaveLength(0);
+    room.dispose();
+  }, 120_000);
 });
 
 describe('lobby seats', () => {
