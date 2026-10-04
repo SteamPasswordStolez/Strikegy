@@ -68,7 +68,7 @@ function setup(hitHandle: number | null) {
     crouching: false,
     horizontalSpeed: () => 0,
   } as unknown as Player;
-  const w = new WeaponController(['ar1', 'pistol1'], physics, registry, surfaces, bus);
+  const w = new WeaponController(['ar1', 'pistol1'], physics, registry, surfaces, bus, { id: 0, team: 'blue', name: () => 'You', local: true });
   w.drawTimer = 0;
   const events: string[] = [];
   bus.on('weapon:melee', (e) => events.push(`melee:${e.hit}`));

@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
-import { PLAYER_ID, PLAYER_TEAM } from '@/ai/types';
 import { t } from '@/i18n';
-import { playerName } from '@/net/identity';
+import type { Team } from '@/world/mapTypes';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import type { GameBus } from '@/core/events';
 import type { InputState } from '@/input/InputState';
-import { computeDamage, type HitboxRegistry } from '@/combat/Hitboxes';
+import { computeDamage, type Damageable, type HitboxRegistry } from '@/combat/Hitboxes';
+import type { HitPart } from '@/core/events';
 import { MOVE } from '@/player/movement';
 import type { Player } from '@/player/Player';
 import { WeaponState } from './WeaponState';
@@ -54,6 +54,15 @@ export interface ShotTrace {
   to: THREE.Vector3;
 }
 
+/** Who holds the gun: names and sides in the kill feed and damage, friendly fire, hit markers. */
+export interface WeaponOwner {
+  readonly id: number;
+  readonly team: Team;
+  name(): string;
+  /** The soldier this browser plays: hit markers and "You" in the kill feed. */
+  readonly local: boolean;
+}
+
 /**
  * Player-side weapon handling: loadout switching, ADS, spread/bloom, recoil
  * patterns and hitscan resolution. Runs on the fixed simulation step.
@@ -85,6 +94,8 @@ export class WeaponController {
   meleeTime = -1;
   /** Seconds into an inspection, or -1. */
   inspectTime = -1;
+  /** Shots fired so far (rounds, not pellets). */
+  shots = 0;
 
   private readonly eye = new THREE.Vector3();
   private readonly fwd = new THREE.Vector3();
@@ -102,6 +113,7 @@ export class WeaponController {
     private readonly registry: HitboxRegistry,
     private readonly surfaces: SurfaceRegistry,
     private readonly bus: GameBus,
+    private readonly owner: WeaponOwner,
   ) {
     this.loadout = loadout;
   }
@@ -272,24 +284,8 @@ export class WeaponController {
       const point = new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
       const target = this.registry.lookup(hit.collider.handle);
       if (target) {
-        if (!target.owner.alive || target.owner.team === PLAYER_TEAM) continue;
-        const dmg = MELEE_DAMAGE[target.part];
-        const source = { pos: eye.clone(), name: playerName(t('feed.you')), team: PLAYER_TEAM, weapon: t('weapon.melee'), id: PLAYER_ID };
-        const killed = target.owner.applyDamage(dmg, target.part, source);
-        this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point, byPlayer: true });
-        if (killed) {
-          this.bus.emit('combat:kill', {
-            attacker: 'You',
-            victim: target.owner.name,
-            weapon: t('weapon.melee'),
-            headshot: false,
-            byPlayer: true,
-            attackerTeam: PLAYER_TEAM,
-            victimTeam: target.owner.team ?? null,
-            attackerId: PLAYER_ID,
-            victimId: target.owner.id,
-          });
-        }
+        if (!target.owner.alive || target.owner.team === this.owner.team) continue;
+        this.hurt(target.owner, target.part, MELEE_DAMAGE[target.part], point, t('weapon.melee'), eye, false);
         this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'body' });
         return;
       }
@@ -299,6 +295,26 @@ export class WeaponController {
       this.bus.emit('combat:impact', { point: wall.point, normal: wall.normal, surface: this.surfaces.get(wall.handle, wall.raw) });
       this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'world' });
     } else this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'none' });
+  }
+
+  /** Damage from this gun (or the swing): hit and kill events in the owner's name. */
+  private hurt(victim: Damageable, part: HitPart, dmg: number, point: THREE.Vector3, weapon: string, from: THREE.Vector3, headshot: boolean): void {
+    const o = this.owner;
+    const source = { pos: from.clone(), name: o.name(), team: o.team, weapon, id: o.id };
+    const killed = victim.applyDamage(dmg, part, source);
+    this.bus.emit('combat:hit', { targetId: victim.id, part, damage: dmg, killed, point, byPlayer: o.local });
+    if (!killed) return;
+    this.bus.emit('combat:kill', {
+      attacker: o.local ? 'You' : o.name(),
+      victim: victim.name,
+      weapon,
+      headshot,
+      byPlayer: o.local,
+      attackerTeam: o.team,
+      victimTeam: victim.team ?? null,
+      attackerId: o.id,
+      victimId: victim.id,
+    });
   }
 
   private emitReloadCues(s: WeaponState, d: WeaponDef): void {
@@ -350,6 +366,7 @@ export class WeaponController {
       this.spraySeed = Math.random();
     }
     this.sinceShot = 0;
+    this.shots++;
     this.aimBasis(player);
 
     const spreadRad = this.spread(player) * DEG;
@@ -388,24 +405,9 @@ export class WeaponController {
 
     if (hit && target) {
       // Friendly fire is off: teammates simply stop the round.
-      if (target.owner.alive && target.owner.team !== PLAYER_TEAM) {
+      if (target.owner.alive && target.owner.team !== this.owner.team) {
         const dmg = computeDamage(damageAtDistance(d, hit.distance), target.part, d.headshotMult);
-        const source = { pos: this.eye.clone(), name: playerName(t('feed.you')), team: PLAYER_TEAM, weapon: d.name, id: PLAYER_ID };
-        const killed = target.owner.applyDamage(dmg, target.part, source);
-        this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: true });
-        if (killed) {
-          this.bus.emit('combat:kill', {
-            attacker: 'You',
-            victim: target.owner.name,
-            weapon: d.name,
-            headshot: target.part === 'head',
-            byPlayer: true,
-            attackerTeam: PLAYER_TEAM,
-            victimTeam: target.owner.team ?? null,
-            attackerId: PLAYER_ID,
-            victimId: target.owner.id,
-          });
-        }
+        this.hurt(target.owner, target.part, dmg, to, d.name, this.eye, target.part === 'head');
       }
     } else if (hit && (!isPellet || Math.random() < 0.5)) {
       this.bus.emit('combat:impact', {

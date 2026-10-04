@@ -16,6 +16,7 @@ import { SURFACE_FROM_MATERIAL, SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
 import type { BuiltMap } from '@/world/buildBlockout';
 import { buildWorld } from '@/sim/world';
+import { Soldier, type SoldierHooks } from '@/sim/Soldier';
 import type { Terrain } from '@/world/terrain';
 import { GROUND_COVER, GroundCover } from '@/world/groundCover';
 import { BACKDROP_MODELS, buildBackdrop, cullBackdropDetail } from '@/world/backdrop';
@@ -73,14 +74,13 @@ import { paintMap, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
 import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimAssist';
 import { wrapAngle, yawPitchOf } from '@/ai/aim';
-import { COMBAT_WINDOW, WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
+import { WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { Scoreboard, type ScoreboardSide } from '@/ui/Scoreboard';
 import type { Team } from '@/world/mapTypes';
 import {
   AMMO_GIVE_COOLDOWN,
-  ASSAULT_WADE_EASE,
   CLASSES,
   DOWN,
   GIVE_RANGE,
@@ -89,7 +89,6 @@ import {
   RECON_ZOOM,
   REVIVE_RANGE,
   loadoutWeapons,
-  moveBonus,
   zoomedFov,
   type ClassId,
 } from '@/data/classes';
@@ -103,7 +102,6 @@ const DEG = Math.PI / 180;
 const AUTHORED_FOV = 78;
 const SIM_HZ = 60;
 const ASSET_BASE = `${import.meta.env.BASE_URL}assets/`;
-const RESPAWN_SEC = 4;
 /** Seconds of death cam before the deploy screen opens. */
 const DEATH_CAM_SEC = 1.6;
 /** Maps up to this size (m) get one shadow map fitted over the whole area, rendered once. */
@@ -147,7 +145,6 @@ export class Game {
   private readonly audio: AudioSystem;
   private readonly viewModel: ViewModel;
   private readonly models = new ModelLibrary(ASSET_BASE);
-  private readonly grenades = new GrenadeInventory();
   private readonly targets: TargetDummy[] = [];
   private readonly tmpEye = new THREE.Vector3();
   private readonly tmpMuzzle = new THREE.Vector3();
@@ -158,13 +155,12 @@ export class Game {
   private throwables!: Throwables;
   private physics!: PhysicsWorld;
   private atmosphere!: Atmosphere;
-  private player!: Player;
-  private weapons!: WeaponController;
+  /** The soldier this browser plays (movement, guns, health, down / revive). */
+  private me!: Soldier;
   private spawn!: SpawnPoint;
   private playerSpawns: SpawnPoint[] = [];
   private mapSpawns: SpawnPoint[] = [];
   private mapName = '';
-  private playerBoxes!: CharacterHitboxes;
   private bots: BotManager | null = null;
   private nav: NavWorld | null = null;
   private navExtra: { positions: number[]; indices: number[] } | null = null;
@@ -172,16 +168,9 @@ export class Game {
   /** Grass tufts around the camera on open ground (grass / bare / sand maps). */
   private groundCover: GroundCover | null = null;
   private snowfall: Snowfall | null = null;
-  /** The player as seen by bots. */
-  private playerCombatant!: Combatant;
-  private playerFiringUntil = -1;
-  private killedBy: string | null = null;
   private zoneMode: ZoneMode | null = null;
   private zoneVisuals: ZoneVisuals | null = null;
   private matchOver = false;
-  /** Bot matches use a deploy screen: the player is off the field until deploying. */
-  private deployFlow = false;
-  private deployed = true;
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
   private mapImage: MapImage | null = null;
@@ -197,7 +186,6 @@ export class Game {
   private scoreboardTimer = 0;
   private playerSquad: Squad | null = null;
   private squadWiped = false;
-  private playerHurtAt = -Infinity;
   private lastAlpha = 0;
   private elapsed = 0;
   private running = false;
@@ -207,7 +195,6 @@ export class Game {
   private fpsTime = 0;
   private fps = 0;
   private rafId = 0;
-  private respawnTimer = 0;
   private throwBlock = 0;
   private throwCooldown = 0;
   private flashLeft = 0;
@@ -221,27 +208,12 @@ export class Game {
   /** Class loadouts picked on the deploy screen (kept per class across matches). */
   private readonly loadouts = new LoadoutStore();
   private loadoutPanel: LoadoutPanel | null = null;
-  /** Class of the current life (passives). */
-  private cls: ClassId = 'assault';
   /** Recon: scope zoomed the extra 1.5x (wheel while aiming). */
   private reconZoom = false;
   /** Scope eye box off centre (fractions of the lens radius): lags behind turning, bobs when walking. */
   private readonly scopeShift = new THREE.Vector2();
   /** Sim clock (s) for cooldowns, shields and the down timer. */
   private simTime = 0;
-  /** Down: health gone, waiting for a revive; bleeds out or gives up into a real death. */
-  private playerDowned = false;
-  private downTime = 0;
-  private giveUpHold = 0;
-  private downCause: DamageCause = 'bullet';
-  private downSource: DamageSource | undefined;
-  private reviveShieldUntil = -Infinity;
-  /** Medkits carried (medics: endless on a cooldown until `medkitReadyAt`). */
-  private medkits: number = MEDKIT.carried;
-  private medkitReadyAt = 0;
-  /** Seconds left of using a medkit (weapon lowered) and of the heal after it. */
-  private medkitUse = 0;
-  private healLeft = 0;
   /** Downed ally the player is reviving (holding E) and progress (s). */
   private reviveOf: Bot | null = null;
   private reviveProgress = 0;
@@ -290,6 +262,63 @@ export class Game {
   private nextBlow = 0;
   /** Next time a giver may hand the same receiver the same thing: 'giver>receiver:kind' -> sim time. */
   private readonly giveReady = new Map<string, number>();
+
+  // The local soldier's state, kept under its old names while the rest of the game moves to `me`.
+  private get player(): Player {
+    return this.me.player;
+  }
+  private get weapons(): WeaponController {
+    return this.me.weapons;
+  }
+  private get playerBoxes(): CharacterHitboxes {
+    return this.me.boxes;
+  }
+  private get playerCombatant(): Combatant {
+    return this.me.combatant;
+  }
+  private get grenades(): GrenadeInventory {
+    return this.me.grenades;
+  }
+  private get cls(): ClassId {
+    return this.me.cls;
+  }
+  private set cls(c: ClassId) {
+    this.me.cls = c;
+  }
+  /** Bot matches use a deploy screen: the player is off the field until deploying. */
+  private get deployFlow(): boolean {
+    return this.me.deployFlow;
+  }
+  private set deployFlow(v: boolean) {
+    this.me.deployFlow = v;
+  }
+  private get deployed(): boolean {
+    return this.me.deployed;
+  }
+  private set deployed(v: boolean) {
+    this.me.deployed = v;
+  }
+  private get playerDowned(): boolean {
+    return this.me.downed;
+  }
+  private get respawnTimer(): number {
+    return this.me.respawnTimer;
+  }
+  private set respawnTimer(v: number) {
+    this.me.respawnTimer = v;
+  }
+  private get medkits(): number {
+    return this.me.medkits;
+  }
+  private set medkits(n: number) {
+    this.me.medkits = n;
+  }
+  private get medkitUse(): number {
+    return this.me.medkitUse;
+  }
+  private get killedBy(): string | null {
+    return this.me.killedBy;
+  }
 
   private constructor(
     private readonly container: HTMLElement,
@@ -450,13 +479,28 @@ export class Game {
     r.scene.add(this.support.group);
     r.scene.add(this.airMarkers.group);
     this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
-    this.spawn =map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
-    this.player = new Player(this.physics, this.bus, this.impacts, new THREE.Vector3(...this.spawn.pos), this.spawn.yaw * DEG);
+    this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
+    const firstKit = this.loadouts.current;
+    this.me = new Soldier({
+      id: PLAYER_ID,
+      team: PLAYER_TEAM,
+      name: () => playerName(t('feed.you')),
+      local: true,
+      physics: this.physics,
+      bus: this.bus,
+      impacts: this.impacts,
+      registry: this.registry,
+      spawn: new THREE.Vector3(...this.spawn.pos),
+      yaw: this.spawn.yaw * DEG,
+      loadout: this.options.sandbox ? this.options.loadout : loadoutWeapons(firstKit),
+      now: () => this.simTime,
+      combatClock: () => this.bots?.time ?? 0,
+    });
+    this.me.hooks = this.soldierHooks();
     this.player.water = water;
     this.playerSpawns = map.spawns.filter((s) => s.team === 'player' || s.team === PLAYER_TEAM);
     this.mapSpawns = map.spawns;
     this.mapName = map.meta.name;
-    this.createPlayerCombatant();
 
     const botOpts = this.options.bots ?? null;
     if (!botOpts) {
@@ -467,12 +511,9 @@ export class Game {
       }
     }
 
-    const firstKit = this.loadouts.current;
     this.cls = firstKit.cls;
     this.grenades.reset(firstKit.grenade);
-    this.weapons = new WeaponController(this.options.sandbox ? this.options.loadout : loadoutWeapons(firstKit), this.physics, this.registry, this.impacts, this.bus);
     this.weapons.endlessReserve = !this.options.sandbox && firstKit.cls === 'support';
-    this.weapons.ignoreBody = this.playerBoxes.body;
 
     if (botOpts && botOpts.allies + botOpts.enemies > 0) {
       await this.loadStep(0.62, 'load.nav');
@@ -680,11 +721,8 @@ export class Game {
     const cls = (id: string) => WEAPONS[id as WeaponId].class;
     bus.on('weapon:fired', (e) => {
       const quiet = !!WEAPONS[e.weaponId as WeaponId].suppressed;
-      if (this.bots) {
-        this.playerFiringUntil = this.bots.time + 0.6;
-        // A suppressed gun is only heard close by.
-        this.bots.alert(this.player.feet, quiet ? 22 : 70, this.playerCombatant);
-      }
+      // A suppressed gun is only heard close by.
+      this.bots?.alert(this.player.feet, quiet ? 22 : 70, this.playerCombatant);
       this.audio.gunshot(cls(e.weaponId), e.ads, quiet);
       this.viewModel.onFire(e.ads);
       this.muzzleEffects(e.weaponId, true);
@@ -937,55 +975,45 @@ export class Game {
     );
   };
 
-  /** The player as a bot target (Combatant) and as a damageable with hitboxes. */
-  private createPlayerCombatant(): void {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const game = this;
-    this.playerCombatant = {
-      id: PLAYER_ID,
-      team: PLAYER_TEAM,
-      get name() {
-        return playerName(t('feed.you'));
+  /** What the local view does when its soldier is hurt, goes down, gets up or dies. */
+  private soldierHooks(): SoldierHooks {
+    return {
+      hurt: (amount, from) => {
+        const p = this.player;
+        if (this.touch) navigator.vibrate?.(Math.min(60, 15 + amount));
+        let yaw: number | null = null;
+        if (from) {
+          const d = from.clone().sub(p.feet);
+          yaw = Math.atan2(-d.x, -d.z);
+        }
+        this.hud.showDamage(yaw, amount);
+        this.audio.hurt(amount);
+        this.shake = Math.min(0.05, this.shake + amount * 0.0004);
       },
-      get alive() {
-        return game.player.alive && game.deployed;
+      falling: () => {
+        if (this.ride) this.leaveVehicle();
+        if (this.chute) this.dropChute();
       },
-      get downed() {
-        return game.playerDowned && game.deployed;
+      down: (cause) => {
+        this.buildMode = false;
+        this.reviveOf = null;
+        this.reviveProgress = 0;
+        this.interact = null;
+        // Kills by others are reported by whoever made them; self-inflicted ones here.
+        if (!this.killedBy) {
+          const weapon = cause === 'explosion' ? t('grenade.frag') : cause === 'fall' ? '↓' : '';
+          this.hud.addKill({ attacker: 'You', victim: 'You', weapon, headshot: false });
+        }
       },
-      get feet() {
-        return game.player.feet;
+      revived: (by) => {
+        this.hud.notify(`${t('notify.revived')} — ${by}`, 'ally');
+        this.audio.revived();
       },
-      get yaw() {
-        return game.player.yaw;
+      died: () => {
+        if (this.deployFlow) this.deployAt = this.elapsed + DEATH_CAM_SEC * 0.5;
       },
-      inCombat(now: number) {
-        return game.playerFiringUntil > now - COMBAT_WINDOW || now - game.playerHurtAt < COMBAT_WINDOW;
-      },
-      get velocity() {
-        return game.player.velocity;
-      },
-      get eyeHeight() {
-        return game.player.eyeHeight;
-      },
-      get firingUntil() {
-        return game.playerFiringUntil;
-      },
+      medkit: () => this.audio.medkit(),
     };
-    const target: Damageable = {
-      id: PLAYER_ID,
-      name: 'You',
-      team: PLAYER_TEAM,
-      get alive() {
-        return game.player.alive && game.deployed;
-      },
-      applyDamage: (amount, _part, source) => {
-        this.damagePlayer(amount, source?.pos ?? null, 'bullet', source);
-        return !this.player.alive;
-      },
-    };
-    this.playerBoxes = new CharacterHitboxes(this.physics, this.registry, target);
-    this.playerBoxes.place(this.player.feet, this.player.yaw);
   }
 
   /**
@@ -1030,8 +1058,6 @@ export class Game {
         this.reconZoom = !this.reconZoom;
         input.weaponCycle = 0;
       }
-      // Barbed wire slows everyone wading through it.
-      p.speedBonus = moveBonus(this.cls, w.def) * (this.fort?.slowAt(p.feet) ?? 1);
       // Call-in menu first: while it is open, 1..5 pick a call-in (not weapons or the gadget).
       this.stepSupport(input);
       // 4 (a match has three weapon slots) or the touch button: the class gadget.
@@ -1057,25 +1083,18 @@ export class Game {
         input.ads = false;
         input.reload = false;
       }
-      p.wadePenalty = this.cls === 'assault' ? ASSAULT_WADE_EASE : 1;
-      if (input.medkit) this.useMedkit();
-      this.stepMedkit(dt);
+      if (input.medkit) this.me.useMedkit();
+      this.me.stepMedkit(dt);
       this.stepInteract(dt, input);
       if (!this.interact && input.interactPressed && this.tryEnterVehicle()) return this.finishStep(dt, input);
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
-      const firing = input.fire;
-      // Pulling the trigger, aiming or swinging ends a sprint immediately.
-      if (input.fire || input.ads || input.melee) {
-        input.sprint = false;
-        p.sprinting = false;
-      }
       // Hands busy (throwing, patching up, reviving): no shooting.
       const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut || this.supportAim !== null;
-      this.weapons.step(dt, input, p, busy);
-      p.step(dt, input, this.weapons.adsBlend > 0.5, firing && this.weapons.sinceShot < 0.2);
+      // Barbed wire slows everyone wading through it.
+      this.me.stepOnFoot(dt, input, busy, this.fort?.slowAt(p.feet) ?? 1);
       this.stepSway(dt, input.holdBreath);
     } else if (this.playerDowned) {
-      this.stepDowned(dt, input.jumpHeld);
+      this.me.stepDowned(dt, input.jumpHeld);
     } else {
       this.respawnTimer -= dt;
       // With a deploy screen the player chooses when to go; otherwise respawn automatically.
@@ -1086,8 +1105,7 @@ export class Game {
 
   /** The rest of a sim step, after the player's own part: everyone else, then physics. */
   private finishStep(dt: number, input: InputState): void {
-    const p = this.player;
-    this.playerBoxes.sync(p.feet, p.yaw, p.bodyHeight);
+    this.me.syncBoxes();
     this.bots?.step(dt);
     this.fort?.step();
     this.botsResupplyPlayer();
@@ -1621,7 +1639,7 @@ export class Game {
       else if (target.id === PLAYER_ID) {
         if (this.damagePlayer(999, point, 'explosion', source)) {
           this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, name);
-          this.die('explosion', source);
+          this.me.die('explosion', source);
         }
       } else {
         const bot = this.bots?.bots.find((b) => b.id === target.id);
@@ -1650,7 +1668,7 @@ export class Game {
       this.leaveVehicle();
       if (this.damagePlayer(999, at, 'explosion', by ?? undefined)) {
         if (by && by.id !== PLAYER_ID) this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
-        this.die('explosion', by ?? undefined);
+        this.me.die('explosion', by ?? undefined);
       }
     }
     for (const b of this.bots?.vehicleLost(v, by) ?? []) {
@@ -2004,112 +2022,16 @@ export class Game {
 
   /** Returns true if this damage killed the player. */
   private damagePlayer(amount: number, from: THREE.Vector3 | null, cause: DamageCause, source?: DamageSource): boolean {
-    const p = this.player;
-    if (!p.alive || this.simTime < this.reviveShieldUntil) return false;
-    const killed = p.health.damage(amount);
-    this.playerHurtAt = this.bots?.time ?? 0;
-    this.bus.emit('player:damaged', { amount, from, cause });
-    if (this.touch) navigator.vibrate?.(Math.min(60, 15 + amount));
-    let yaw: number | null = null;
-    if (from) {
-      const d = from.clone().sub(p.feet);
-      yaw = Math.atan2(-d.x, -d.z);
-    }
-    this.hud.showDamage(yaw, amount);
-    this.audio.hurt(amount);
-    this.shake = Math.min(0.05, this.shake + amount * 0.0004);
-    if (killed) {
-      if (this.ride) this.leaveVehicle();
-      if (this.chute) this.dropChute();
-      this.goDown(cause, source);
-    }
-    return killed;
-  }
-
-  /** Health gone: down on the ground until revived, bled out or given up. */
-  private goDown(cause: DamageCause, source?: DamageSource): void {
-    this.buildMode = false;
-    this.playerDowned = true;
-    this.downTime = 0;
-    this.giveUpHold = 0;
-    this.downCause = cause;
-    this.downSource = source;
-    this.weapons.adsBlend = 0;
-    this.weapons.state.cancelReload();
-    this.medkitUse = this.healLeft = 0;
-    this.reviveOf = null;
-    this.reviveProgress = 0;
-    this.interact = null;
-    this.playerBoxes.setEnabled(false);
-    this.killedBy = source && source.id !== PLAYER_ID ? source.name : null;
-    // Kills by others are reported by whoever made them; self-inflicted ones here.
-    if (!this.killedBy) {
-      const weapon = cause === 'explosion' ? t('grenade.frag') : cause === 'fall' ? '↓' : '';
-      this.hud.addKill({ attacker: 'You', victim: 'You', weapon, headshot: false });
-    }
-  }
-
-  private stepDowned(dt: number, holdingGiveUp: boolean): void {
-    this.downTime += dt;
-    this.giveUpHold = holdingGiveUp ? this.giveUpHold + dt : 0;
-    if (this.giveUpHold >= DOWN.giveUpHold || this.downTime >= DOWN.bleedOut) this.die(this.downCause, this.downSource);
+    return this.me.damage(amount, from, cause, source);
   }
 
   /** A bot got the player back up. */
   private revivePlayer(by: string, health: number): void {
-    if (!this.playerDowned) return;
-    this.playerDowned = false;
-    this.player.health.value = health;
-    this.playerBoxes.setEnabled(true);
-    this.reviveShieldUntil = this.simTime + DOWN.reviveShield;
-    this.killedBy = null;
-    this.weapons.drawTimer = DRAW_TIME;
-    this.hud.notify(`${t('notify.revived')} — ${by}`, 'ally');
-    this.audio.revived();
-  }
-
-  /** Dead for good (bled out or gave up): tickets, deploy screen. */
-  private die(cause: DamageCause, source?: DamageSource): void {
-    void source;
-    this.playerDowned = false;
-    // The time spent down already counts toward the respawn wait.
-    this.respawnTimer = Math.max(0, RESPAWN_SEC - this.downTime);
-    this.weapons.adsBlend = 0;
-    if (this.deployFlow) {
-      this.deployed = false;
-      this.deployAt = this.elapsed + DEATH_CAM_SEC * 0.5;
-    }
-    this.playerBoxes.setEnabled(false);
-    this.bus.emit('player:died', { cause });
-    this.bus.emit('combatant:died', { team: PLAYER_TEAM, id: PLAYER_ID });
+    this.me.revive(by, health);
   }
 
   // ---------------------------------------------------------------------------
   // Medkits, reviving and handing out kits
-
-  private get medkitReady(): boolean {
-    return this.cls === 'medic' ? this.simTime >= this.medkitReadyAt : this.medkits > 0;
-  }
-
-  /** Q: patch up to full health over a second (the weapon comes down meanwhile). */
-  private useMedkit(): void {
-    if (!this.medkitReady || this.medkitUse > 0 || this.player.health.value >= 100) return;
-    if (this.cls === 'medic') this.medkitReadyAt = this.simTime + MEDKIT.medicCooldown;
-    else this.medkits--;
-    this.medkitUse = MEDKIT.useTime;
-    this.healLeft = MEDKIT.healTime;
-    this.weapons.state.cancelReload();
-    this.audio.medkit();
-  }
-
-  private stepMedkit(dt: number): void {
-    if (this.medkitUse > 0) this.medkitUse = Math.max(0, this.medkitUse - dt);
-    if (this.healLeft > 0) {
-      const h = this.player.health;
-      h.value = Math.min(100, h.value + (100 / MEDKIT.healTime) * dt);
-      this.healLeft = Math.max(0, this.healLeft - dt);
-    }
-  }
 
   private giveOk(key: string): boolean {
     return (this.giveReady.get(key) ?? -Infinity) <= this.simTime;
@@ -2290,41 +2212,26 @@ export class Game {
     this.buildMode = false;
     if (this.chute) this.dropChute();
 
-    const p = this.player;
-    p.health.reset();
-    if (this.bots) {
-      const at = this.spawnFor(PLAYER_TEAM, key, PLAYER_ID);
-      p.teleport(at.pos, at.yaw);
-    } else {
+    let at: { pos: THREE.Vector3; yaw: number };
+    if (this.bots) at = this.spawnFor(PLAYER_TEAM, key, PLAYER_ID);
+    else {
       const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
-      p.teleport(new THREE.Vector3(...sp.pos), sp.yaw * DEG);
+      at = { pos: new THREE.Vector3(...sp.pos), yaw: sp.yaw * DEG };
     }
-    this.playerBoxes.setEnabled(true);
-    this.killedBy = null;
     // The loadout picked on the deploy screen takes effect now.
     const kit = this.loadouts.current;
-    this.cls = kit.cls;
     this.reconZoom = false;
-    if (this.options.sandbox) this.weapons.resetAmmo();
-    else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support');
-    this.grenades.reset(kit.grenade);
     this.gadget = classGadget(kit.cls, kit.reconGadget);
     this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
     this.gadgetOut = false;
     this.gadgetBusy = 0;
-    this.playerDowned = false;
-    this.downTime = 0;
-    this.medkits = MEDKIT.carried;
-    this.medkitReadyAt = 0;
-    this.medkitUse = this.healLeft = 0;
     this.reviveOf = null;
     this.reviveProgress = 0;
     this.hud.clearDamage();
     this.touch?.reset();
     this.flashLeft = 0;
     this.breath = createBreath();
-    this.weapons.sway.pitch = this.weapons.sway.yaw = 0;
-    this.bus.emit('player:respawned', {});
+    this.me.spawn(at.pos, at.yaw, kit, this.options.sandbox ? this.options.loadout : null);
     // Deployed in a tank: it comes out at the base with the player at the controls.
     if (key.startsWith('tank:') && this.vehicles) {
       const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, PLAYER_TEAM);
@@ -2544,13 +2451,14 @@ export class Game {
     this.touch?.setGrenade(t(`grenade.${sel}` as MessageKey), this.grenades.count);
     this.touch?.setAmmo(s.ammo, w.def.magSize, s.reloading);
     const onField = this.player.alive && this.deployed;
-    const kitText = this.cls === 'medic' ? (this.medkitReady ? '∞' : `${Math.ceil(this.medkitReadyAt - this.simTime)}s`) : String(this.medkits);
-    const medkit = onField ? { text: kitText, ready: this.medkitReady } : null;
+    const me = this.me;
+    const kitText = this.cls === 'medic' ? (me.medkitReady ? '∞' : `${Math.ceil(me.medkitReadyAt - this.simTime)}s`) : String(this.medkits);
+    const medkit = onField ? { text: kitText, ready: me.medkitReady } : null;
     const reviver = this.playerDowned ? (this.bots?.reviverFor(this.playerCombatant) ?? null) : null;
     const down = this.playerDowned
       ? {
-          left: Math.max(0, DOWN.bleedOut - this.downTime),
-          giveUp: Math.min(1, this.giveUpHold / DOWN.giveUpHold),
+          left: Math.max(0, DOWN.bleedOut - me.downTime),
+          giveUp: Math.min(1, me.giveUpHold / DOWN.giveUpHold),
           reviver: reviver?.reviving ? reviver.name : null,
           revive: reviver ? Math.min(1, reviver.reviveProgress / CLASSES[reviver.cls].reviveTime) : 0,
         }
