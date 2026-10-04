@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -135,9 +135,11 @@ export type MatchEvent =
   | { k: 'spawn'; id: number; pos: [number, number, number]; yaw: number; seed: number; kit: unknown }
   | { k: 'down'; id: number; by: string | null; cause: 'bullet' | 'explosion' | 'fall' }
   | { k: 'died'; id: number; respawn: number }
-  | { k: 'revived'; id: number; by: string }
+  | { k: 'revived'; id: number; by: string; byId?: number }
   | { k: 'zone'; type: 'captured' | 'neutralized'; zone: string; team: Side }
   | { k: 'mode'; e: unknown }
+  /** A grenade went off at tick `tick` (browsers show it when they draw that moment). */
+  | { k: 'boom'; type: 'frag' | 'flash' | 'smoke'; pos: [number, number, number]; tick: number }
   /** To the earner: points popping up under the crosshair. */
   | { k: 'points'; points: number; reason: string }
   | { k: 'end'; winner: Side };

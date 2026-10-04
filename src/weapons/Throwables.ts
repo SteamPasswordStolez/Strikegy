@@ -8,6 +8,7 @@ const RADIUS = 0.045;
 const BODY_COLOR: Record<GrenadeType, number> = { frag: 0x3f4a33, flash: 0x5b5f66, smoke: 0x6b6f5a };
 
 interface LiveGrenade {
+  id: number;
   type: GrenadeType;
   owner: GrenadeOwner;
   body: RAPIER.RigidBody;
@@ -48,6 +49,7 @@ export class GrenadeInventory {
  */
 export class Throwables {
   private readonly live: LiveGrenade[] = [];
+  private nextId = 1;
   private readonly geometry = new THREE.CapsuleGeometry(RADIUS * 0.8, RADIUS, 4, 10);
   private readonly materials = new Map<GrenadeType, THREE.Material>();
 
@@ -93,7 +95,15 @@ export class Throwables {
     mesh.castShadow = true;
     mesh.position.copy(origin);
     this.scene.add(mesh);
-    this.live.push({ type, owner, body, mesh, fuse: spec.fuse, lastVel: vel.clone(), bounceCooldown: 0 });
+    this.live.push({ id: this.nextId++ & 0xffff, type, owner, body, mesh, fuse: spec.fuse, lastVel: vel.clone(), bounceCooldown: 0 });
+  }
+
+  /** Every grenade in the air or on the ground (the game server sends them to the browsers). */
+  *all(): Generator<{ id: number; type: GrenadeType; x: number; y: number; z: number }> {
+    for (const g of this.live) {
+      const t = g.body.translation();
+      yield { id: g.id, type: g.type, x: t.x, y: t.y, z: t.z };
+    }
   }
 
   /** Live frag grenades (for bots to get away from). */

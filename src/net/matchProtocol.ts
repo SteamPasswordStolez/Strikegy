@@ -219,10 +219,44 @@ export interface NetSelf {
   reserve: number;
 }
 
+/** Kinds of moving things other than soldiers in a snapshot. */
+export const THING = { frag: 1, flash: 2, smoke: 3 } as const;
+
+/** A moving thing (a grenade in the air; rockets and the like later). */
+export interface NetThing {
+  id: number;
+  kind: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface Snapshot {
   tick: number;
   self: NetSelf | null;
   soldiers: NetSoldier[];
+  things: NetThing[];
+}
+
+const THING_BYTES = 9;
+
+/** The moving things of a tick (shared by every receiver, like the soldiers). */
+export function encodeThings(list: readonly NetThing[]): Uint8Array {
+  const n = Math.min(65535, list.length);
+  const buf = new Uint8Array(2 + n * THING_BYTES);
+  const v = new DataView(buf.buffer);
+  v.setUint16(0, n);
+  let o = 2;
+  for (let i = 0; i < n; i++) {
+    const t = list[i]!;
+    v.setUint16(o, t.id);
+    v.setUint8(o + 2, t.kind);
+    v.setUint16(o + 3, qX(t.x));
+    v.setUint16(o + 5, qY(t.y));
+    v.setUint16(o + 7, qX(t.z));
+    o += THING_BYTES;
+  }
+  return buf;
 }
 
 const SOLDIER_BYTES = 16;
@@ -261,9 +295,9 @@ export function encodeSoldiers(list: readonly NetSoldier[]): Uint8Array {
 }
 
 /** A whole snapshot frame for one receiver. */
-export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8Array): Uint8Array {
+export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8Array, things: Uint8Array = EMPTY_THINGS): Uint8Array {
   const head = 6 + (self ? SELF_BYTES : 0);
-  const buf = new Uint8Array(head + soldiers.byteLength);
+  const buf = new Uint8Array(head + soldiers.byteLength + things.byteLength);
   const v = new DataView(buf.buffer);
   v.setUint8(0, FRAME.snapshot);
   v.setUint32(1, tick);
@@ -281,8 +315,11 @@ export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8A
     v.setUint16(36, self.reserve < 0 ? 0xffff : Math.min(0xfffe, self.reserve));
   }
   buf.set(soldiers, head);
+  buf.set(things, head + soldiers.byteLength);
   return buf;
 }
+
+const EMPTY_THINGS = new Uint8Array(2);
 
 export function decodeSnapshot(data: Uint8Array): Snapshot | null {
   if (data.byteLength < 8) return null;
@@ -310,7 +347,7 @@ export function decodeSnapshot(data: Uint8Array): Snapshot | null {
   }
   const n = v.getUint16(o);
   o += 2;
-  if (data.byteLength !== o + n * SOLDIER_BYTES) return null;
+  if (data.byteLength < o + n * SOLDIER_BYTES + 2) return null;
   const soldiers: NetSoldier[] = [];
   for (let i = 0; i < n; i++) {
     soldiers.push({
@@ -327,7 +364,15 @@ export function decodeSnapshot(data: Uint8Array): Snapshot | null {
     });
     o += SOLDIER_BYTES;
   }
-  return { tick, self, soldiers };
+  const m = v.getUint16(o);
+  o += 2;
+  if (data.byteLength !== o + m * THING_BYTES) return null;
+  const things: NetThing[] = [];
+  for (let i = 0; i < m; i++) {
+    things.push({ id: v.getUint16(o), kind: v.getUint8(o + 2), x: v.getUint16(o + 3) / XZ_Q - 1024, y: v.getUint16(o + 5) / Y_Q - 256, z: v.getUint16(o + 7) / XZ_Q - 1024 });
+    o += THING_BYTES;
+  }
+  return { tick, self, soldiers, things };
 }
 
 /** The frame kind of a binary message (0: unknown). */

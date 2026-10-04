@@ -106,4 +106,46 @@ describe('a match on the game server (no view)', () => {
     expect(sim.soldiers.size).toBe(0);
     sim.dispose();
   });
+
+  it('a frag thrown at an enemy hurts it; a mate holding E revives the downed', async () => {
+    const sim = await MatchSim.create(lyon());
+    const a = sim.addSoldier(1, 'blue', 'alpha');
+    const b = sim.addSoldier(2, 'red', 'bravo');
+    const c = sim.addSoldier(3, 'red', 'charlie');
+    for (const id of [1, 2, 3]) sim.deploy(id);
+    const at = ground(sim, 60, -90);
+    a.player.teleport(at, 0);
+    b.player.teleport(ground(sim, at.x, at.z - 7), 0);
+    c.player.teleport(ground(sim, at.x + 30, at.z - 7), 0);
+    run(sim, 0.3);
+    const booms: string[] = [];
+    sim.bus.on('grenade:detonate', (e) => booms.push(e.type));
+    const throwIt = createInputState();
+    throwIt.throwGrenade = true;
+    sim.step((id) => (id === 1 ? { state: throwIt, yaw: 0, pitch: -0.35 } : null));
+    expect(a.grenades.count).toBe(1);
+    expect([...sim.throwables.all()]).toHaveLength(1);
+    // Where it comes to rest, bravo is standing 2 m off when it goes.
+    run(sim, 2);
+    const g = [...sim.throwables.all()][0]!;
+    b.player.teleport(ground(sim, g.x, g.z - 2), 0);
+    run(sim, 2);
+    expect(booms).toEqual(['frag']);
+    expect(b.player.health.value).toBeLessThan(100);
+
+    // Bravo goes down (finished off by the test), charlie walks up and holds E.
+    b.damage(500, null, 'bullet');
+    expect(b.downed).toBe(true);
+    c.player.teleport(ground(sim, b.player.feet.x + 1, b.player.feet.z), 0);
+    const hold = createInputState();
+    hold.interact = true;
+    const revived: number[] = [];
+    sim.bus.on('combatant:revived', (e) => revived.push(e.id));
+    run(sim, 5.2, { 3: { state: hold, yaw: 0, pitch: 0 } });
+    expect(revived).toEqual([2]);
+    expect(b.downed).toBe(false);
+    expect(b.alive).toBe(true);
+    expect(sim.scores.get(3)!.score).toBeGreaterThan(0);
+    sim.dispose();
+  });
 });

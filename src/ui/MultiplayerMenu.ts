@@ -146,7 +146,7 @@ export class MultiplayerMenu {
     this.redrawQueued = true;
     requestAnimationFrame(() => {
       this.redrawQueued = false;
-      this.host.redraw();
+      if (this.offs.length) this.host.redraw();
     });
   }
 

@@ -230,7 +230,12 @@ export class Game {
   private reviveOf: Bot | null = null;
   private reviveProgress = 0;
   /** What E does right now (HUD prompt, touch button). */
-  private interact: { kind: 'revive' | 'medkit'; bot: Bot } | { kind: 'fort'; job: FortJob | null; station: Station | null; note: string | null } | null = null;
+  private interact:
+    | { kind: 'revive' | 'medkit'; bot: Bot }
+    | { kind: 'fort'; job: FortJob | null; station: Station | null; note: string | null }
+    /** A downed mate in a match on the game server (the server does the reviving). */
+    | { kind: 'reviveMate'; name: string }
+    | null = null;
   /** Zone supply stations and build spots. */
   private fort: Fortifications | null = null;
   /** Holding E at a build spot or station (hands busy, hammer out) and for how long. */
@@ -1143,10 +1148,16 @@ export class Game {
     p.pitch = n.pitch;
     w.sway.yaw = n.swayYaw;
     w.sway.pitch = n.swayPitch;
+    const me = this.me;
     if (p.alive && this.deployed) {
-      if (input.medkit) this.me.useMedkit();
-      this.me.stepMedkit(dt);
-      this.me.stepOnFoot(dt, input, this.medkitUse > 0);
+      // In the order the server steps a soldier (MatchSim.stepSoldier).
+      me.stepTimers(dt);
+      if (input.medkit) me.useMedkit();
+      me.stepMedkit(dt);
+      const reviving = this.netRevive(net, input.interact, dt);
+      // The server throws it; here only the hands move.
+      if (input.throwGrenade) me.throwGrenade(null);
+      me.stepOnFoot(dt, input, me.throwBlock > 0 || this.medkitUse > 0 || reviving);
       this.stepSway(dt, input.holdBreath);
       net.stepped(n.seq, p.feet);
     } else if (this.playerDowned) this.me.stepDowned(dt, input.jumpHeld);
@@ -1155,6 +1166,55 @@ export class Game {
     this.throwables.step(dt);
     this.physics.step();
     consumePulses(input);
+  }
+
+  /**
+   * Holding E by a downed mate in a match on the game server: the same count
+   * the server keeps (MatchSim.stepRevive) for the prompt and the hands; the
+   * server does the reviving and says so.
+   */
+  private netRevive(net: NetMatch, holding: boolean, dt: number): boolean {
+    const me = this.me;
+    const feet = this.player.feet;
+    let mate: { id: number; name: string } | null = null;
+    let best = REVIVE_RANGE;
+    for (const o of net.others()) {
+      if (o.team !== this.myTeam || !o.downed) continue;
+      const d = o.feet.distanceTo(feet);
+      if (d < best) {
+        best = d;
+        mate = o;
+      }
+    }
+    this.interact = mate ? { kind: 'reviveMate', name: mate.name } : null;
+    if (!mate || !holding) {
+      me.reviveOf = null;
+      me.reviveProgress = 0;
+      return false;
+    }
+    if (me.reviveOf !== mate.id) {
+      me.reviveOf = mate.id;
+      me.reviveProgress = 0;
+    }
+    me.reviveProgress += dt;
+    if (me.reviveProgress >= CLASSES[me.cls].reviveTime) {
+      me.reviveOf = null;
+      me.reviveProgress = 0;
+    }
+    return true;
+  }
+
+  /** A grenade going off in a match on the game server: what it looks and sounds like here (the server did the damage). */
+  private netBoom(type: GrenadeType, point: THREE.Vector3): void {
+    if (type === 'frag') {
+      const dist = this.renderer.camera.position.distanceTo(point);
+      this.effects.explosion(point);
+      this.audio.explosion(point, dist);
+      this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - dist * 0.003));
+      return;
+    }
+    // Flash and smoke work here as in solo play (the flash blinds by where this view looks).
+    this.detonate(type, point, { id: -1, name: '', team: this.myTeam });
   }
 
   /** The rest of a sim step, after the player's own part: everyone else, then physics. */
@@ -2528,6 +2588,9 @@ export class Game {
     if (act?.kind === 'revive') {
       prompt = { text: `${key(true)}${t('act.revive')} ${act.bot.name}`, progress: this.reviveProgress > 0 ? this.reviveProgress / CLASSES[this.cls].reviveTime : null };
       touchLabel = t('act.revive');
+    } else if (act?.kind === 'reviveMate') {
+      prompt = { text: `${key(true)}${t('act.revive')} ${act.name}`, progress: me.reviveProgress > 0 ? me.reviveProgress / CLASSES[this.cls].reviveTime : null };
+      touchLabel = t('act.revive');
     } else if (act?.kind === 'medkit') {
       prompt = { text: `${key(false)}${t('act.giveMedkit')} → ${act.bot.name}`, progress: null };
       touchLabel = t('act.giveMedkit');
@@ -3357,6 +3420,7 @@ export class Game {
     const net = new NetMatch(opts.link, opts.start, this.me, { scene: r.scene, physics: this.physics, registry: this.registry, audio: this.audio, effects: this.effects, camera: r.camera });
     this.net = net;
     net.onEvents = (ev) => this.onNetEvents(ev);
+    net.onBoom = (e) => this.netBoom(e.type, new THREE.Vector3(...e.pos));
     net.onState = (m) => this.onNetState(m);
     net.onClosed = () => {
       if (this.matchOver) return;
@@ -3436,6 +3500,10 @@ export class Game {
           break;
         case 'revived':
           if (e.id === this.myId) me.revive(e.by, me.player.health.value || 50);
+          else if (e.byId === this.myId) {
+            this.hud.notify(`${t('notify.revivedMate')} — ${this.net?.nameOf(e.id) ?? ''}`, 'ally');
+            this.audio.revived();
+          }
           break;
         case 'zone':
           this.bus.emit(e.type === 'captured' ? 'zone:captured' : 'zone:neutralized', { zone: e.zone, team: e.team });

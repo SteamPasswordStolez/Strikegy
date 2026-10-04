@@ -141,7 +141,7 @@ export class Lobby {
       this.multi ??= new MultiplayerMenu({
         modesFor: (map) => modesOf(this.maps.get(map)),
         redraw: () => {
-          if (this.screen === 'multi') this.render();
+          if (this.screen === 'multi' && this.multi) this.render();
         },
         device: this.touch ? 'mobile' : 'desktop',
         startMatch: (start, link) => {

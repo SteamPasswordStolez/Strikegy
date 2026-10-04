@@ -24,7 +24,7 @@ import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import type { Team } from '@/world/mapTypes';
 import type { ServerLink } from './ServerLink';
 import type { MatchEvent, MatchSoldierInfo, MatchStart, ServerMsg } from './lobbyProtocol';
-import { INTERP_TICKS, SF, TICK_HZ, decodeSnapshot, encodeInputs, packInput, type NetInput, type Snapshot } from './matchProtocol';
+import { INTERP_TICKS, SF, THING, TICK_HZ, decodeSnapshot, encodeInputs, packInput, type NetInput, type Snapshot } from './matchProtocol';
 
 export interface NetOptions {
   link: ServerLink;
@@ -109,6 +109,11 @@ class Remote {
 
   get feet(): THREE.Vector3 {
     return this.pos;
+  }
+
+  /** Down and waiting for a revive, in the moment drawn. */
+  get downed(): boolean {
+    return this.downFor >= 0;
   }
 
   add(s: Sample): void {
@@ -219,8 +224,26 @@ class Remote {
   }
 }
 
+/** A grenade (or the like) in the air as the server last saw it: drawn between its samples. */
+interface Thing {
+  kind: number;
+  samples: { tick: number; x: number; y: number; z: number }[];
+  mesh: THREE.Mesh;
+  /** Last snapshot tick it was in. */
+  seen: number;
+}
+
+const THING_COLOR: Record<number, number> = { [THING.frag]: 0x3f4a33, [THING.flash]: 0x5b5f66, [THING.smoke]: 0x6b6f5a };
+const thingGeometry = new THREE.CapsuleGeometry(0.036, 0.045, 4, 10);
+const thingMaterials = new Map<number, THREE.Material>();
+
 export class NetMatch {
   readonly roster = new Map<number, MatchSoldierInfo>();
+  private readonly things = new Map<number, Thing>();
+  /** Explosions waiting for the moment drawn to reach them. */
+  private readonly booms: Extract<MatchEvent, { k: 'boom' }>[] = [];
+  /** A grenade went off where (and when) this browser draws things. */
+  onBoom: (e: Extract<MatchEvent, { k: 'boom' }>) => void = () => {};
   private readonly remotes = new Map<number, Remote>();
   /** Server tick = this + now (ms) * TICK_HZ / 1000, smoothed from snapshot arrivals. */
   private offset: number | null = null;
@@ -251,7 +274,12 @@ export class NetMatch {
     this.setRoster(start.roster);
     this.offs.push(
       link.onBinary((d) => this.onFrame(d)),
-      link.on('ev', (m) => this.onEvents(m.ev)),
+      link.on('ev', (m) => {
+        // Explosions wait for their moment; the rest is news now.
+        const now: MatchEvent[] = [];
+        for (const e of m.ev) (e.k === 'boom' ? this.booms : now).push(e as never);
+        if (now.length) this.onEvents(now);
+      }),
       link.on('mstate', (m) => this.onState(m)),
       link.on('roster', (m) => this.setRoster(m.roster)),
       link.on('close', () => this.onClosed()),
@@ -270,8 +298,8 @@ export class NetMatch {
   }
 
   /** Everyone else this browser draws (minimap, deploy screen). */
-  *others(): Iterable<{ id: number; team: Team; name: string; alive: boolean; feet: THREE.Vector3 }> {
-    for (const r of this.remotes.values()) if (r.visible) yield { id: r.id, team: r.team, name: r.name, alive: r.alive, feet: r.feet };
+  *others(): Iterable<{ id: number; team: Team; name: string; alive: boolean; downed: boolean; feet: THREE.Vector3 }> {
+    for (const r of this.remotes.values()) if (r.visible) yield { id: r.id, team: r.team, name: r.name, alive: r.alive, downed: r.downed, feet: r.feet };
   }
 
   nameOf(id: number): string {
@@ -373,6 +401,19 @@ export class NetMatch {
       }
       r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots });
     }
+    for (const t of snap.things) {
+      let th = this.things.get(t.id);
+      if (!th || th.kind !== t.kind) {
+        if (th) th.mesh.removeFromParent();
+        let mat = thingMaterials.get(t.kind);
+        if (!mat) thingMaterials.set(t.kind, (mat = new THREE.MeshStandardMaterial({ color: THING_COLOR[t.kind] ?? 0x555555, roughness: 0.6, metalness: 0.3 })));
+        th = { kind: t.kind, samples: [], mesh: new THREE.Mesh(thingGeometry, mat), seen: snap.tick };
+        this.things.set(t.id, th);
+      }
+      th.seen = snap.tick;
+      th.samples.push({ tick: snap.tick, x: t.x, y: t.y, z: t.z });
+      if (th.samples.length > 12) th.samples.shift();
+    }
     const mine = snap.soldiers.find((s) => s.id === this.myId);
     if (snap.self && mine) this.correct(snap.self, mine.flags);
     this.lastSelf = snap.self;
@@ -403,15 +444,44 @@ export class NetMatch {
     if (err > 0.5) p.velocity.set(self.vx, self.vy, self.vz);
   }
 
-  /** Draws everyone else for this frame. */
+  /** Draws everyone else, grenades in the air and explosions due, for this frame. */
   render(dt: number): void {
     const tick = this.viewTick();
     for (const r of this.remotes.values()) r.render(tick, dt);
+    for (const [id, th] of this.things) {
+      const list = th.samples;
+      // Gone from the snapshots and past the moment drawn: it went off (or vanished).
+      if (th.seen < tick - 1 && list[list.length - 1]!.tick < tick) {
+        th.mesh.removeFromParent();
+        this.things.delete(id);
+        continue;
+      }
+      if (list[0]!.tick > tick) {
+        th.mesh.removeFromParent();
+        continue;
+      }
+      let a = list[0]!;
+      let b = a;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i]!.tick <= tick) {
+          a = list[i]!;
+          b = list[i + 1] ?? a;
+          break;
+        }
+      }
+      const f = b.tick > a.tick ? Math.min(1, (tick - a.tick) / (b.tick - a.tick)) : 0;
+      th.mesh.position.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
+      th.mesh.rotation.x += dt * 9;
+      if (!th.mesh.parent) this.view.scene.add(th.mesh);
+    }
+    while (this.booms.length && this.booms[0]!.tick <= tick) this.onBoom(this.booms.shift()!);
   }
 
   dispose(): void {
     for (const off of this.offs) off();
     for (const r of this.remotes.values()) r.dispose();
     this.remotes.clear();
+    for (const th of this.things.values()) th.mesh.removeFromParent();
+    this.things.clear();
   }
 }

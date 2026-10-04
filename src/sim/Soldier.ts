@@ -10,6 +10,7 @@ import type { SurfaceRegistry } from '@/physics/surfaces';
 import { Player } from '@/player/Player';
 import { fallDamage } from '@/player/health';
 import { GrenadeInventory } from '@/weapons/Throwables';
+import type { GrenadeType } from '@/combat/explosions';
 import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
 import type { WeaponId } from '@/weapons/weaponData';
 import type { Team } from '@/world/mapTypes';
@@ -17,6 +18,9 @@ import { COMBAT_WINDOW } from '@/modes/squads';
 
 /** Seconds from a real death to the next deploy (time spent down counts toward it). */
 export const RESPAWN_SEC = 4;
+/** The weapon is unusable this long after starting a throw, and the next throw waits this long. */
+export const THROW_BLOCK = 0.55;
+export const THROW_COOLDOWN = 0.8;
 /** How long a shot keeps a soldier "firing" for bots spotting it (combat clock, s). */
 const FIRING_GLOW = 0.6;
 
@@ -109,6 +113,12 @@ export class Soldier {
   /** Seconds left of using a medkit (weapon lowered) and of the heal after it. */
   medkitUse = 0;
   healLeft = 0;
+  /** Throwing: hands busy, then the wait before the next throw (s). */
+  throwBlock = 0;
+  throwCooldown = 0;
+  /** The downed mate being revived (holding E) and for how long (s). */
+  reviveOf: number | null = null;
+  reviveProgress = 0;
   private readonly now: () => number;
   private readonly combatClock: () => number;
   private readonly bus: GameBus;
@@ -214,6 +224,30 @@ export class Soldier {
     p.step(dt, input, w.adsBlend > 0.5, firing && w.sinceShot < 0.2);
   }
 
+  /**
+   * Throws a grenade of the carried type, if any is left and the last throw
+   * is long enough ago. `launch` puts it in the world (the game server, solo
+   * play); a browser in a match there leaves it out and draws the server's.
+   */
+  throwGrenade(launch: ((type: GrenadeType, origin: THREE.Vector3, dir: THREE.Vector3, carry: THREE.Vector3) => void) | null): boolean {
+    if (this.throwCooldown > 0 || this.player.sprinting) return false;
+    const type = this.grenades.take();
+    if (!type) return false;
+    const { eye, fwd, right, up } = this.weapons.aimBasis(this.player);
+    const origin = eye.clone().addScaledVector(fwd, 0.45).addScaledVector(right, -0.15).addScaledVector(up, -0.05);
+    launch?.(type, origin, fwd.clone(), this.player.velocity.clone());
+    this.throwBlock = THROW_BLOCK;
+    this.throwCooldown = THROW_COOLDOWN;
+    this.bus.emit('grenade:thrown', { type, remaining: this.grenades.count });
+    return true;
+  }
+
+  /** Throw timers run down. */
+  stepTimers(dt: number): void {
+    this.throwBlock = Math.max(0, this.throwBlock - dt);
+    this.throwCooldown = Math.max(0, this.throwCooldown - dt);
+  }
+
   /** Hitboxes to where the body is now (after everyone moved). */
   syncBoxes(): void {
     const p = this.player;
@@ -263,6 +297,8 @@ export class Soldier {
     this.weapons.adsBlend = 0;
     this.weapons.state.cancelReload();
     this.medkitUse = this.healLeft = 0;
+    this.reviveOf = null;
+    this.reviveProgress = 0;
     this.boxes.setEnabled(false);
     this.killedBy = killer !== undefined ? killer : source && source.id !== this.id ? source.name : null;
     this.hooks.down?.(cause, source);
@@ -344,6 +380,9 @@ export class Soldier {
     this.medkits = MEDKIT.carried;
     this.medkitReadyAt = 0;
     this.medkitUse = this.healLeft = 0;
+    this.throwBlock = this.throwCooldown = 0;
+    this.reviveOf = null;
+    this.reviveProgress = 0;
     this.weapons.sway.pitch = this.weapons.sway.yaw = 0;
     this.bus.emit('player:respawned', {});
   }

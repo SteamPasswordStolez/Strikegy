@@ -16,9 +16,11 @@ import {
   SF,
   SNAPSHOT_EVERY,
   TICK_HZ,
+  THING,
   applyInput,
   decodeInputs,
   encodeSoldiers,
+  encodeThings,
   snapshotFor,
   type NetInput,
   type NetSoldier,
@@ -281,6 +283,7 @@ export class MatchRoom {
     const list: NetSoldier[] = [];
     for (const seat of this.seats.values()) list.push(netSoldier(seat));
     const shared = encodeSoldiers(list);
+    const things = encodeThings([...this.sim.throwables.all()].map((g) => ({ id: g.id, kind: THING[g.type], x: g.x, y: g.y, z: g.z })));
     for (const seat of this.seats.values()) {
       if (!seat.conn || !seat.ready) continue;
       const s = seat.soldier;
@@ -303,6 +306,7 @@ export class MatchRoom {
             reserve: Number.isFinite(st.reserve) ? st.reserve : -1,
           },
           shared,
+          things,
         ),
       );
     }
@@ -377,6 +381,8 @@ export class MatchRoom {
     bus.on('zone:captured', (e) => this.broadcastEvents.push({ k: 'zone', type: 'captured', zone: e.zone, team: e.team }));
     bus.on('zone:neutralized', (e) => this.broadcastEvents.push({ k: 'zone', type: 'neutralized', zone: e.zone, team: e.team }));
     bus.on('mode:event', (e) => this.broadcastEvents.push({ k: 'mode', e }));
+    bus.on('grenade:detonate', (e) => this.broadcastEvents.push({ k: 'boom', type: e.type, pos: [e.point.x, e.point.y, e.point.z], tick: this.sim.tick }));
+    bus.on('combatant:revived', (e) => this.broadcastEvents.push({ k: 'revived', id: e.id, by: e.byName, byId: e.byId }));
     bus.on('match:ended', (e) => {
       if (this.over) return;
       this.over = true;
@@ -398,7 +404,6 @@ export class MatchRoom {
       hurt: (amount, from, cause) => seat.events.push({ k: 'hurt', amount, from: from ? [from.x, from.y, from.z] : null, cause }),
       down: (cause) => this.broadcastEvents.push({ k: 'down', id: s.id, by: s.killedBy, cause }),
       died: () => this.broadcastEvents.push({ k: 'died', id: s.id, respawn: s.respawnTimer }),
-      revived: (by) => this.broadcastEvents.push({ k: 'revived', id: s.id, by }),
     };
   }
 }

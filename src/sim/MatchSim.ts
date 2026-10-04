@@ -3,7 +3,12 @@ import { rayHitbox } from '@/combat/CharacterHitboxes';
 import { HitboxRegistry } from '@/combat/Hitboxes';
 import { EventBus } from '@/core/EventBus';
 import type { GameEvents } from '@/core/events';
-import { defaultLoadout, loadoutWeapons, type Loadout } from '@/data/classes';
+import { BLASTS, fragDamage, type BlastKind } from '@/combat/explosions';
+import type { DamageSource } from '@/combat/Hitboxes';
+import type { GrenadeOwner } from '@/core/events';
+import { CLASSES, REVIVE_RANGE, defaultLoadout, loadoutWeapons, type Loadout } from '@/data/classes';
+import { t } from '@/i18n';
+import { Throwables } from '@/weapons/Throwables';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
 import { ZoneMode } from '@/modes/ZoneMode';
 import type { ModeKind } from '@/modes/matchRules';
@@ -85,6 +90,8 @@ export class MatchSim {
   readonly scores = new ScoreTracker();
   readonly soldiers = new Map<number, Soldier>();
   readonly zoneMode: ZoneMode | null;
+  /** Grenades in the world (their meshes go into a scene nobody draws). */
+  readonly throwables: Throwables;
   /** Sim clock (s). */
   time = 0;
   /** Steps run so far. */
@@ -101,6 +108,7 @@ export class MatchSim {
     opts: MatchOptions,
   ) {
     physics.timestep = SIM_DT;
+    this.throwables = new Throwables(new THREE.Scene(), physics, this.bus);
     const map = world.map;
     this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize }) : null;
     this.wire();
@@ -124,6 +132,10 @@ export class MatchSim {
       zm?.onDeath(e.team);
     });
     bus.on('match:ended', (e) => (this.winner = e.winner));
+    bus.on('grenade:detonate', (e) => {
+      if (e.type === 'frag') this.blast('frag', e.point, e.owner, t('grenade.frag'));
+    });
+    bus.on('combatant:revived', (e) => this.scores.revive(e.byId, e.medic));
     if (!zm) return;
     // Credit for zones goes to the side's soldiers standing in the zone at that moment.
     const inZone = (zone: string, team: Team) => {
@@ -254,9 +266,15 @@ export class MatchSim {
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
     if (s.alive && s.deployed) {
+      s.stepTimers(dt);
       if (input.medkit) s.useMedkit();
       s.stepMedkit(dt);
-      s.stepOnFoot(dt, input, s.medkitUse > 0);
+      const reviving = this.stepRevive(s, input.interact, dt);
+      if (input.throwGrenade) {
+        const owner: GrenadeOwner = { id: s.id, name: s.combatant.name, team: s.team };
+        s.throwGrenade((type, origin, dir, carry) => this.throwables.throw(type, origin, dir, carry, owner));
+      }
+      s.stepOnFoot(dt, input, s.throwBlock > 0 || s.medkitUse > 0 || reviving);
       // The eye follows crouching as the browser's view does (shots start there).
       s.player.eyePosition(1, dt, this.eyeTmp);
     } else if (s.downed) s.stepDowned(dt, input.jumpHeld);
@@ -271,7 +289,84 @@ export class MatchSim {
       this.recordPose(s);
     }
     this.zoneMode?.step(dt, [...this.soldiers.values()].map((s) => s.combatant));
+    this.throwables.step(dt);
     this.physics.step();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reviving and blasts
+
+  /** The downed mate nearest `s` within reach, if any. */
+  downedMateNear(s: Soldier): Soldier | null {
+    let best: Soldier | null = null;
+    let bestD = REVIVE_RANGE;
+    for (const o of this.soldiers.values()) {
+      if (o === s || o.team !== s.team || !o.downed || !o.deployed) continue;
+      const d = o.player.feet.distanceTo(s.player.feet);
+      if (d < bestD) {
+        best = o;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  /** Holding E by a downed mate: the revive runs; true while hands are busy with it. */
+  private stepRevive(s: Soldier, holding: boolean, dt: number): boolean {
+    const mate = holding ? this.downedMateNear(s) : null;
+    if (!mate) {
+      s.reviveOf = null;
+      s.reviveProgress = 0;
+      return false;
+    }
+    if (s.reviveOf !== mate.id) {
+      s.reviveOf = mate.id;
+      s.reviveProgress = 0;
+    }
+    s.reviveProgress += dt;
+    const spec = CLASSES[s.cls];
+    if (s.reviveProgress >= spec.reviveTime) {
+      mate.revive(s.combatant.name, spec.reviveHealth);
+      this.bus.emit('combatant:revived', { team: mate.team, id: mate.id, name: mate.combatant.name, byId: s.id, byName: s.combatant.name, medic: s.cls === 'medic' });
+      s.reviveOf = null;
+      s.reviveProgress = 0;
+    }
+    return true;
+  }
+
+  /**
+   * An explosion: soldiers within reach take damage (less behind cover), the
+   * thrower too, teammates not. Kills count like bullet kills.
+   */
+  blast(kind: BlastKind, point: THREE.Vector3, owner: GrenadeOwner, weapon: string): void {
+    const spec = BLASTS[kind];
+    const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
+    const probe = { x: point.x, y: point.y + 0.25, z: point.z };
+    for (const s of this.soldiers.values()) {
+      if (!s.deployed || !s.alive || s.downed) continue;
+      const self = s.id === owner.id;
+      if (!self && s.team === owner.team) continue;
+      const chest = { x: s.player.feet.x, y: s.player.feet.y + 1.1, z: s.player.feet.z };
+      const d = Math.hypot(chest.x - point.x, chest.y - point.y, chest.z - point.z);
+      const dmg = fragDamage(spec, d, this.physics.blocked(probe, chest, Layer.WORLD));
+      if (dmg <= 0) continue;
+      const killed = s.damage(dmg, point, 'explosion', self ? undefined : source);
+      if (self) continue;
+      this.bus.emit('combat:hit', { targetId: s.id, part: 'body', damage: dmg, killed, point: new THREE.Vector3(chest.x, chest.y, chest.z), byPlayer: false, attackerId: owner.id });
+      if (killed) {
+        this.bus.emit('combat:kill', {
+          attacker: owner.name,
+          victim: s.combatant.name,
+          weapon,
+          headshot: false,
+          byPlayer: false,
+          attackerTeam: owner.team,
+          victimTeam: s.team,
+          attackerId: owner.id,
+          victimId: s.id,
+        });
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
