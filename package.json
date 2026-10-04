@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && npm run clean && vite build",
     "preview": "vite preview",
+    "signal": "node server/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -20,7 +21,8 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
     "recast-navigation": "^0.43.1",
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -29,6 +31,7 @@
     "@gltf-transform/functions": "^4.5.0",
     "@types/node": "^26.6.3",
     "@types/three": "^0.186.0",
+    "@types/ws": "^8.18.2",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",
     "meshoptimizer": "^1.3.0",
