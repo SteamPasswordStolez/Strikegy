@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
 import { PLAYER_ID, PLAYER_TEAM } from '@/ai/types';
 import { t } from '@/i18n';
+import { playerName } from '@/net/identity';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import type { GameBus } from '@/core/events';
 import type { InputState } from '@/input/InputState';
@@ -273,7 +274,7 @@ export class WeaponController {
       if (target) {
         if (!target.owner.alive || target.owner.team === PLAYER_TEAM) continue;
         const dmg = MELEE_DAMAGE[target.part];
-        const source = { pos: eye.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: t('weapon.melee'), id: PLAYER_ID };
+        const source = { pos: eye.clone(), name: playerName(t('feed.you')), team: PLAYER_TEAM, weapon: t('weapon.melee'), id: PLAYER_ID };
         const killed = target.owner.applyDamage(dmg, target.part, source);
         this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point, byPlayer: true });
         if (killed) {
@@ -389,7 +390,7 @@ export class WeaponController {
       // Friendly fire is off: teammates simply stop the round.
       if (target.owner.alive && target.owner.team !== PLAYER_TEAM) {
         const dmg = computeDamage(damageAtDistance(d, hit.distance), target.part, d.headshotMult);
-        const source = { pos: this.eye.clone(), name: t('feed.you'), team: PLAYER_TEAM, weapon: d.name, id: PLAYER_ID };
+        const source = { pos: this.eye.clone(), name: playerName(t('feed.you')), team: PLAYER_TEAM, weapon: d.name, id: PLAYER_ID };
         const killed = target.owner.applyDamage(dmg, target.part, source);
         this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: true });
         if (killed) {

@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import { cleanName, cleanReport, cleanSettings, SIGNAL_VERSION, type Member, type Report, type RoomSettings, type ServerMsg } from '@/net/signalProtocol';
 import { hostScore, pickCandidates, pickHost } from '@/net/hostScore';
 import { startSignalServer, type SignalServer } from '../server/signal';
+import { withoutPort53 } from '../server/turn';
 
 const desk = (id: string): Member => ({ id, name: id, device: 'desktop' });
 const phone = (id: string): Member => ({ id, name: id, device: 'mobile' });
@@ -69,6 +70,20 @@ describe('host pick', () => {
 
   it('still names a host when only phones are in the room', () => {
     expect(pickHost([phone('a'), phone('b')], new Map(), 'b').host).toBe('b');
+  });
+});
+
+describe('ICE servers', () => {
+  it('drops the port-53 fallbacks, keeps the rest', () => {
+    const got = withoutPort53([
+      { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:53'] },
+      { urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:53?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'u', credential: 'c' },
+      { urls: 'stun:x:53' },
+    ]);
+    expect(got).toEqual([
+      { urls: ['stun:stun.cloudflare.com:3478'] },
+      { urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'u', credential: 'c' },
+    ]);
   });
 });
 

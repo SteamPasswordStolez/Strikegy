@@ -14,7 +14,20 @@ export interface TurnConfig {
 
 /** Credentials live this long (longer than any match); refreshed after half. */
 const TTL_S = 6 * 3600;
-const STUN_ONLY: IceServer[] = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:53'] }];
+const STUN_ONLY: IceServer[] = [{ urls: ['stun:stun.cloudflare.com:3478'] }];
+
+/**
+ * Drops Cloudflare's port-53 fallbacks. On the owner's line (and likely other
+ * Korean home lines) UDP 53 is caught by the router / ISP DNS, and a STUN
+ * server there kept two browsers on the same PC from ever connecting
+ * (measured 2026-10-04: with :53 in the list ICE stayed in "checking"; 3478
+ * alone connected every time).
+ */
+export function withoutPort53(list: IceServer[]): IceServer[] {
+  return list
+    .map((s) => ({ ...s, urls: (Array.isArray(s.urls) ? s.urls : [s.urls]).filter((u) => !/:53(\?|$)/.test(u)) }))
+    .filter((s) => s.urls.length > 0);
+}
 
 export function turnConfigFromEnv(env: NodeJS.ProcessEnv = process.env): TurnConfig | null {
   const keyId = env.CF_TURN_KEY_ID?.trim();
@@ -55,10 +68,11 @@ export class TurnCredentials {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { iceServers?: IceServer | IceServer[] };
       const list = Array.isArray(body.iceServers) ? body.iceServers : body.iceServers ? [body.iceServers] : [];
-      if (!list.length) throw new Error('no iceServers in the answer');
-      this.cached = list;
+      const usable = withoutPort53(list);
+      if (!usable.length) throw new Error('no iceServers in the answer');
+      this.cached = usable;
       this.fetchedAt = Date.now();
-      return list;
+      return usable;
     } catch (err) {
       // Keep the old set if there is one; else STUN only (direct links still work).
       this.log(`TURN credentials failed: ${String(err)}`);
