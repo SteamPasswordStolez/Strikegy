@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && npm run clean && vite build",
     "preview": "vite preview",
-    "server:build": "vite build -c server/vite.config.ts",
+    "server:build": "node scripts/clean.mjs dist-server && vite build -c server/vite.config.ts",
     "server": "npm run server:build && node dist-server/main.js",
     "server:bench": "npm run server:build && node dist-server/bench.js",
     "typecheck": "tsc --noEmit",
@@ -18,7 +18,8 @@
     "clean": "node scripts/clean.mjs",
     "assets": "node scripts/fetch-assets.mjs && node scripts/optimize-assets.mjs",
     "sounds": "node scripts/build-sounds.mjs",
-    "maps": "node scripts/maps/iron-gate.mjs && node scripts/maps/ardennes.mjs && node scripts/maps/lyon.mjs && node scripts/maps/persia.mjs && node scripts/maps/bilbao.mjs",
+    "maps": "node scripts/maps/iron-gate.mjs && node scripts/maps/ardennes.mjs && node scripts/maps/lyon.mjs && node scripts/maps/persia.mjs && node scripts/maps/bilbao.mjs && npm run nav",
+    "nav": "npm run server:build && node dist-server/bakeNav.js",
     "props:bounds": "node scripts/prop-bounds.mjs"
   },
   "dependencies": {

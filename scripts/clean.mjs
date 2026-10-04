@@ -1,4 +1,4 @@
-// Removes dist/ before a build.
+// Removes dist/ (or the folder given, e.g. dist-server) before a build.
 // Node 24's recursive fs.rmSync crashes natively on Windows paths containing
 // non-ASCII characters (this repo lives under a Korean folder name), and Vite's
 // emptyOutDir uses it. Deleting entry by entry with non-recursive calls works.
@@ -15,4 +15,5 @@ function remove(p) {
   }
 }
 
-if (fs.existsSync('dist')) remove('dist');
+const dir = process.argv[2] ?? 'dist';
+if (fs.existsSync(dir)) remove(dir);

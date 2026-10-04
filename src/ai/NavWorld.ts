@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { exportNavMesh, exportTileCache, importNavMesh, importTileCache, init, NavMeshQuery, type NavMesh, type Obstacle, type TileCache } from 'recast-navigation';
-import { hashNavInput, loadNav, saveNav } from './navCache';
+import { bakedNav, hashNavInput, loadNav, saveNav } from './navCache';
 import { createDefaultTileCacheMeshProcess, generateTileCache, generateTiledNavMesh } from 'recast-navigation/generators';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
@@ -265,7 +265,7 @@ export class NavWorld {
     };
     // Same input and settings as a previous load: reuse that navmesh (seconds saved on big maps).
     const key = hashNavInput(positions, indices, `tc1${JSON.stringify(config)}`);
-    const cached = skipCache() ? null : await loadNav(key);
+    const cached = skipCache() ? null : ((await loadNav(key)) ?? (await bakedNav(key)));
     if (cached) {
       try {
         const imp = importTileCache(cached, createDefaultTileCacheMeshProcess());
@@ -426,7 +426,7 @@ export class VehicleNav {
       tileSize: 64,
     };
     const key = hashNavInput(positions, indices, `veh1${JSON.stringify(config)}`);
-    const cached = skipCache() ? null : await loadNav(key);
+    const cached = skipCache() ? null : ((await loadNav(key)) ?? (await bakedNav(key)));
     if (cached) {
       try {
         return new VehicleNav(importNavMesh(cached).navMesh);

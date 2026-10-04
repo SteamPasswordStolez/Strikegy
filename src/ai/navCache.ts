@@ -4,7 +4,47 @@
  * geometry and the build settings, so it is stored under a hash of exactly
  * those and reused on later loads. Any change to the map changes the hash.
  * Every call fails soft: no IndexedDB (private mode, old browser) = no cache.
+ *
+ * Before building, a navmesh baked ahead of time is looked up by the same key
+ * (`npm run nav` writes them to public/nav/<key>.bin.gz): the site serves them,
+ * the game server reads them from disk (`setNavFiles`). A map changed since
+ * the bake hashes differently, misses the file and is built as before.
  */
+
+/** Where baked navmeshes come from: the site's nav/ folder, or the server's disk. */
+let navFiles: (key: string) => Promise<Uint8Array | null> = async (key) => {
+  if (typeof fetch === 'undefined' || typeof location === 'undefined') return null;
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}nav/${key}.bin.gz`);
+    // A dev server answers unknown paths with the page itself: only a binary body counts.
+    if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    // Still gzipped unless the server already unpacked it on the way.
+    if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes;
+    if (typeof DecompressionStream === 'undefined') return null;
+    const out = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(out).arrayBuffer());
+  } catch {
+    return null;
+  }
+};
+
+/** Replaces the baked-navmesh lookup (the game server reads files). */
+export function setNavFiles(fn: (key: string) => Promise<Uint8Array | null>): void {
+  navFiles = fn;
+}
+
+/** Told about every navmesh built here (the bake script writes them out). */
+let navBuilt: ((key: string, data: Uint8Array) => void) | null = null;
+
+export function onNavBuilt(fn: ((key: string, data: Uint8Array) => void) | null): void {
+  navBuilt = fn;
+}
+
+/** A baked navmesh for `key`, or null. */
+export function bakedNav(key: string): Promise<Uint8Array | null> {
+  return navFiles(key);
+}
 
 const DB = 'strikegy-nav';
 const STORE = 'navmesh';
@@ -42,6 +82,7 @@ function open(): Promise<IDBDatabase | null> {
 }
 
 export async function loadNav(key: string): Promise<Uint8Array | null> {
+  if (typeof indexedDB === 'undefined') return null;
   const db = await open();
   if (!db) return null;
   return new Promise((resolve) => {
@@ -61,6 +102,8 @@ export async function loadNav(key: string): Promise<Uint8Array | null> {
 }
 
 export async function saveNav(key: string, data: Uint8Array): Promise<void> {
+  navBuilt?.(key, data);
+  if (typeof indexedDB === 'undefined') return;
   const db = await open();
   if (!db) return;
   try {

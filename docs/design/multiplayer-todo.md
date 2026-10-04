@@ -24,10 +24,13 @@
 - [x] 멀티 메뉴는 경기가 될 때까지 `?mp`로만
 
 ## 2. 시뮬과 화면 분리
-- [ ] `buildBlockout`: 충돌체만 만드는 길(서버)과 메시까지 만드는 길(브라우저)
-- [ ] `Game.ts`: 시뮬(물리, 규칙, 병사, 피해)과 화면(렌더, HUD, 소리, 입력)을 나누기
-- [ ] Node에서 맵 하나를 불러 시뮬 스텝 돌리기 (Rapier, recast WASM)
-- [ ] navmesh 미리 굽기(`npm run maps`)
+- [x] 맵 세계를 화면 없이: `src/sim/world.ts` `buildWorld`(브라우저와 서버가 같이 씀), 소품 충돌 상자는 표(`src/world/propBounds.json`, `npm run props:bounds`), 나무 줄기 충돌체는 숲 그리기와 분리. 전 맵에서 서버 쪽과 브라우저 쪽 충돌체가 같은지 테스트(`tests/simWorld.test.ts`)
+- [x] 사람 병사 하나를 시뮬 객체로: `src/sim/Soldier.ts`(이동, 총, 수류탄 수, 구급상자, 체력, 다운·부활·출혈·포기·사망, 배치). 화면만 하는 반응은 hooks. 총은 쏜 사람 이름으로 판정(`WeaponOwner`), 낙하 피해는 병사가 직접
+- [x] 화면 없는 경기: `src/sim/MatchSim.ts`(사람들 참가·퇴장·배치, 입력으로 스텝, 거점 규칙, 점수). 테스트 `tests/matchSim.test.ts`
+- [x] Node 번들: `npm run server:build`(`server/vite.config.ts`, `dist-server/`), 스텝 시간 측정 `npm run server:bench -- <맵> <인원> [초]`
+- [x] navmesh 미리 굽기: `npm run nav`(`npm run maps`도 마지막에 실행) → `public/nav/<키>.bin.gz`(git에 넣지 않음, 배포 워크플로가 구움). 브라우저와 서버가 같은 키로 찾고, 맵이 바뀌어 키가 다르면 예전처럼 만듦
+- [ ] 혼자 하는 `Game`도 `MatchSim`을 쓰게 합치기(지금은 같은 부품을 각자 조립): 3~4단계에서 클라이언트를 만들면서
+- [ ] 봇, 차량, 가젯, 건설, 콜인을 `MatchSim`으로 (5단계)
 
 ## 3. 방 하나, 보병만
 - [ ] 경기용 바이너리 인코딩(양자화) + 테스트

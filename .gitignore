@@ -8,3 +8,4 @@ dist-server/
 !.vscode/extensions.json
 assets-src/
 .snapshots/
+public/nav/

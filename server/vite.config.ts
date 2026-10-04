@@ -16,9 +16,10 @@ export default defineConfig({
     ssr: true,
     target: 'node22',
     outDir: here('../dist-server'),
-    emptyOutDir: true,
+    // Cleaned by scripts/clean.mjs (Vite's own emptying crashes on Windows paths with Korean folder names).
+    emptyOutDir: false,
     rollupOptions: {
-      input: { main: here('./main.ts'), bench: here('./bench.ts') },
+      input: { main: here('./main.ts'), bench: here('./bench.ts'), bakeNav: here('./bakeNav.ts') },
       output: { entryFileNames: '[name].js' },
     },
   },

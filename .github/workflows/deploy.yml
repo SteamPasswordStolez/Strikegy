@@ -29,6 +29,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      # Navmeshes baked ahead of time (public/nav, not in git): the site serves them.
+      - if: github.ref == 'refs/heads/main'
+        run: npm run nav
       - run: npm run build
       # The strikegy-v2 mirror (github.io) must not claim strikegy.org, which serves p1 from this repo's main.
       - if: github.repository != 'SteamPasswordStolez/Strikegy'
