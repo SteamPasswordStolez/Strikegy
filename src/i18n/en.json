@@ -372,5 +372,6 @@
   "load.vehicleNav": "Mapping vehicle routes",
   "load.battle": "Setting up the battle",
   "load.shaders": "Preparing the graphics",
-  "load.soldiers": "Equipping the soldiers"
+  "load.soldiers": "Equipping the soldiers",
+  "load.tactics": "Finding cover"
 }

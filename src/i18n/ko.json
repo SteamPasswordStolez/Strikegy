@@ -372,5 +372,6 @@
   "load.vehicleNav": "차량 경로 만드는 중",
   "load.battle": "전장 준비 중",
   "load.shaders": "그래픽 준비 중",
-  "load.soldiers": "병사 준비 중"
+  "load.soldiers": "병사 준비 중",
+  "load.tactics": "엄폐 지점 찾는 중"
 }

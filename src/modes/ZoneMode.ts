@@ -86,6 +86,8 @@ export interface Objective {
   guard?: boolean;
   /** Unit direction (xz) from the zone toward the enemy base: where attacks come from. */
   front?: THREE.Vector3;
+  /** Held by the other side. */
+  enemyHeld?: boolean;
 }
 
 interface Presence {
@@ -269,6 +271,7 @@ export class ZoneMode {
       radius: z.radius,
       defend: z.owner === team,
       guard: z.owner === team && !ZoneRules.underAttack(z),
+      enemyHeld: z.owner !== null && z.owner !== team,
       front: new THREE.Vector3(enemy.x - z.x, 0, enemy.z - z.z).normalize(),
     }));
   }

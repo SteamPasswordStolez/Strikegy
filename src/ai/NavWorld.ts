@@ -513,6 +513,6 @@ function collectStaticBoxes(physics: PhysicsWorld): { positions: number[]; indic
 }
 
 /** Dev: `?nocache` rebuilds the navmesh every load (for timing the build). */
-function skipCache(): boolean {
+export function skipCache(): boolean {
   return import.meta.env.DEV && typeof location !== 'undefined' && new URLSearchParams(location.search).has('nocache');
 }

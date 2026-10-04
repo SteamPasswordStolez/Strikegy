@@ -29,8 +29,10 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void): 
   const botMatch = /^(\d+)v(\d+)$/.exec(botsParam);
   const difficulty =
     (['easy', 'normal', 'hard'] as const).find((d) => d === params.get('difficulty')) ?? 'normal';
+  // ?plain=red|blue|both: that side's bots play the older, plainer way (for comparing the two).
+  const plain = (['blue', 'red', 'both'] as const).find((t) => t === params.get('plain')) ?? null;
   const bots = botMatch
-    ? { allies: Number(botMatch[1]), enemies: Number(botMatch[2]), difficulty }
+    ? { allies: Number(botMatch[1]), enemies: Number(botMatch[2]), difficulty, plain }
     : null;
   // ?mode=zone|frontline|conquest|skirmish (default: the map's own mode on maps with zones); ?tickets=300
   const mode =
@@ -56,7 +58,8 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void): 
   onLoadingShown?.();
   void created
     .then((game) => {
-      if (import.meta.env.DEV) {
+      // Dev builds, and builds made for automated sims (VITE_SIM=1), expose the game for scripts.
+      if (import.meta.env.DEV || import.meta.env.VITE_SIM) {
         (window as unknown as { __strikegy: Game }).__strikegy = game;
       }
     })
