@@ -1,13 +1,16 @@
 /**
- * How the full-screen layer is dressed: the title menu (start / pause), a
- * match result (won / lost), or a plain message (loading, errors).
+ * How the full-screen layer is dressed: the title menu (start), the pause
+ * menu (a column of entries beside the controls or the settings), a match
+ * result (won / lost), or a plain message (loading, errors).
  */
-export type OverlayKind = 'menu' | 'win' | 'loss' | 'info';
+export type OverlayKind = 'menu' | 'pause' | 'win' | 'loss' | 'info';
 
-/** A button on the overlay (back to the lobby, play again). */
+/** A button on the overlay (back to the lobby, play again; the pause menu's entries). */
 export interface OverlayAction {
   label: string;
   primary?: boolean;
+  /** The pause menu's open entry (drawn inverted). */
+  selected?: boolean;
   onClick: () => void;
 }
 
@@ -20,6 +23,7 @@ export class Overlay {
   private subEl: HTMLDivElement;
   private hintEl: HTMLDivElement;
   private actionsEl: HTMLDivElement;
+  private shown: OverlayKind = 'info';
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -64,7 +68,7 @@ export class Overlay {
     for (const a of actions) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = `ov-action${a.primary ? ' primary' : ''}`;
+      b.className = `ov-action${a.primary ? ' primary' : ''}${a.selected ? ' sel' : ''}`;
       b.textContent = a.label;
       b.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -76,6 +80,7 @@ export class Overlay {
 
   show(title: string, sub = '', hint = '', kind: OverlayKind = 'info'): void {
     this.setActions([]);
+    this.shown = kind;
     this.root.className = `overlay kind-${kind}`;
     this.titleEl.textContent = title;
     this.subEl.textContent = sub;
@@ -87,6 +92,11 @@ export class Overlay {
   hide(): void {
     this.root.classList.add('hidden');
     document.body.classList.remove('overlay-up');
+  }
+
+  /** What the last `show` put up. */
+  get kind(): OverlayKind {
+    return this.shown;
   }
 
   get visible(): boolean {

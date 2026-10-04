@@ -18,6 +18,33 @@ export const MAPS: readonly MapEntry[] = [
   { id: 'persia', team: 2 },
 ];
 
+/**
+ * Playlists on the lobby's main menu, Call of Duty style: a mode at a set
+ * size, rotating through maps (the room votes between up to three of them).
+ */
+export interface Playlist {
+  id: string;
+  mode: LobbyMode;
+  team: number;
+  maps: readonly string[];
+}
+
+export const PLAYLISTS: readonly Playlist[] = [
+  { id: 'zone', mode: 'zone', team: 12, maps: ['iron_gate', 'lyon', 'bilbao', 'ardennes'] },
+  { id: 'groundwar', mode: 'zone', team: 32, maps: ['ardennes', 'iron_gate'] },
+  { id: 'frontline', mode: 'frontline', team: 12, maps: ['iron_gate', 'ardennes'] },
+  { id: 'conquest', mode: 'conquest', team: 12, maps: ['bilbao'] },
+  { id: 'gunfight', mode: 'frontline', team: 2, maps: ['persia'] },
+];
+
+/** Up to `n` of a playlist's maps for the vote, in random order. */
+export function voteMaps(p: Playlist, n = 3, rand = Math.random): string[] {
+  const left = [...p.maps];
+  const out: string[] = [];
+  while (left.length && out.length < n) out.push(left.splice(Math.floor(rand() * left.length), 1)[0]!);
+  return out;
+}
+
 /** The practice range: no bots, every weapon. */
 export const RANGE_ID = 'sandbox';
 

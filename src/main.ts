@@ -3,12 +3,23 @@ import type { Game } from '@/core/Game';
 import { Lobby } from '@/ui/Lobby';
 
 const container = document.getElementById('app')!;
-const params = new URLSearchParams(location.search);
-// No map in the address: the lobby (it starts a match by loading the address for it).
-if (!params.has('map')) new Lobby(container);
-else void startGame();
+const loadGame = () => import('@/core/Game');
+// No map in the address: the lobby. It hands over the match's address, which
+// goes into the history (reload = the same match, back = the lobby) and the
+// game starts in this page (its code was fetched while the room counted down).
+if (!new URLSearchParams(location.search).has('map'))
+  new Lobby(
+    container,
+    (query) => {
+      history.pushState(null, '', query);
+      window.addEventListener('popstate', () => location.reload());
+      void startGame(new URLSearchParams(query));
+    },
+    () => void loadGame(),
+  );
+else void startGame(new URLSearchParams(location.search));
 
-async function startGame(): Promise<void> {
+async function startGame(params: URLSearchParams): Promise<void> {
   const mapId = params.get('map') ?? 'sandbox';
   const mapUrl = `${import.meta.env.BASE_URL}maps/${encodeURIComponent(mapId)}.json`;
 
@@ -28,7 +39,7 @@ async function startGame(): Promise<void> {
   const tickets = Number(params.get('tickets')) || undefined;
 
   // The game itself loads only now: the lobby stays light (no three.js / physics yet).
-  const { Game } = await import('@/core/Game');
+  const { Game } = await loadGame();
   Game.create(container, {
     mapUrl,
     // Sandbox loadout: every weapon class for feel testing (1-9 / mouse wheel). The

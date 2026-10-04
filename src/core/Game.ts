@@ -60,6 +60,8 @@ import { ambienceFor } from '@/audio/ambienceDirector';
 import { HUD } from '@/ui/HUD';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
+import { SettingsPanel } from '@/ui/SettingsPanel';
+import { addMatch } from '@/data/career';
 import { ZoneMode } from '@/modes/ZoneMode';
 import { ConquestRules, DominationRules, FrontlineRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { ZoneRules } from '@/modes/zoneRules';
@@ -540,7 +542,10 @@ export class Game {
     this.overlay.setContext(this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName);
     this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? t('start.hintTouch') : t('start.hint'), 'menu');
     this.overlay.setActions([{ label: t('lobby.back'), onClick: toLobby }]);
-    this.overlay.root.addEventListener('click', () => this.resume());
+    // The start screen starts on a click anywhere; the pause menu has its own entries.
+    this.overlay.root.addEventListener('click', () => {
+      if (this.overlay.kind !== 'pause') this.resume();
+    });
     document.addEventListener('pointerlockchange', () => {
       if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
     });
@@ -750,29 +755,51 @@ export class Game {
     }
   }
 
-  private pause(): void {
+  /**
+   * The pause menu, Modern Warfare style: resume / settings / (touch) button
+   * layout / back to the lobby in a column, the controls or the settings
+   * beside it. Settings apply at once (volume, sensitivity, FOV, FPS display);
+   * quality and language on the next load.
+   */
+  private pause(view: 'controls' | 'settings' = 'controls'): void {
     // Not over the result screen: ending the match lets go of the mouse, which used to pause.
     if (!this.started || this.matchOver) return;
     this.running = false;
     this.touch?.setVisible(false);
-    this.overlay.show(t('paused'), this.touch ? t('start.tap') : t('start.click'), this.touch ? t('start.hintTouch') : t('start.hint'), 'menu');
-    this.overlay.setActions([{ label: t('lobby.back'), onClick: toLobby }]);
-    if (this.touch) this.overlay.setExtra(this.layoutButton());
+    const touch = !!this.touch;
+    this.overlay.show(t('paused'), '', view === 'controls' ? t(touch ? 'start.hintTouch' : 'start.hint') : '', 'pause');
+    this.overlay.setActions([
+      { label: t('pause.resume'), selected: view === 'controls', onClick: () => this.resume() },
+      { label: t('pause.settings'), selected: view === 'settings', onClick: () => this.pause(view === 'settings' ? 'controls' : 'settings') },
+      ...(touch
+        ? [
+            {
+              label: t('layout.edit'),
+              onClick: () => {
+                this.overlay.setExtra(null);
+                this.overlay.hide();
+                this.touch?.editLayout(() => this.pause());
+              },
+            },
+          ]
+        : []),
+      { label: t('pause.quit'), onClick: toLobby },
+    ]);
+    this.overlay.setExtra(view === 'settings' ? this.settingsPanel().root : null);
   }
 
-  /** Pause screen (touch): opens the button layout editor instead of resuming. */
-  private layoutButton(): HTMLElement {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'overlay-layout-btn';
-    b.textContent = t('layout.edit');
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.overlay.setExtra(null);
-      this.overlay.hide();
-      this.touch?.editLayout(() => this.pause());
+  private settingsPanelCache: SettingsPanel | null = null;
+
+  /** The lobby's settings, live: what can change mid-match does at once. */
+  private settingsPanel(): SettingsPanel {
+    this.settingsPanelCache ??= new SettingsPanel(this.settings, {
+      live: true,
+      onChange: (key) => {
+        if (key === 'masterVolume') this.audio.setVolume(this.settings.masterVolume);
+      },
     });
-    return b;
+    this.settingsPanelCache.render();
+    return this.settingsPanelCache;
   }
 
   private frame = (now: number): void => {
@@ -3248,11 +3275,15 @@ export class Game {
     this.matchOver = true;
     this.touch?.setVisible(false);
     const won = winner === PLAYER_TEAM;
+    // The match's score goes on the career (the lobby's calling card); not the range.
+    const xp = this.bots ? (this.scores.get(PLAYER_ID)?.score ?? 0) : 0;
+    if (this.bots) addMatch(xp, won);
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'), won ? 'win' : 'loss');
+      const line = this.bots ? `${this.resultLine()} · +${Math.round(xp).toLocaleString('en-US')} XP` : this.resultLine();
+      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), line, t('match.again'), won ? 'win' : 'loss');
       this.overlay.setActions([
         { label: t('lobby.again'), primary: true, onClick: () => location.reload() },
         { label: t('lobby.back'), onClick: toLobby },

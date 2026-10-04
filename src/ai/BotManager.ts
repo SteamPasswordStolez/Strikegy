@@ -13,6 +13,7 @@ import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel, buildFarSoldierPose } from './SoldierModel';
 import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
+import { botName } from './names';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from './types';
@@ -126,18 +127,6 @@ const LEAF_STEP = 2;
 /** Foliage per unit of tree scale in a cell, per sample. */
 const LEAF_WEIGHT = 0.25;
 const COVER_SAMPLES = 10;
-
-const NAMES: Record<Team, string[]> = {
-  blue: ['Hawk', 'Bishop', 'Rook', 'Nomad', 'Sparrow', 'Atlas', 'Echo', 'Kodiak', 'Falcon', 'Ranger', 'Bear', 'Moose', 'Otter', 'Badger', 'Heron', 'Lynx', 'Maple', 'Cedar', 'Granite', 'Harbor', 'Beacon', 'Anchor', 'Summit', 'Glacier'],
-  red: ['Viper', 'Jackal', 'Cobra', 'Wraith', 'Mako', 'Talon', 'Scorpion', 'Raven', 'Hyena', 'Adder', 'Vulture', 'Shrike', 'Mamba', 'Barracuda', 'Warden', 'Specter', 'Cinder', 'Onyx', 'Havoc', 'Rogue', 'Vandal', 'Reaper', 'Ember', 'Dagger'],
-};
-
-/** The i-th bot's name on a team: unique, numbered once the list runs out. */
-function botName(team: Team, i: number): string {
-  const list = NAMES[team];
-  const base = list[i % list.length]!;
-  return i < list.length ? base : `${base} ${Math.floor(i / list.length) + 1}`;
-}
 
 export interface BotOptions {
   allies: number;
