@@ -31,6 +31,21 @@ interface Chunk {
 }
 
 /**
+ * Trunk colliders of the map's own trees: a slim box from just below the
+ * ground up into the crown (bullets, bodies, bots' paths; crowns are open).
+ * Separate from the render side so the game server builds them too.
+ */
+export function treeColliders(trees: readonly (readonly [number, number, number])[], terrain: Terrain, physics: PhysicsWorld, impacts: SurfaceRegistry): void {
+  for (const [x, z, s] of trees) {
+    const y = terrain.heightAt(x, z);
+    const h = 18 * s * TRUNK_HEIGHT;
+    const r = 0.26 * s + 0.06;
+    const c = physics.addStaticBox({ x, y: y + h / 2 - 0.5, z }, { x: r, y: h / 2 + 0.5, z: r }, undefined, Layer.WORLD);
+    impacts.set(c.handle, 'wood');
+  }
+}
+
+/**
  * Conifers inside the playable area. Trunks are static colliders (they stop
  * bullets, bodies and bots' paths); crowns are render only. Trees are grouped
  * into chunks that draw full 3D trees near the camera and baked impostors
@@ -48,12 +63,10 @@ export class Forest {
   /** 3D trees of every chunk in one batch per part; a chunk shows its own while near. */
   private readonly nearTrees: TreeBatch | null = null;
 
-  /** The map's own trees: trunks collide (bullets, bodies, bots' paths) and cast shadows. */
+  /** The map's own trees (render only; their trunks collide through `treeColliders`); they cast shadows. */
   static ofMap(
     trees: readonly (readonly [number, number, number])[],
     terrain: Terrain,
-    physics: PhysicsWorld,
-    impacts: SurfaceRegistry,
     kit: ConiferKit,
     gl: THREE.WebGLRenderer,
     scene: THREE.Scene,
@@ -64,11 +77,6 @@ export class Forest {
     for (const [x, z, s] of trees) {
       const y = terrain.heightAt(x, z);
       spots.push({ pos: new THREE.Vector3(x, y - 0.2, z), scale: s, yaw: rng() * Math.PI * 2, variant: Math.floor(rng() * kit.variants.length), tint: 0.8 + rng() * 0.3 });
-      // Trunk: a slim box from just below the ground up into the crown.
-      const h = 18 * s * TRUNK_HEIGHT;
-      const r = 0.26 * s + 0.06;
-      const c = physics.addStaticBox({ x, y: y + h / 2 - 0.5, z }, { x: r, y: h / 2 + 0.5, z: r }, undefined, Layer.WORLD);
-      impacts.set(c.handle, 'wood');
     }
     const f = new Forest(spots, kit, gl, scene, near, true);
     f.group.name = 'forest';

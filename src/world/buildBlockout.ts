@@ -69,6 +69,7 @@ export function snapToTerrain(map: MapDef, terrain: Terrain): void {
 }
 
 export interface BuiltMap {
+  /** Render meshes (empty when built without a view, on the game server). */
   root: THREE.Group;
   /** Walkable terrain triangles for the navmesh (null on flat box maps). */
   navExtra: { positions: number[]; indices: number[] } | null;
@@ -85,12 +86,14 @@ export interface BuiltMap {
  * the ground (flat box, or terrain with invisible boundary walls), map boxes
  * and generated buildings. Boxes sharing a material are merged into one mesh
  * (one draw call per material, per render pass) since the geometry never moves.
+ * Without `surfaces` (the game server) only the colliders and the map data
+ * are built, no meshes.
  */
 export function buildBlockout(
   map: MapDef,
-  scene: THREE.Scene,
+  scene: THREE.Scene | null,
   physics: PhysicsWorld,
-  surfaces: SurfaceLibrary,
+  surfaces: SurfaceLibrary | null,
   impacts: SurfaceRegistry,
   terrain: Terrain | null,
   /** Terrain render mesh detail: 1 = every grid line, 2 = every other (weak devices). */
@@ -107,11 +110,13 @@ export function buildBlockout(
   const footprints: BuiltMap['footprints'] = [];
 
   if (terrain) {
-    const built = buildTerrain(terrain, surfaces.terrain(groundKind), physics, terrainStep);
+    const built = buildTerrain(terrain, surfaces?.terrain(groundKind) ?? null, physics, terrainStep);
     impacts.set(built.collider.handle, SURFACE_FROM_MATERIAL[groundKind]);
     groundHandle = built.collider.handle;
-    built.mesh.matrixAutoUpdate = false;
-    root.add(built.mesh);
+    if (built.mesh) {
+      built.mesh.matrixAutoUpdate = false;
+      root.add(built.mesh);
+    }
     if (map.world.boundary) buildBoundaryWalls(terrain.boundary, terrain, physics);
     navExtra = terrainTriangles(terrain, built.grid);
   } else {
@@ -139,13 +144,13 @@ export function buildBlockout(
       continue;
     }
     if (obj.model) {
-      addModel(obj, batches, physics, surfaces, impacts, (kitMats ??= kitMaterials()));
+      addModel(obj, batches, physics, surfaces, impacts, surfaces ? (kitMats ??= kitMaterials()) : null);
       continue;
     }
     if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
       // A coarse terrain mesh cuts corners between grid lines: lift paint clear of it.
       // In snow, tracks fade out at their sides instead of ending in a hard line.
-      addDraped(obj, terrain, batches, surfaces, terrainStep > 1 ? 0.12 : 0, snowy && obj.size[0] >= SNOW_FADE_MIN_WIDTH);
+      if (surfaces) addDraped(obj, terrain, batches, surfaces, terrainStep > 1 ? 0.12 : 0, snowy && obj.size[0] >= SNOW_FADE_MIN_WIDTH);
       const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
       impacts.paint(groundHandle, obj.pos[0], obj.pos[2], (obj.rot?.[1] ?? 0) * DEG, obj.size[0], obj.size[2], SURFACE_FROM_MATERIAL[kind]);
     }
@@ -155,8 +160,8 @@ export function buildBlockout(
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
     const built = buildBuilding(b, base, { snow: map.world.visualProfile === 'winter' });
     for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts);
-    for (const obj of built.decor) addBox(obj, batches, physics, surfaces, impacts, '', false);
-    for (const sh of built.shapes) {
+    if (surfaces) for (const obj of built.decor) addBox(obj, batches, physics, surfaces, impacts, '', false);
+    if (surfaces) for (const sh of built.shapes) {
       // A plain 0..n-1 index lets gables and roofs merge into the boxes of their
       // wall colour (box geometry is indexed) instead of costing a batch of their own.
       sh.geo.setIndex(Array.from({ length: sh.geo.getAttribute('position').count }, (_, i) => i));
@@ -201,7 +206,7 @@ export function buildBlockout(
     root.add(mesh);
   }
 
-  scene.add(root);
+  scene?.add(root);
   return { root, navExtra, windows, footprints, groundHandle };
 }
 
@@ -296,9 +301,9 @@ function addModel(
   obj: MapObject,
   batches: Map<string, Batch>,
   physics: PhysicsWorld,
-  surfaces: SurfaceLibrary,
+  surfaces: SurfaceLibrary | null,
   impacts: SurfaceRegistry,
-  shared: ReturnType<typeof kitMaterials>,
+  shared: ReturnType<typeof kitMaterials> | null,
 ): void {
   const [w, h, d] = obj.size;
   const base = obj.base ?? 0;
@@ -316,44 +321,7 @@ function addModel(
     .compose(new THREE.Vector3(...obj.pos), tmpQuat, one)
     .multiply(new THREE.Matrix4().makeTranslation(0, -h / 2 + base, 0));
 
-  const color = obj.color;
-  const trim = color ? `#${new THREE.Color(color).multiplyScalar(0.72).getHexString()}` : undefined;
-  const materialFor = (m: KitMaterial): THREE.Material => {
-    switch (m) {
-      case 'body':
-        return color ? surfaces.tinted(kind, color) : surfaces.get(kind);
-      case 'trim':
-        return trim ? surfaces.tinted(kind, trim) : surfaces.get(kind);
-      case 'metal':
-        return surfaces.get('metal');
-      case 'wood':
-        return surfaces.get('wood');
-      case 'concrete':
-        return surfaces.get('concrete');
-      case 'dirt':
-        return surfaces.tinted('ground', color ?? '#9c8a64');
-      default:
-        return shared[m];
-    }
-  };
-  for (const p of kit.pieces) {
-    p.geo.applyMatrix4(toWorld);
-    // Surface pieces share per-surface batches (tint in vertex colours); the kit's own looks keep theirs.
-    const surface: [SurfaceMaterial, string | undefined] | null =
-      p.mat === 'body' ? [kind, color] : p.mat === 'trim' ? [kind, trim] : p.mat === 'metal' || p.mat === 'wood' || p.mat === 'concrete' ? [p.mat, undefined] : p.mat === 'dirt' ? ['ground', color ?? '#9c8a64'] : null;
-    if (surface) {
-      pushTinted(batches, surfaces, surface[0], surface[1], p.geo, 'kit', true);
-      continue;
-    }
-    const material = materialFor(p.mat);
-    const key = `${material.uuid}kit`;
-    let batch = batches.get(key);
-    if (!batch) {
-      batch = { material, geometries: [], castShadow: true };
-      batches.set(key, batch);
-    }
-    batch.geometries.push(p.geo);
-  }
+  if (surfaces && shared) addKitPieces(kit.pieces, toWorld, kind, obj.color, batches, surfaces, shared);
 
   const surface = SURFACE_FROM_MATERIAL[kind];
   if (!kit.colliders) {
@@ -376,6 +344,55 @@ function addModel(
   }
 }
 
+/** A kit's render pieces into the map's batches. */
+function addKitPieces(
+  pieces: ReturnType<typeof buildKit>['pieces'],
+  toWorld: THREE.Matrix4,
+  kind: SurfaceMaterial,
+  color: string | undefined,
+  batches: Map<string, Batch>,
+  surfaces: SurfaceLibrary,
+  shared: ReturnType<typeof kitMaterials>,
+): void {
+  const trim = color ? `#${new THREE.Color(color).multiplyScalar(0.72).getHexString()}` : undefined;
+  const materialFor = (m: KitMaterial): THREE.Material => {
+    switch (m) {
+      case 'body':
+        return color ? surfaces.tinted(kind, color) : surfaces.get(kind);
+      case 'trim':
+        return trim ? surfaces.tinted(kind, trim) : surfaces.get(kind);
+      case 'metal':
+        return surfaces.get('metal');
+      case 'wood':
+        return surfaces.get('wood');
+      case 'concrete':
+        return surfaces.get('concrete');
+      case 'dirt':
+        return surfaces.tinted('ground', color ?? '#9c8a64');
+      default:
+        return shared[m];
+    }
+  };
+  for (const p of pieces) {
+    p.geo.applyMatrix4(toWorld);
+    // Surface pieces share per-surface batches (tint in vertex colours); the kit's own looks keep theirs.
+    const surface: [SurfaceMaterial, string | undefined] | null =
+      p.mat === 'body' ? [kind, color] : p.mat === 'trim' ? [kind, trim] : p.mat === 'metal' || p.mat === 'wood' || p.mat === 'concrete' ? [p.mat, undefined] : p.mat === 'dirt' ? ['ground', color ?? '#9c8a64'] : null;
+    if (surface) {
+      pushTinted(batches, surfaces, surface[0], surface[1], p.geo, 'kit', true);
+      continue;
+    }
+    const material = materialFor(p.mat);
+    const key = `${material.uuid}kit`;
+    let batch = batches.get(key);
+    if (!batch) {
+      batch = { material, geometries: [], castShadow: true };
+      batches.set(key, batch);
+    }
+    batch.geometries.push(p.geo);
+  }
+}
+
 const tmpMatrix = new THREE.Matrix4();
 const tmpQuat = new THREE.Quaternion();
 const tmpEuler = new THREE.Euler();
@@ -385,7 +402,7 @@ function addBox(
   obj: MapObject,
   batches: Map<string, Batch>,
   physics: PhysicsWorld,
-  surfaces: SurfaceLibrary,
+  surfaces: SurfaceLibrary | null,
   impacts: SurfaceRegistry,
   batchTag = '',
   collide = true,
@@ -393,14 +410,15 @@ function addBox(
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
 
-  const geo = new THREE.BoxGeometry(w, h, d);
-  worldScaleBoxUVs(geo, w, h, d);
   if (obj.rot) tmpEuler.set(obj.rot[0] * DEG, obj.rot[1] * DEG, obj.rot[2] * DEG);
   else tmpEuler.set(0, 0, 0);
   tmpQuat.setFromEuler(tmpEuler);
-  geo.applyMatrix4(tmpMatrix.compose(new THREE.Vector3(...obj.pos), tmpQuat, one));
-
-  pushTinted(batches, surfaces, kind, obj.color, geo, batchTag, batchTag !== 'ground');
+  if (surfaces) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    worldScaleBoxUVs(geo, w, h, d);
+    geo.applyMatrix4(tmpMatrix.compose(new THREE.Vector3(...obj.pos), tmpQuat, one));
+    pushTinted(batches, surfaces, kind, obj.color, geo, batchTag, batchTag !== 'ground');
+  }
   if (!collide) return;
 
   const collider = physics.addStaticBox(

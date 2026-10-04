@@ -55,8 +55,8 @@ describe('terrain render detail', () => {
       }
       return out;
     };
-    const nf = level0(fine.mesh).length;
-    const pts = level0(coarse.mesh);
+    const nf = level0(fine.mesh!).length;
+    const pts = level0(coarse.mesh!);
     expect(pts.length).toBeLessThan(nf / 2.5);
     // Surface vertices sit on the ground (skirt vertices hang 1.5 m below it).
     let onGround = 0;

@@ -14,9 +14,9 @@ import { Effects } from '@/render/Effects';
 import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
-import { buildBlockout, hasTerrain, snapToTerrain, type BuiltMap } from '@/world/buildBlockout';
-import { Boundary, Terrain } from '@/world/terrain';
-import { buildingPadRadius } from '@/world/buildings';
+import type { BuiltMap } from '@/world/buildBlockout';
+import { buildWorld } from '@/sim/world';
+import type { Terrain } from '@/world/terrain';
 import { GROUND_COVER, GroundCover } from '@/world/groundCover';
 import { BACKDROP_MODELS, buildBackdrop, cullBackdropDetail } from '@/world/backdrop';
 import { createConiferKit } from '@/world/conifers';
@@ -384,21 +384,14 @@ export class Game {
       steps.push(`${name} ${Math.round(now - tStep)}`);
       tStep = now;
     };
-    // Buildings get a level pad so they sit flat on sloped ground.
-    const pads = (map.buildings ?? []).map((b) => ({ pos: b.pos, radius: buildingPadRadius(b) - 1, blend: 5 }));
-    const terrainDef = { ...map.world.terrain, flats: [...(map.world.terrain?.flats ?? []), ...pads] };
-    const terrain = new Terrain(terrainDef, Boundary.fromMap(map), map.world.size);
-    const shaped = hasTerrain(map);
-    if (shaped) snapToTerrain(map, terrain);
-    lap('terrain');
     await this.loadStep(0.36, 'load.buildings');
-    const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null, r.preset === 'low' ? 2 : 1);
+    // Ground, colliders and map data as the game server builds them, plus the looks.
+    const { terrain, shaped, water, built } = buildWorld(map, this.physics, this.impacts, { scene: r.scene, surfaces: this.surfaces, terrainStep: r.preset === 'low' ? 2 : 1 });
     this.navExtra = built.navExtra;
-    lap('blockout');
-    const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
+    lap('world');
+    const props = placeProps(map, r.scene, this.models);
     lap('props');
     await this.loadStep(0.48, 'load.nature');
-    const water = terrain.rivers.length ? new WaterMap(terrain) : null;
     if (water) r.scene.add(buildRivers(terrain, r.scene.environment));
     const winter = map.world.visualProfile === 'winter';
     if (winter) {
@@ -408,7 +401,7 @@ export class Game {
     const kit = outdoor ? createConiferKit(q.msaa, winter, map.world.flora) : null;
     if (kit && map.trees?.length) {
       // Low quality (phones): 3D trees only close by, impostors beyond.
-      this.forest = Forest.ofMap(map.trees, terrain, this.physics, this.impacts, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
+      this.forest = Forest.ofMap(map.trees, terrain, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
       r.scene.add(this.forest.group);
     }
     const coverStyle = GROUND_COVER[map.world.groundMaterial ?? 'ground'];

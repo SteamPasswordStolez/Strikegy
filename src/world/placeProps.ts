@@ -4,21 +4,54 @@ import type { ModelLibrary } from '@/render/models';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MODEL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, PropDef } from './mapTypes';
+import PROP_BOUNDS from './propBounds.json';
 
 const DEG = Math.PI / 180;
 
+const BOUNDS: Record<string, { min: number[]; max: number[] }> = PROP_BOUNDS;
+const warnedProps = new Set<string>();
+
 /**
- * Places map props. Every mesh node of a model becomes one InstancedMesh with an
- * instance per placement, so a model costs (nodes) draw calls however many times
- * it appears. Each placement also gets a box collider fitted to the model bounds.
+ * A box collider fitted to each map prop. The boxes come from a table of model
+ * bounds (`npm run props:bounds`, measured the way the browser measures the
+ * loaded model) rather than the loaded model, so the game server, which loads
+ * no models, builds the same colliders.
  */
-export function placeProps(
-  map: MapDef,
-  scene: THREE.Scene,
-  physics: PhysicsWorld,
-  models: ModelLibrary,
-  impacts: SurfaceRegistry,
-): THREE.Group {
+export function propColliders(map: MapDef, physics: PhysicsWorld, impacts: SurfaceRegistry): void {
+  const quat = new THREE.Quaternion();
+  const euler = new THREE.Euler();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  const half = new THREE.Vector3();
+  const box = new THREE.Box3();
+  for (const p of map.props ?? []) {
+    if (p.collide === false) continue;
+    const b = BOUNDS[p.model];
+    if (!b) {
+      if (!warnedProps.has(p.model)) console.warn(`[props] no bounds for ${p.model}: run npm run props:bounds`);
+      warnedProps.add(p.model);
+      continue;
+    }
+    box.min.fromArray(b.min);
+    box.max.fromArray(b.max);
+    euler.set((p.rot?.[0] ?? 0) * DEG, (p.rot?.[1] ?? 0) * DEG, (p.rot?.[2] ?? 0) * DEG);
+    quat.setFromEuler(euler);
+    // Same steps as the render instance's matrix, so the box sits exactly on the model.
+    new THREE.Matrix4().compose(pos.set(...p.pos), quat.clone(), scl.setScalar(p.scale ?? 1)).decompose(pos, quat, scl);
+    box.getCenter(center).multiply(scl).applyQuaternion(quat).add(pos);
+    box.getSize(half).multiply(scl).multiplyScalar(0.5);
+    const collider = physics.addStaticBox(center, half, { x: quat.x, y: quat.y, z: quat.z, w: quat.w });
+    impacts.set(collider.handle, SURFACE_FROM_MODEL[p.model] ?? 'wood');
+  }
+}
+
+/**
+ * Places map props (render only; colliders come from `propColliders`). Every
+ * mesh node of a model becomes one InstancedMesh with an instance per
+ * placement, so a model costs (nodes) draw calls however many times it appears.
+ */
+export function placeProps(map: MapDef, scene: THREE.Scene, models: ModelLibrary): THREE.Group {
   const root = new THREE.Group();
   root.name = 'props';
   const byModel = new Map<string, PropDef[]>();
@@ -33,12 +66,9 @@ export function placeProps(
   const euler = new THREE.Euler();
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  const half = new THREE.Vector3();
 
   for (const [model, list] of byModel) {
     const template = models.template(model)!;
-    const box = models.localBounds(model)!;
     const matrices = list.map((p) => {
       euler.set((p.rot?.[0] ?? 0) * DEG, (p.rot?.[1] ?? 0) * DEG, (p.rot?.[2] ?? 0) * DEG);
       quat.setFromEuler(euler);
@@ -46,15 +76,6 @@ export function placeProps(
     });
 
     instanceModel(template, matrices, root, true);
-
-    list.forEach((p, i) => {
-      if (p.collide === false) return;
-      matrices[i]!.decompose(pos, quat, scl);
-      box.getCenter(center).multiply(scl).applyQuaternion(quat).add(pos);
-      box.getSize(half).multiply(scl).multiplyScalar(0.5);
-      const collider = physics.addStaticBox(center, half, { x: quat.x, y: quat.y, z: quat.z, w: quat.w });
-      impacts.set(collider.handle, SURFACE_FROM_MODEL[p.model] ?? 'wood');
-    });
   }
 
   scene.add(root);

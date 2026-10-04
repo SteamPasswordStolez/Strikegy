@@ -401,19 +401,20 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
 
 /**
  * Terrain mesh + Rapier heightfield collider. Returns the collider so its
- * handle can be registered as a ground surface.
+ * handle can be registered as a ground surface. Without a material (the game
+ * server) there is no mesh.
  */
 export function buildTerrain(
   terrain: Terrain,
-  material: THREE.Material,
+  material: THREE.Material | null,
   physics: PhysicsWorld,
   /** Render mesh uses every `renderStep`-th grid line at full detail (the collider always uses all). */
   renderStep = 1,
-): { mesh: THREE.Group; collider: RAPIER.Collider; grid: ReturnType<Terrain['sample']> } {
+): { mesh: THREE.Group | null; collider: RAPIER.Collider; grid: ReturnType<Terrain['sample']> } {
   const grid = terrain.sample();
   const { cols, rows, heights } = grid;
   const [sx, sz] = terrain.size;
-  const mesh = buildTerrainMesh(grid, terrain.size, material, renderStep);
+  const mesh = material ? buildTerrainMesh(grid, terrain.size, material, renderStep) : null;
 
   // Rapier wants column-major (rows + 1) x (cols + 1) with rows along local z... its
   // "rows" index the x axis in the JS API, so transpose: index = c * (rows + 1) + r.
