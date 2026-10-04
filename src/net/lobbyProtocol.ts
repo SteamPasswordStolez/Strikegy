@@ -222,7 +222,9 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!isObj(raw)) return null;
   const { name, map, mode, size, lineup, difficulty, input, botShare } = raw;
   if (!str(name, 32) || !str(map, 32) || !str(mode, 16)) return null;
-  const title = name.trim();
+  // No control characters or text-direction overrides (they scramble the room list).
+  // eslint-disable-next-line no-control-regex -- stripping them is the point
+  const title = name.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim();
   if (!title || !/^[\w-]+$/.test(map) || !/^\w+$/.test(mode)) return null;
   if (typeof size !== 'number' || !Number.isInteger(size) || size < 2 || size > ROOM_MAX) return null;
   if (!LINEUPS.includes(lineup as Lineup) || !INPUTS.includes(input as InputRule)) return null;

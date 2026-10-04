@@ -12,6 +12,10 @@ import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
 import { LobbyCore, type MatchHost } from './lobby.ts';
 import { Matches } from './matches.ts';
 
+/** Open connections one address may have (a household's tabs), and the server in all. */
+const PER_ADDRESS = 12;
+const CONNECTIONS_MAX = 1500;
+
 export interface GatewayOptions {
   port?: number;
   host?: string;
@@ -58,8 +62,23 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     res.end();
   });
   const wss = new WebSocketServer({ server: http, path: '/play', maxPayload: 64 * 1024 });
+  /** Open connections by address (behind the Cloudflare tunnel: the visitor's, from its header). */
+  const perAddress = new Map<string, number>();
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    const fwd = req.headers['cf-connecting-ip'];
+    const addr = (Array.isArray(fwd) ? fwd[0] : fwd) ?? req.socket.remoteAddress ?? '?';
+    const open = perAddress.get(addr) ?? 0;
+    if (open >= PER_ADDRESS || wss.clients.size > CONNECTIONS_MAX) {
+      ws.close(1013, 'too many connections');
+      return;
+    }
+    perAddress.set(addr, open + 1);
+    ws.on('close', () => {
+      const n = (perAddress.get(addr) ?? 1) - 1;
+      if (n <= 0) perAddress.delete(addr);
+      else perAddress.set(addr, n);
+    });
     const id = core.open({
       send: (text) => {
         if (ws.readyState === ws.OPEN) ws.send(text);

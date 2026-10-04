@@ -21,8 +21,7 @@ const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map
 /** The main menu's entries, top to bottom. */
 const ALL_ENTRIES = ['play', 'multi', 'range', 'controls', 'settings'] as const;
 type Entry = (typeof ALL_ENTRIES)[number];
-/** Multiplayer shows only with `?mp` until matches work over the network. */
-const ENTRIES: readonly Entry[] = ALL_ENTRIES.filter((e) => e !== 'multi' || new URLSearchParams(location.search).has('mp'));
+const ENTRIES: readonly Entry[] = ALL_ENTRIES;
 type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {

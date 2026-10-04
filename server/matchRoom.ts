@@ -59,6 +59,14 @@ export interface MatchConn {
 const QUEUE_CATCH_UP = 4;
 /** Inputs queued past this are dropped (a stalled tab sending a burst). */
 const QUEUE_MAX = 30;
+/**
+ * Inputs a player may be ahead of real time (ticks). Catching up two a tick
+ * is only allowed within this: a client sending inputs faster than 60 a
+ * second can't move or shoot faster.
+ */
+const INPUT_SLACK = 8;
+/** Scope sway is a few hundredths of a radian at most; anything bigger is clamped. */
+const SWAY_MAX = 0.03;
 /** Zone and score tables every this many ticks (4 Hz). */
 const STATE_EVERY = 15;
 const CLASSES: readonly ClassId[] = ['assault', 'medic', 'support', 'recon'];
@@ -79,6 +87,13 @@ interface Seat {
   events: MatchEvent[];
   /** The kit of the current life. */
   kit: Loadout | null;
+  /** Server tick when the player was ready, and inputs stepped since (the input budget). */
+  readyTick: number;
+  stepped: number;
+  /** Hits on others and how many were headshots from over 30 m (a crude aimbot flag, logged). */
+  hits: number;
+  farHeads: number;
+  flagged: boolean;
 }
 
 export interface MatchRoomOptions {
@@ -151,7 +166,7 @@ export class MatchRoom {
       const team = this.smallerTeam();
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null };
+      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false };
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -209,6 +224,8 @@ export class MatchRoom {
     seat.lastSeq = 0;
     seat.ack = 0;
     seat.queue.length = 0;
+    seat.readyTick = this.sim.tick;
+    seat.stepped = 0;
     // Who joined while this player was loading.
     seat.conn?.text({ t: 'roster', roster: this.roster() });
     this.sendState(seat);
@@ -284,9 +301,14 @@ export class MatchRoom {
     const maxRewind = Math.round(REWIND_MAX * TICK_HZ);
     for (const seat of this.seats.values()) {
       const s = seat.soldier;
-      const take = seat.queue.length > QUEUE_CATCH_UP ? 2 : seat.queue.length ? 1 : 0;
+      // Never more inputs than ticks since ready (plus a little slack): no speed hack by flooding.
+      const budget = this.sim.tick - seat.readyTick + INPUT_SLACK - seat.stepped;
+      const take = Math.min(budget, seat.queue.length > QUEUE_CATCH_UP ? 2 : seat.queue.length ? 1 : 0);
       for (let i = 0; i < take; i++) {
         const inp = seat.queue.shift()!;
+        seat.stepped++;
+        inp.swayYaw = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayYaw));
+        inp.swayPitch = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayPitch));
         applyInput(inp, seat.input);
         s.weapons.shotCaster = sim.casterFor(s, inp.view, maxRewind);
         sim.stepSoldier(s, { state: seat.input, yaw: inp.yaw, pitch: inp.pitch, swayYaw: inp.swayYaw, swayPitch: inp.swayPitch });
@@ -435,7 +457,18 @@ export class MatchRoom {
     });
     bus.on('combat:hit', (e) => {
       const by = e.attackerId === undefined ? undefined : this.byId.get(e.attackerId);
-      by?.events.push({ k: 'hit', head: e.part === 'head', killed: e.killed });
+      if (!by) return;
+      by.events.push({ k: 'hit', head: e.part === 'head', killed: e.killed });
+      // A crude aimbot flag for the log: nearly every hit a headshot from afar.
+      by.hits++;
+      if (e.part === 'head' && e.point.distanceTo(by.soldier.player.feet) > 30) by.farHeads++;
+      if (!by.flagged && by.hits >= 25 && by.farHeads / by.hits > 0.7) {
+        by.flagged = true;
+        this.opts.log?.(`suspect: ${by.name} (${by.uid.slice(0, 8)}) in room ${this.opts.room}: ${by.farHeads}/${by.hits} hits were headshots past 30 m`);
+      }
+    });
+    bus.on('combat:kill', (e) => {
+      if (e.attackerId !== undefined && this.byId.has(e.attackerId)) this.opts.log?.(`kill ${this.opts.room}: ${e.attacker} > ${e.victim} (${e.weapon}${e.headshot ? ', head' : ''})`);
     });
     bus.on('zone:captured', (e) => this.broadcastEvents.push({ k: 'zone', type: 'captured', zone: e.zone, team: e.team }));
     bus.on('zone:neutralized', (e) => this.broadcastEvents.push({ k: 'zone', type: 'neutralized', zone: e.zone, team: e.team }));

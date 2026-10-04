@@ -89,7 +89,12 @@ interface Client {
   lastBinRefill: number;
   /** Connection gone mid-match: the seat waits until then (ms) for the same uid. */
   awayUntil: number | null;
+  /** Messages refused (flooding, malformed): too many and the connection is dropped. */
+  strikes: number;
 }
+
+/** Refused messages before a connection is dropped. */
+const STRIKES_MAX = 40;
 
 interface RoomRec {
   id: string;
@@ -167,7 +172,7 @@ export class LobbyCore {
   /** A new connection; returns its client id. */
   open(conn: Conn, id = randomHex(4)): string {
     const now = this.now();
-    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null });
+    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0 });
     return id;
   }
 
@@ -208,9 +213,9 @@ export class LobbyCore {
   async message(id: string, text: string): Promise<void> {
     const c = this.clients.get(id);
     if (!c || c.awayUntil !== null) return;
-    if (!this.allowed(c)) return this.fail(c, 'rate');
+    if (!this.allowed(c)) return this.strike(c, 'rate');
     const msg = parseClientMsg(text);
-    if (!msg) return this.fail(c, 'bad');
+    if (!msg) return this.strike(c, 'bad');
     try {
       await this.handle(c, msg);
       this.pushList();
@@ -228,7 +233,7 @@ export class LobbyCore {
     const now = this.now();
     c.binTokens = Math.min(BIN_RATE.burst, c.binTokens + ((now - c.lastBinRefill) / 1000) * BIN_RATE.perSecond);
     c.lastBinRefill = now;
-    if (c.binTokens < 1) return;
+    if (c.binTokens < 1) return this.strike(c, null);
     c.binTokens -= 1;
     this.matches.binary(r.id, c.uid, data);
   }
@@ -266,6 +271,16 @@ export class LobbyCore {
         }
       },
     };
+  }
+
+  /** A refused message; past `STRIKES_MAX` the connection is dropped (its seat waits as for any drop). */
+  private strike(c: Client, code: ErrorCode | null): void {
+    c.strikes++;
+    if (code) this.fail(c, code);
+    if (c.strikes === STRIKES_MAX) {
+      this.log(`dropping ${c.id} (${c.name ?? '?'}): too many refused messages`);
+      c.conn.close();
+    }
   }
 
   private fail(c: Client, code: ErrorCode, detail?: string): void {
