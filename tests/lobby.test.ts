@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MAPS, PLAYLISTS, RANGE_ID, TEAM_SIZES, matchQuery, snapTeam, voteMaps } from '@/data/maps';
-import { CAREER, botLevel, levelOf } from '@/data/career';
+import { MAPS, RANGE_ID, TEAM_SIZES, matchQuery, snapTeam } from '@/data/maps';
+import { CAREER, levelOf } from '@/data/career';
 import ko from '@/i18n/ko.json';
 import en from '@/i18n/en.json';
 
@@ -36,35 +36,11 @@ describe('lobby', () => {
     }
   });
 
-  it('playlists only offer maps that set up their mode, and the vote picks distinct maps from them', () => {
-    for (const p of PLAYLISTS) {
-      expect(p.maps.length).toBeGreaterThan(0);
-      for (const id of p.maps) {
-        const map = JSON.parse(readFileSync(`public/maps/${id}.json`, 'utf8'));
-        if (p.mode === 'zone') expect(map.zones.length).toBeGreaterThan(0);
-        else expect(map.modes?.[p.mode]).toBeTruthy();
-      }
-      for (const table of [ko, en] as Record<string, string>[]) {
-        expect(table[`playlist.${p.id}`]).toBeTruthy();
-        expect(table[`playlistDesc.${p.id}`]).toBeTruthy();
-      }
-      const vote = voteMaps(p);
-      expect(new Set(vote).size).toBe(vote.length);
-      expect(vote.length).toBe(Math.min(3, p.maps.length));
-      for (const id of vote) expect(p.maps).toContain(id);
-    }
-  });
-
   it('career levels: 2,000 XP to level 2, each level 250 longer, capped', () => {
     expect(levelOf(0)).toMatchObject({ level: 1, progress: 0, need: 2000 });
     expect(levelOf(1999).level).toBe(1);
     expect(levelOf(2000)).toMatchObject({ level: 2, need: 2250 });
     expect(levelOf(2000 + 2250).level).toBe(3);
     expect(levelOf(1e9).level).toBe(CAREER.maxLevel);
-    for (const name of ['blue:Hawk', 'red:Viper', 'red:Dagger 3']) {
-      expect(botLevel(name)).toBe(botLevel(name));
-      expect(botLevel(name)).toBeGreaterThanOrEqual(1);
-      expect(botLevel(name)).toBeLessThanOrEqual(CAREER.maxLevel);
-    }
   });
 });

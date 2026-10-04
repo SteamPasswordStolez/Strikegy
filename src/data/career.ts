@@ -56,10 +56,3 @@ export function levelOf(xp: number): { level: number; progress: number; need: nu
     level++;
   }
 }
-
-/** A bot's level in the lobby: the same every time for the same name. */
-export function botLevel(name: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 16777619);
-  return 1 + ((h >>> 0) % CAREER.maxLevel);
-}

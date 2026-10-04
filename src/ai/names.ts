@@ -1,6 +1,6 @@
 import type { Team } from '@/world/mapTypes';
 
-/** Call signs per side (the lobby shows the same names before a match). */
+/** Call signs per side. */
 export const NAMES: Record<Team, string[]> = {
   blue: ['Hawk', 'Bishop', 'Rook', 'Nomad', 'Sparrow', 'Atlas', 'Echo', 'Kodiak', 'Falcon', 'Ranger', 'Bear', 'Moose', 'Otter', 'Badger', 'Heron', 'Lynx', 'Maple', 'Cedar', 'Granite', 'Harbor', 'Beacon', 'Anchor', 'Summit', 'Glacier'],
   red: ['Viper', 'Jackal', 'Cobra', 'Wraith', 'Mako', 'Talon', 'Scorpion', 'Raven', 'Hyena', 'Adder', 'Vulture', 'Shrike', 'Mamba', 'Barracuda', 'Warden', 'Specter', 'Cinder', 'Onyx', 'Havoc', 'Rogue', 'Vandal', 'Reaper', 'Ember', 'Dagger'],
