@@ -2,7 +2,7 @@
 
 설계: `multiplayer.md`. 표시: `[x]` 끝남, `[~]` 진행 중, `[ ]` 아직.
 
-방식: **오너 서버, 서버 권위**(2026-10-04). 로컬 시험: `npm run server` + `npm run dev`, 주소에 `?mp`. `public/servers.json`의 `servers`가 비어 있으면 개발 빌드는 같은 PC의 `ws://<host>:8787/play`에 붙습니다. 도메인이 정해지면 그 주소(`wss://<도메인>/play`)를 넣습니다. 요로님이 `exp`에서 P2P로 시작한 목록(이름, 연결 설정 서버, WebRTC, 메뉴)을 `v2`에 합쳐 서버 방식으로 바꿉니다. 지난 P2P 목록은 `exp` 기록에 있습니다(`git show 91686e9:docs/design/multiplayer-todo.md`).
+방식: **오너 서버, 서버 권위**(2026-10-04). 로컬 시험: `npm run server` + `npm run dev`, 주소에 `?mp`. `public/servers.json`의 `servers`가 비어 있으면 개발 빌드는 같은 PC의 `ws://<host>:8787/play`에 붙습니다. 배포 빌드는 `wss://play.strikegy.xyz/play`(오너 노트북, Cloudflare 터널; 2026-10-04)에 붙습니다. 요로님이 `exp`에서 P2P로 시작한 목록(이름, 연결 설정 서버, WebRTC, 메뉴)을 `v2`에 합쳐 서버 방식으로 바꿉니다. 지난 P2P 목록은 `exp` 기록에 있습니다(`git show 91686e9:docs/design/multiplayer-todo.md`).
 
 각 묶음이 끝나면 lint + test + tsc, 그리고 짧게 실제로 돌려 본 뒤 체크합니다.
 

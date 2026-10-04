@@ -95,6 +95,10 @@ sudo cloudflared service install
 
 터널 토큰과 인증 파일(`~/.cloudflared/*.json`)은 노트북에만 두고, 채팅에 붙여넣지 마세요.
 
+### 지금 설정 (2026-10-04)
+
+`strikegy.xyz`는 Cloudflare에 있고, `play` CNAME이 노트북에 이미 있던 터널(`d6dacf46…cfargotunnel.com`, howtoboard.com과 같은 터널)을 가리킵니다. 노트북 `/etc/cloudflared/config.yml` ingress에 `play.strikegy.xyz → http://localhost:8787`이 들어 있습니다(바꾸기 전 파일: `config.yml.bak-strikegy-20261004`). 게임은 `public/servers.json`에서 `wss://play.strikegy.xyz/play`를 읽습니다. 이 노트북의 `cert.pem`은 howtoboard.com용이라 `cloudflared tunnel route dns`로는 strikegy.xyz 레코드를 만들지 말고 대시보드에서 넣으세요.
+
 ## 7. 업데이트
 
 ```bash
