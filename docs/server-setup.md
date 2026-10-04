@@ -9,8 +9,10 @@
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs git
-node --version   # v22 이상
+node --version   # v20.19 이상이면 됨 (Vite 8 기준)
 ```
+
+이미 Node 20.19 이상이 깔려 있고 다른 서비스(pm2 등)가 그 Node를 쓰면 올리지 마세요. 시스템 Node를 바꾸면 그 서비스들의 네이티브 모듈이 재시작할 때 깨질 수 있습니다. 오너 노트북은 2026-10-04 기준 Node 20.20.2로 설치·실행 중입니다.
 
 ## 2. 저장소 받기와 준비
 
