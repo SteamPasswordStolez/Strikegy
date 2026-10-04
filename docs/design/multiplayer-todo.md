@@ -59,8 +59,9 @@
 - [ ] 서버 노트북에서 "봇 n명 방 m개" 실측, 하루 전송량 기록
 
 ## 7. 배포
-- [ ] 도메인(오너가 알려 줌), Cloudflare Tunnel 또는 포트포워딩 + 인증서
-- [ ] systemd 자동 재시작, 버전 확인("새로고침" 안내)
+- [x] 도메인 + 터널: 게임 페이지 `https://strikegy.xyz`(GitHub Pages), 서버 `wss://play.strikegy.xyz/play`(오너 노트북, Cloudflare Tunnel; 2026-10-04, `docs/server-setup.md`)
+- [x] systemd 자동 재시작(`strikegy.service`, 노트북에 설치됨)
+- [ ] 버전 확인("새로고침" 안내)
 - [ ] (필요하면) UDP: 서버와 브라우저 사이 WebRTC 데이터 채널
 
 ## 안티치트 (나중에)
