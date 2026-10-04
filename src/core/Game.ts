@@ -97,6 +97,7 @@ import { LoadoutPanel } from '@/ui/LoadoutPanel';
 import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Station } from '@/modes/fortify';
 import { FortModels } from '@/world/fortModels';
 import { NetMatch, type NetOptions } from '@/net/NetMatch';
+import { forgetPlay } from './session';
 import { seeded } from '@/sim/MatchSim';
 import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
 import { SF } from '@/net/matchProtocol';
@@ -3808,6 +3809,7 @@ function assignDeep(into: Record<string, unknown>, from: Record<string, unknown>
 
 /** Back to the lobby: the page without a map in its address. */
 function toLobby(): void {
+  forgetPlay();
   location.href = location.pathname;
 }
 

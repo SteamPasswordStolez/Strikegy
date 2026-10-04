@@ -2,30 +2,45 @@ import './styles.css';
 import type { Game } from '@/core/Game';
 import type { NetOptions } from '@/net/NetMatch';
 import { Lobby } from '@/ui/Lobby';
+import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
 
 const container = document.getElementById('app')!;
 const loadGame = () => import('@/core/Game');
-// No map in the address: the lobby. It hands over the match's address, which
-// goes into the history (reload = the same match, back = the lobby) and the
-// game starts in this page (its code was fetched while the room counted down).
-// The menu stays up until the game's loading screen covers it.
-if (!new URLSearchParams(location.search).has('map')) {
+// No map in the address: the lobby, or the solo match this tab was playing
+// (a reload or "again"). The address stays the site's own: the match's
+// settings are kept in the tab (core/session.ts), a history entry with the
+// same address makes "back" return to the menu. The game starts in this page
+// (its code was fetched while the menu was up); the menu stays until the
+// game's loading screen covers it. ?map=... still starts a match directly (links, testing).
+const replay = recallMatch();
+if (new URLSearchParams(location.search).has('map')) void startGame(new URLSearchParams(location.search));
+else if (replay) startSolo(replay);
+else {
   const menu: Lobby = new Lobby(
     container,
     (query) => {
-      history.pushState(null, '', query);
-      window.addEventListener('popstate', () => location.reload());
-      void startGame(new URLSearchParams(query), () => menu.root.remove());
+      rememberMatch(query);
+      startSolo(query, () => menu.root.remove());
     },
     () => void loadGame(),
     // A room's match on the game server: a reload comes back to the
     // multiplayer pages, where the server puts this browser back in its seat.
     (start, link) => {
-      history.replaceState(null, '', '?mp&multi');
+      rememberRoom();
       void startGame(new URLSearchParams({ map: start.map, mode: start.mode, bots: 'none' }), () => menu.root.remove(), { link, start });
     },
   );
-} else void startGame(new URLSearchParams(location.search));
+}
+
+/** A solo match; "back" in the browser returns to the menu. */
+function startSolo(query: string, onLoadingShown?: () => void): void {
+  history.pushState({ match: true }, '', location.pathname);
+  window.addEventListener('popstate', () => {
+    forgetPlay();
+    location.reload();
+  });
+  void startGame(new URLSearchParams(query), onLoadingShown);
+}
 
 async function startGame(params: URLSearchParams, onLoadingShown?: () => void, net?: NetOptions): Promise<void> {
   const mapId = params.get('map') ?? 'sandbox';

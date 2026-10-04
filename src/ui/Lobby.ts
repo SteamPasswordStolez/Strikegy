@@ -9,6 +9,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { MultiplayerMenu } from './MultiplayerMenu';
 import { askName } from './NameDialog';
 import { loadIdentity } from '@/net/identity';
+import { inRoom } from '@/core/session';
 import type { MatchStart } from '@/net/lobbyProtocol';
 import type { ServerLink } from '@/net/ServerLink';
 
@@ -110,7 +111,7 @@ export class Lobby {
     // First visit: a name before anything else.
     if (!this.playerName) this.editName(true);
     // Back from a match (or reloaded in one): straight to the multiplayer pages.
-    else if (ENTRIES.includes('multi') && new URLSearchParams(location.search).has('multi')) this.go('multi');
+    else if (inRoom() || new URLSearchParams(location.search).has('multi')) this.go('multi');
   }
 
   private editName(required: boolean): void {
