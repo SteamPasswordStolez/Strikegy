@@ -154,9 +154,13 @@ export class RoomSession {
     this.onChange?.();
   }
 
-  /** Sends the waiting-room measurements when they changed noticeably. */
+  /**
+   * Sends the waiting-room measurements when they changed noticeably. Not in
+   * a match: the host is fixed then, and every message counts against the
+   * signalling server's free plan.
+   */
   private report(): void {
-    if (!this.room) return;
+    if (this.room?.state !== 'lobby') return;
     const links: Report['links'] = {};
     for (const [id, link] of this.links) {
       if (!link.isOpen || link.rtt < 0) continue;

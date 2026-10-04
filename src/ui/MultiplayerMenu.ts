@@ -8,7 +8,6 @@ import { signalUrls } from '@/net/servers';
 import type { Device, Lineup, InputRule, Room, RoomInfo, RoomSettings } from '@/net/signalProtocol';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
-const LIST_POLL_MS = 3000;
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
 const INPUTS: readonly InputRule[] = ['all', 'desktop', 'mobile'];
 const DIFFS = ['easy', 'normal', 'hard'] as const;
@@ -51,7 +50,6 @@ export class MultiplayerMenu {
   private rooms: RoomInfo[] = [];
   private notice: string | null = null;
   private form: RoomSettings & { password: string };
-  private listTimer: ReturnType<typeof setInterval> | null = null;
   private redrawQueued = false;
 
   constructor(private readonly host: MultiplayerHost) {
@@ -93,7 +91,6 @@ export class MultiplayerMenu {
       this.signal.on('close', () => {
         this.view = 'offline';
         this.notice = t('mp.lost');
-        this.stopPolling();
         this.host.redraw();
       });
       this.signal.on('rooms', (m) => {
@@ -119,17 +116,11 @@ export class MultiplayerMenu {
     });
   }
 
+  /** The room list page. Asks once; the server pushes changes while we're here (no polling). */
   private showList(): void {
     this.view = 'list';
     this.signal?.send({ t: 'list' });
-    this.stopPolling();
-    this.listTimer = setInterval(() => this.signal?.send({ t: 'list' }), LIST_POLL_MS);
     this.host.redraw();
-  }
-
-  private stopPolling(): void {
-    if (this.listTimer) clearInterval(this.listTimer);
-    this.listTimer = null;
   }
 
   /** Esc / back: out of the form or the room to the list; from the list, false (leave the page). */
@@ -147,7 +138,6 @@ export class MultiplayerMenu {
   }
 
   close(): void {
-    this.stopPolling();
     this.session?.leave();
     this.session?.dispose();
     this.signal?.close();
@@ -174,7 +164,6 @@ export class MultiplayerMenu {
       password = pw;
     }
     void this.act(async () => {
-      this.stopPolling();
       await this.signal!.request({ t: 'join', room: room.id, password }, 'room');
       this.view = 'room';
       this.host.redraw();
@@ -195,7 +184,6 @@ export class MultiplayerMenu {
     saveJSON(CREATE_KEY, settings);
     void this.act(async () => {
       await this.signal!.request({ t: 'create', settings, password: password || undefined }, 'room');
-      this.stopPolling();
       this.view = 'room';
       this.host.redraw();
     });
@@ -231,7 +219,6 @@ export class MultiplayerMenu {
       }
     });
     el('button', 'lb-btn', bar, t('mp.create')).addEventListener('click', () => {
-      this.stopPolling();
       this.view = 'create';
       this.host.redraw();
     });

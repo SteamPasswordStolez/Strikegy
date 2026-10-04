@@ -58,6 +58,8 @@ interface Client {
   device: Device;
   uid: string;
   room: string | null;
+  /** On the room list page: gets the list pushed when it changes (no polling). */
+  watching: boolean;
   tokens: number;
   lastRefill: number;
 }
@@ -114,6 +116,8 @@ export class SignalCore {
   private readonly clients = new Map<string, Client>();
   private readonly rooms = new Map<string, RoomRec>();
   private readonly iceServers: () => Promise<IceServer[]>;
+  /** The room list as last pushed to watchers (JSON), to push only changes. */
+  private lastList = '';
   private readonly log: (line: string) => void;
 
   constructor(opts: CoreOptions) {
@@ -157,13 +161,15 @@ export class SignalCore {
     }
     // Connections the saved state doesn't know (opened just before a save was lost): fresh clients.
     for (const [id, conn] of conns) if (!this.clients.has(id)) this.clients.set(id, this.newClient(id, conn));
+    // Watchers already have this list; push only what changes from here.
+    this.lastList = JSON.stringify(this.roomList());
   }
 
   // ---------------------------------------------------------------------------
   // Connections
 
   private newClient(id: string, conn: Conn): Client {
-    return { conn, id, name: null, device: 'desktop', uid: '', room: null, tokens: RATE.burst, lastRefill: Date.now() };
+    return { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: Date.now() };
   }
 
   /** A new connection; returns its client id. */
@@ -178,6 +184,7 @@ export class SignalCore {
     if (!c) return false;
     this.leaveRoom(c, 'closed');
     this.clients.delete(id);
+    this.pushList();
     return true;
   }
 
@@ -195,7 +202,9 @@ export class SignalCore {
       return false;
     }
     try {
-      return await this.handle(c, msg);
+      const changed = await this.handle(c, msg);
+      this.pushList();
+      return changed;
     } catch (err) {
       this.log(`error: ${String(err)}`);
       return false;
@@ -320,6 +329,7 @@ export class SignalCore {
   private joinRoom(c: Client, r: RoomRec): void {
     c.name = this.uniqueName(r, c.name!);
     c.room = r.id;
+    c.watching = false;
     r.members.push(c.id);
     this.repick(r);
     this.broadcast(r);
@@ -348,9 +358,13 @@ export class SignalCore {
     }
     const r = c.room ? this.rooms.get(c.room) : undefined;
     switch (msg.t) {
-      case 'list':
-        this.send(c, { t: 'rooms', rooms: [...this.rooms.values()].map((x) => this.info(x)) });
-        return false;
+      case 'list': {
+        // Saved when the flag flips, so pushes still reach this client after a sleep.
+        const was = c.watching;
+        c.watching = !r;
+        this.send(c, { t: 'rooms', rooms: this.roomList() });
+        return c.watching !== was;
+      }
       case 'create': {
         if (r) return this.no(c, 'busy');
         const settings = cleanSettings(msg.settings);
@@ -424,7 +438,11 @@ export class SignalCore {
         r.reports[c.id] = report;
         const before = `${r.host}/${r.backup}/${r.candidates.join()}`;
         this.repick(r);
-        if (`${r.host}/${r.backup}/${r.candidates.join()}` !== before) this.broadcast(r);
+        if (`${r.host}/${r.backup}/${r.candidates.join()}` === before) return false;
+        // Saved only when the pick moved: reports come every few seconds and a
+        // write each time would use up the free plan's daily writes. One lost in
+        // a sleep is resent by the browser when its numbers change.
+        this.broadcast(r);
         return true;
       }
       case 'hostLost': {
@@ -448,6 +466,19 @@ export class SignalCore {
         return false;
       }
     }
+  }
+
+  private roomList(): RoomInfo[] {
+    return [...this.rooms.values()].map((x) => this.info(x));
+  }
+
+  /** Sends the room list to everyone on the list page when it changed. */
+  private pushList(): void {
+    const rooms = this.roomList();
+    const text = JSON.stringify(rooms);
+    if (text === this.lastList) return;
+    this.lastList = text;
+    for (const c of this.clients.values()) if (c.watching && !c.room) this.send(c, { t: 'rooms', rooms });
   }
 
   /** Sends an error; nothing changed. */

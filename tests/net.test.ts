@@ -133,6 +133,63 @@ describe('signalling core across a Durable Object sleep', () => {
   });
 });
 
+describe('signalling core, free-plan economy', () => {
+  const settings: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 8, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true };
+  const ice = async () => [{ urls: 'stun:x:3478' }];
+  const hello = (name: string) => JSON.stringify({ t: 'hello', v: SIGNAL_VERSION, name, uid: name, device: 'desktop' });
+  const fake = () => {
+    const got: ServerMsg[] = [];
+    return { got, conn: { send: (t: string) => got.push(JSON.parse(t) as ServerMsg), close: () => {} } as Conn };
+  };
+
+  it('pushes the room list to people on the list page, only when it changes', async () => {
+    const core = new SignalCore({ iceServers: ice });
+    const w = fake();
+    const o = fake();
+    const idw = core.open(w.conn);
+    const ido = core.open(o.conn);
+    await core.message(idw, hello('watcher'));
+    await core.message(ido, hello('owner'));
+    expect(await core.message(idw, JSON.stringify({ t: 'list' }))).toBe(true); // flag flipped: saved
+    expect(await core.message(idw, JSON.stringify({ t: 'list' }))).toBe(false);
+    const lists = () => w.got.filter((m) => m.t === 'rooms').length;
+    const before = lists();
+    await core.message(ido, JSON.stringify({ t: 'create', settings }));
+    expect(lists()).toBe(before + 1);
+    // Something that doesn't change the list (a signal to nobody) pushes nothing.
+    await core.message(ido, JSON.stringify({ t: 'signal', to: 'nobody', data: {} }));
+    expect(lists()).toBe(before + 1);
+    // The owner isn't watching (in a room); closing the room pushes an empty list.
+    core.close(ido);
+    const last = w.got.filter((m) => m.t === 'rooms').at(-1) as Extract<ServerMsg, { t: 'rooms' }>;
+    expect(last.rooms).toEqual([]);
+    expect(o.got.filter((m) => m.t === 'rooms')).toHaveLength(0);
+
+    // After a sleep nothing is pushed until the list really changes.
+    const woke = new SignalCore({ iceServers: ice });
+    woke.restore(JSON.parse(JSON.stringify(core.snapshot())), new Map([[idw, w.conn]]));
+    const n = lists();
+    const x = fake();
+    const idx = woke.open(x.conn);
+    await woke.message(idx, hello('late'));
+    expect(lists()).toBe(n);
+    await woke.message(idx, JSON.stringify({ t: 'create', settings }));
+    expect(lists()).toBe(n + 1);
+  });
+
+  it('saves a report only when it moves the host pick', async () => {
+    const core = new SignalCore({ iceServers: ice });
+    const a = fake();
+    const ida = core.open(a.conn);
+    await core.message(ida, hello('aa'));
+    await core.message(ida, JSON.stringify({ t: 'create', settings }));
+    const rep = (benchMs: number) => JSON.stringify({ t: 'report', report: { device: 'desktop', benchMs, onBattery: false, links: {} } });
+    // Alone in the room: the pick can't move, so nothing to save.
+    expect(await core.message(ida, rep(20))).toBe(false);
+    expect(await core.message(ida, rep(25))).toBe(false);
+  });
+});
+
 describe('signalling server', () => {
   let server: SignalServer;
   const url = (): string => `ws://127.0.0.1:${server.port}/signal`;
