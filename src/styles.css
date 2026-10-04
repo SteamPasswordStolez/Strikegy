@@ -3885,7 +3885,7 @@ button.mp-row:hover {
   color: var(--hud-dim);
 }
 .mp-row.mp-members {
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) 64px;
+  grid-template-columns: minmax(0, 1fr) 64px;
 }
 .mp-self {
   box-shadow: inset 3px 0 0 var(--ally), inset 0 0 0 1px rgb(255 255 255 / 0.08);
@@ -3899,8 +3899,7 @@ button.mp-row:hover {
 .mp-num {
   font-variant-numeric: tabular-nums;
 }
-.mp-live,
-.mp-host {
+.mp-live {
   color: var(--hud-accent);
   font-weight: 700;
 }

@@ -2,7 +2,7 @@
 
 설계: `multiplayer.md`. 표시: `[x]` 끝남, `[~]` 진행 중, `[ ]` 아직.
 
-방식: **오너 서버, 서버 권위**(2026-10-04). 요로님이 `exp`에서 P2P로 시작한 목록(이름, 연결 설정 서버, WebRTC, 메뉴)을 `v2`에 합쳐 서버 방식으로 바꿉니다. 지난 P2P 목록은 `exp` 기록에 있습니다(`git show 91686e9:docs/design/multiplayer-todo.md`).
+방식: **오너 서버, 서버 권위**(2026-10-04). 로컬 시험: `npm run server` + `npm run dev`, 주소에 `?mp`. `public/servers.json`의 `servers`가 비어 있으면 개발 빌드는 같은 PC의 `ws://<host>:8787/play`에 붙습니다. 도메인이 정해지면 그 주소(`wss://<도메인>/play`)를 넣습니다. 요로님이 `exp`에서 P2P로 시작한 목록(이름, 연결 설정 서버, WebRTC, 메뉴)을 `v2`에 합쳐 서버 방식으로 바꿉니다. 지난 P2P 목록은 `exp` 기록에 있습니다(`git show 91686e9:docs/design/multiplayer-todo.md`).
 
 각 묶음이 끝나면 lint + test + tsc, 그리고 짧게 실제로 돌려 본 뒤 체크합니다.
 
@@ -13,14 +13,15 @@
 - [x] 혼자 하는 경기의 "나"를 이 이름으로
 
 ## 1. 방 목록 서버를 오너 서버 방식으로
-- [x] 메시지 모양, 버전, 검사 + 테스트 (요로님, `src/net/signalProtocol.ts`)
-- [x] 방 규칙: 이름, 방 목록(바뀔 때만 보냄), 만들기 / 참가 / 나가기, 비밀번호, 방 주인 넘기기, 강퇴, 메시지 수 제한 + 테스트 (요로님, `server/core.ts`)
+- [x] 메시지 모양, 버전, 검사 + 테스트 (요로님; 지금 `src/net/lobbyProtocol.ts`)
+- [x] 방 규칙: 이름, 방 목록(바뀔 때만 보냄), 만들기 / 참가 / 나가기, 비밀번호, 방 주인 넘기기, 강퇴, 메시지 수 제한 + 테스트 (요로님; 지금 `server/lobby.ts`)
 - [x] 메뉴: 방 목록, 빠른 참가, 방 만들기, 대기실 (요로님, `src/ui/MultiplayerMenu.ts`)
-- [ ] 방장 PC 고르기, 성능 측정, WebRTC 연결 설정 전달, TURN 빼기
-- [ ] Cloudflare Workers 배포를 빼고 Node 관문 프로세스로 (`npm run server`)
-- [ ] 서버 전체 1000명 상한(방 인원 합), 다 차면 "진행 중인 방에 참가하세요"
-- [ ] 같은 WebSocket으로 경기 데이터(바이너리)도 오가게
-- [ ] 멀티 메뉴는 경기가 될 때까지 `?mp`로만
+- [x] 방장 PC 고르기, 성능 측정, WebRTC 연결 설정 전달, TURN 빼기
+- [x] Cloudflare Workers 배포를 빼고 Node 관문 프로세스로: `npm run server`(포트 8787, `/play` WebSocket, `/health`), 브라우저는 `ServerLink`
+- [x] 서버 전체 1000명 상한(봇 있는 방은 방 크기, 유저만 방은 사람 수), 넘으면 "서버가 가득 찼습니다"
+- [x] 대기실과 방 목록에 서버 지연(ping) 표시
+- [ ] 같은 WebSocket으로 경기 데이터(바이너리)도 오가게 (관문은 지금 바이너리를 버림)
+- [x] 멀티 메뉴는 경기가 될 때까지 `?mp`로만
 
 ## 2. 시뮬과 화면 분리
 - [ ] `buildBlockout`: 충돌체만 만드는 길(서버)과 메시까지 만드는 길(브라우저)

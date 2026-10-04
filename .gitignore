@@ -7,4 +7,3 @@ dist/
 !.vscode/extensions.json
 assets-src/
 .snapshots/
-.wrangler/

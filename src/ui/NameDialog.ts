@@ -1,6 +1,6 @@
 import { t } from '@/i18n';
 import { saveName } from '@/net/identity';
-import { NAME_MAX } from '@/net/signalProtocol';
+import { NAME_MAX } from '@/net/lobbyProtocol';
 
 /**
  * "Pick your name": shown over the main menu on the first visit, and when the

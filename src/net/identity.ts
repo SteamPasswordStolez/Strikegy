@@ -1,5 +1,5 @@
 import { loadJSON, saveJSON } from '@/core/storage';
-import { cleanName } from './signalProtocol';
+import { cleanName } from './lobbyProtocol';
 
 const KEY = 'strikegy.player.v1';
 

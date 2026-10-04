@@ -7,9 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && npm run clean && vite build",
     "preview": "vite preview",
-    "signal": "node server/main.ts",
-    "signal:deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit && tsc -p server/tsconfig.worker.json",
+    "server": "node server/main.ts",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -26,7 +25,6 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261004.1",
     "@eslint/js": "^10.0.1",
     "@gltf-transform/core": "^4.5.0",
     "@gltf-transform/extensions": "^4.5.0",
@@ -42,7 +40,6 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.1",
-    "vitest": "^5.0.2",
-    "wrangler": "^4.147.0"
+    "vitest": "^5.0.2"
   }
 }

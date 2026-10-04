@@ -17,6 +17,5 @@
     "allowImportingTsExtensions": true,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "server", "tests", "vite.config.ts"],
-  "exclude": ["server/worker.ts"]
+  "include": ["src", "server", "tests", "vite.config.ts"]
 }

@@ -1,12 +1,13 @@
 /**
- * Messages between the browser and the signalling server (JSON over a
- * WebSocket). The server only keeps the room list and passes WebRTC set-up
- * messages along; match data goes peer to peer. Shared by the browser and the
- * Node server, so this file imports nothing and uses erasable TypeScript only.
+ * Lobby messages between the browser and the game server (JSON text frames on
+ * the one WebSocket; match data will travel as binary frames on the same
+ * socket): names, the room list, rooms and their settings. Shared by the
+ * browser and the Node server, so this file imports nothing and uses erasable
+ * TypeScript only.
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const SIGNAL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -15,8 +16,10 @@ export type RoomState = 'lobby' | 'playing';
 
 /** The most soldiers in a room, bots included (owner, 2026-10-04). */
 export const ROOM_MAX = 300;
-/** Humans per room until the host PC's limit is measured. */
+/** Humans per room until the server's load is measured. */
 export const HUMAN_CAP = 64;
+/** The most soldiers on the whole server, bots included (owner, 2026-10-04). */
+export const SERVER_MAX = 1000;
 
 export const NAME_MIN = 2;
 export const NAME_MAX = 16;
@@ -43,6 +46,14 @@ export interface RoomSettings {
   botShare: boolean;
 }
 
+/**
+ * Soldiers a room puts on the server: with bots it is filled to its size,
+ * users only it is just the people in it.
+ */
+export function roomLoad(settings: RoomSettings, humans: number): number {
+  return settings.lineup === 'users' ? humans : Math.max(settings.size, humans);
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -60,30 +71,9 @@ export interface RoomInfo {
   humanCap: number;
 }
 
-/** What a member measured in the waiting room, for picking the host PC. */
-export interface Report {
-  device: Device;
-  /** Milliseconds for the fixed sim benchmark (lower is better); null when not run. */
-  benchMs: number | null;
-  onBattery: boolean;
-  /** Per peer: round trip in ms and whether the link goes through TURN. */
-  links: Record<string, { rtt: number; relayed: boolean }>;
-}
-
 export interface Room extends RoomInfo {
   owner: string;
   members: Member[];
-  /** The PC that runs the match, and the one standing by to take over. */
-  host: string | null;
-  backup: string | null;
-  /** Desktops the others should open test links to (best guesses first). */
-  candidates: string[];
-}
-
-export interface IceServer {
-  urls: string | string[];
-  username?: string;
-  credential?: string;
 }
 
 export type ClientMsg =
@@ -96,10 +86,8 @@ export type ClientMsg =
   | { t: 'start' }
   | { t: 'end' }
   | { t: 'kick'; member: string }
-  | { t: 'report'; report: Report }
-  /** The host has gone: the backup says it took over (or the server picks again). */
-  | { t: 'hostLost' }
-  | { t: 'signal'; to: string; data: unknown };
+  /** Round trip to the server: answered with `pong` carrying the same `at`. */
+  | { t: 'ping'; at: number };
 
 export type ErrorCode =
   | 'version'
@@ -107,6 +95,7 @@ export type ErrorCode =
   | 'noRoom'
   | 'password'
   | 'full'
+  | 'serverFull'
   | 'notOwner'
   | 'notInRoom'
   | 'busy'
@@ -114,11 +103,11 @@ export type ErrorCode =
   | 'bad';
 
 export type ServerMsg =
-  | { t: 'welcome'; id: string; name: string; ice: IceServer[] }
+  | { t: 'welcome'; id: string; name: string }
   | { t: 'rooms'; rooms: RoomInfo[] }
   | { t: 'room'; room: Room }
   | { t: 'left'; reason: 'leave' | 'kicked' | 'closed' }
-  | { t: 'signal'; from: string; data: unknown }
+  | { t: 'pong'; at: number }
   | { t: 'error'; code: ErrorCode; detail?: string };
 
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
@@ -150,24 +139,6 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
   };
 }
 
-/** Checks a measurement report from a client; returns a clean copy or null. */
-export function cleanReport(raw: unknown): Report | null {
-  if (!isObj(raw)) return null;
-  const { device, benchMs, onBattery, links } = raw;
-  if (device !== 'desktop' && device !== 'mobile') return null;
-  if (benchMs !== null && (typeof benchMs !== 'number' || !(benchMs >= 0) || benchMs > 1e6)) return null;
-  if (typeof onBattery !== 'boolean' || !isObj(links)) return null;
-  const out: Report['links'] = {};
-  let n = 0;
-  for (const [peer, l] of Object.entries(links)) {
-    if (++n > ROOM_MAX || !isObj(l) || peer.length > 32) return null;
-    const { rtt, relayed } = l;
-    if (typeof rtt !== 'number' || !(rtt >= 0) || rtt > 60000 || typeof relayed !== 'boolean') return null;
-    out[peer] = { rtt, relayed };
-  }
-  return { device, benchMs, onBattery, links: out };
-}
-
 /** Parses a client message; null when it isn't one. Field checks beyond shape are the server's. */
 export function parseClientMsg(text: string): ClientMsg | null {
   let raw: unknown;
@@ -186,7 +157,6 @@ export function parseClientMsg(text: string): ClientMsg | null {
     case 'leave':
     case 'start':
     case 'end':
-    case 'hostLost':
       return { t: raw.t };
     case 'create':
       return isObj(raw.settings) && (raw.password === undefined || str(raw.password, 64)) ? (raw as ClientMsg) : null;
@@ -196,10 +166,8 @@ export function parseClientMsg(text: string): ClientMsg | null {
       return isObj(raw.settings) ? (raw as ClientMsg) : null;
     case 'kick':
       return str(raw.member, 32) ? (raw as ClientMsg) : null;
-    case 'report':
-      return isObj(raw.report) ? (raw as ClientMsg) : null;
-    case 'signal':
-      return str(raw.to, 32) && 'data' in raw ? (raw as ClientMsg) : null;
+    case 'ping':
+      return typeof raw.at === 'number' && Number.isFinite(raw.at) ? { t: 'ping', at: raw.at } : null;
     default:
       return null;
   }

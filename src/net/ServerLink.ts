@@ -1,10 +1,10 @@
-import { SIGNAL_VERSION, type ClientMsg, type Device, type ErrorCode, type IceServer, type ServerMsg } from './signalProtocol';
+import { PROTOCOL_VERSION, type ClientMsg, type Device, type ErrorCode, type ServerMsg } from './lobbyProtocol';
 
 type Handlers = {
   [K in ServerMsg['t']]: (msg: Extract<ServerMsg, { t: K }>) => void;
 } & { close: () => void };
 
-export class SignalError extends Error {
+export class ServerError extends Error {
   constructor(
     readonly code: ErrorCode | 'connect',
     detail?: string,
@@ -13,12 +13,11 @@ export class SignalError extends Error {
   }
 }
 
-/** The browser's end of the signalling WebSocket: hello, then typed messages both ways. */
-export class SignalClient {
+/** The browser's end of the game server's WebSocket: hello, then typed messages both ways. */
+export class ServerLink {
   private readonly listeners = new Map<keyof Handlers, Set<(msg: ServerMsg) => void>>();
   id = '';
   name = '';
-  ice: IceServer[] = [];
 
   private constructor(private readonly ws: WebSocket) {
     ws.addEventListener('message', (e) => {
@@ -34,16 +33,15 @@ export class SignalClient {
   }
 
   /** Connects to the first server that answers and says hello. */
-  static async connect(urls: readonly string[], hello: { name: string; uid: string; device: Device }): Promise<SignalClient> {
-    let last: unknown = new SignalError('connect', 'no server');
+  static async connect(urls: readonly string[], hello: { name: string; uid: string; device: Device }): Promise<ServerLink> {
+    let last: unknown = new ServerError('connect', 'no server');
     for (const url of urls) {
       try {
         const ws = await open(url);
-        const client = new SignalClient(ws);
-        const welcome = await client.request({ t: 'hello', v: SIGNAL_VERSION, ...hello }, 'welcome');
+        const client = new ServerLink(ws);
+        const welcome = await client.request({ t: 'hello', v: PROTOCOL_VERSION, ...hello }, 'welcome');
         client.id = welcome.id;
         client.name = welcome.name;
-        client.ice = welcome.ice;
         return client;
       } catch (err) {
         last = err;
@@ -83,15 +81,15 @@ export class SignalClient {
       }) as Handlers[K]);
       const offErr = this.on('error', (m) => {
         done();
-        reject(new SignalError(m.code, m.detail));
+        reject(new ServerError(m.code, m.detail));
       });
       const offClose = this.on('close', () => {
         done();
-        reject(new SignalError('connect', 'closed'));
+        reject(new ServerError('connect', 'closed'));
       });
       const timer = setTimeout(() => {
         done();
-        reject(new SignalError('connect', 'timeout'));
+        reject(new ServerError('connect', 'timeout'));
       }, timeoutMs);
       this.send(msg);
     });
@@ -107,7 +105,7 @@ function open(url: string): Promise<WebSocket> {
     const ws = new WebSocket(url);
     const timer = setTimeout(() => {
       ws.close();
-      reject(new SignalError('connect', 'timeout'));
+      reject(new ServerError('connect', 'timeout'));
     }, 5000);
     ws.addEventListener('open', () => {
       clearTimeout(timer);
@@ -115,7 +113,7 @@ function open(url: string): Promise<WebSocket> {
     });
     ws.addEventListener('error', () => {
       clearTimeout(timer);
-      reject(new SignalError('connect', url));
+      reject(new ServerError('connect', url));
     });
   });
 }
