@@ -29,7 +29,8 @@ export function withoutPort53(list: IceServer[]): IceServer[] {
     .filter((s) => s.urls.length > 0);
 }
 
-export function turnConfigFromEnv(env: NodeJS.ProcessEnv = process.env): TurnConfig | null {
+/** TURN settings from environment variables / Worker secrets (CF_TURN_KEY_ID, CF_TURN_API_TOKEN). */
+export function turnConfigFrom(env: { CF_TURN_KEY_ID?: string; CF_TURN_API_TOKEN?: string }): TurnConfig | null {
   const keyId = env.CF_TURN_KEY_ID?.trim();
   const apiToken = env.CF_TURN_API_TOKEN?.trim();
   return keyId && apiToken ? { keyId, apiToken } : null;

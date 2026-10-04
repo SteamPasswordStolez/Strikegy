@@ -4,6 +4,7 @@ import { cleanName, cleanReport, cleanSettings, SIGNAL_VERSION, type Member, typ
 import { hostScore, pickCandidates, pickHost } from '@/net/hostScore';
 import { startSignalServer, type SignalServer } from '../server/signal';
 import { withoutPort53 } from '../server/turn';
+import { SignalCore, type Conn } from '../server/core';
 
 const desk = (id: string): Member => ({ id, name: id, device: 'desktop' });
 const phone = (id: string): Member => ({ id, name: id, device: 'mobile' });
@@ -84,6 +85,51 @@ describe('ICE servers', () => {
       { urls: ['stun:stun.cloudflare.com:3478'] },
       { urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'u', credential: 'c' },
     ]);
+  });
+});
+
+describe('signalling core across a Durable Object sleep', () => {
+  const settings: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 8, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true };
+  const fake = () => {
+    const got: ServerMsg[] = [];
+    const conn: Conn = { send: (t) => got.push(JSON.parse(t) as ServerMsg), close: () => {} };
+    return { conn, got, last: <T extends ServerMsg['t']>(t: T) => got.filter((m) => m.t === t).at(-1) as Extract<ServerMsg, { t: T }> | undefined };
+  };
+  const ice = async () => [{ urls: 'stun:x:3478' }];
+  const hello = (name: string) => JSON.stringify({ t: 'hello', v: SIGNAL_VERSION, name, uid: name, device: 'desktop' });
+
+  it('keeps rooms, passwords and members through save / restore, and drops members whose socket closed meanwhile', async () => {
+    const a = fake();
+    const b = fake();
+    const core = new SignalCore({ iceServers: ice });
+    const ida = core.open(a.conn);
+    const idb = core.open(b.conn);
+    await core.message(ida, hello('aa'));
+    await core.message(idb, hello('bb'));
+    expect(await core.message(ida, JSON.stringify({ t: 'create', settings, password: 'pw' }))).toBe(true);
+    const roomId = a.last('room')!.room.id;
+    await core.message(idb, JSON.stringify({ t: 'join', room: roomId, password: 'pw' }));
+    expect(b.last('room')!.room.members).toHaveLength(2);
+
+    // The object sleeps: only JSON survives.
+    const saved = JSON.parse(JSON.stringify(core.snapshot()));
+    const woke = new SignalCore({ iceServers: ice });
+    woke.restore(saved, new Map([[ida, a.conn], [idb, b.conn]]));
+    const c = fake();
+    const idc = woke.open(c.conn);
+    await woke.message(idc, hello('cc'));
+    await woke.message(idc, JSON.stringify({ t: 'join', room: roomId, password: 'wrong' }));
+    expect(c.last('error')).toMatchObject({ code: 'password' });
+    await woke.message(idc, JSON.stringify({ t: 'join', room: roomId, password: 'pw' }));
+    expect(c.last('room')!.room.members.map((m) => m.name)).toEqual(['aa', 'bb', 'cc']);
+
+    // a's socket closed while the object slept: on waking, a is out and b owns the room.
+    const again = new SignalCore({ iceServers: ice });
+    again.restore(JSON.parse(JSON.stringify(woke.snapshot())), new Map([[idb, b.conn], [idc, c.conn]]));
+    await again.message(idb, JSON.stringify({ t: 'list' }));
+    expect(b.last('rooms')!.rooms[0]).toMatchObject({ id: roomId, humans: 2 });
+    await again.message(idb, JSON.stringify({ t: 'kick', member: idc }));
+    expect(c.last('left')).toEqual({ t: 'left', reason: 'kicked' });
   });
 });
 
