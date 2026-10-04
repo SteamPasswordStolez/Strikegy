@@ -88,6 +88,8 @@ export interface MatchSoldierInfo {
   team: Side;
   /** Squad index on the side (members in join order; the first one leads). */
   squad: number;
+  /** A bot (people get a name tag over their heads). */
+  bot?: boolean;
 }
 
 /** Sent when a match starts, or when joining (or coming back to) one under way. */

@@ -397,7 +397,7 @@ export class MatchRoom {
 
   private roster(): MatchSoldierInfo[] {
     const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
-    for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0 });
+    for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0, bot: true });
     return out;
   }
 

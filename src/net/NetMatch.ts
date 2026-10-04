@@ -20,6 +20,7 @@ import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
 import type { Effects } from '@/render/Effects';
 import { gadgetModel } from '@/modes/gadgetWorld';
+import { LAYER_FX } from '@/render/layers';
 import type { Soldier } from '@/sim/Soldier';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import type { Team } from '@/world/mapTypes';
@@ -63,8 +64,40 @@ const CORPSE_SEC = 4;
 const CORRECT_MIN = 0.02;
 
 /** Someone else in the match, as this browser draws them. */
+/** A name over a person's head: allies seen through walls, enemies only when in sight. */
+function nameTag(name: string, ally: boolean): THREE.Sprite {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 64;
+  const g = c.getContext('2d')!;
+  g.font = 'bold 30px Bahnschrift, "Malgun Gothic", sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.lineWidth = 6;
+  g.strokeStyle = 'rgba(0,0,0,0.75)';
+  g.strokeText(name, 128, 32, 248);
+  g.fillStyle = ally ? '#7fb6ff' : '#ff7a6b';
+  g.fillText(name, 128, 32, 248);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: !ally, depthWrite: false, sizeAttenuation: false, toneMapped: false }));
+  s.scale.set(0.1, 0.025, 1);
+  s.renderOrder = 10;
+  s.layers.set(LAYER_FX);
+  return s;
+}
+
+/** Name tags show within this distance (m). */
+const TAG_RANGE = 120;
+
 class Remote {
   readonly samples: Sample[] = [];
+  /** A person (not a bot): gets a name tag. */
+  human = false;
+  /** On this browser's side. */
+  ally = false;
+  private tag: THREE.Sprite | null = null;
+  private tagText = '';
   model: SoldierModel | null = null;
   private weapon: WeaponId | null = null;
   readonly boxes: CharacterHitboxes;
@@ -186,6 +219,7 @@ class Remote {
     const weapon = (f < 0.5 ? a : b).weapon;
     if (!this.visible) {
       this.model?.root.removeFromParent();
+      this.tag?.removeFromParent();
       return;
     }
     if (!this.model || weapon !== this.weapon) {
@@ -195,6 +229,7 @@ class Remote {
       this.view.scene.add(this.model.root);
     } else if (!this.model.root.parent) this.view.scene.add(this.model.root);
     const dead = !this.alive;
+    this.updateTag();
     this.model.update(this.pos, {
       speed: this.alive ? speed : 0,
       crouch: this.crouch,
@@ -229,9 +264,30 @@ class Remote {
     v.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(v.camera.position));
   }
 
+  /** The name over a person's head while up (and within range). */
+  private updateTag(): void {
+    const show = this.human && this.alive && this.pos.distanceTo(this.view.camera.position) < TAG_RANGE;
+    if (!show) {
+      this.tag?.removeFromParent();
+      return;
+    }
+    if (!this.tag || this.tagText !== this.name) {
+      this.tag?.removeFromParent();
+      this.tag?.material.map?.dispose();
+      this.tag?.material.dispose();
+      this.tag = nameTag(this.name, this.ally);
+      this.tagText = this.name;
+    }
+    this.tag.position.set(this.pos.x, this.pos.y + 2.15 - this.crouch * 0.6, this.pos.z);
+    if (!this.tag.parent) this.view.scene.add(this.tag);
+  }
+
   dispose(): void {
     this.model?.dispose();
     this.boxes.dispose();
+    this.tag?.removeFromParent();
+    this.tag?.material.map?.dispose();
+    this.tag?.material.dispose();
   }
 }
 
@@ -405,7 +461,10 @@ export class NetMatch {
       if (!info) {
         r.dispose();
         this.remotes.delete(id);
-      } else r.name = info.name;
+      } else {
+        r.name = info.name;
+        r.human = !info.bot;
+      }
     }
     this.onRoster();
   }
@@ -424,6 +483,8 @@ export class NetMatch {
       if (!r) {
         const info = this.roster.get(s.id);
         r = new Remote(s.id, info?.team ?? 'red', info?.name ?? '?', this.view);
+        r.human = !!info && !info.bot;
+        r.ally = r.team === this.myTeam;
         this.remotes.set(s.id, r);
       }
       r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots });
