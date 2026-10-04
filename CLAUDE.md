@@ -63,7 +63,7 @@ Performance work: measure first. A reliable CPU benchmark in a hidden/automated 
 
 The "better looks and faster" plan (owner's order 2 -> 3 -> 4 -> 1) stands at:
 - 2 CPU pass: done. 3 looks without downloads: done (terrain blend, grass tufts, wall grime, rounder soldiers). 4 assets: Mixamo soldiers tried and reverted (see below); Sketchfab needs an Epic login the owner doesn't have now. GPU pass and far crowd: done.
-- **Open: step 1** — dynamic resolution reacts to the whole frame time (CPU stalls included) and saves the scale (`DynamicResolution`, `Renderer.adaptResolution`, `scaleKey` in localStorage), so CPU lag lowers the resolution for good; auto quality also picks low / medium too eagerly. Fix: decide from GPU time (timer queries) and don't persist a scale that came from CPU lag. Not started.
+- Step 1 settled differently (owner, 2026-10-04): no automatic resolution at all. The render scale is a setting (`renderScale`, default 0.9, 50-100 %, applies at once); `dynamicResolution.ts` is gone. Auto quality still picks the preset.
 - Owner's last reports to follow up: Lyon 12v12 on high dipped to 45-50 fps on the MX450 before the GPU pass (not re-measured on their PC since); sound dropping out now and then (not reproduced, no audio in automated browsers); first-person arms / guns "like real ones" wanted (no asset route yet).
 - GPU timing recipe that works in the desktop app's browser pane (it renders on this PC's Iris Xe): wrap `renderer.gl.render` (per pass) or `renderBufferDirect` (per draw) in `EXT_disjoint_timer_query_webgl2` queries while driving `g.frame(now)` by hand, collect results a few frames later. Cloud sessions likely have no GPU: leave GPU numbers to the owner (F3).
 

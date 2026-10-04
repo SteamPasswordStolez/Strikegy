@@ -62,6 +62,7 @@ export class SettingsPanel {
       this.toggle(rows, 'lobby.invertY', 'invertY');
     } else if (this.cat === 'video') {
       this.slider(rows, 'lobby.fov', 'fov', 60, 100, 1, (v) => `${Math.round(v)}°`);
+      this.slider(rows, 'lobby.renderScale', 'renderScale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       // What auto picks needs the GPU's name (a throwaway WebGL context): asked once.
       autoQuality ??= resolveQuality('auto');
       const auto = t(`lobby.q.${autoQuality}` as MessageKey);
@@ -92,7 +93,7 @@ export class SettingsPanel {
     return ctl;
   }
 
-  private slider(parent: HTMLElement, label: MessageKey, key: 'sensitivity' | 'adsSensitivity' | 'fov' | 'masterVolume', min: number, max: number, step: number, show: (v: number) => string): void {
+  private slider(parent: HTMLElement, label: MessageKey, key: 'sensitivity' | 'adsSensitivity' | 'fov' | 'masterVolume' | 'renderScale', min: number, max: number, step: number, show: (v: number) => string): void {
     const ctl = this.row(parent, label, key);
     const input = el('input', 'sp-range', ctl);
     input.type = 'range';

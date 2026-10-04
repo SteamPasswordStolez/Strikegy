@@ -3,9 +3,7 @@ import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
-import { DynamicResolution } from './dynamicResolution';
 import { updateShownMatrices } from './sceneMatrices';
-import { loadJSON, saveJSON } from '@/core/storage';
 
 installGradeToneMapping();
 
@@ -105,7 +103,8 @@ export class Renderer {
   /** Optional GPU timing hook (F3 panel). */
   private section: (label: string, fn: () => void) => void = (_l, fn) => fn();
   private shadowDirty = true;
-  private readonly drs = new DynamicResolution();
+  /** Render resolution as a share of the screen's (settings, 0.5..1; fixed: no automatic changes). */
+  private scale = 0.9;
 
   constructor(
     container: HTMLElement,
@@ -161,13 +160,17 @@ export class Renderer {
     window.addEventListener('resize', this.resize);
   }
 
-  /** Current dynamic-resolution scale (1 = native up to the cap). */
+  /** Render resolution as a share of native (up to the preset's pixel-ratio cap). */
   get renderScale(): number {
-    return this.drs.scale;
+    return this.scale;
   }
 
-  private get scaleKey(): string {
-    return `strikegy.renderScale.${this.preset}`;
+  /** The player's resolution setting (applies at once). */
+  setRenderScale(scale: number): void {
+    const next = Math.max(0.5, Math.min(1, scale));
+    if (next === this.scale) return;
+    this.scale = next;
+    this.applySize();
   }
 
   private get pixelRatio(): number {
@@ -183,12 +186,6 @@ export class Renderer {
   }
 
   private resize = (): void => {
-    const base = Math.min(window.devicePixelRatio, this.quality.pixelRatioCap);
-    const pixels = window.innerWidth * window.innerHeight * base * base;
-    // Large screens start below native and upscale; dynamic resolution never exceeds it.
-    this.drs.setMax(Math.floor(Math.sqrt((this.quality.pixelBudget * 1e6) / pixels) * 20) / 20);
-    // Start where this preset settled last time instead of re-learning it.
-    this.drs.restart(loadJSON<number>(this.scaleKey) ?? 1);
     this.applySize();
   };
 
@@ -214,13 +211,6 @@ export class Renderer {
     this.shadowDirty = true;
   }
 
-  /** Feeds a frame into dynamic resolution; resizes when the scale changes. */
-  adaptResolution(frameMs: number, dt: number): void {
-    const next = this.drs.update(dt, frameMs);
-    if (next === null) return;
-    saveJSON(this.scaleKey, next);
-    this.applySize();
-  }
 
   /**
    * Starts compiling every material's shaders for the variant the frame will

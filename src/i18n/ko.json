@@ -447,5 +447,7 @@
   "mp.reconnect": "다시 연결",
   "mp.away": "연결 끊김",
   "mp.ended": "경기가 끝났습니다",
-  "mp.endedSub": "방 주인이 경기를 끝냈습니다."
+  "mp.endedSub": "방 주인이 경기를 끝냈습니다.",
+  "lobby.renderScale": "해상도 배율",
+  "setDesc.renderScale": "화면을 그리는 해상도입니다. 낮추면 프레임이 오르고 흐려집니다. 자동으로 바뀌지 않습니다."
 }

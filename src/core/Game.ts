@@ -386,6 +386,7 @@ export class Game {
     setLocale(this.settings.locale);
     const quality = resolveQuality(this.settings.quality);
     this.renderer = new Renderer(container, quality, this.settings.fov);
+    this.renderer.setRenderScale(this.settings.renderScale);
     this.hud = new HUD(container);
     this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
     this.renderer.instrument(this.perf.section);
@@ -948,6 +949,7 @@ export class Game {
       live: true,
       onChange: (key) => {
         if (key === 'masterVolume') this.audio.setVolume(this.settings.masterVolume);
+        if (key === 'renderScale') this.renderer.setRenderScale(this.settings.renderScale);
       },
     });
     this.settingsPanelCache.render();
@@ -989,7 +991,6 @@ export class Game {
       const alpha = this.loop.advance(dt, (h) => this.simStep(h));
       this.lastAlpha = alpha;
       simMs = performance.now() - tSim;
-      this.renderer.adaptResolution(dt * 1000, dt);
       this.vehicles?.render(alpha, this.renderer.camera.position);
       this.updateAirMarkers();
       this.renderRider(alpha, dt);

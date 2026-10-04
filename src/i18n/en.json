@@ -447,5 +447,7 @@
   "mp.reconnect": "Reconnect",
   "mp.away": "disconnected",
   "mp.ended": "The match is over",
-  "mp.endedSub": "The room's owner ended the match."
+  "mp.endedSub": "The room's owner ended the match.",
+  "lobby.renderScale": "Resolution scale",
+  "setDesc.renderScale": "The resolution the game draws at. Lower runs faster and looks softer. It never changes by itself."
 }

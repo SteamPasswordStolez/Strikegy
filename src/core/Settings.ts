@@ -15,6 +15,8 @@ export interface Settings {
   locale: Locale;
   showFps: boolean;
   masterVolume: number;
+  /** Render resolution as a share of the screen's (0.5..1; no automatic changes). */
+  renderScale: number;
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   locale: 'ko',
   showFps: false,
   masterVolume: 0.8,
+  renderScale: 0.9,
 };
 
 export function loadSettings(): Settings {
