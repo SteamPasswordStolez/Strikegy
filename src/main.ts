@@ -1,5 +1,6 @@
 import './styles.css';
 import type { Game } from '@/core/Game';
+import type { NetOptions } from '@/net/NetMatch';
 import { Lobby } from '@/ui/Lobby';
 
 const container = document.getElementById('app')!;
@@ -17,10 +18,16 @@ if (!new URLSearchParams(location.search).has('map')) {
       void startGame(new URLSearchParams(query), () => menu.root.remove());
     },
     () => void loadGame(),
+    // A room's match on the game server: a reload comes back to the
+    // multiplayer pages, where the server puts this browser back in its seat.
+    (start, link) => {
+      history.replaceState(null, '', '?mp&multi');
+      void startGame(new URLSearchParams({ map: start.map, mode: start.mode, bots: 'none' }), () => menu.root.remove(), { link, start });
+    },
   );
 } else void startGame(new URLSearchParams(location.search));
 
-async function startGame(params: URLSearchParams, onLoadingShown?: () => void): Promise<void> {
+async function startGame(params: URLSearchParams, onLoadingShown?: () => void, net?: NetOptions): Promise<void> {
   const mapId = params.get('map') ?? 'sandbox';
   const mapUrl = `${import.meta.env.BASE_URL}maps/${encodeURIComponent(mapId)}.json`;
 
@@ -46,11 +53,12 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void): 
     // Sandbox loadout: every weapon class for feel testing (1-9 / mouse wheel). The
     // practice range (?bots=0) and ?sandbox use it; bot matches use the class picked on the deploy screen.
     loadout: ['ar1', 'smg1', 'lmg1', 'sg1', 'dmr1', 'sr1', 'pistol1', 'ar4', 'sg3'],
-    sandbox: !bots || params.has('sandbox'),
+    sandbox: !net && (!bots || params.has('sandbox')),
     viewModels: ['bolt_action_rifle_7_62', 'service_pistol'],
     bots,
     mode,
     tickets,
+    net,
   });
   // Game.create puts its loading screen up before its first await.
   onLoadingShown?.();

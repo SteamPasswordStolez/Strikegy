@@ -95,6 +95,10 @@ import { LoadoutStore } from '@/data/loadoutStore';
 import { LoadoutPanel } from '@/ui/LoadoutPanel';
 import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, planFortifications, worldProbe, type FortJob, type FortSlot, type Station } from '@/modes/fortify';
 import { FortModels } from '@/world/fortModels';
+import { NetMatch, type NetOptions } from '@/net/NetMatch';
+import { seeded } from '@/sim/MatchSim';
+import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
+import { sanitizeLoadout, type Loadout } from '@/data/classes';
 
 const DEG = Math.PI / 180;
 /** FOV that the weapon adsFov values were authored against. */
@@ -122,11 +126,20 @@ export interface GameOptions {
   tickets?: number;
   /** Carry `loadout` (every weapon, for testing) instead of the class loadout picked on the deploy screen. */
   sandbox?: boolean;
+  /** A match on the game server (multiplayer): the connection and the match's start message. */
+  net?: NetOptions;
 }
 
 export class Game {
   readonly bus = new EventBus<GameEvents>();
   readonly settings: Settings;
+  /** The soldier this browser plays: id and side (fixed solo; the server's in a match there). */
+  private readonly myId: number;
+  private readonly myTeam: Team;
+  /** A match on the game server, or null (solo). */
+  private net: NetMatch | null = null;
+  /** Asked the server to deploy; waiting for the spawn. */
+  private netDeploying = false;
   private readonly renderer: Renderer;
   private readonly loop = new FixedStepLoop(1 / SIM_HZ);
   private readonly input = createInputState();
@@ -323,6 +336,8 @@ export class Game {
     private readonly container: HTMLElement,
     private readonly options: GameOptions,
   ) {
+    this.myId = options.net?.start.me ?? PLAYER_ID;
+    this.myTeam = options.net?.start.team ?? PLAYER_TEAM;
     this.settings = loadSettings();
     setLocale(this.settings.locale);
     const quality = resolveQuality(this.settings.quality);
@@ -472,17 +487,18 @@ export class Game {
       planeDown: (pos, team, by) => {
         this.effects.explosion(pos);
         this.audio.explosion(pos, this.renderer.camera.position.distanceTo(pos));
-        if (by) this.hud.addKill({ attacker: by.id === PLAYER_ID ? playerName(t('feed.you')) : by.name, victim: t('support.recon'), weapon: by.weapon, headshot: false, attackerTeam: by.team ?? otherTeam(team), victimTeam: team });
+        if (by) this.hud.addKill({ attacker: by.id === this.myId ? playerName(t('feed.you')) : by.name, victim: t('support.recon'), weapon: by.weapon, headshot: false, attackerTeam: by.team ?? otherTeam(team), victimTeam: team });
       },
     }, Math.random, this.registry);
     r.scene.add(this.support.group);
     r.scene.add(this.airMarkers.group);
     this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
-    this.spawn = map.spawns.find((s) => s.team === 'player') ?? map.spawns[0]!;
+    const ownSpawn = (s: SpawnPoint) => s.team === this.myTeam || (this.myTeam === 'blue' && s.team === 'player');
+    this.spawn = (this.myTeam === 'blue' ? map.spawns.find((s) => s.team === 'player') : undefined) ?? map.spawns.find(ownSpawn) ?? map.spawns[0]!;
     const firstKit = this.loadouts.current;
     this.me = new Soldier({
-      id: PLAYER_ID,
-      team: PLAYER_TEAM,
+      id: this.myId,
+      team: this.myTeam,
       name: () => playerName(t('feed.you')),
       local: true,
       physics: this.physics,
@@ -496,8 +512,9 @@ export class Game {
       combatClock: () => this.bots?.time ?? 0,
     });
     this.me.hooks = this.soldierHooks();
+    if (this.options.net) this.me.authority = false;
     this.player.water = water;
-    this.playerSpawns = map.spawns.filter((s) => s.team === 'player' || s.team === PLAYER_TEAM);
+    this.playerSpawns = map.spawns.filter(ownSpawn);
     this.mapSpawns = map.spawns;
     this.mapName = map.meta.name;
 
@@ -533,7 +550,7 @@ export class Game {
         if (map.trees) this.bots.setForest(map.trees, map.world.size);
         if (water) this.bots.setWater(water);
         const bots = this.bots;
-        this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, PLAYER_TEAM, hitId, pellet ? 0.35 : 1);
+        this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, this.myTeam, hitId, pellet ? 0.35 : 1);
         // Vehicles come with zone matches: their drivers route on a mesh as wide as a tank.
         if ((map.zones?.length ?? 0) > 0 && !this.options.sandbox) {
           await this.loadStep(0.8, 'load.vehicleNav');
@@ -549,9 +566,11 @@ export class Game {
     const mode = this.options.mode ?? 'auto';
     if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
-      this.setupFortifications(map, terrain, water, built);
+      // Fortifications aren't run by the game server yet.
+      if (!this.options.net) this.setupFortifications(map, terrain, water, built);
       if (this.bots && !this.options.sandbox) this.setupVehicles(map);
     }
+    if (this.options.net) await this.setupNet(map, terrain);
     if (this.bots) {
       this.setupSquads(map, terrain);
       const support = this.support;
@@ -566,7 +585,7 @@ export class Game {
           if (!sq) return false;
           const owner: GadgetOwner = { id: bot.id, name: bot.name, team: bot.team, squad: `${sq.team}:${sq.name}` };
           // The player's side sees the marker on its own team's calls.
-          return support.request(kind, point, owner, this.squadRpOf(sq), bot.team === PLAYER_TEAM);
+          return support.request(kind, point, owner, this.squadRpOf(sq), bot.team === this.myTeam);
         },
         dangers: () => support.dangers(),
       };
@@ -627,6 +646,7 @@ export class Game {
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.frame);
     this.begin();
+    this.net?.ready();
   }
 
   /** Loading: moves the bar and lets the page draw it before the next long step. */
@@ -748,12 +768,13 @@ export class Game {
       this.audio.impact(e.point, e.surface);
     });
     bus.on('combat:hit', (e) => {
-      if (e.byPlayer) {
+      // On the game server the hit marker waits for its word (`onNetEvents`).
+      if (e.byPlayer && !this.net) {
         this.hud.showHit(e.part === 'head', e.killed);
         this.audio.hit(e.part === 'head', e.killed);
       }
-      if (e.targetId !== PLAYER_ID) {
-        if (this.bots) this.effects.bodyHit(e.point);
+      if (e.targetId !== this.myId) {
+        if (this.bots || this.net) this.effects.bodyHit(e.point);
         else this.effects.targetHit(e.point);
       }
     });
@@ -870,7 +891,7 @@ export class Game {
             },
           ]
         : []),
-      { label: t('pause.quit'), onClick: toLobby },
+      { label: t('pause.quit'), onClick: () => this.quit() },
     ]);
     this.overlay.setExtra(view === 'settings' ? this.settingsPanel().root : null);
   }
@@ -940,9 +961,13 @@ export class Game {
 
     for (const tg of this.targets) tg.update(simDt);
     this.bots?.render(this.lastAlpha, dt, this.renderer.camera);
+    if (this.net) {
+      this.net.flush();
+      this.net.render(dt);
+    }
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.deployScreen && this.running) {
-      if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver) this.openDeploy();
+      if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver && !this.netDeploying) this.openDeploy();
       this.deployRefresh -= dt;
       if (this.deployScreen.visible && this.deployRefresh <= 0) {
         this.deployRefresh = 0.2;
@@ -1035,6 +1060,7 @@ export class Game {
   }
 
   private simStep(dt: number): void {
+    if (this.net) return this.netStep(dt, this.net);
     const input = this.input;
     const p = this.player;
     this.simTime += dt;
@@ -1100,13 +1126,44 @@ export class Game {
     this.finishStep(dt, input);
   }
 
+  /**
+   * A step in a match on the game server: the same as the server steps this
+   * soldier with the input sent for it (rounded the way the wire rounds it),
+   * so prediction and the server agree. On foot only for now: gadgets,
+   * building, vehicles and call-ins aren't run by the server yet.
+   */
+  private netStep(dt: number, net: NetMatch): void {
+    const input = this.input;
+    const p = this.player;
+    const w = this.weapons;
+    this.simTime += dt;
+    if (input.firePressed) input.fire = true;
+    const n = net.pack(input, p.yaw, p.pitch, w.sway.yaw, w.sway.pitch);
+    p.yaw = n.yaw;
+    p.pitch = n.pitch;
+    w.sway.yaw = n.swayYaw;
+    w.sway.pitch = n.swayPitch;
+    if (p.alive && this.deployed) {
+      if (input.medkit) this.me.useMedkit();
+      this.me.stepMedkit(dt);
+      this.me.stepOnFoot(dt, input, this.medkitUse > 0);
+      this.stepSway(dt, input.holdBreath);
+      net.stepped(n.seq, p.feet);
+    } else if (this.playerDowned) this.me.stepDowned(dt, input.jumpHeld);
+    else this.respawnTimer -= dt;
+    this.me.syncBoxes();
+    this.throwables.step(dt);
+    this.physics.step();
+    consumePulses(input);
+  }
+
   /** The rest of a sim step, after the player's own part: everyone else, then physics. */
   private finishStep(dt: number, input: InputState): void {
     this.me.syncBoxes();
     this.bots?.step(dt);
     this.fort?.step();
     this.botsResupplyPlayer();
-    this.zoneMode?.step(dt, this.combatants());
+    if (!this.net) this.zoneMode?.step(dt, this.combatants());
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
@@ -1142,7 +1199,7 @@ export class Game {
   private setupVehicles(map: MapDef): void {
     const bases: { team: Team; pos: THREE.Vector3; facing: number }[] = [];
     for (const team of ['blue', 'red'] as const) {
-      const sp = map.spawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+      const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
       if (!sp.length) continue;
       const pos = sp.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(sp.length);
       bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
@@ -1223,8 +1280,8 @@ export class Game {
         if (!p || vw.vehicles.some((v) => v.pos.distanceTo(p) < 8)) continue;
         const v = vw.spawn('rocket', p, yaw, owner.team);
         v.driverOnly = owner.id;
-        if (owner.team === PLAYER_TEAM) {
-          const who = owner.id === PLAYER_ID ? playerName(t('feed.you')) : owner.name;
+        if (owner.team === this.myTeam) {
+          const who = owner.id === this.myId ? playerName(t('feed.you')) : owner.name;
           this.hud.notify(t('support.rocketArrived').replace('{zone}', z.id).replace('{who}', who), 'ally');
         }
         this.bots?.rocketTankFor(owner.id, v);
@@ -1268,7 +1325,7 @@ export class Game {
     let best: THREE.Vector3 | null = null;
     let bestA = JET_GUN.assist;
     const consider = (p: THREE.Vector3, team: Team | null): void => {
-      if (team === PLAYER_TEAM) return;
+      if (team === this.myTeam) return;
       const to = p.clone().sub(muzzle);
       const d = to.length();
       if (d < 5 || d > range) return;
@@ -1354,7 +1411,7 @@ export class Game {
   private botJetSlot(team: Team): boolean {
     const free = this.jetFreeSince[team];
     if (free < 0) return false;
-    return team !== PLAYER_TEAM || this.simTime - free > BOT_JETS.playerFirst;
+    return team !== this.myTeam || this.simTime - free > BOT_JETS.playerFirst;
   }
 
   /** Bots that deployed into a vehicle seat this step (bot id -> vehicle id). */
@@ -1380,7 +1437,7 @@ export class Game {
   private tryEnterVehicle(): boolean {
     const v = this.vehicles?.nearest(this.player.feet);
     if (!v) return false;
-    const seat = v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID));
+    const seat = v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === this.myId));
     if (seat < 0) return false;
     this.enterSeat(v, seat);
     return true;
@@ -1388,7 +1445,7 @@ export class Game {
 
   private enterSeat(v: Vehicle, seat: number): void {
     if (this.ride) this.ride.v.seats[this.ride.seat] = null;
-    v.seats[seat] = { id: PLAYER_ID, team: PLAYER_TEAM };
+    v.seats[seat] = { id: this.myId, team: this.myTeam };
     this.ride = { v, seat };
     this.gadgetOut = false;
     this.buildMode = false;
@@ -1442,7 +1499,7 @@ export class Game {
       return;
     }
     if (input.viewToggle) this.rideThird = !this.rideThird;
-    const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === PLAYER_ID);
+    const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
     const want = input.weaponSlot;
     if (want >= 0 && want < v.seats.length && free(want)) this.enterSeat(v, want);
     else if (input.weaponCycle !== 0) {
@@ -1463,7 +1520,7 @@ export class Game {
     const p = this.player;
     if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
     if (seat.gun) this.stepVehicleGun(v, at, input.fire, dt);
-    if (v.altMounts[at] && v.pullTrigger(at, input.ads, this.simTime, dt, true)) this.fireMount(v, at, { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM }, null, true);
+    if (v.altMounts[at] && v.pullTrigger(at, input.ads, this.simTime, dt, true)) this.fireMount(v, at, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, null, true);
     const eye = v.seatEye(at, this.tmpEye);
     this.player.ride(eye, v.velocity);
   }
@@ -1475,7 +1532,7 @@ export class Game {
     const mark = (pos: THREE.Vector3, team: Team | null, recon: boolean): void => {
       const m = (marks[n++] ??= { pos: new THREE.Vector3(), friendly: false, recon: false });
       m.pos.copy(pos);
-      m.friendly = team === PLAYER_TEAM;
+      m.friendly = team === this.myTeam;
       m.recon = recon;
     };
     for (const v of this.vehicles?.vehicles ?? []) if (v.flight && !v.wrecked && v !== this.ride?.v) mark(v.model.root.position, v.team ?? v.home, false);
@@ -1542,7 +1599,7 @@ export class Game {
     if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
     // Aircraft guns (the pilot's seat): where the crosshair points, near the nose.
     if (v.flight && v.spec.seats[seat]!.role === 'driver') {
-      this.fireMount(v, seat, { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM }, this.jetGunAim(v, seat));
+      this.fireMount(v, seat, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, this.jetGunAim(v, seat));
       return;
     }
     // Aim: what the view centre points at.
@@ -1551,7 +1608,7 @@ export class Game {
     const range = v.mounts[seat]!.gun.range;
     const look = this.physics.raycast(cam.position, fwd, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
     const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, range);
-    this.fireMount(v, seat, { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM }, aim);
+    this.fireMount(v, seat, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, aim);
   }
 
   /**
@@ -1563,7 +1620,7 @@ export class Game {
     const m = (alt ? v.altMounts : v.mounts)[seat];
     if (!m) return;
     const gun = m.gun;
-    const byPlayer = shooter.id === PLAYER_ID;
+    const byPlayer = shooter.id === this.myId;
     const muzzle = v.muzzleOf(seat, new THREE.Vector3());
     // No aim point: straight ahead along the plane's flight path.
     const nose = v.velocity.lengthSq() > 1 ? v.velocity.clone().normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(v.quat);
@@ -1609,9 +1666,9 @@ export class Game {
       const isVehicle = !!this.vehicles?.get(target.owner.id);
       const dmg = isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5);
       const source: DamageSource = { pos: muzzle.clone(), name: shooter.name, team: shooter.team, weapon: name, id: shooter.id };
-      const killed = target.owner.id === PLAYER_ID ? this.damagePlayer(dmg, muzzle, 'bullet', source) : target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'heavy');
+      const killed = target.owner.id === this.myId ? this.damagePlayer(dmg, muzzle, 'bullet', source) : target.owner.applyDamage(dmg, target.part, source, gun.blast > 0 ? 'at' : 'heavy');
       this.bus.emit('combat:hit', { targetId: target.owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer });
-      if (killed) this.reportKill(shooter, target.owner.id, target.owner.id === PLAYER_ID ? this.playerCombatant.name : target.owner.name, target.owner.team ?? null, name);
+      if (killed) this.reportKill(shooter, target.owner.id, target.owner.id === this.myId ? this.playerCombatant.name : target.owner.name, target.owner.team ?? null, name);
     } else if (hit && !target) {
       this.bus.emit('combat:impact', { point: to, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), surface: this.impacts.get(hit.collider.handle, hit.point) });
     }
@@ -1633,16 +1690,16 @@ export class Game {
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon: name, id: owner.id };
     if (target && target.team !== owner.team && target.id >= 0) {
       if (this.vehicles?.get(target.id)) target.applyDamage(spec.vsVehicle, part, source, 'at');
-      else if (target.id === PLAYER_ID) {
+      else if (target.id === this.myId) {
         if (this.damagePlayer(999, point, 'explosion', source)) {
-          this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, name);
+          this.reportKill(owner, this.myId, this.playerCombatant.name, this.myTeam, name);
           this.me.die('explosion', source);
         }
       } else {
         const bot = this.bots?.bots.find((b) => b.id === target.id);
         if (bot?.alive) {
           bot.killOutright(source);
-          this.bus.emit('combat:hit', { targetId: bot.id, part, damage: 999, killed: true, point: point.clone(), byPlayer: owner.id === PLAYER_ID });
+          this.bus.emit('combat:hit', { targetId: bot.id, part, damage: 999, killed: true, point: point.clone(), byPlayer: owner.id === this.myId });
           this.reportKill(owner, bot.id, bot.name, bot.team, name);
         } else if (!bot) target.applyDamage(spec.vsVehicle, part, source, 'at'); // a recon plane
 
@@ -1659,12 +1716,12 @@ export class Game {
     this.effects.explosion(at.clone().setY(at.y + 1));
     this.audio.explosion(at, this.renderer.camera.position.distanceTo(at));
     this.renderer.requestShadowUpdate();
-    const owner: GrenadeOwner = { id: by?.id ?? -1, name: by?.name ?? '', team: by?.team ?? otherTeam(PLAYER_TEAM) };
+    const owner: GrenadeOwner = { id: by?.id ?? -1, name: by?.name ?? '', team: by?.team ?? otherTeam(this.myTeam) };
     const weapon = by?.weapon ?? t(`vehicle.${v.kind}`);
     if (this.ride?.v === v) {
       this.leaveVehicle();
       if (this.damagePlayer(999, at, 'explosion', by ?? undefined)) {
-        if (by && by.id !== PLAYER_ID) this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
+        if (by && by.id !== this.myId) this.reportKill(owner, this.myId, this.playerCombatant.name, this.myTeam, weapon);
         this.me.die('explosion', by ?? undefined);
       }
     }
@@ -1677,12 +1734,12 @@ export class Game {
   /** Someone run over: down (or dead) and credited to the driver. */
   private roadkill(v: Vehicle, victim: Walker): void {
     const d = v.driver!;
-    const isPlayer = d.id === PLAYER_ID;
+    const isPlayer = d.id === this.myId;
     const name = isPlayer ? playerName(t('feed.you')) : (this.bots?.bots.find((b) => b.id === d.id)?.name ?? '');
     const weapon = t(`vehicle.${v.kind}`);
     const source: DamageSource = { pos: v.pos.clone(), name, team: d.team, weapon, id: d.id };
-    if (victim.id === PLAYER_ID) {
-      if (this.damagePlayer(999, v.pos, 'explosion', source)) this.reportKill({ id: d.id, name, team: d.team }, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
+    if (victim.id === this.myId) {
+      if (this.damagePlayer(999, v.pos, 'explosion', source)) this.reportKill({ id: d.id, name, team: d.team }, this.myId, this.playerCombatant.name, this.myTeam, weapon);
       return;
     }
     const bot = this.bots?.bots.find((b) => b.id === victim.id);
@@ -1704,7 +1761,7 @@ export class Game {
     const sq = this.playerSquad;
     if (!sq || !this.player.alive || !this.deployed) return null;
     const cooldown = {} as Record<SupportId, number>;
-    for (const id of SUPPORT_ORDER) cooldown[id] = this.support.cooldown(PLAYER_TEAM, id);
+    for (const id of SUPPORT_ORDER) cooldown[id] = this.support.cooldown(this.myTeam, id);
     return { rp: this.squadRpOf(sq), cooldown, aiming: this.supportAim };
   }
 
@@ -1716,7 +1773,7 @@ export class Game {
     // The rocket tank isn't aimed: it comes to the zone nearest the leader.
     if (id === 'rocketTank') {
       const sq = this.playerSquad!;
-      const owner: GadgetOwner = { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM, squad: `${sq.team}:${sq.name}` };
+      const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: `${sq.team}:${sq.name}` };
       if (this.support.request(id, this.player.feet, owner, s.rp, false)) this.audio.click();
       return;
     }
@@ -1759,7 +1816,7 @@ export class Game {
     this.supportPoint = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : null;
     if (input.firePressed && this.supportPoint) {
       const sq = this.playerSquad!;
-      const owner: GadgetOwner = { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM, squad: `${sq.team}:${sq.name}` };
+      const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: `${sq.team}:${sq.name}` };
       if (this.support.request(this.supportAim, this.supportPoint, owner, state.rp, true)) {
         this.hud.notify(t('support.called').replace('{name}', t(`support.${this.supportAim}`)), 'ally');
         this.audio.click();
@@ -1797,7 +1854,7 @@ export class Game {
    */
   private crateResupply(team: Team, pos: THREE.Vector3, reach: number): boolean {
     const p = this.player;
-    if (team === PLAYER_TEAM && p.alive && this.deployed && p.feet.distanceTo(pos) < reach) {
+    if (team === this.myTeam && p.alive && this.deployed && p.feet.distanceTo(pos) < reach) {
       const need =
         this.weapons.needsAmmo ||
         this.grenades.count < GRENADE_COUNT[this.grenades.selected] ||
@@ -1848,7 +1905,7 @@ export class Game {
     }
     if (!input.firePressed || this.gadgetBusy > 0) return;
     const p = this.player;
-    const owner: GadgetOwner = { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM, squad: this.squadKeyOf(PLAYER_TEAM, PLAYER_ID) };
+    const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: this.squadKeyOf(this.myTeam, this.myId) };
     const { eye, fwd, right, up } = this.weapons.aimBasis(p);
     const g = this.gadget;
     if (g === 'panzerfaust' || g === 'riflesmoke') {
@@ -1889,7 +1946,7 @@ export class Game {
     if (!type) return;
     const { eye, fwd, right, up } = this.weapons.aimBasis(this.player);
     const origin = eye.clone().addScaledVector(fwd, 0.45).addScaledVector(right, -0.15).addScaledVector(up, -0.05);
-    this.throwables.throw(type, origin, fwd.clone(), this.player.velocity.clone(), { id: PLAYER_ID, name: playerName(t('feed.you')), team: PLAYER_TEAM });
+    this.throwables.throw(type, origin, fwd.clone(), this.player.velocity.clone(), { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam });
     this.throwBlock = THROW_BLOCK;
     this.throwCooldown = THROW_COOLDOWN;
     this.bus.emit('grenade:thrown', { type, remaining: this.grenades.count });
@@ -1910,7 +1967,7 @@ export class Game {
    */
   private blast(kind: BlastKind, point: THREE.Vector3, owner: GrenadeOwner, weapon: string): void {
     const spec = BLASTS[kind];
-    const byPlayer = owner.id === PLAYER_ID;
+    const byPlayer = owner.id === this.myId;
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
     const listenerDist = this.renderer.camera.position.distanceTo(point);
     const probe = point.clone().setY(point.y + 0.25);
@@ -1924,7 +1981,7 @@ export class Game {
     }
     if (kind === 'frag') this.gadgets.blast(point, spec.radius * 0.6);
     for (const v of this.vehicles?.vehicles ?? []) {
-      if (v.wrecked || (v.team && v.team === owner.team && owner.id !== PLAYER_ID)) continue;
+      if (v.wrecked || (v.team && v.team === owner.team && owner.id !== this.myId)) continue;
       // Distance to the hull, roughly.
       const d = Math.max(0, v.pos.distanceTo(point) - Math.min(v.spec.half[0], v.spec.half[2]));
       const dmg = fragDamage(spec, d, false);
@@ -1949,12 +2006,12 @@ export class Game {
       if (killed) this.reportKill(owner, b.id, b.name, b.team, weapon);
     }
     // Your own blast hurts you; teammates' don't.
-    if (byPlayer || owner.team !== PLAYER_TEAM) {
+    if (byPlayer || owner.team !== this.myTeam) {
       const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
       const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
       const killed = dmg > 0 && this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
       // An enemy's blast: report the kill like a bullet kill (feed, scoreboard).
-      if (killed && !byPlayer) this.reportKill(owner, PLAYER_ID, this.playerCombatant.name, PLAYER_TEAM, weapon);
+      if (killed && !byPlayer) this.reportKill(owner, this.myId, this.playerCombatant.name, this.myTeam, weapon);
     }
   }
 
@@ -1962,15 +2019,15 @@ export class Game {
   private rocketHit(target: Damageable, part: HitPart, point: THREE.Vector3, owner: GadgetOwner): void {
     if (target.team === owner.team || target.id < 0) return;
     const weapon = t('gadget.assault');
-    const byPlayer = owner.id === PLAYER_ID;
+    const byPlayer = owner.id === this.myId;
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
     const killed = target.applyDamage(ROCKET.directDamage, part, source, 'at');
     this.bus.emit('combat:hit', { targetId: target.id, part, damage: ROCKET.directDamage, killed, point: point.clone(), byPlayer });
-    if (killed) this.reportKill(owner, target.id, target.id === PLAYER_ID ? this.playerCombatant.name : target.name, target.team ?? null, weapon);
+    if (killed) this.reportKill(owner, target.id, target.id === this.myId ? this.playerCombatant.name : target.name, target.team ?? null, weapon);
   }
 
   private reportKill(owner: GrenadeOwner, victimId: number, victim: string, victimTeam: Team | null, weapon: string): void {
-    const byPlayer = owner.id === PLAYER_ID;
+    const byPlayer = owner.id === this.myId;
     this.bus.emit('combat:kill', {
       attacker: byPlayer ? 'You' : owner.name,
       victim,
@@ -2050,12 +2107,12 @@ export class Game {
     let give: Bot | null = null;
     let giveD = GIVE_RANGE;
     for (const b of bots.bots) {
-      if (b.team !== PLAYER_TEAM) continue;
+      if (b.team !== this.myTeam) continue;
       const d = b.feet.distanceTo(feet);
       if (b.downed && d < reviveD) {
         revive = b;
         reviveD = d;
-      } else if (this.cls === 'medic' && b.alive && b.medkits === 0 && d < giveD && this.giveOk(`${PLAYER_ID}>${b.id}:kit`)) {
+      } else if (this.cls === 'medic' && b.alive && b.medkits === 0 && d < giveD && this.giveOk(`${this.myId}>${b.id}:kit`)) {
         give = b;
         giveD = d;
       }
@@ -2083,8 +2140,8 @@ export class Game {
       this.interact = { kind: 'medkit', bot: give };
       if (input.interactPressed) {
         give.medkits = MEDKIT.carried;
-        this.giveReady.set(`${PLAYER_ID}>${give.id}:kit`, this.simTime + MEDKIT.giveCooldown);
-        this.scores.resupply(PLAYER_ID);
+        this.giveReady.set(`${this.myId}>${give.id}:kit`, this.simTime + MEDKIT.giveCooldown);
+        this.scores.resupply(this.myId);
         this.audio.resupply();
       }
       return;
@@ -2116,7 +2173,7 @@ export class Game {
     let job: FortJob | null = null;
     let note: string | null = null;
     if (station) {
-      const owned = this.zoneMode?.zone(station.zone)?.owner === PLAYER_TEAM;
+      const owned = this.zoneMode?.zone(station.zone)?.owner === this.myTeam;
       const need =
         station.kind === 'ammo'
           ? this.weapons.needsAmmo || this.grenades.count < GRENADE_COUNT[this.grenades.selected] || (!!this.gadget && this.gadgetCount < GADGETS[this.gadget].count)
@@ -2153,12 +2210,12 @@ export class Game {
     if (job.type === 'use') return;
     if (job.type === 'refill') {
       if (fort.refill(job.station, dt)) {
-        this.scores.award(PLAYER_ID, REFILL_POINTS);
+        this.scores.award(this.myId, REFILL_POINTS);
         this.audio.resupply();
       }
     } else {
       const r = fort.work(job.slot, dt, this.cls, (s) => this.inTheWay(s));
-      this.scores.award(PLAYER_ID, r.points);
+      this.scores.award(this.myId, r.points);
       if (r.done) {
         this.hud.notify(`${t(`fort.${job.slot.kind}` as MessageKey)} ${t('fort.built')}`, 'ally');
         this.audio.resupply();
@@ -2185,18 +2242,18 @@ export class Game {
     const needAmmo = this.weapons.needsAmmo;
     if (!needKit && !needAmmo) return;
     for (const b of bots.bots) {
-      if (b.team !== PLAYER_TEAM || !b.alive || b.target || b.feet.distanceTo(feet) > GIVE_RANGE) continue;
-      if (needKit && b.cls === 'medic' && this.giveOk(`${b.id}>${PLAYER_ID}:kit`)) {
+      if (b.team !== this.myTeam || !b.alive || b.target || b.feet.distanceTo(feet) > GIVE_RANGE) continue;
+      if (needKit && b.cls === 'medic' && this.giveOk(`${b.id}>${this.myId}:kit`)) {
         this.medkits = MEDKIT.carried;
-        this.giveReady.set(`${b.id}>${PLAYER_ID}:kit`, this.simTime + MEDKIT.giveCooldown);
+        this.giveReady.set(`${b.id}>${this.myId}:kit`, this.simTime + MEDKIT.giveCooldown);
         this.scores.resupply(b.id);
         this.hud.notify(`${t('notify.gotMedkit')} — ${b.name}`, 'ally');
         this.audio.resupply();
         return;
       }
-      if (needAmmo && b.cls === 'support' && this.giveOk(`${b.id}>${PLAYER_ID}:ammo`)) {
+      if (needAmmo && b.cls === 'support' && this.giveOk(`${b.id}>${this.myId}:ammo`)) {
         this.weapons.refillReserve();
-        this.giveReady.set(`${b.id}>${PLAYER_ID}:ammo`, this.simTime + AMMO_GIVE_COOLDOWN);
+        this.giveReady.set(`${b.id}>${this.myId}:ammo`, this.simTime + AMMO_GIVE_COOLDOWN);
         this.scores.resupply(b.id);
         this.hud.notify(`${t('notify.gotAmmo')} — ${b.name}`, 'ally');
         this.audio.resupply();
@@ -2210,13 +2267,16 @@ export class Game {
     if (this.chute) this.dropChute();
 
     let at: { pos: THREE.Vector3; yaw: number };
-    if (this.bots) at = this.spawnFor(PLAYER_TEAM, key, PLAYER_ID);
+    if (this.bots) at = this.spawnFor(this.myTeam, key, this.myId);
     else {
       const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
       at = { pos: new THREE.Vector3(...sp.pos), yaw: sp.yaw * DEG };
     }
-    // The loadout picked on the deploy screen takes effect now.
-    const kit = this.loadouts.current;
+    this.startLife(at, this.loadouts.current, key);
+  }
+
+  /** A new life at `at` with `kit` (the loadout picked on the deploy screen); `key`: what was picked to deploy at. */
+  private startLife(at: { pos: THREE.Vector3; yaw: number }, kit: Loadout, key: string): void {
     this.reconZoom = false;
     this.gadget = classGadget(kit.cls, kit.reconGadget);
     this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
@@ -2231,16 +2291,16 @@ export class Game {
     this.me.spawn(at.pos, at.yaw, kit, this.options.sandbox ? this.options.loadout : null);
     // Deployed in a tank: it comes out at the base with the player at the controls.
     if (key.startsWith('tank:') && this.vehicles) {
-      const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, PLAYER_TEAM);
+      const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, this.myTeam);
       if (v) this.enterSeat(v, 0);
     }
     if (key.startsWith('veh:') && this.vehicles) {
       const v = this.vehicles.get(Number(key.slice(4)));
-      const seat = v ? this.freeSeatFor(v, PLAYER_TEAM, PLAYER_ID) : -1;
+      const seat = v ? this.freeSeatFor(v, this.myTeam, this.myId) : -1;
       if (v && seat >= 0) this.enterSeat(v, seat);
     }
     if (key.startsWith('jet:') && this.vehicles) {
-      const v = this.spawnJet(key.slice(4) as VehicleKind, PLAYER_TEAM);
+      const v = this.spawnJet(key.slice(4) as VehicleKind, this.myTeam);
       if (v) this.enterSeat(v, 0);
     }
   }
@@ -2316,7 +2376,7 @@ export class Game {
       return;
     }
     if (!this.rider) {
-      this.rider = new SoldierModel(PLAYER_TEAM, this.weapons.def);
+      this.rider = new SoldierModel(this.myTeam, this.weapons.def);
       this.renderer.scene.add(this.rider.root);
     }
     const eye = r.v.seatEye(r.seat, new THREE.Vector3(), alpha);
@@ -2384,7 +2444,7 @@ export class Game {
     let best: AssistTarget | null = null;
     let bestOff = cone;
     let bestPos: THREE.Vector3 | null = null;
-    for (const e of this.bots.enemiesOf(PLAYER_TEAM)) {
+    for (const e of this.bots.enemiesOf(this.myTeam)) {
       if (!e.alive) continue;
       const dx = e.feet.x - eye.x;
       const dz = e.feet.z - eye.z;
@@ -2419,17 +2479,18 @@ export class Game {
     f.yaw = p.yaw;
     const zm = this.zoneMode;
     f.zones = zm
-      ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: z.owner === null ? null : z.owner === PLAYER_TEAM ? 'ally' : 'enemy', contested: z.contested }))
+      ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: z.owner === null ? null : z.owner === this.myTeam ? 'ally' : 'enemy', contested: z.contested }))
       : [];
     f.allies.length = 0;
     f.enemies.length = 0;
     if (this.bots) {
       const squad = this.playerSquad;
       for (const b of this.bots.bots) {
-        if (b.alive && b.team === PLAYER_TEAM) f.allies.push({ x: b.feet.x, z: b.feet.z, squad: !!squad?.has(b.id) });
+        if (b.alive && b.team === this.myTeam) f.allies.push({ x: b.feet.x, z: b.feet.z, squad: !!squad?.has(b.id) });
       }
-      for (const e of this.bots.spottedEnemies(PLAYER_TEAM, p.feet)) f.enemies.push({ x: e.feet.x, z: e.feet.z });
+      for (const e of this.bots.spottedEnemies(this.myTeam, p.feet)) f.enemies.push({ x: e.feet.x, z: e.feet.z });
     }
+    if (this.net) for (const o of this.net.others()) if (o.alive && o.team === this.myTeam) f.allies.push({ x: o.feet.x, z: o.feet.z, squad: false });
     mm.draw(f, dt);
   }
 
@@ -2488,7 +2549,7 @@ export class Game {
       if (f) {
         const below = this.physics.raycast(v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
         parts.splice(1, 0, t('jet.hud').replace('{alt}', String(Math.round(below ? below.distance : v.pos.y))).replace('{spd}', String(Math.round(f.speed * 3.6))).replace('{thr}', String(Math.round(f.throttle * 100))));
-        if (v.altMounts[seat]?.gun.homing && this.lockTarget(v, PLAYER_TEAM)) parts.splice(2, 0, t('jet.locked'));
+        if (v.altMounts[seat]?.gun.homing && this.lockTarget(v, this.myTeam)) parts.splice(2, 0, t('jet.locked'));
         if (f.turningBack) parts.splice(2, 0, t('jet.airspace'));
         if (!this.touch) parts.push(t('jet.controls'));
       }
@@ -2572,7 +2633,7 @@ export class Game {
         down,
         prompt,
         killedBy: this.killedBy,
-        score: this.bots ? { allies: this.bots.score(PLAYER_TEAM), enemies: this.bots.score(otherTeam(PLAYER_TEAM)) } : null,
+        score: this.bots ? { allies: this.bots.score(this.myTeam), enemies: this.bots.score(otherTeam(this.myTeam)) } : null,
         zone: this.zoneHud(),
         squad: this.squadHud(),
         fps: this.settings.showFps ? this.fps : null,
@@ -2601,23 +2662,23 @@ export class Game {
   private setupZoneMode(map: MapDef, terrain: Terrain, mode: ModeKind | undefined): void {
     const b = this.options.bots;
     const teamSize = { blue: 0, red: 0 };
-    teamSize[PLAYER_TEAM] = (b?.allies ?? 0) + 1;
-    teamSize[otherTeam(PLAYER_TEAM)] = b?.enemies ?? 1;
+    teamSize[this.myTeam] = (b?.allies ?? 0) + 1;
+    teamSize[otherTeam(this.myTeam)] = b?.enemies ?? 1;
     const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize });
     this.zoneMode = zm;
     if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
-    const side = (team: Team): Side => (team === PLAYER_TEAM ? 'ally' : 'enemy');
-    this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
+    const side = (team: Team): Side => (team === this.myTeam ? 'ally' : 'enemy');
+    if (!this.options.net) this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
     this.bus.on('zone:captured', (e) => {
-      const ours = e.team === PLAYER_TEAM;
+      const ours = e.team === this.myTeam;
       this.hud.notify(`${e.zone} ${t(ours ? 'zone.captured' : 'zone.enemyCaptured')}`, side(e.team));
       this.audio.zoneCue(ours);
       this.bots?.replan('blue');
       this.bots?.replan('red');
     });
     this.bus.on('zone:neutralized', (e) => {
-      const ours = e.team === PLAYER_TEAM;
+      const ours = e.team === this.myTeam;
       this.hud.notify(`${e.zone} ${t(ours ? 'zone.lost' : 'zone.enemyLost')}`, ours ? 'enemy' : 'ally');
       this.audio.zoneCue(!ours);
       if (ours && this.spawnKey === `zone:${e.zone}`) this.spawnKey = 'base';
@@ -2629,7 +2690,7 @@ export class Game {
 
     // Scoreboard stats; the player's own points pop up under the crosshair.
     this.scores.onPoints = (id, points, reason) => {
-      if (id === PLAYER_ID) this.hud.scorePopup(points, t(`points.${reason}`));
+      if (id === this.myId) this.hud.scorePopup(points, t(`points.${reason}`));
     };
     this.bus.on('combat:kill', (e) => this.scores.kill(e.attackerId, e.victimId, e.headshot));
     this.bus.on('combatant:died', (e) => this.scores.death(e.id));
@@ -2725,7 +2786,7 @@ export class Game {
     const alive = new Map<number, boolean>();
     for (const c of this.combatants()) alive.set(c.id, c.alive);
     const side = (team: Team): ScoreboardSide => ({
-      label: t(team === PLAYER_TEAM ? 'hud.allies' : 'hud.enemies'),
+      label: t(team === this.myTeam ? 'hud.allies' : 'hud.enemies'),
       stat: zm ? this.modeScoreLine(team) : null,
       kills: this.scores.totals(team).kills,
       rows: this.scores.table(team).map((r) => ({
@@ -2736,11 +2797,11 @@ export class Game {
         captures: r.captures,
         score: r.score,
         alive: alive.get(r.id) ?? false,
-        you: r.id === PLAYER_ID,
-        mate: r.id !== PLAYER_ID && !!this.playerSquad?.has(r.id),
+        you: r.id === this.myId,
+        mate: r.id !== this.myId && !!this.playerSquad?.has(r.id),
       })),
     });
-    this.scoreboard.update(side(PLAYER_TEAM), side(otherTeam(PLAYER_TEAM)));
+    this.scoreboard.update(side(this.myTeam), side(otherTeam(this.myTeam)));
   }
 
   // ---------------------------------------------------------------------------
@@ -2751,13 +2812,13 @@ export class Game {
     const blue = bots.bots.filter((b) => b.team === 'blue');
     const red = bots.bots.filter((b) => b.team === 'red');
     this.squads = [...formSquads('blue', [this.playerCombatant, ...blue]), ...formSquads('red', red)];
-    for (const c of [this.playerCombatant, ...blue, ...red]) this.scores.add(c.id, c.id === PLAYER_ID ? playerName(t('feed.you')) : c.name, c.team);
-    this.playerSquad = this.squads.find((s) => s.has(PLAYER_ID)) ?? null;
+    for (const c of [this.playerCombatant, ...blue, ...red]) this.scores.add(c.id, c.id === this.myId ? playerName(t('feed.you')) : c.name, c.team);
+    this.playerSquad = this.squads.find((s) => s.has(this.myId)) ?? null;
     bots.setSquads(
       this.squads.map((sq) => ({
         index: sq.index,
-        botIds: sq.members.filter((m) => m.id !== PLAYER_ID).map((m) => m.id),
-        leader: sq.has(PLAYER_ID) ? this.playerCombatant : null,
+        botIds: sq.members.filter((m) => m.id !== this.myId).map((m) => m.id),
+        leader: sq.has(this.myId) ? this.playerCombatant : null,
       })),
     );
     // The player's fights are the squad's fights: whoever they hit or get shot by.
@@ -2780,7 +2841,7 @@ export class Game {
     // Revives: points to the reviver, a line in the feed for the player's side.
     this.bus.on('combatant:revived', (e) => {
       this.scores.revive(e.byId, e.medic);
-      if (e.team === PLAYER_TEAM && e.byId !== PLAYER_ID && e.id !== PLAYER_ID) {
+      if (e.team === this.myTeam && e.byId !== this.myId && e.id !== this.myId) {
         this.hud.addKill({ attacker: e.byName, victim: e.name, weapon: `✚ ${t('feed.revived')}`, headshot: false, attackerTeam: e.team, victimTeam: e.team });
       }
     });
@@ -2793,7 +2854,7 @@ export class Game {
       penalized.add(sq);
       // Everyone in a wiped squad waits longer.
       for (const m of sq.members) {
-        if (m.id === PLAYER_ID) this.respawnTimer += WIPE_PENALTY;
+        if (m.id === this.myId) this.respawnTimer += WIPE_PENALTY;
         else (m as Bot).respawnPenalty = WIPE_PENALTY;
       }
       if (sq === this.playerSquad) {
@@ -2829,6 +2890,20 @@ export class Game {
     const opts = this.deployOptions();
     const choice = opts.find((o) => o.key === this.spawnKey && !o.blocked) ?? opts[0]!;
     this.audio.unlock();
+    if (this.net) {
+      if (this.netDeploying) return;
+      this.netDeploying = true;
+      this.loadoutPanel?.close();
+      this.net.deploy(choice.key, this.loadouts.current);
+      this.deployScreen!.hide();
+      // No answer (the server said no: still waiting to respawn): the deploy screen again.
+      window.setTimeout(() => (this.netDeploying = false), 3000);
+      if (this.touch) {
+        this.enterFullscreen();
+        this.touch.setVisible(true);
+      } else this.kbm.requestLock();
+      return;
+    }
     this.deployed = true;
     this.loadoutPanel?.close();
     this.respawn(choice.key);
@@ -2841,7 +2916,7 @@ export class Game {
   }
 
   private baseCenter(team: Team): THREE.Vector3 {
-    const list = this.mapSpawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+    const list = this.mapSpawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
     return list.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(Math.max(1, list.length));
   }
 
@@ -2851,7 +2926,7 @@ export class Game {
     // A bot deploying into a vehicle seat: seated right after the respawn (see
     // `seatPending`), and meanwhile at its base, so if the seat has gone by
     // then (taken, wrecked) it is on the ground there, not where a plane was.
-    if (kind === 'veh' && selfId !== PLAYER_ID) {
+    if (kind === 'veh' && selfId !== this.myId) {
       const v = this.vehicles?.get(Number(id));
       let pending = 0;
       for (const vid of this.pendingSeats.values()) if (vid === v?.id) pending++;
@@ -2861,7 +2936,7 @@ export class Game {
       }
     }
     // A bot respawning into a new jet: seated right after (see `seatPending`), at its base meanwhile.
-    if (kind === 'jet' && selfId !== PLAYER_ID) {
+    if (kind === 'jet' && selfId !== this.myId) {
       const v = this.spawnJet(JET_KINDS[Math.floor(Math.random() * JET_KINDS.length)]!, team);
       if (v) {
         this.pendingSeats.set(selfId, v.id);
@@ -2883,7 +2958,7 @@ export class Game {
     }
     const zm = this.zoneMode;
     if (zm) return zm.spawnPoint(team, kind === 'zone' ? id! : 'base', this.nav);
-    const list = this.mapSpawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+    const list = this.mapSpawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
     const sp = list[Math.floor(Math.random() * list.length)];
     const pos = sp ? new THREE.Vector3(...sp.pos) : this.baseCenter(team);
     return { pos: this.nav?.randomAround(pos, 3) ?? pos, yaw: (sp?.yaw ?? 0) * DEG };
@@ -2891,7 +2966,7 @@ export class Game {
 
   /** Combatant `id` (the player or a bot) sits in a vehicle. */
   private riding(id: number): boolean {
-    if (id === PLAYER_ID) return !!this.ride;
+    if (id === this.myId) return !!this.ride;
     return !!this.bots?.bots.find((b) => b.id === id)?.riding;
   }
 
@@ -2914,7 +2989,7 @@ export class Game {
     const now = this.bots!.time;
     const sq = this.squads.find((s) => s.team === bot.team && s.has(bot.id));
     const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, now, this.riding(m.id))) : [];
-    if (sq === this.playerSquad && mates.some((m) => m.id === PLAYER_ID)) return `mate:${PLAYER_ID}`;
+    if (sq === this.playerSquad && mates.some((m) => m.id === this.myId)) return `mate:${this.myId}`;
     // Now and then straight into a new jet while the side is short of its limit
     // (owner, 2026-10-02: bots hardly flew; jets went only to bots back at their base).
     const vw = this.vehicles;
@@ -2950,29 +3025,29 @@ export class Game {
 
   private deployOptions(): DeployOption[] {
     const out: DeployOption[] = [];
-    const base = this.baseCenter(PLAYER_TEAM);
+    const base = this.baseCenter(this.myTeam);
     out.push({ key: 'base', kind: 'base', label: t('spawn.base'), x: base.x, z: base.z, blocked: null, warn: null });
     const zm = this.zoneMode;
-    for (const o of zm?.spawnOptions(PLAYER_TEAM) ?? []) {
+    for (const o of zm?.spawnOptions(this.myTeam) ?? []) {
       if (o.id === 'base') continue;
       const z = zm!.zone(o.id)!;
       out.push({ key: `zone:${o.id}`, kind: 'zone', label: `${t('spawn.zone')} ${o.id}`, x: z.x, z: z.z, blocked: null, warn: o.underAttack ? t('deploy.underAttack') : null });
     }
     // Spawn beacons the squad's recons put down.
-    for (const b of this.gadgets.beaconsFor(PLAYER_TEAM, this.squadKeyOf(PLAYER_TEAM, PLAYER_ID))) {
-      const who = b.owner.id === PLAYER_ID ? playerName(t('feed.you')) : b.owner.name;
+    for (const b of this.gadgets.beaconsFor(this.myTeam, this.squadKeyOf(this.myTeam, this.myId))) {
+      const who = b.owner.id === this.myId ? playerName(t('feed.you')) : b.owner.name;
       out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${who}) ×${b.uses}`, x: b.pos.x, z: b.pos.z, blocked: null, warn: null });
     }
     // Tanks: start in one at the base, while the side is under its limit.
     const vw = this.vehicles;
-    if (vw && vw.tankSpots.some((s) => s.team === PLAYER_TEAM)) {
-      const full = vw.tanks(PLAYER_TEAM) >= vw.tankLimit();
-      const spot = vw.freeTankSpot(PLAYER_TEAM);
+    if (vw && vw.tankSpots.some((s) => s.team === this.myTeam)) {
+      const full = vw.tanks(this.myTeam) >= vw.tankLimit();
+      const spot = vw.freeTankSpot(this.myTeam);
       for (const kind of TANK_KINDS) {
         out.push({
           key: `tank:${kind}`,
           kind: 'vehicle',
-          label: `${t('spawn.tank')}: ${t(`vehicle.${kind}`)} (${vw.tanks(PLAYER_TEAM)}/${vw.tankLimit()})`,
+          label: `${t('spawn.tank')}: ${t(`vehicle.${kind}`)} (${vw.tanks(this.myTeam)}/${vw.tankLimit()})`,
           x: spot?.pos.x ?? base.x,
           z: spot?.pos.z ?? base.z,
           blocked: full ? t('deploy.tankLimit').replace('{n}', String(vw.tankLimit())) : !spot ? t('deploy.noRoom') : null,
@@ -2981,12 +3056,12 @@ export class Game {
       }
     }
     if (vw && vw.jetLimit() > 0) {
-      const full = vw.jets(PLAYER_TEAM) >= vw.jetLimit();
+      const full = vw.jets(this.myTeam) >= vw.jetLimit();
       for (const kind of JET_KINDS) {
         out.push({
           key: `jet:${kind}`,
           kind: 'vehicle',
-          label: `${t('spawn.jet')}: ${t(`vehicle.${kind}`)} (${vw.jets(PLAYER_TEAM)}/${vw.jetLimit()})`,
+          label: `${t('spawn.jet')}: ${t(`vehicle.${kind}`)} (${vw.jets(this.myTeam)}/${vw.jetLimit()})`,
           x: base.x,
           z: base.z,
           blocked: full ? t('deploy.tankLimit').replace('{n}', String(vw.jetLimit())) : null,
@@ -2996,7 +3071,7 @@ export class Game {
     }
     // A free seat in one of the side's tanks or jets: deploy aboard.
     for (const v of vw?.vehicles ?? []) {
-      const seat = this.freeSeatFor(v, PLAYER_TEAM, PLAYER_ID);
+      const seat = this.freeSeatFor(v, this.myTeam, this.myId);
       if (seat < 0) continue;
       const aboard = v.seats.filter((s) => s).length;
       out.push({
@@ -3010,7 +3085,7 @@ export class Game {
       });
     }
     const now = this.bots?.time ?? 0;
-    for (const m of this.playerSquad?.mates(PLAYER_ID) ?? []) {
+    for (const m of this.playerSquad?.mates(this.myId) ?? []) {
       const block = mateSpawnBlock(m, now, this.riding(m.id));
       out.push({
         key: `mate:${m.id}`,
@@ -3032,10 +3107,10 @@ export class Game {
     return {
       name: sq.name,
       members: sq.members.map((m) => ({
-        name: m.id === PLAYER_ID ? playerName(t('feed.you')) : m.name,
+        name: m.id === this.myId ? playerName(t('feed.you')) : m.name,
         // Before the first deploy the player is waiting, not dead.
         state:
-          m.id === PLAYER_ID
+          m.id === this.myId
             ? this.player.alive
               ? this.deployed && m.inCombat(now)
                 ? 'combat'
@@ -3050,7 +3125,7 @@ export class Game {
               : m.inCombat(now)
                 ? 'combat'
                 : 'ok',
-        you: m.id === PLAYER_ID,
+        you: m.id === this.myId,
       })),
     };
   }
@@ -3059,7 +3134,7 @@ export class Game {
     const options = this.deployOptions();
     const sel = options.find((o) => o.key === this.spawnKey && !o.blocked) ? this.spawnKey : 'base';
     const zm = this.zoneMode;
-    const tone = (team: Team | null) => (team === null ? 'neutral' : team === PLAYER_TEAM ? 'ally' : 'enemy') as 'ally' | 'enemy' | 'neutral';
+    const tone = (team: Team | null) => (team === null ? 'neutral' : team === this.myTeam ? 'ally' : 'enemy') as 'ally' | 'enemy' | 'neutral';
     const squad = this.squadHud();
     return {
       options,
@@ -3070,7 +3145,7 @@ export class Game {
       matchLine: zm ? this.deployMatchLine() : null,
       zones: zm ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: tone(z.owner), pushing: z.pushing !== null })) : [],
       enemyBase: (() => {
-        const b = this.baseCenter(otherTeam(PLAYER_TEAM));
+        const b = this.baseCenter(otherTeam(this.myTeam));
         return { x: b.x, z: b.z };
       })(),
       squad: squad && { name: squad.name, members: squad.members.map((m) => ({ ...m, name: m.you ? this.playerCombatant.name : m.name })) },
@@ -3085,19 +3160,19 @@ export class Game {
   private zoneHud(): ZoneHud | null {
     const zm = this.zoneMode;
     if (!zm) return null;
-    const side = (team: Team | null): Side | null => (team === null ? null : team === PLAYER_TEAM ? 'ally' : 'enemy');
-    const zones = zm.order(PLAYER_TEAM).map((id) => {
+    const side = (team: Team | null): Side | null => (team === null ? null : team === this.myTeam ? 'ally' : 'enemy');
+    const zones = zm.order(this.myTeam).map((id) => {
       const z = zm.zone(id)!;
       return { id: z.id, owner: side(z.owner), progress: ZoneRules.progress(z), pushing: side(z.pushing), contested: z.contested, locked: z.locked };
     });
     let here: ZoneHud['here'] = null;
     const inZone = this.player.alive ? zm.zoneAt(this.player.feet) : null;
     if (inZone) {
-      const ours = inZone.owner === PLAYER_TEAM;
+      const ours = inZone.owner === this.myTeam;
       let text: string;
       let tone: Side | 'neutral' = inZone.owner === null ? 'neutral' : ours ? 'ally' : 'enemy';
       if (inZone.contested) text = t('zone.contested');
-      else if (inZone.pushing === PLAYER_TEAM) {
+      else if (inZone.pushing === this.myTeam) {
         text = inZone.owner === null ? t('zone.capturing') : t('zone.neutralizing');
         tone = 'ally';
       } else if (inZone.pushing) {
@@ -3105,10 +3180,10 @@ export class Game {
         tone = 'enemy';
       } else text = inZone.owner === null ? t('zone.neutral') : ours ? t('zone.held') : t('zone.enemyHeld');
       // Bar: how much the zone leans toward us (full = ours).
-      const lean = PLAYER_TEAM === 'blue' ? inZone.control : -inZone.control;
+      const lean = this.myTeam === 'blue' ? inZone.control : -inZone.control;
       here = { id: inZone.id, text, progress: (lean + 1) / 2, tone };
     }
-    const us = PLAYER_TEAM;
+    const us = this.myTeam;
     const them = otherTeam(us);
     return {
       score: { allies: this.modeScore(us), enemies: this.modeScore(them), fill: { allies: this.modeFill(us), enemies: this.modeFill(them) } },
@@ -3155,7 +3230,7 @@ export class Game {
     if (m instanceof FrontlineRules) {
       const clock = t('mode.clock').replace('{t}', clockText(m.clock));
       if (!m.attacker) return { text: `${mode} · ${t('mode.opening')} ${clockText(m.timeLeft)} · ${clock}`, tone: 'neutral', urgent: false };
-      const ours = m.attacker === PLAYER_TEAM;
+      const ours = m.attacker === this.myTeam;
       return {
         text: `${t(ours ? 'mode.attack' : 'mode.defend')} ${clockText(m.timeLeft)} · ${clock}`,
         tone: ours ? 'ally' : 'enemy',
@@ -3163,7 +3238,7 @@ export class Game {
       };
     }
     if (m instanceof ConquestRules) {
-      const ours = m.attacker === PLAYER_TEAM;
+      const ours = m.attacker === this.myTeam;
       const sector = t('mode.sector').replace('{n}', String(Math.min(m.active + 1, m.sectors.length))).replace('{total}', String(m.sectors.length));
       if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${sector}`, tone: 'neutral', urgent: false };
       return { text: `${mode} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${sector}`, tone: ours ? 'ally' : 'enemy', urgent: false };
@@ -3174,14 +3249,14 @@ export class Game {
   /** The deploy screen's line: mode and score both sides. */
   private deployMatchLine(): string {
     const s = this.modeStatus();
-    const score = `${t('hud.allies')} ${this.modeScore(PLAYER_TEAM)}  ·  ${this.modeScore(otherTeam(PLAYER_TEAM))} ${t('hud.enemies')}`;
+    const score = `${t('hud.allies')} ${this.modeScore(this.myTeam)}  ·  ${this.modeScore(otherTeam(this.myTeam))} ${t('hud.enemies')}`;
     return s ? `${s.text}  ·  ${score}` : score;
   }
 
   /** Mode news on screen, and bots re-plan when the fight moves. */
   private onModeEvent(e: ModeEvent): void {
     const zm = this.zoneMode!;
-    const ours = (team: Team) => team === PLAYER_TEAM;
+    const ours = (team: Team) => team === this.myTeam;
     const m = zm.match;
     if (e.type === 'time') {
       const up = e.delta > 0;
@@ -3213,7 +3288,7 @@ export class Game {
       this.hud.notify(t(key), weAttack === (e.reason === 'held') ? 'ally' : 'enemy');
       this.audio.zoneCue(weAttack === (e.reason === 'held'));
     }
-    if (this.spawnKey.startsWith('zone:') && zm.zone(this.spawnKey.slice(5))?.owner !== PLAYER_TEAM) this.spawnKey = 'base';
+    if (this.spawnKey.startsWith('zone:') && zm.zone(this.spawnKey.slice(5))?.owner !== this.myTeam) this.spawnKey = 'base';
     this.bots?.replan('blue');
     this.bots?.replan('red');
   }
@@ -3221,7 +3296,7 @@ export class Game {
   /** The result screen's second line. */
   private resultLine(): string {
     const m = this.zoneMode!.match;
-    const us = PLAYER_TEAM;
+    const us = this.myTeam;
     const them = otherTeam(us);
     const reason = t(`match.reason.${m.reason ?? 'tickets'}`);
     if (m instanceof DominationRules) return `${reason} · ${t('hud.points')} ${m.points[us]} : ${m.points[them]}`;
@@ -3233,18 +3308,25 @@ export class Game {
     if (this.matchOver) return;
     this.matchOver = true;
     this.touch?.setVisible(false);
-    const won = winner === PLAYER_TEAM;
+    const won = winner === this.myTeam;
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'), won ? 'win' : 'loss');
-      this.overlay.setActions([
-        { label: t('lobby.again'), primary: true, onClick: () => location.reload() },
-        { label: t('lobby.back'), onClick: toLobby },
-      ]);
+      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t(this.net ? 'mp.again' : 'match.again'), won ? 'win' : 'loss');
+      this.overlay.setActions(
+        this.net
+          ? [
+              { label: t('mp.backToRoom'), primary: true, onClick: () => location.reload() },
+              { label: t('lobby.back'), onClick: () => this.quit() },
+            ]
+          : [
+              { label: t('lobby.again'), primary: true, onClick: () => location.reload() },
+              { label: t('lobby.back'), onClick: toLobby },
+            ],
+      );
       // Final standings under the result.
-      if (this.bots) {
+      if (this.bots || this.net) {
         this.fillScoreboard();
         this.scoreboard.setFinal(true);
         this.scoreboard.setVisible(true);
@@ -3252,6 +3334,148 @@ export class Game {
       }
       this.overlay.root.addEventListener('click', () => location.reload(), { once: true });
     }, 2500);
+  }
+
+  // ---------------------------------------------------------------------------
+  // A match on the game server
+
+  /** Out of the match to the main menu (the room is left first, so the seat isn't kept). */
+  private quit(): void {
+    if (this.net) {
+      this.net.link.send({ t: 'leave' });
+      this.net.link.close();
+    }
+    toLobby();
+  }
+
+  /** Others' models, the match connection, the deploy screen and the server's news. */
+  private async setupNet(map: MapDef, terrain: Terrain): Promise<void> {
+    const opts = this.options.net!;
+    await this.loadStep(0.72, 'load.soldiers');
+    await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
+    const r = this.renderer;
+    const net = new NetMatch(opts.link, opts.start, this.me, { scene: r.scene, physics: this.physics, registry: this.registry, audio: this.audio, effects: this.effects, camera: r.camera });
+    this.net = net;
+    net.onEvents = (ev) => this.onNetEvents(ev);
+    net.onState = (m) => this.onNetState(m);
+    net.onClosed = () => {
+      if (this.matchOver) return;
+      this.running = false;
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.overlay.show(t('mp.lost'), t('mp.lostSub'), '', 'info');
+      this.overlay.setActions([
+        { label: t('mp.reconnect'), primary: true, onClick: () => location.reload() },
+        { label: t('lobby.back'), onClick: toLobby },
+      ]);
+    };
+    net.onRoomBack = () => {
+      // Over with a winner: the result screen is already up. Ended by the room's owner: say so.
+      if (this.matchOver) return;
+      this.matchOver = true;
+      this.running = false;
+      this.touch?.setVisible(false);
+      this.deployScreen?.hide();
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.overlay.show(t('mp.ended'), t('mp.endedSub'), '', 'info');
+      this.overlay.setActions([
+        { label: t('mp.backToRoom'), primary: true, onClick: () => location.reload() },
+        { label: t('lobby.back'), onClick: () => this.quit() },
+      ]);
+    };
+    for (const s of opts.start.roster) this.scores.add(s.id, s.name, s.team);
+    this.deployFlow = true;
+    this.deployed = false;
+    this.playerBoxes.setEnabled(false);
+    this.deployScreen = new DeployScreen(
+      this.container,
+      this.mapImage ?? paintMap(map, terrain.boundary),
+      (key) => (this.spawnKey = key),
+      () => this.deploy(),
+      () => this.pause(),
+    );
+    this.loadoutPanel = new LoadoutPanel(this.deployScreen.sideTop, this.deployScreen.mapBox, this.loadouts, () => {});
+    // Reloaded mid-match: the soldier is still out there.
+    const life = opts.start.life;
+    if (life) this.netSpawned({ k: 'spawn', id: this.myId, ...life });
+  }
+
+  /** The match's news from the server. */
+  private onNetEvents(list: MatchEvent[]): void {
+    const me = this.me;
+    const you = (id: number | undefined, name: string) => (id === this.myId ? 'You' : name);
+    for (const e of list) {
+      switch (e.k) {
+        case 'kill':
+          this.hud.addKill({
+            attacker: you(e.attackerId, e.attacker),
+            victim: you(e.victimId, e.victim),
+            weapon: e.weapon,
+            headshot: e.headshot,
+            attackerTeam: e.attackerTeam,
+            victimTeam: e.victimTeam,
+          });
+          break;
+        case 'hit':
+          this.hud.showHit(e.head, e.killed);
+          this.audio.hit(e.head, e.killed);
+          break;
+        case 'hurt':
+          me.hooks.hurt?.(e.amount, e.from ? new THREE.Vector3(...e.from) : null, e.cause);
+          break;
+        case 'spawn':
+          if (e.id === this.myId) this.netSpawned(e);
+          break;
+        case 'down':
+          if (e.id === this.myId) me.netDown(e.cause, e.by);
+          break;
+        case 'died':
+          if (e.id === this.myId && (me.downed || me.alive)) {
+            me.die('bullet');
+            this.respawnTimer = e.respawn;
+          }
+          break;
+        case 'revived':
+          if (e.id === this.myId) me.revive(e.by, me.player.health.value || 50);
+          break;
+        case 'zone':
+          this.bus.emit(e.type === 'captured' ? 'zone:captured' : 'zone:neutralized', { zone: e.zone, team: e.team });
+          break;
+        case 'mode':
+          this.bus.emit('mode:event', e.e as ModeEvent);
+          break;
+        case 'points':
+          this.hud.scorePopup(e.points, t(`points.${e.reason}` as MessageKey));
+          break;
+        case 'end':
+          this.bus.emit('match:ended', { winner: e.winner });
+          break;
+      }
+    }
+  }
+
+  /** On the field where the server put this browser's soldier. */
+  private netSpawned(e: Extract<MatchEvent, { k: 'spawn' }>): void {
+    this.netDeploying = false;
+    const raw = (typeof e.kit === 'object' && e.kit ? e.kit : {}) as Partial<Loadout>;
+    const kit = sanitizeLoadout({ ...raw, cls: raw.cls ?? this.loadouts.current.cls });
+    this.deployed = true;
+    this.deployScreen?.hide();
+    this.startLife({ pos: new THREE.Vector3(...e.pos), yaw: e.yaw }, kit, 'base');
+    this.me.weapons.rand = seeded(e.seed);
+    this.net?.respawned();
+  }
+
+  /** The zones, the mode's rules and the score table as the server has them. */
+  private onNetState(m: Extract<ServerMsg, { t: 'mstate' }>): void {
+    const zm = this.zoneMode;
+    if (zm && Array.isArray(m.zones)) {
+      for (const z of m.zones as { id?: string }[]) {
+        const mine = z.id ? zm.zone(z.id) : undefined;
+        if (mine) Object.assign(mine, z);
+      }
+    }
+    if (zm && m.rules && typeof m.rules === 'object') assignDeep(zm.match as unknown as Record<string, unknown>, m.rules as Record<string, unknown>);
+    this.scores.load(m.scores);
   }
 
   /** Dev-only inspection handle (see main.ts). */
@@ -3287,6 +3511,15 @@ export class Game {
  * bots leave a freed slot alone for `playerFirst` s.
  */
 const BOT_JETS = { first: 12, every: 4, nearBase: 90, respawn: 0.6, playerFirst: 15 };
+/** Copies plain data into an object of the same shape (the mode's rules as the server sent them). */
+function assignDeep(into: Record<string, unknown>, from: Record<string, unknown>): void {
+  for (const [k, v] of Object.entries(from)) {
+    const cur = into[k];
+    if (v && typeof v === 'object' && !Array.isArray(v) && cur && typeof cur === 'object' && !Array.isArray(cur)) assignDeep(cur as Record<string, unknown>, v as Record<string, unknown>);
+    else into[k] = v;
+  }
+}
+
 /** Back to the lobby: the page without a map in its address. */
 function toLobby(): void {
   location.href = location.pathname;

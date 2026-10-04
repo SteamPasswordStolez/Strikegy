@@ -25,9 +25,9 @@ describe('a match on the game server (no view)', () => {
     const blue = sim.addSoldier(1, 'blue', 'alpha');
     const red = sim.addSoldier(2, 'red', 'bravo');
     expect(blue.deployed).toBe(false);
-    expect(sim.deploy(1)).toBe(true);
-    expect(sim.deploy(2)).toBe(true);
-    expect(sim.deploy(2)).toBe(false);
+    expect(sim.deploy(1)).toBeTruthy();
+    expect(sim.deploy(2)).toBeTruthy();
+    expect(sim.deploy(2)).toBeNull();
 
     // Face to face on open ground in the fields, 9 m apart.
     let from = ground(sim, 60, -90);
@@ -68,9 +68,9 @@ describe('a match on the game server (no view)', () => {
     expect(red.deployed).toBe(false);
     expect(sim.scores.get(2)?.deaths).toBe(1);
     expect(red.respawnTimer).toBeGreaterThan(2.5);
-    expect(sim.deploy(2)).toBe(false);
+    expect(sim.deploy(2)).toBeNull();
     run(sim, 3.1);
-    expect(sim.deploy(2)).toBe(true);
+    expect(sim.deploy(2)).toBeTruthy();
     expect(red.alive).toBe(true);
     sim.dispose();
   });

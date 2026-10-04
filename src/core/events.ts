@@ -41,6 +41,8 @@ export interface GameEvents {
     point: THREE.Vector3;
     /** Hit dealt by the local player (hitmarker, hit sound). */
     byPlayer: boolean;
+    /** Who fired (the game server sends the hit marker to them). */
+    attackerId?: number;
   };
   'combat:kill': {
     attacker: string;

@@ -1,10 +1,10 @@
 import { t, type MessageKey } from '@/i18n';
 import { MAPS, TEAM_SIZES, type LobbyMode } from '@/data/maps';
 import { loadJSON, saveJSON } from '@/core/storage';
-import { loadIdentity } from '@/net/identity';
+import { loadIdentity, seatId } from '@/net/identity';
 import { ServerLink, ServerError } from '@/net/ServerLink';
 import { serverUrls } from '@/net/servers';
-import type { Device, Lineup, InputRule, Room, RoomInfo, RoomSettings } from '@/net/lobbyProtocol';
+import type { Device, Lineup, InputRule, MatchStart, Room, RoomInfo, RoomSettings } from '@/net/lobbyProtocol';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
@@ -36,6 +36,8 @@ export interface MultiplayerHost {
   /** Redraws the menu (the multiplayer page is drawn by `render`). */
   redraw(): void;
   device: Device;
+  /** The room's match starts (or is under way and we're in): the game takes the connection. */
+  startMatch(start: MatchStart, link: ServerLink): void;
 }
 
 /**
@@ -56,6 +58,7 @@ export class MultiplayerMenu {
   private notice: string | null = null;
   private form: RoomSettings & { password: string };
   private redrawQueued = false;
+  private offs: (() => void)[] = [];
 
   constructor(private readonly host: MultiplayerHost) {
     const saved = loadJSON<Partial<RoomSettings>>(CREATE_KEY) ?? {};
@@ -86,35 +89,38 @@ export class MultiplayerMenu {
     try {
       const urls = await serverUrls();
       if (!urls.length) throw new ServerError('connect', 'no server');
-      const link = await ServerLink.connect(urls, { name: id.name ?? 'player', uid: id.uid, device: this.host.device });
+      const link = await ServerLink.connect(urls, { name: id.name ?? 'player', uid: seatId(), device: this.host.device });
       this.link = link;
-      link.on('close', () => {
+      const offs = this.offs;
+      offs.push(link.on('match', (m) => this.host.startMatch(m.match, link)));
+      offs.push(link.on('close', () => {
         this.stopPing();
         this.room = null;
         this.view = 'offline';
         this.notice = t('mp.lost');
         this.host.redraw();
-      });
-      link.on('rooms', (m) => {
+      }));
+      offs.push(link.on('rooms', (m) => {
         this.rooms = m.rooms;
         if (this.view === 'list') this.host.redraw();
-      });
-      link.on('room', (m) => {
+      }));
+      offs.push(link.on('room', (m) => {
         this.room = m.room;
         this.view = 'room';
         this.queueRedraw();
-      });
-      link.on('left', (m) => {
+      }));
+      offs.push(link.on('left', (m) => {
         this.room = null;
         if (m.reason === 'kicked') this.notice = t('mp.kicked');
         if (this.view === 'room') this.showList();
-      });
-      link.on('pong', (m) => {
+      }));
+      offs.push(link.on('pong', (m) => {
         this.ping = performance.now() - m.at;
         if (this.view !== 'create') this.queueRedraw();
-      });
+      }));
       this.startPing();
-      this.showList();
+      // Back from a match (or a reload) the server may have put us straight back in our room.
+      if (!this.room) this.showList();
     } catch (err) {
       this.view = 'offline';
       this.notice = err instanceof ServerError && err.code === 'version' ? t('mp.oldVersion') : t('mp.noServer');
@@ -172,8 +178,15 @@ export class MultiplayerMenu {
 
   close(): void {
     this.leave();
-    this.stopPing();
+    this.handOver();
     this.link?.close();
+  }
+
+  /** The game takes the connection: this menu stops listening and pinging (the link stays open). */
+  handOver(): void {
+    for (const off of this.offs) off();
+    this.offs = [];
+    this.stopPing();
     this.link = null;
   }
 
@@ -367,7 +380,7 @@ export class MultiplayerMenu {
     for (const k of ['mp.col.player', ''] as const) el('span', '', head, k ? t(k) : '');
     for (const m of room.members) {
       const row = el('div', `mp-row mp-members${m.id === me ? ' mp-self' : ''}`, list);
-      el('span', 'mp-name', row, `${m.device === 'mobile' ? '📱' : '🖥'} ${m.name}${m.id === room.owner ? ' ★' : ''}`);
+      el('span', 'mp-name', row, `${m.device === 'mobile' ? '📱' : '🖥'} ${m.name}${m.id === room.owner ? ' ★' : ''}${m.away ? ` (${t('mp.away')})` : ''}`);
       const cell = el('span', '', row);
       if (owner && m.id !== me) {
         el('button', 'lb-btn small', cell, t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));

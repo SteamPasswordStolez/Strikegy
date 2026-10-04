@@ -10,6 +10,74 @@ const STAND = {
 };
 
 /**
+ * A ray against a character's hitboxes posed at `feet` / `yaw` / `height`
+ * without the physics world (the game server tests shots against where
+ * soldiers were a moment ago). Same layout as `CharacterHitboxes`. Returns the
+ * nearest part hit within `maxDist`, or null.
+ */
+export function rayHitbox(
+  feet: { x: number; y: number; z: number },
+  yaw: number,
+  height: number,
+  origin: { x: number; y: number; z: number },
+  dir: { x: number; y: number; z: number },
+  maxDist: number,
+): { distance: number; part: HitPart } | null {
+  const k = height / 1.8;
+  // Into the body's frame: feet at the origin, unturned.
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  const px = origin.x - feet.x;
+  const pz = origin.z - feet.z;
+  const ox = px * c - pz * s;
+  const oz = px * s + pz * c;
+  const oy = origin.y - feet.y;
+  const dx = dir.x * c - dir.z * s;
+  const dz = dir.x * s + dir.z * c;
+  const dy = dir.y;
+  let best: { distance: number; part: HitPart } | null = null;
+  const box = (cy: number, hx: number, hy: number, hz: number, part: HitPart) => {
+    const t = slab(ox, oy - cy, oz, dx, dy, dz, hx, hy, hz);
+    if (t !== null && t <= maxDist && (!best || t < best.distance)) best = { distance: t, part };
+  };
+  box(STAND.legs.y * k, STAND.legs.he[0], STAND.legs.he[1] * k, STAND.legs.he[2], 'limb');
+  box(STAND.torso.y * k, STAND.torso.he[0], STAND.torso.he[1] * k, STAND.torso.he[2], 'body');
+  // Head: a ball.
+  const hy = oy - STAND.head.y * k;
+  const b = ox * dx + hy * dy + oz * dz;
+  const cc = ox * ox + hy * hy + oz * oz - STAND.head.r * STAND.head.r;
+  const disc = b * b - cc;
+  if (disc >= 0) {
+    const t = cc <= 0 ? 0 : -b - Math.sqrt(disc);
+    if (t >= 0 && t <= maxDist && (!best || t < (best as { distance: number }).distance)) best = { distance: t, part: 'head' };
+  }
+  return best;
+}
+
+/** Entry distance of a ray (origin relative to the box centre) into a box of half extents h, or null. */
+function slab(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, hx: number, hy: number, hz: number): number | null {
+  let t0 = 0;
+  let t1 = Infinity;
+  for (const [o, d, h] of [
+    [ox, dx, hx],
+    [oy, dy, hy],
+    [oz, dz, hz],
+  ] as const) {
+    if (Math.abs(d) < 1e-9) {
+      if (o < -h || o > h) return null;
+      continue;
+    }
+    let a = (-h - o) / d;
+    let b = (h - o) / d;
+    if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, b);
+    if (t0 > t1) return null;
+  }
+  return t0;
+}
+
+/**
  * Head / torso / legs hitboxes on one kinematic body that follows a character
  * (player or bot). Shots from the owner exclude this body.
  */

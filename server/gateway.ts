@@ -1,20 +1,25 @@
 /**
  * The game server's front door on Node (`npm run server`): one WebSocket per
- * player at `/play`. Text frames are lobby messages (`LobbyCore`); binary
- * frames are kept for match data, which the room workers will take. `/health`
- * answers with the load for a quick look from outside.
+ * player at `/play`. Text frames are lobby and match messages (`LobbyCore`);
+ * binary frames are match data (inputs up, snapshots down) for the room the
+ * player is in (`Matches`). `/health` answers with the load for a quick look
+ * from outside.
  */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
-import { LobbyCore } from './lobby.ts';
+import { LobbyCore, type MatchHost } from './lobby.ts';
+import { Matches } from './matches.ts';
 
 export interface GatewayOptions {
   port?: number;
   host?: string;
   log?: (line: string) => void;
   serverMax?: number;
+  /** Runs the matches; null: lobby only (tests). Default: matches in this process. */
+  matches?: MatchHost | null;
+  mapsDir?: string;
 }
 
 export interface Gateway {
@@ -25,12 +30,28 @@ export interface Gateway {
 
 export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> {
   const log = opts.log ?? ((line: string) => console.log(`[server] ${line}`));
-  const lobby = new LobbyCore({ log, serverMax: opts.serverMax });
+  let lobby: LobbyCore | null = null;
+  const own = opts.matches === undefined ? new Matches({ log, mapsDir: opts.mapsDir, ended: (room) => lobby?.matchOver(room) }) : null;
+  const matches = opts.matches === undefined ? own : opts.matches;
+  lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches });
+  const core = lobby;
+  const sweep = setInterval(() => core.sweep(), 5000);
 
   const http: Server = createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-      res.end(JSON.stringify({ ok: true, v: PROTOCOL_VERSION, rooms: lobby.roomCount, clients: lobby.clientCount, load: lobby.load, max: opts.serverMax ?? SERVER_MAX }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          v: PROTOCOL_VERSION,
+          rooms: core.roomCount,
+          clients: core.clientCount,
+          load: core.load,
+          max: opts.serverMax ?? SERVER_MAX,
+          matches: own?.running ?? 0,
+          stepMs: own ? Math.round(own.stepMs * 100) / 100 : 0,
+        }),
+      );
       return;
     }
     res.writeHead(404);
@@ -39,18 +60,24 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const wss = new WebSocketServer({ server: http, path: '/play', maxPayload: 64 * 1024 });
 
   wss.on('connection', (ws) => {
-    const id = lobby.open({
+    const id = core.open({
       send: (text) => {
         if (ws.readyState === ws.OPEN) ws.send(text);
+      },
+      binary: (data) => {
+        if (ws.readyState === ws.OPEN) ws.send(data, { binary: true });
       },
       close: () => ws.close(),
     });
     ws.on('message', (data, isBinary) => {
-      // Binary frames: match data, once rooms run matches.
-      if (isBinary) return;
-      void lobby.message(id, data.toString());
+      if (isBinary) {
+        const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
+        core.binary(id, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        return;
+      }
+      void core.message(id, data.toString());
     });
-    ws.on('close', () => lobby.close(id));
+    ws.on('close', () => core.close(id));
     ws.on('error', () => ws.close());
   });
 
@@ -59,9 +86,11 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   log(`listening on :${port}`);
   return {
     port,
-    lobby,
+    lobby: core,
     close: () =>
       new Promise<void>((resolve) => {
+        clearInterval(sweep);
+        own?.dispose();
         for (const ws of wss.clients) ws.terminate();
         wss.close();
         http.close(() => resolve());

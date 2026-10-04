@@ -9,6 +9,8 @@ import { SettingsPanel } from './SettingsPanel';
 import { MultiplayerMenu } from './MultiplayerMenu';
 import { askName } from './NameDialog';
 import { loadIdentity } from '@/net/identity';
+import type { MatchStart } from '@/net/lobbyProtocol';
+import type { ServerLink } from '@/net/ServerLink';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
@@ -87,6 +89,8 @@ export class Lobby {
     container: HTMLElement,
     private readonly onStart: (query: string) => void,
     private readonly prefetch: () => void = () => {},
+    /** A room's match on the game server starts: the game takes it from here. */
+    private readonly onNetStart: (start: MatchStart, link: ServerLink) => void = () => {},
   ) {
     setLocale(this.settings.locale);
     const saved = loadJSON<Partial<LobbyPick>>(PICK_KEY) ?? {};
@@ -106,6 +110,8 @@ export class Lobby {
     for (const m of [...MAPS.map((e) => e.id), RANGE_ID]) void this.load(m);
     // First visit: a name before anything else.
     if (!this.playerName) this.editName(true);
+    // Back from a match (or reloaded in one): straight to the multiplayer pages.
+    else if (ENTRIES.includes('multi') && new URLSearchParams(location.search).has('multi')) this.go('multi');
   }
 
   private editName(required: boolean): void {
@@ -138,10 +144,16 @@ export class Lobby {
           if (this.screen === 'multi') this.render();
         },
         device: this.touch ? 'mobile' : 'desktop',
+        startMatch: (start, link) => {
+          window.removeEventListener('keydown', this.onKey);
+          this.multi?.handOver();
+          this.multi = null;
+          this.onNetStart(start, link);
+        },
       });
     this.screen = screen;
     // The game's code starts downloading while the player sets up.
-    if (screen === 'play') this.prefetch();
+    if (screen === 'play' || screen === 'multi') this.prefetch();
     this.render();
   }
 

@@ -440,5 +440,12 @@
   "mp.err.busy": "Can't do that right now.",
   "mp.err.rate": "Too many requests. Try again in a moment.",
   "mp.err.bad": "Couldn't handle that request.",
-  "mp.err.connect": "Couldn't reach the server."
+  "mp.err.connect": "Couldn't reach the server.",
+  "mp.again": "Click to go back to the room",
+  "mp.backToRoom": "Back to the room",
+  "mp.lostSub": "Reconnect within a minute to get your place back.",
+  "mp.reconnect": "Reconnect",
+  "mp.away": "disconnected",
+  "mp.ended": "The match is over",
+  "mp.endedSub": "The room's owner ended the match."
 }

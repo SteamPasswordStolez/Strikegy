@@ -39,7 +39,8 @@ describe('lobby core', () => {
   };
 
   it('pushes the room list to people on the list page, only when it changes', async () => {
-    const core = new LobbyCore();
+    let now = 0;
+    const core = new LobbyCore({ now: () => now });
     const w = fake();
     const o = fake();
     const idw = core.open(w.conn);
@@ -55,8 +56,12 @@ describe('lobby core', () => {
     await core.message(ido, JSON.stringify({ t: 'ping', at: 5 }));
     expect(o.last('pong')).toEqual({ t: 'pong', at: 5 });
     expect(lists()).toBe(before + 1);
-    // The owner isn't watching (in a room); closing the room pushes an empty list.
+    // The owner isn't watching (in a room). Its connection drops: the seat (and
+    // the room) wait a minute for it, then the room closes and the list empties.
     core.close(ido);
+    expect(w.last('rooms')!.rooms).toHaveLength(1);
+    now += 61_000;
+    core.sweep();
     expect(w.last('rooms')!.rooms).toEqual([]);
     expect(o.got.filter((m) => m.t === 'rooms')).toHaveLength(0);
   });
@@ -158,10 +163,11 @@ describe('game server gateway', () => {
     a.send({ t: 'start' });
     expect((await b.next('room')).room.state).toBe('playing');
 
+    // Mid-match a dropped player keeps the seat for a while; someone connected leads.
     a.ws.close();
     const after = (await b.next('room')).room;
     expect(after.owner).toBe(b.id);
-    expect(after.members).toHaveLength(1);
+    expect(after.members.map((m) => !!m.away)).toEqual([true, false]);
     b.ws.close();
   });
 

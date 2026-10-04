@@ -25,6 +25,27 @@ export function loadIdentity(): Identity {
   return id;
 }
 
+const SEAT_KEY = 'strikegy.seat.v1';
+
+/**
+ * The id the game server knows this browser tab by: the browser's hidden id
+ * plus one kept per tab (session storage survives a reload, not a new tab).
+ * A reload gets its seat in a match back; a second tab is someone else.
+ */
+export function seatId(): string {
+  let tab: string;
+  try {
+    tab = sessionStorage.getItem(SEAT_KEY) ?? '';
+    if (!/^[0-9a-f]{8}$/.test(tab)) {
+      tab = newUid().slice(0, 8);
+      sessionStorage.setItem(SEAT_KEY, tab);
+    }
+  } catch {
+    tab = newUid().slice(0, 8);
+  }
+  return `${loadIdentity().uid}-${tab}`;
+}
+
 /** Saves a new name; returns the cleaned name or null when it can't be used. */
 export function saveName(raw: string): string | null {
   const name = cleanName(raw);

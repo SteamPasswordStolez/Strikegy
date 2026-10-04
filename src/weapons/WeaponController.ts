@@ -54,6 +54,23 @@ export interface ShotTrace {
   to: THREE.Vector3;
 }
 
+/** What a shot (or a melee probe) met, when something other than the physics world judges it. */
+export interface ShotHit {
+  distance: number;
+  point: { x: number; y: number; z: number };
+  normal: { x: number; y: number; z: number };
+  /** The world collider struck (impact surface), or null. */
+  handle: number | null;
+  /** A soldier struck, or null. */
+  target: { owner: Damageable; part: HitPart } | null;
+}
+
+/**
+ * Judges a ray instead of the physics world's hitboxes: the game server rewinds
+ * soldiers to where the shooter saw them (lag compensation).
+ */
+export type ShotCaster = (eye: THREE.Vector3, dir: THREE.Vector3, maxDist: number) => ShotHit | null;
+
 /** Who holds the gun: names and sides in the kill feed and damage, friendly fire, hit markers. */
 export interface WeaponOwner {
   readonly id: number;
@@ -106,6 +123,14 @@ export class WeaponController {
   ignoreBody: RAPIER.RigidBody | undefined;
   /** Called for every round fired (pellets flagged): where it went and whom it hit (-1: nobody). */
   onRound: ((from: THREE.Vector3, to: THREE.Vector3, hitId: number, pellet: boolean) => void) | null = null;
+  /**
+   * Spread and spray patterns draw from this. A match on the game server seeds
+   * it the same at both ends for each life, so the browser's shots go where
+   * the server's do.
+   */
+  rand: () => number = Math.random;
+  /** Judges shots instead of the physics hitboxes (see `ShotCaster`). */
+  shotCaster: ShotCaster | null = null;
 
   constructor(
     loadout: WeaponId[],
@@ -276,23 +301,23 @@ export class WeaponController {
     const d = this.def;
     const { eye, fwd, right, up } = this.aimBasis(player);
     const dir = new THREE.Vector3();
-    let wall: { point: THREE.Vector3; normal: THREE.Vector3; handle: number; raw: { x: number; y: number; z: number } } | null = null;
+    let wall: { point: THREE.Vector3; normal: THREE.Vector3; handle: number | null; raw: { x: number; y: number; z: number } } | null = null;
     for (const [a, b] of MELEE_PROBES) {
       dir.copy(fwd).addScaledVector(right, a).addScaledVector(up, b).normalize();
-      const hit = this.physics.raycast(eye, dir, MELEE_RANGE, Layer.WORLD | Layer.HITBOX, undefined, this.ignoreBody);
+      const hit = this.cast(eye, dir, MELEE_RANGE);
       if (!hit) continue;
       const point = new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
-      const target = this.registry.lookup(hit.collider.handle);
+      const target = hit.target;
       if (target) {
         if (!target.owner.alive || target.owner.team === this.owner.team) continue;
         this.hurt(target.owner, target.part, MELEE_DAMAGE[target.part], point, t('weapon.melee'), eye, false);
         this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'body' });
         return;
       }
-      if (!wall) wall = { point, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), handle: hit.collider.handle, raw: hit.point };
+      if (!wall) wall = { point, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z), handle: hit.handle, raw: hit.point };
     }
     if (wall) {
-      this.bus.emit('combat:impact', { point: wall.point, normal: wall.normal, surface: this.surfaces.get(wall.handle, wall.raw) });
+      this.bus.emit('combat:impact', { point: wall.point, normal: wall.normal, surface: wall.handle === null ? 'concrete' : this.surfaces.get(wall.handle, wall.raw) });
       this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'world' });
     } else this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'none' });
   }
@@ -302,7 +327,7 @@ export class WeaponController {
     const o = this.owner;
     const source = { pos: from.clone(), name: o.name(), team: o.team, weapon, id: o.id };
     const killed = victim.applyDamage(dmg, part, source);
-    this.bus.emit('combat:hit', { targetId: victim.id, part, damage: dmg, killed, point, byPlayer: o.local });
+    this.bus.emit('combat:hit', { targetId: victim.id, part, damage: dmg, killed, point, byPlayer: o.local, attackerId: o.id });
     if (!killed) return;
     this.bus.emit('combat:kill', {
       attacker: o.local ? 'You' : o.name(),
@@ -363,7 +388,7 @@ export class WeaponController {
     const d = this.def;
     if (this.sinceShot > SPRAY_RESET) {
       this.shotIndex = 0;
-      this.spraySeed = Math.random();
+      this.spraySeed = this.rand();
     }
     this.sinceShot = 0;
     this.shots++;
@@ -373,8 +398,8 @@ export class WeaponController {
     const pellets = d.pellets ?? 1;
     for (let p = 0; p < pellets; p++) {
       // Uniform sample inside the spread cone.
-      const r = Math.tan(spreadRad) * Math.sqrt(Math.random());
-      const theta = Math.random() * Math.PI * 2;
+      const r = Math.tan(spreadRad) * Math.sqrt(this.rand());
+      const theta = this.rand() * Math.PI * 2;
       const dir = this.fwd
         .clone()
         .addScaledVector(this.right, Math.cos(theta) * r)
@@ -393,14 +418,23 @@ export class WeaponController {
     this.bus.emit('weapon:fired', { weaponId: d.id, ads: this.adsBlend > 0.5 });
   }
 
+  /** A ray from the eye: the shot caster's judgement, or the physics world's (walls and hitboxes). */
+  private cast(eye: THREE.Vector3, dir: THREE.Vector3, maxDist: number): ShotHit | null {
+    if (this.shotCaster) return this.shotCaster(eye, dir, maxDist);
+    const hit = this.physics.raycast(eye, dir, maxDist, Layer.WORLD | Layer.HITBOX, undefined, this.ignoreBody);
+    if (!hit) return null;
+    const target = this.registry.lookup(hit.collider.handle) ?? null;
+    return { distance: hit.distance, point: hit.point, normal: hit.normal, handle: hit.collider.handle, target };
+  }
+
   private resolveRay(dir: THREE.Vector3, isPellet: boolean): void {
     const d = this.def;
     const maxDist = d.range * 1.5;
-    const hit = this.physics.raycast(this.eye, dir, maxDist, Layer.WORLD | Layer.HITBOX, undefined, this.ignoreBody);
+    const hit = this.cast(this.eye, dir, maxDist);
     const to = hit
       ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z)
       : this.eye.clone().addScaledVector(dir, maxDist);
-    const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+    const target = hit?.target;
     this.onRound?.(this.eye, to, target?.owner.id ?? -1, isPellet);
 
     if (hit && target) {
@@ -409,11 +443,11 @@ export class WeaponController {
         const dmg = computeDamage(damageAtDistance(d, hit.distance), target.part, d.headshotMult);
         this.hurt(target.owner, target.part, dmg, to, d.name, this.eye, target.part === 'head');
       }
-    } else if (hit && (!isPellet || Math.random() < 0.5)) {
+    } else if (hit && !target && (!isPellet || Math.random() < 0.5)) {
       this.bus.emit('combat:impact', {
         point: to,
         normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z),
-        surface: this.surfaces.get(hit.collider.handle, hit.point),
+        surface: hit.handle === null ? 'concrete' : this.surfaces.get(hit.handle, hit.point),
       });
     }
     this.traces.push({ from: this.eye.clone(), to });

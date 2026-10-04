@@ -57,6 +57,7 @@ describe('map world on the game server', () => {
       console.info(`[sim world] ${id}: ${server.world.colliders.len()} colliders, built in ${Math.round(ms)} ms without a view`);
       server.dispose();
       browser.dispose();
-    });
+      // Two whole map builds: the big maps take over 30 s when the suite runs in parallel.
+    }, 120_000);
   }
 });

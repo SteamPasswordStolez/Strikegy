@@ -1,7 +1,7 @@
 /**
  * Where the game server is: `public/servers.json` (`{ "servers": ["wss://.../play"] }`),
- * so a new domain needs only that file changed. With an empty list a dev
- * build uses a server on the same machine (`npm run server`).
+ * so a new domain needs only that file changed. A dev build tries a server on
+ * the same machine first (`npm run server`), then the list.
  */
 export async function serverUrls(): Promise<string[]> {
   let list: string[] = [];
@@ -14,6 +14,6 @@ export async function serverUrls(): Promise<string[]> {
   } catch {
     /* no file: fall through */
   }
-  if (!list.length && import.meta.env.DEV) list = [`ws://${location.hostname || 'localhost'}:8787/play`];
+  if (import.meta.env.DEV) list = [`ws://${location.hostname || 'localhost'}:8787/play`, ...list];
   return list;
 }

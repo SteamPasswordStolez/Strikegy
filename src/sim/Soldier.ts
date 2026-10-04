@@ -77,6 +77,12 @@ export class Soldier {
   /** As guns and blasts see it. */
   readonly target: Damageable;
   hooks: SoldierHooks = {};
+  /**
+   * This sim decides health, going down and dying. False for the browser's
+   * soldier in a match on the game server: the server's news (`netDown`,
+   * `die`, `revive`) does it instead, and local hits and falls change nothing.
+   */
+  authority = true;
   /** Class of the current life (passives). */
   cls: ClassId = 'assault';
   /** On the field. Matches with a deploy screen take the dead off it until they deploy again. */
@@ -218,6 +224,7 @@ export class Soldier {
   stepDowned(dt: number, holdingGiveUp: boolean): void {
     this.downTime += dt;
     this.giveUpHold = holdingGiveUp ? this.giveUpHold + dt : 0;
+    if (!this.authority) return;
     if (this.giveUpHold >= DOWN.giveUpHold || this.downTime >= DOWN.bleedOut) this.die(this.downCause, this.downSource);
   }
 
@@ -227,7 +234,7 @@ export class Soldier {
   /** Damage from anything; true if it took the last health (the soldier goes down). */
   damage(amount: number, from: THREE.Vector3 | null, cause: DamageCause, source?: DamageSource): boolean {
     const p = this.player;
-    if (!p.alive || this.now() < this.reviveShieldUntil) return false;
+    if (!this.authority || !p.alive || this.now() < this.reviveShieldUntil) return false;
     const killed = p.health.damage(amount);
     this.hurtAt = this.combatClock();
     this.bus.emit('player:damaged', { amount, from, cause });
@@ -239,8 +246,15 @@ export class Soldier {
     return killed;
   }
 
+  /** The server says this soldier went down (`killedBy`: another soldier's name, or null). */
+  netDown(cause: DamageCause, killedBy: string | null): void {
+    if (this.downed) return;
+    this.player.health.value = 0;
+    this.goDown(cause, undefined, killedBy);
+  }
+
   /** Health gone: down on the ground until revived, bled out or given up. */
-  private goDown(cause: DamageCause, source?: DamageSource): void {
+  private goDown(cause: DamageCause, source?: DamageSource, killer?: string | null): void {
     this.downed = true;
     this.downTime = 0;
     this.giveUpHold = 0;
@@ -250,7 +264,7 @@ export class Soldier {
     this.weapons.state.cancelReload();
     this.medkitUse = this.healLeft = 0;
     this.boxes.setEnabled(false);
-    this.killedBy = source && source.id !== this.id ? source.name : null;
+    this.killedBy = killer !== undefined ? killer : source && source.id !== this.id ? source.name : null;
     this.hooks.down?.(cause, source);
   }
 

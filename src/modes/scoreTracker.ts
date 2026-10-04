@@ -27,6 +27,12 @@ export class ScoreTracker {
     if (!this.rows.has(id)) this.rows.set(id, { id, name, team, kills: 0, deaths: 0, captures: 0, score: 0 });
   }
 
+  /** The whole table as the game server has it (matches played there). */
+  load(rows: readonly ScoreRow[]): void {
+    this.rows.clear();
+    for (const r of rows) this.rows.set(r.id, { ...r });
+  }
+
   get(id: number): ScoreRow | undefined {
     return this.rows.get(id);
   }

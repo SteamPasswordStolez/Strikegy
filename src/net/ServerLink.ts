@@ -16,11 +16,18 @@ export class ServerError extends Error {
 /** The browser's end of the game server's WebSocket: hello, then typed messages both ways. */
 export class ServerLink {
   private readonly listeners = new Map<keyof Handlers, Set<(msg: ServerMsg) => void>>();
+  private readonly binaryListeners = new Set<(data: Uint8Array) => void>();
   id = '';
   name = '';
 
   private constructor(private readonly ws: WebSocket) {
+    ws.binaryType = 'arraybuffer';
     ws.addEventListener('message', (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        const data = new Uint8Array(e.data);
+        this.binaryListeners.forEach((fn) => fn(data));
+        return;
+      }
       let msg: ServerMsg;
       try {
         msg = JSON.parse(String(e.data)) as ServerMsg;
@@ -64,6 +71,22 @@ export class ServerLink {
 
   send(msg: ClientMsg): void {
     if (this.open) this.ws.send(JSON.stringify(msg));
+  }
+
+  /** Match data (inputs). */
+  sendBinary(data: Uint8Array): void {
+    if (this.open) this.ws.send(data as Uint8Array<ArrayBuffer>);
+  }
+
+  /** Match data from the server (snapshots). */
+  onBinary(fn: (data: Uint8Array) => void): () => void {
+    this.binaryListeners.add(fn);
+    return () => void this.binaryListeners.delete(fn);
+  }
+
+  /** Bytes waiting to go out (a slow line backs up here). */
+  get buffered(): number {
+    return this.ws.bufferedAmount;
   }
 
   /** Sends and waits for the answer of a kind (or an error, which rejects). */

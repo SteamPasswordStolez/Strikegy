@@ -1,13 +1,14 @@
 /**
- * Lobby messages between the browser and the game server (JSON text frames on
- * the one WebSocket; match data will travel as binary frames on the same
- * socket): names, the room list, rooms and their settings. Shared by the
- * browser and the Node server, so this file imports nothing and uses erasable
- * TypeScript only.
+ * JSON messages between the browser and the game server (text frames on the
+ * one WebSocket; inputs and snapshots travel as binary frames on the same
+ * socket, see matchProtocol.ts): names, the room list, rooms and their
+ * settings, and a match's news (start, who is in it, kills, spawns, the zone
+ * and score tables). Shared by the browser and the Node server, so this file
+ * imports nothing and uses erasable TypeScript only.
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -58,6 +59,8 @@ export interface Member {
   id: string;
   name: string;
   device: Device;
+  /** Lost the connection mid-match; the seat is kept for a minute. */
+  away?: boolean;
 }
 
 /** One row of the room list. */
@@ -76,6 +79,69 @@ export interface Room extends RoomInfo {
   members: Member[];
 }
 
+type Side = 'blue' | 'red';
+
+/** A soldier in a match as everyone knows it. */
+export interface MatchSoldierInfo {
+  id: number;
+  name: string;
+  team: Side;
+}
+
+/** Sent when a match starts, or when joining (or coming back to) one under way. */
+export interface MatchStart {
+  room: string;
+  map: string;
+  mode: string;
+  /** The receiver's own soldier. */
+  me: number;
+  team: Side;
+  /** Server tick now. */
+  tick: number;
+  roster: MatchSoldierInfo[];
+  /** Back to a soldier still on the field (a reload mid-match): carry on from here. */
+  life?: { pos: [number, number, number]; yaw: number; seed: number; kit: unknown };
+}
+
+/** A score table row as sent. */
+export interface ScoreRowMsg {
+  id: number;
+  name: string;
+  team: Side;
+  kills: number;
+  deaths: number;
+  captures: number;
+  score: number;
+}
+
+/** Things that happen in a match (to everyone unless noted). */
+export type MatchEvent =
+  | {
+      k: 'kill';
+      attacker: string;
+      victim: string;
+      weapon: string;
+      headshot: boolean;
+      attackerTeam: Side | null;
+      victimTeam: Side | null;
+      attackerId?: number;
+      victimId?: number;
+    }
+  /** To the shooter: a hit marker. */
+  | { k: 'hit'; head: boolean; killed: boolean }
+  /** To whoever was hurt: the damage indicator. */
+  | { k: 'hurt'; amount: number; from: [number, number, number] | null; cause: 'bullet' | 'explosion' | 'fall' }
+  /** To the soldier's player: on the field at `pos`, spread drawn from `seed`. */
+  | { k: 'spawn'; id: number; pos: [number, number, number]; yaw: number; seed: number; kit: unknown }
+  | { k: 'down'; id: number; by: string | null; cause: 'bullet' | 'explosion' | 'fall' }
+  | { k: 'died'; id: number; respawn: number }
+  | { k: 'revived'; id: number; by: string }
+  | { k: 'zone'; type: 'captured' | 'neutralized'; zone: string; team: Side }
+  | { k: 'mode'; e: unknown }
+  /** To the earner: points popping up under the crosshair. */
+  | { k: 'points'; points: number; reason: string }
+  | { k: 'end'; winner: Side };
+
 export type ClientMsg =
   | { t: 'hello'; v: number; name: string; uid: string; device: Device }
   | { t: 'list' }
@@ -87,7 +153,11 @@ export type ClientMsg =
   | { t: 'end' }
   | { t: 'kick'; member: string }
   /** Round trip to the server: answered with `pong` carrying the same `at`. */
-  | { t: 'ping'; at: number };
+  | { t: 'ping'; at: number }
+  /** The match is loaded here: snapshots may come. */
+  | { t: 'ready' }
+  /** On the field at `key` ('base', 'zone:<id>') with the kit picked on the deploy screen. */
+  | { t: 'deploy'; key: string; kit: unknown };
 
 export type ErrorCode =
   | 'version'
@@ -108,7 +178,12 @@ export type ServerMsg =
   | { t: 'room'; room: Room }
   | { t: 'left'; reason: 'leave' | 'kicked' | 'closed' }
   | { t: 'pong'; at: number }
-  | { t: 'error'; code: ErrorCode; detail?: string };
+  | { t: 'error'; code: ErrorCode; detail?: string }
+  | { t: 'match'; match: MatchStart }
+  | { t: 'roster'; roster: MatchSoldierInfo[] }
+  | { t: 'ev'; ev: MatchEvent[] }
+  /** The zones and the mode's rules as the server has them, and the score table (a few times a second). */
+  | { t: 'mstate'; zones: unknown; rules: unknown; scores: ScoreRowMsg[] };
 
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
 const INPUTS: readonly InputRule[] = ['all', 'desktop', 'mobile'];
@@ -157,7 +232,10 @@ export function parseClientMsg(text: string): ClientMsg | null {
     case 'leave':
     case 'start':
     case 'end':
+    case 'ready':
       return { t: raw.t };
+    case 'deploy':
+      return str(raw.key, 32) && isObj(raw.kit) ? { t: 'deploy', key: raw.key, kit: raw.kit } : null;
     case 'create':
       return isObj(raw.settings) && (raw.password === undefined || str(raw.password, 64)) ? (raw as ClientMsg) : null;
     case 'join':

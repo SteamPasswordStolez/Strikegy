@@ -105,6 +105,17 @@ export class Player {
     this.body.setTranslation(this.centerFromFeet(), true);
   }
 
+  /** Shifts the body by an offset, keeping its motion (the game server corrected where it is). */
+  nudge(dx: number, dy: number, dz: number): void {
+    this.feet.x += dx;
+    this.feet.y += dy;
+    this.feet.z += dz;
+    this.prevFeet.x += dx;
+    this.prevFeet.y += dy;
+    this.prevFeet.z += dz;
+    this.body.setTranslation(this.centerFromFeet(), true);
+  }
+
   /**
    * Riding a vehicle: no capsule (the vehicle carries the player), feet put
    * under the seat each step, moving with it.
