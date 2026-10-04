@@ -27,6 +27,11 @@ export interface SquadMember {
   inCombat(now: number): boolean;
 }
 
+/** A squad's call sign by its index on the side. */
+export function squadName(index: number): string {
+  return NAMES[index % NAMES.length]!;
+}
+
 export class Squad {
   constructor(
     readonly index: number,

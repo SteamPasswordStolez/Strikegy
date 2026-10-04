@@ -8,6 +8,7 @@
  * out and comes back within the grace time gets the same soldier back.
  */
 import { readFileSync } from 'node:fs';
+import * as THREE from 'three';
 import { sanitizeLoadout, type ClassId, type Loadout } from '../src/data/classes.ts';
 import { STATION } from '../src/modes/fortify.ts';
 import { createInputState, type InputState } from '../src/input/InputState.ts';
@@ -195,7 +196,7 @@ export class MatchRoom {
     if (!seat || this.over) return;
     const kit = cleanKit(rawKit);
     const s = seat.soldier;
-    const at = this.sim.deploy(s.id, /^(base|zone:[\w-]{1,8}|beacon:\d{1,6})$/.test(key) ? key : 'base', kit);
+    const at = this.sim.deploy(s.id, /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6})$/.test(key) ? key : 'base', kit);
     if (!at) return;
     seat.kit = kit;
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
@@ -285,7 +286,7 @@ export class MatchRoom {
     for (const seat of this.seats.values()) list.push(netSoldier(seat));
     const shared = encodeSoldiers(list);
     const list2 = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
-    for (const g of this.sim.gadgets.things()) list2.push({ id: 0x8000 | (g.id & 0x7fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
+    for (const g of this.sim.gadgets.things()) list2.push({ id: 0x8000 | (g.id & 0x3fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
     const things = encodeThings(list2);
     for (const seat of this.seats.values()) {
       if (!seat.conn || !seat.ready) continue;
@@ -349,7 +350,14 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    return [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, team: s.soldier.team }));
+    return [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
+  }
+
+  /** A squad leader's call-in. */
+  callIn(uid: string, kind: string, point: [number, number, number] | null): void {
+    const seat = this.seats.get(uid);
+    if (!seat || this.over) return;
+    this.sim.callIn(seat.soldier.id, kind, point ? new THREE.Vector3(...point) : null);
   }
 
   private sendRoster(): void {
@@ -374,9 +382,14 @@ export class MatchRoom {
     const bus = this.sim.bus;
     this.sim.onBoom = (kind, p) => this.broadcastEvents.push({ k: 'boom', type: kind, pos: [p.x, p.y, p.z], tick: this.sim.tick });
     this.sim.onGive = (by, to, kind) => {
-      const ev: MatchEvent = { k: 'given', kind, by: by.id, to: to.id };
-      this.byId.get(by.id)?.events.push(ev);
+      const ev: MatchEvent = { k: 'given', kind, by: by?.id ?? -1, to: to.id };
+      if (by) this.byId.get(by.id)?.events.push(ev);
       this.byId.get(to.id)?.events.push(ev);
+    };
+    this.sim.onCallIn = (kind, p, owner) => this.broadcastEvents.push({ k: 'callin', kind, pos: [p.x, p.y, p.z], owner: { id: owner.id, name: owner.name, team: owner.team, squad: owner.squad } });
+    this.sim.onIncoming = (p) => this.broadcastEvents.push({ k: 'incoming', pos: [p.x, p.y, p.z] });
+    this.sim.onSpotted = (team, ids) => {
+      for (const seat of this.seats.values()) if (seat.soldier.team === team) seat.events.push({ k: 'spotted', ids, sec: 2 });
     };
     bus.on('combat:kill', (e) => {
       this.broadcastEvents.push({

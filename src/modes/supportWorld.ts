@@ -62,6 +62,7 @@ export interface PlaneInfo {
 }
 
 interface Crate {
+  id: number;
   team: Team;
   pos: THREE.Vector3;
   landed: boolean;
@@ -128,12 +129,13 @@ export class SupportWorld {
    * (`rp` = what the squad has). False when it can't (cooldown, too little RP).
    * `marker`: show a beam on the spot (the player's side).
    */
-  request(kind: SupportId, point: THREE.Vector3, owner: GadgetOwner, rp: number, marker: boolean): boolean {
+  request(kind: SupportId, point: THREE.Vector3, owner: GadgetOwner, rp: number, marker: boolean, force = false): boolean {
     const spec = SUPPORT[kind];
-    if (!owner.squad || rp < spec.cost || this.cooldown(owner.team, kind) > 0) return false;
+    // `force`: a browser repeating a call the game server already allowed (for the planes, crates and markers).
+    if (!force && (!owner.squad || rp < spec.cost || this.cooldown(owner.team, kind) > 0)) return false;
     if (kind === 'rocketTank' && !this.hooks.vehicle?.(owner, point)) return false;
     this.readyAt.set(`${owner.team}:${kind}`, this.time + spec.cooldown);
-    this.spentBy.set(owner.squad, this.spent(owner.squad) + spec.cost);
+    if (owner.squad) this.spentBy.set(owner.squad, this.spent(owner.squad) + spec.cost);
     if (kind === 'smoke' || kind === 'mortar' || kind === 'artillery') {
       barrageOffsets(spec, this.rand).forEach((o, i) => {
         const p = this.ground(point.x + o.x, point.z + o.z, point.y);
@@ -148,7 +150,7 @@ export class SupportWorld {
       const land = this.ground(point.x, point.z, point.y);
       mesh.position.set(land.x, land.y + SUPPLY.height, land.z);
       this.group.add(mesh);
-      this.crates.push({ team: owner.team, pos: land, landed: false, uses: SUPPLY.uses, until: Infinity, mesh, chute: mesh.getObjectByName('chute')! });
+      this.crates.push({ id: nextPlaneId++, team: owner.team, pos: land, landed: false, uses: SUPPLY.uses, until: Infinity, mesh, chute: mesh.getObjectByName('chute')! });
     }
     if (marker && kind !== 'supply' && kind !== 'rocketTank') this.addMarker(point, kind === 'recon' ? 0x7fd0ff : kind === 'smoke' ? 0xd8d8d8 : 0xff5a3c, spec.delay + spec.shells * spec.interval);
     return true;
@@ -163,6 +165,12 @@ export class SupportWorld {
       if (dt < 2.5) out.push({ point: s.point, radius: s.kind === 'artillery' ? 12 : 9, in: dt });
     }
     return out;
+  }
+
+  /** Recon planes and supply crates (the game server sends where they are). */
+  *things(): Generator<{ id: number; kind: 'reconBlue' | 'reconRed' | 'crate'; pos: THREE.Vector3 }> {
+    for (const w of this.sweeps) yield { id: w.hit.id, kind: w.team === 'blue' ? 'reconBlue' : 'reconRed', pos: w.plane.position };
+    for (const c of this.crates) yield { id: c.id, kind: 'crate', pos: c.mesh.position };
   }
 
   /** Supply crates on the ground (bots walk over to them). */
@@ -268,6 +276,19 @@ export class SupportWorld {
   private ground(x: number, z: number, fallbackY: number): THREE.Vector3 {
     const hit = this.physics.raycast({ x, y: fallbackY + 120, z }, DOWN, 300, Layer.WORLD);
     return new THREE.Vector3(x, hit ? hit.point.y : fallbackY, z);
+  }
+
+  /** The beam a call shows on its spot for the caller's side (a browser told of a barrage by the game server). */
+  marker(kind: SupportId, point: THREE.Vector3): void {
+    const spec = SUPPORT[kind];
+    this.addMarker(point, kind === 'recon' ? 0x7fd0ff : kind === 'smoke' ? 0xd8d8d8 : 0xff5a3c, spec.delay + spec.shells * spec.interval);
+  }
+
+  /** A team cooldown starts and the squad pays (a browser keeping count of the server's calls). */
+  account(kind: SupportId, owner: GadgetOwner): void {
+    const spec = SUPPORT[kind];
+    this.readyAt.set(`${owner.team}:${kind}`, this.time + spec.cooldown);
+    if (owner.squad) this.spentBy.set(owner.squad, this.spent(owner.squad) + spec.cost);
   }
 
   private addMarker(point: THREE.Vector3, color: number, life: number): void {

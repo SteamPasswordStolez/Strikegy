@@ -118,6 +118,9 @@ class Remote {
     return this.downFor >= 0;
   }
 
+  /** Facing in the moment drawn. */
+  yaw = 0;
+
   /** The newest flags (what the soldier could use from a mate). */
   get flags(): number {
     return this.samples[this.samples.length - 1]?.flags ?? 0;
@@ -149,6 +152,7 @@ class Remote {
     this.pos.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
     const dy = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
     const yaw = a.yaw + dy * f;
+    this.yaw = yaw;
     const pitch = a.pitch + (b.pitch - a.pitch) * f;
     const flags = f < 0.5 ? a.flags : b.flags;
     const deployed = (flags & SF.deployed) !== 0;
@@ -316,6 +320,11 @@ export class NetMatch {
   }
 
   /** Everyone else this browser draws (minimap, deploy screen). */
+  /** Someone else as this browser draws them, if snapshots have brought them. */
+  remote(id: number): { readonly alive: boolean; readonly downed: boolean; readonly feet: THREE.Vector3; readonly yaw: number } | undefined {
+    return this.remotes.get(id);
+  }
+
   *others(): Iterable<{ id: number; team: Team; name: string; alive: boolean; downed: boolean; feet: THREE.Vector3; flags: number }> {
     for (const r of this.remotes.values()) if (r.visible) yield { id: r.id, team: r.team, name: r.name, alive: r.alive, downed: r.downed, feet: r.feet, flags: r.flags };
   }

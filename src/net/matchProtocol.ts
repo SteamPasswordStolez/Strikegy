@@ -223,7 +223,7 @@ export interface NetSelf {
 }
 
 /** Kinds of moving things other than soldiers in a snapshot. */
-export const THING = { frag: 1, flash: 2, smoke: 3, rocket: 4, riflesmoke: 5, shell: 6, beacon: 7, mine: 8 } as const;
+export const THING = { frag: 1, flash: 2, smoke: 3, rocket: 4, riflesmoke: 5, shell: 6, beacon: 7, mine: 8, reconBlue: 9, reconRed: 10, crate: 11 } as const;
 
 /** A moving thing (a grenade in the air; rockets and the like later). */
 export interface NetThing {

@@ -16,7 +16,7 @@ import { SURFACE_FROM_MATERIAL, SurfaceRegistry } from '@/physics/surfaces';
 import { fetchMap } from '@/world/validateMap';
 import type { BuiltMap } from '@/world/buildBlockout';
 import { buildWorld, fortPlanFor } from '@/sim/world';
-import { kitToggles, stepFort, stepGadget, type KitWorld } from '@/sim/kit';
+import { kitToggles, restockAmmo, stepFort, stepGadget, type KitWorld } from '@/sim/kit';
 import { Soldier, type SoldierHooks } from '@/sim/Soldier';
 import type { Terrain } from '@/world/terrain';
 import { GROUND_COVER, GroundCover } from '@/world/groundCover';
@@ -74,7 +74,7 @@ import { paintMap, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
 import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimAssist';
 import { wrapAngle, yawPitchOf } from '@/ai/aim';
-import { WIPE_PENALTY, formSquads, mateSpawnBlock, type Squad, type SquadMember } from '@/modes/squads';
+import { Squad, WIPE_PENALTY, formSquads, mateSpawnBlock, squadName, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { Scoreboard, type ScoreboardSide } from '@/ui/Scoreboard';
@@ -142,6 +142,8 @@ export class Game {
   private net: NetMatch | null = null;
   /** Asked the server to deploy; waiting for the spawn. */
   private netDeploying = false;
+  /** Enemies a recon plane marked in a match on the game server: id -> until (elapsed s). */
+  private readonly netSpotted = new Map<number, number>();
   /** The side's spawn beacons in a match on the game server. */
   private netBeacons: NonNullable<Extract<ServerMsg, { t: 'mstate' }>['beacons']> = [];
   private readonly renderer: Renderer;
@@ -522,7 +524,8 @@ export class Game {
       },
       incoming: (point) => this.audio.incoming(point),
       reveal: (team, center, radius) => this.bots?.reveal(team, center, radius),
-      resupply: (team, pos, reach) => this.crateResupply(team, pos, reach),
+      // On the game server the crates hand things out there.
+      resupply: (team, pos, reach) => !this.options.net && this.crateResupply(team, pos, reach),
       landed: (pos) => this.audio.gadget('place', pos),
       vehicle: (owner, near) => this.callRocketTank(owner, near),
       planeDown: (pos, team, by) => {
@@ -550,7 +553,7 @@ export class Game {
       yaw: this.spawn.yaw * DEG,
       loadout: this.options.sandbox ? this.options.loadout : loadoutWeapons(firstKit),
       now: () => this.simTime,
-      combatClock: () => this.bots?.time ?? 0,
+      combatClock: () => this.bots?.time ?? this.simTime,
     });
     this.me.hooks = this.soldierHooks();
     if (this.options.net) this.me.authority = false;
@@ -1176,12 +1179,21 @@ export class Game {
     const input = this.input;
     const p = this.player;
     const w = this.weapons;
+    const me0 = this.me;
     this.simTime += dt;
     if (input.firePressed) input.fire = true;
     // Recon: the wheel changes scope power while aiming (before packing: the server mustn't switch weapons).
     if (this.cls === 'recon' && w.def.scope && w.adsBlend > 0.5 && input.weaponCycle !== 0) {
       this.reconZoom = !this.reconZoom;
       input.weaponCycle = 0;
+    }
+    // The call-in menu takes 1..5 and the trigger while it is up (also before packing).
+    if (p.alive && this.deployed) {
+      this.stepSupport(input);
+      if (this.supportAim) {
+        me0.gadgetOut = false;
+        me0.buildMode = false;
+      }
     }
     const n = net.pack(input, p.yaw, p.pitch, w.sway.yaw, w.sway.pitch);
     p.yaw = n.yaw;
@@ -1211,7 +1223,7 @@ export class Game {
       }
       // The server throws it; here only the hands move.
       if (input.throwGrenade) me.throwGrenade(null);
-      const busy = me.throwBlock > 0 || this.medkitUse > 0 || reviving || me.working >= 0 || me.buildMode || me.gadgetOut;
+      const busy = me.throwBlock > 0 || this.medkitUse > 0 || reviving || me.working >= 0 || me.buildMode || me.gadgetOut || this.supportAim !== null;
       me.stepOnFoot(dt, input, busy, this.fort?.slowAt(p.feet) ?? 1);
       this.stepSway(dt, input.holdBreath);
       net.stepped(n.seq, p.feet);
@@ -1219,6 +1231,7 @@ export class Game {
     else this.respawnTimer -= dt;
     this.me.syncBoxes();
     this.throwables.step(dt);
+    this.support.step(dt);
     this.physics.step();
     consumePulses(input);
   }
@@ -1302,13 +1315,13 @@ export class Game {
   }
 
   /** Something going off in a match on the game server: what it looks and sounds like here (the server did the damage). */
-  private netBoom(type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke', point: THREE.Vector3): void {
-    if (type === 'riflesmoke') {
-      this.effects.smoke(point, GRENADES.smoke.duration ?? 20, GRENADES.smoke.radius);
+  private netBoom(type: Extract<MatchEvent, { k: 'boom' }>['type'], point: THREE.Vector3): void {
+    if (type === 'riflesmoke' || type === 'smokeShell') {
+      this.effects.smoke(point, GRENADES.smoke.duration ?? 20, GRENADES.smoke.radius * (type === 'smokeShell' ? 1.3 : 1));
       this.audio.smokePop(point, GRENADES.smoke.duration ?? 20);
       return;
     }
-    if (type === 'frag' || type === 'rocket' || type === 'mine') {
+    if (type !== 'flash' && type !== 'smoke') {
       const dist = this.renderer.camera.position.distanceTo(point);
       this.effects.explosion(point);
       this.audio.explosion(point, dist);
@@ -1922,6 +1935,8 @@ export class Game {
   private supportState(): SupportMenuState | null {
     const sq = this.playerSquad;
     if (!sq || !this.player.alive || !this.deployed) return null;
+    // On the game server only a squad's first member (its leader) calls things in.
+    if (this.net && sq.members[0]?.id !== this.myId) return null;
     const cooldown = {} as Record<SupportId, number>;
     for (const id of SUPPORT_ORDER) cooldown[id] = this.support.cooldown(this.myTeam, id);
     return { rp: this.squadRpOf(sq), cooldown, aiming: this.supportAim };
@@ -1932,8 +1947,9 @@ export class Game {
     const s = this.supportState();
     if (!s || !SupportMenu.ready(s, id)) return;
     this.supportMenu.open = false;
-    // The rocket tank isn't aimed: it comes to the zone nearest the leader.
+    // The rocket tank isn't aimed: it comes to the zone nearest the leader (not on the game server yet).
     if (id === 'rocketTank') {
+      if (this.net) return;
       const sq = this.playerSquad!;
       const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: `${sq.team}:${sq.name}` };
       if (this.support.request(id, this.player.feet, owner, s.rp, false)) this.audio.click();
@@ -1976,7 +1992,14 @@ export class Game {
     const { eye, fwd } = this.weapons.aimBasis(this.player);
     const hit = this.physics.raycast(eye, fwd, CALL_RANGE, Layer.WORLD);
     this.supportPoint = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : null;
-    if (input.firePressed && this.supportPoint) {
+    if (input.firePressed && this.supportPoint && this.net) {
+      // The server decides (RP, cooldown) and tells everyone.
+      const p = this.supportPoint;
+      this.net.link.send({ t: 'callin', kind: this.supportAim, point: [p.x, p.y, p.z] });
+      this.audio.click();
+      this.supportAim = null;
+      this.supportPoint = null;
+    } else if (input.firePressed && this.supportPoint) {
       const sq = this.playerSquad!;
       const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: `${sq.team}:${sq.name}` };
       if (this.support.request(this.supportAim, this.supportPoint, owner, state.rp, true)) {
@@ -2652,7 +2675,14 @@ export class Game {
       }
       for (const e of this.bots.spottedEnemies(this.myTeam, p.feet)) f.enemies.push({ x: e.feet.x, z: e.feet.z });
     }
-    if (this.net) for (const o of this.net.others()) if (o.alive && o.team === this.myTeam) f.allies.push({ x: o.feet.x, z: o.feet.z, squad: false });
+    if (this.net) {
+      const squad = this.playerSquad;
+      for (const o of this.net.others()) {
+        if (!o.alive) continue;
+        if (o.team === this.myTeam) f.allies.push({ x: o.feet.x, z: o.feet.z, squad: !!squad?.has(o.id) });
+        else if ((this.netSpotted.get(o.id) ?? 0) > this.elapsed) f.enemies.push({ x: o.feet.x, z: o.feet.z });
+      }
+    }
     mm.draw(f, dt);
   }
 
@@ -3192,8 +3222,9 @@ export class Game {
       out.push({ key: `zone:${o.id}`, kind: 'zone', label: `${t('spawn.zone')} ${o.id}`, x: z.x, z: z.z, blocked: null, warn: o.underAttack ? t('deploy.underAttack') : null });
     }
     // In a match on the game server: the side's beacons as the server has them.
+    const mates = new Set(this.playerSquad?.members.map((m) => m.name));
     for (const b of this.net ? this.netBeacons : []) {
-      if (b.team !== this.myTeam) continue;
+      if (b.team !== this.myTeam || !mates.has(b.owner)) continue;
       out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${b.owner}) ×${b.uses}`, x: b.pos[0], z: b.pos[2], blocked: null, warn: null });
     }
     // Spawn beacons the squad's recons put down.
@@ -3247,7 +3278,7 @@ export class Game {
         warn: v.health < v.spec.health * 0.35 ? t('deploy.damaged') : null,
       });
     }
-    const now = this.bots?.time ?? 0;
+    const now = this.bots?.time ?? this.simTime;
     for (const m of this.playerSquad?.mates(this.myId) ?? []) {
       const block = mateSpawnBlock(m, now, this.riding(m.id));
       out.push({
@@ -3266,7 +3297,7 @@ export class Game {
   private squadHud(): SquadHud | null {
     const sq = this.playerSquad;
     if (!sq) return null;
-    const now = this.bots?.time ?? 0;
+    const now = this.bots?.time ?? this.simTime;
     return {
       name: sq.name,
       members: sq.members.map((m) => ({
@@ -3520,6 +3551,8 @@ export class Game {
     const net = new NetMatch(opts.link, opts.start, this.me, { scene: r.scene, physics: this.physics, registry: this.registry, audio: this.audio, effects: this.effects, camera: r.camera });
     this.net = net;
     net.onEvents = (ev) => this.onNetEvents(ev);
+    net.onRoster = () => this.netSquads(net);
+    this.netSquads(net);
     net.onBoom = (e) => this.netBoom(e.type, new THREE.Vector3(...e.pos));
     net.onState = (m) => this.onNetState(m);
     net.onClosed = () => {
@@ -3614,13 +3647,35 @@ export class Game {
         case 'points':
           this.hud.scorePopup(e.points, t(`points.${e.reason}` as MessageKey));
           break;
+        case 'callin': {
+          const kind = e.kind as SupportId;
+          const at = new THREE.Vector3(...e.pos);
+          const ours = e.owner.team === this.myTeam;
+          // Planes and crates are drawn here as the server's go; barrages are its booms, here only the beam.
+          if (kind === 'recon' || kind === 'supply') this.support.request(kind, at, e.owner, Infinity, ours, true);
+          else {
+            this.support.account(kind, e.owner);
+            if (ours) this.support.marker(kind, at);
+          }
+          if (ours) this.hud.notify(`${t('support.called').replace('{name}', t(`support.${kind}` as MessageKey))} — ${e.owner.id === this.myId ? playerName(t('feed.you')) : e.owner.name}`, 'ally');
+          break;
+        }
+        case 'incoming':
+          this.audio.incoming(new THREE.Vector3(...e.pos));
+          break;
+        case 'spotted':
+          for (const id of e.ids) this.netSpotted.set(id, this.elapsed + e.sec);
+          break;
         case 'given':
           if (e.to === this.myId) {
             // The server already did it; this browser's copy follows.
             if (e.kind === 'medkit') me.medkits = MEDKIT.carried;
-            else me.weapons.refillReserve();
-            this.hud.notify(`${t(e.kind === 'medkit' ? 'notify.gotMedkit' : 'notify.gotAmmo')} — ${this.net?.nameOf(e.by) ?? ''}`, 'ally');
-          } else this.hud.notify(`${t(e.kind === 'medkit' ? 'act.giveMedkit' : 'act.giveAmmo')} → ${this.net?.nameOf(e.to) ?? ''}`, 'ally');
+            else if (e.kind === 'crate') {
+              restockAmmo(me);
+              if (me.cls !== 'medic') me.medkits = MEDKIT.carried;
+            } else me.weapons.refillReserve();
+            if (e.kind !== 'crate') this.hud.notify(`${t(e.kind === 'medkit' ? 'notify.gotMedkit' : 'notify.gotAmmo')} — ${this.net?.nameOf(e.by) ?? ''}`, 'ally');
+          } else if (e.kind !== 'crate') this.hud.notify(`${t(e.kind === 'medkit' ? 'act.giveMedkit' : 'act.giveAmmo')} → ${this.net?.nameOf(e.to) ?? ''}`, 'ally');
           this.audio.resupply();
           break;
         case 'end':
@@ -3628,6 +3683,49 @@ export class Game {
           break;
       }
     }
+  }
+
+  /**
+   * Squads as the server formed them (fours in join order, the first leads):
+   * this browser's soldier and everyone else as it draws them.
+   */
+  private netSquads(net: NetMatch): void {
+    const bySquad = new Map<string, SquadMember[]>();
+    for (const info of net.roster.values()) {
+      const key = `${info.team}:${info.squad}`;
+      let list = bySquad.get(key);
+      if (!list) bySquad.set(key, (list = []));
+      if (info.id === this.myId) {
+        list.push(this.playerCombatant);
+        continue;
+      }
+      const remote = () => net.remote(info.id);
+      const far = new THREE.Vector3(0, -1000, 0);
+      list.push({
+        id: info.id,
+        name: info.name,
+        team: info.team,
+        get alive() {
+          return remote()?.alive ?? false;
+        },
+        get downed() {
+          return remote()?.downed ?? false;
+        },
+        get feet() {
+          return remote()?.feet ?? far;
+        },
+        get yaw() {
+          return remote()?.yaw ?? 0;
+        },
+        // The server knows who is fighting; it turns a spawn on them down.
+        inCombat: () => false,
+      });
+    }
+    this.squads = [...bySquad.entries()].map(([key, members]) => {
+      const [team, index] = key.split(':');
+      return new Squad(Number(index), team as Team, squadName(Number(index)), members);
+    });
+    this.playerSquad = this.squads.find((s) => s.has(this.myId)) ?? null;
   }
 
   /** On the field where the server put this browser's soldier. */

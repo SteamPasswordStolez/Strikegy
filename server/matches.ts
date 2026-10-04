@@ -93,11 +93,12 @@ export class Matches implements MatchHost {
     else m.dispose();
   }
 
-  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' }>): void {
+  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void {
     const m = this.rooms.get(room);
     if (!m) return;
     if (msg.t === 'ready') m.ready(uid);
-    else m.deploy(uid, msg.key, msg.kit);
+    else if (msg.t === 'deploy') m.deploy(uid, msg.key, msg.kit);
+    else m.callIn(uid, msg.kind, msg.point);
   }
 
   binary(room: string, uid: string, data: Uint8Array): void {

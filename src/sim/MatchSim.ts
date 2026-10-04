@@ -15,7 +15,11 @@ import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWo
 import { FortModels } from '@/world/fortModels';
 import type { Damageable } from '@/combat/Hitboxes';
 import type { HitPart } from '@/core/events';
-import { kitToggles, stepFort, stepGadget, stepGive, type GiveClock, type KitWorld } from './kit';
+import { kitToggles, needsStation, restockAmmo, stepFort, stepGadget, stepGive, type GiveClock, type KitWorld } from './kit';
+import { SupportWorld } from '@/modes/supportWorld';
+import { CALL_RANGE, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
+import { SQUAD_SIZE, Squad, WIPE_PENALTY, mateSpawnBlock, squadName } from '@/modes/squads';
+import { MEDKIT } from '@/data/classes';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
 import { ZoneMode } from '@/modes/ZoneMode';
 import type { ModeKind } from '@/modes/matchRules';
@@ -78,7 +82,7 @@ export function seeded(seed: number): () => number {
 }
 
 /** What goes off where everyone should see it. */
-export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke';
+export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell';
 
 /** Where a deployed soldier came out and the seed of its spread for this life. */
 export interface Deployed {
@@ -108,8 +112,20 @@ export class MatchSim {
   readonly gadgets: GadgetWorld;
   /** Something went off where everyone should see it (grenades, rockets, mines, rifle smoke). */
   onBoom: (kind: BoomKind, point: THREE.Vector3) => void = () => {};
-  /** A mate handed `to` a medkit or ammo. */
-  onGive: (by: Soldier, to: Soldier, kind: 'medkit' | 'ammo') => void = () => {};
+  /** A mate handed `to` a medkit or ammo (`by` null: a supply crate). */
+  onGive: (by: Soldier | null, to: Soldier, kind: 'medkit' | 'ammo' | 'crate') => void = () => {};
+  /** Call-ins in the world: barrages, recon planes, supply crates. */
+  readonly support: SupportWorld;
+  /** A call-in was made (browsers show it). */
+  onCallIn: (kind: SupportId, point: THREE.Vector3, owner: GadgetOwner) => void = () => {};
+  /** A shell is about a second out. */
+  onIncoming: (point: THREE.Vector3) => void = () => {};
+  /** A recon plane marked `ids` (enemies of `team`). */
+  onSpotted: (team: Team, ids: number[]) => void = () => {};
+  /** Squads of each side (four people each, in join order; the first member leads). */
+  readonly squads: Squad[] = [];
+  /** Squads already given the wipe penalty for their current wipe. */
+  private readonly penalized = new Set<Squad>();
   private readonly kit: KitWorld;
   private readonly giveClock: GiveClock = new Map();
   /** Sim clock (s). */
@@ -140,6 +156,20 @@ export class MatchSim {
       directHit: (target, part, point, owner) => this.rocketHit(target, part, point, owner),
       smoke: (point) => this.onBoom('riflesmoke', point),
     });
+    this.support = new SupportWorld(physics, {
+      shell: (kind, point, owner) => {
+        this.blast(kind, point, owner, t(`support.${kind}`));
+        this.onBoom(kind, point);
+      },
+      smoke: (point) => this.onBoom('smokeShell', point),
+      incoming: (point) => this.onIncoming(point),
+      reveal: (team, center, radius) => {
+        const ids: number[] = [];
+        for (const s of this.soldiers.values()) if (s.team !== team && s.deployed && s.alive && s.player.feet.distanceTo(center) < radius) ids.push(s.id);
+        if (ids.length) this.onSpotted(team, ids);
+      },
+      resupply: (team, pos, reach) => this.crateResupply(team, pos, reach),
+    });
     const fort = this.fort;
     this.kit = {
       physics,
@@ -150,7 +180,7 @@ export class MatchSim {
         for (const o of this.soldiers.values()) if (o.deployed && (o.alive || o.downed) && fort?.occupies(slot, o.player.feet)) return true;
         return false;
       },
-      owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: null }),
+      owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: this.squadKey(s.id) }),
       points: (id, p) => this.scores.award(id, p),
     };
     this.wire();
@@ -172,6 +202,16 @@ export class MatchSim {
     bus.on('combatant:died', (e) => {
       this.scores.death(e.id);
       zm?.onDeath(e.team);
+      // A squad wiped out entirely waits longer to come back.
+      for (const s of this.penalized) if (!s.wiped) this.penalized.delete(s);
+      const sq = this.squadOf(e.id);
+      if (sq && sq.wiped && !this.penalized.has(sq)) {
+        this.penalized.add(sq);
+        for (const m of sq.members) {
+          const s = this.soldiers.get(m.id);
+          if (s) s.respawnTimer += WIPE_PENALTY;
+        }
+      }
     });
     bus.on('match:ended', (e) => (this.winner = e.winner));
     bus.on('grenade:detonate', (e) => {
@@ -219,7 +259,63 @@ export class MatchSim {
     s.boxes.setEnabled(false);
     this.soldiers.set(id, s);
     this.scores.add(id, name, team);
+    // Into the first squad of the side with room, else a new one.
+    let sq = this.squads.find((q) => q.team === team && q.members.length < SQUAD_SIZE);
+    if (!sq) {
+      let index = 0;
+      while (this.squads.some((q) => q.team === team && q.index === index)) index++;
+      sq = new Squad(index, team, squadName(index), []);
+      this.squads.push(sq);
+    }
+    sq.members.push(s.combatant);
     return s;
+  }
+
+  squadOf(id: number): Squad | undefined {
+    return this.squads.find((q) => q.has(id));
+  }
+
+  /** 'blue:Alpha' (beacons, call-ins), or null. */
+  squadKey(id: number): string | null {
+    const q = this.squadOf(id);
+    return q ? `${q.team}:${q.name}` : null;
+  }
+
+  /** A squad's RP: what its members earned, less what its leader spent. */
+  squadRp(q: Squad): number {
+    let earned = 0;
+    for (const m of q.members) earned += this.scores.get(m.id)?.score ?? 0;
+    return squadRp(earned, this.support.spent(`${q.team}:${q.name}`));
+  }
+
+  /**
+   * A squad leader calls `kind` in onto `point` (aimed within reach). False
+   * when not allowed: not the leader, not on the field, too far, too little
+   * RP, the side's cooldown, or the rocket tank (no vehicles on the server yet).
+   */
+  callIn(id: number, kind: string, point: THREE.Vector3 | null): boolean {
+    const s = this.soldiers.get(id);
+    const q = this.squadOf(id);
+    if (!s || !q || q.members[0]?.id !== id || !s.deployed || !s.alive || s.downed) return false;
+    if (!(SUPPORT_ORDER as readonly string[]).includes(kind) || kind === 'rocketTank' || !point) return false;
+    if (point.distanceTo(s.player.feet) > CALL_RANGE + 5) return false;
+    const owner: GadgetOwner = { id, name: s.combatant.name, team: s.team, squad: `${q.team}:${q.name}` };
+    if (!this.support.request(kind as SupportId, point, owner, this.squadRp(q), false)) return false;
+    this.onCallIn(kind as SupportId, point, owner);
+    return true;
+  }
+
+  /** A supply crate on the ground hands one of its side a refill when they need it. */
+  private crateResupply(team: Team, pos: THREE.Vector3, reach: number): boolean {
+    for (const s of this.soldiers.values()) {
+      if (s.team !== team || !s.deployed || !s.alive || s.downed || s.player.feet.distanceTo(pos) > reach) continue;
+      if (!needsStation(s, 'ammo') && (s.cls === 'medic' || s.medkits >= MEDKIT.carried)) continue;
+      restockAmmo(s);
+      if (s.cls !== 'medic') s.medkits = MEDKIT.carried;
+      this.onGive(null, s, 'crate');
+      return true;
+    }
+    return false;
   }
 
   /** Someone left: their soldier and its bodies go. */
@@ -229,6 +325,11 @@ export class MatchSim {
     s.dispose();
     this.soldiers.delete(id);
     this.poses.delete(id);
+    const sq = this.squadOf(id);
+    if (sq) {
+      sq.members.splice(sq.members.findIndex((m) => m.id === id), 1);
+      if (!sq.members.length) this.squads.splice(this.squads.indexOf(sq), 1);
+    }
   }
 
   /**
@@ -240,11 +341,19 @@ export class MatchSim {
     if (!s || s.deployed || s.respawnTimer > 0 || this.winner) return null;
     const [kind, zone] = key.split(':');
     let at = this.zoneMode ? this.zoneMode.spawnPoint(s.team, kind === 'zone' ? zone! : 'base', null) : this.base(s.team);
-    // A spawn beacon of the side (in a match on the server any of the side's, squads aside).
-    const beacon = kind === 'beacon' ? this.gadgets.beacons.find((b) => String(b.id) === zone && b.owner.team === s.team) : undefined;
+    // A spawn beacon of the squad.
+    const beacon = kind === 'beacon' ? this.gadgets.beaconsFor(s.team, this.squadKey(id)).find((b) => String(b.id) === zone) : undefined;
     if (beacon) {
       this.gadgets.useBeacon(beacon);
       at = { pos: beacon.pos.clone(), yaw: beacon.mesh.rotation.y };
+    }
+    // Beside a squadmate who is up and not fighting.
+    const mate = kind === 'mate' ? this.squadOf(id)?.members.find((m) => String(m.id) === zone && m.id !== id) : undefined;
+    if (mate && !mateSpawnBlock(mate, this.time)) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const back = new THREE.Vector3(Math.sin(mate.yaw), 0, Math.cos(mate.yaw)).multiplyScalar(2.2);
+      const lateral = new THREE.Vector3(Math.cos(mate.yaw), 0, -Math.sin(mate.yaw)).multiplyScalar(side * 1.2);
+      at = { pos: mate.feet.clone().add(back).add(lateral), yaw: mate.yaw };
     }
     s.deployed = true;
     s.spawn(this.clearSpot(at.pos, s), at.yaw, kit);
@@ -355,6 +464,7 @@ export class MatchSim {
     this.zoneMode?.step(dt, [...this.soldiers.values()].map((s) => s.combatant));
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
+    this.support.step(dt);
     this.physics.step();
   }
 

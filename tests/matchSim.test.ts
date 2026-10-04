@@ -70,7 +70,10 @@ describe('a match on the game server (no view)', () => {
     expect(sim.scores.get(2)?.deaths).toBe(1);
     expect(red.respawnTimer).toBeGreaterThan(2.5);
     expect(sim.deploy(2)).toBeNull();
+    // Bravo is a squad of one: wiped out, so the wait is longer (WIPE_PENALTY).
     run(sim, 3.1);
+    expect(sim.deploy(2)).toBeNull();
+    run(sim, 5);
     expect(sim.deploy(2)).toBeTruthy();
     expect(red.alive).toBe(true);
     sim.dispose();
@@ -197,6 +200,40 @@ describe('a match on the game server (no view)', () => {
     run(sim, 1);
     expect(booms).toContain('rocket');
     expect(b.downed).toBe(true);
+    sim.dispose();
+  });
+
+  it('squads of four; only the leader calls in, with the squad RP; mortars hurt; deploying beside a squadmate', async () => {
+    const sim = await MatchSim.create(lyon());
+    for (let id = 1; id <= 5; id++) sim.addSoldier(id, 'blue', `b${id}`);
+    const red = sim.addSoldier(9, 'red', 'r9');
+    expect(sim.squads.filter((q) => q.team === 'blue').map((q) => q.members.length)).toEqual([4, 1]);
+    expect(sim.squadKey(5)).toBe('blue:Bravo');
+    for (const id of [1, 2, 9]) sim.deploy(id);
+    const at = ground(sim, 60, -90);
+    sim.soldiers.get(1)!.player.teleport(at, 0);
+    red.player.teleport(ground(sim, at.x + 40, at.z), 0);
+    run(sim, 0.3);
+    const target = red.player.feet.clone();
+    // No RP yet; then points for the squad: still only its leader may spend them.
+    expect(sim.callIn(1, 'mortar', target)).toBe(false);
+    sim.scores.award(2, 900);
+    expect(sim.callIn(2, 'mortar', target)).toBe(false);
+    const calls: string[] = [];
+    sim.onCallIn = (k) => calls.push(k);
+    expect(sim.callIn(1, 'mortar', target)).toBe(true);
+    expect(calls).toEqual(['mortar']);
+    expect(sim.squadRp(sim.squadOf(1)!)).toBe(100);
+    // The side's cooldown.
+    sim.scores.award(3, 900);
+    expect(sim.callIn(1, 'mortar', target)).toBe(false);
+    run(sim, 8);
+    expect(red.player.health.value < 100 || red.downed).toBe(true);
+
+    // A squadmate deploys beside the leader.
+    const mate = sim.deploy(3, 'mate:1');
+    expect(mate).toBeTruthy();
+    expect(mate!.pos.distanceTo(sim.soldiers.get(1)!.player.feet)).toBeLessThan(4);
     sim.dispose();
   });
 });

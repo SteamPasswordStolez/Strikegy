@@ -62,7 +62,7 @@ export interface MatchHost {
   leave(room: string, uid: string): void;
   /** The match is over or called off. */
   stop(room: string): void;
-  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' }>): void;
+  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void;
   binary(room: string, uid: string, data: Uint8Array): void;
 }
 
@@ -485,6 +485,7 @@ export class LobbyCore {
       }
       case 'ready':
       case 'deploy':
+      case 'callin':
         if (!r || r.state !== 'playing') return;
         return this.matches?.message(r.id, c.uid, msg);
     }

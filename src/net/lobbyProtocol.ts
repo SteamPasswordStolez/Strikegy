@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -86,6 +86,8 @@ export interface MatchSoldierInfo {
   id: number;
   name: string;
   team: Side;
+  /** Squad index on the side (members in join order; the first one leads). */
+  squad: number;
 }
 
 /** Sent when a match starts, or when joining (or coming back to) one under way. */
@@ -139,9 +141,15 @@ export type MatchEvent =
   | { k: 'zone'; type: 'captured' | 'neutralized'; zone: string; team: Side }
   | { k: 'mode'; e: unknown }
   /** A grenade went off at tick `tick` (browsers show it when they draw that moment). */
-  | { k: 'boom'; type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke'; pos: [number, number, number]; tick: number }
-  /** A mate handed `to` a medkit or ammo (to both of them). */
-  | { k: 'given'; kind: 'medkit' | 'ammo'; by: number; to: number }
+  | { k: 'boom'; type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell'; pos: [number, number, number]; tick: number }
+  /** A mate handed `to` a medkit or ammo (to both of them); a supply crate gave `to` a refill (`by` -1). */
+  | { k: 'given'; kind: 'medkit' | 'ammo' | 'crate'; by: number; to: number }
+  /** A squad leader called something in (browsers show the planes, crates and markers). */
+  | { k: 'callin'; kind: string; pos: [number, number, number]; owner: { id: number; name: string; team: Side; squad: string | null } }
+  /** A shell is about a second out (the whistle). */
+  | { k: 'incoming'; pos: [number, number, number] }
+  /** To a side: enemies a recon plane marked, for `sec` seconds. */
+  | { k: 'spotted'; ids: number[]; sec: number }
   /** To the earner: points popping up under the crosshair. */
   | { k: 'points'; points: number; reason: string }
   | { k: 'end'; winner: Side };
@@ -160,8 +168,10 @@ export type ClientMsg =
   | { t: 'ping'; at: number }
   /** The match is loaded here: snapshots may come. */
   | { t: 'ready' }
-  /** On the field at `key` ('base', 'zone:<id>') with the kit picked on the deploy screen. */
-  | { t: 'deploy'; key: string; kit: unknown };
+  /** On the field at `key` ('base', 'zone:<id>', 'beacon:<id>', 'mate:<id>') with the kit picked on the deploy screen. */
+  | { t: 'deploy'; key: string; kit: unknown }
+  /** A squad leader calls `kind` in onto `point` (the rocket tank: no point). */
+  | { t: 'callin'; kind: string; point: [number, number, number] | null };
 
 export type ErrorCode =
   | 'version'
@@ -251,6 +261,11 @@ export function parseClientMsg(text: string): ClientMsg | null {
       return { t: raw.t };
     case 'deploy':
       return str(raw.key, 32) && isObj(raw.kit) ? { t: 'deploy', key: raw.key, kit: raw.kit } : null;
+    case 'callin': {
+      const p = raw.point;
+      const point = Array.isArray(p) && p.length === 3 && p.every((v) => typeof v === 'number' && Number.isFinite(v)) ? (p as [number, number, number]) : null;
+      return str(raw.kind, 16) && (point || p === null) ? { t: 'callin', kind: raw.kind, point } : null;
+    }
     case 'create':
       return isObj(raw.settings) && (raw.password === undefined || str(raw.password, 64)) ? (raw as ClientMsg) : null;
     case 'join':
