@@ -1,4 +1,5 @@
 import { t } from '@/i18n';
+import { playerName } from '@/net/identity';
 import { reticleSvg, type Reticle } from '@/weapons/optics';
 
 export interface HudFrame {
@@ -267,11 +268,11 @@ export class HUD {
     // Team colors: allies blue, enemies red; the player is highlighted.
     const cls = (name: string, team?: 'blue' | 'red' | null) => (name === 'You' ? 'kf-you' : team ? `kf-name kf-${team}` : 'kf-name');
     const a = el('span', cls(k.attacker, k.attackerTeam), row);
-    a.textContent = k.attacker === 'You' ? t('feed.you') : k.attacker;
+    a.textContent = k.attacker === 'You' ? playerName(t('feed.you')) : k.attacker;
     if (k.attacker === 'You' || k.victim === 'You') row.classList.add('mine');
     if (k.weapon) el('span', 'kf-weapon', row).textContent = k.weapon;
     if (k.headshot) el('span', 'kf-hs', row).textContent = '◎';
-    el('span', cls(k.victim, k.victimTeam), row).textContent = k.victim === 'You' ? t('feed.you') : k.victim;
+    el('span', cls(k.victim, k.victimTeam), row).textContent = k.victim === 'You' ? playerName(t('feed.you')) : k.victim;
     this.feedItems.push({ el: row, life: FEED_LIFE });
     while (this.feedItems.length > FEED_MAX) this.feedItems.shift()!.el.remove();
   }

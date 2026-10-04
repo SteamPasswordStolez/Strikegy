@@ -6,6 +6,9 @@ import type { MapDef } from '@/world/mapTypes';
 import { paintMap } from './mapPainter';
 import { renderHint } from './Overlay';
 import { SettingsPanel } from './SettingsPanel';
+import { MultiplayerMenu } from './MultiplayerMenu';
+import { askName } from './NameDialog';
+import { loadIdentity } from '@/net/identity';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
@@ -14,9 +17,11 @@ const ROWS: readonly Row[] = ['mode', 'map', 'team', 'difficulty'];
 const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map', team: 'lobby.team', difficulty: 'lobby.difficulty' };
 
 /** The main menu's entries, top to bottom. */
-const ENTRIES = ['play', 'range', 'controls', 'settings'] as const;
-type Entry = (typeof ENTRIES)[number];
-type Screen = 'main' | 'play' | 'controls' | 'settings';
+const ALL_ENTRIES = ['play', 'multi', 'range', 'controls', 'settings'] as const;
+type Entry = (typeof ALL_ENTRIES)[number];
+/** Multiplayer shows only with `?mp` until matches work over the network. */
+const ENTRIES: readonly Entry[] = ALL_ENTRIES.filter((e) => e !== 'multi' || new URLSearchParams(location.search).has('mp'));
+type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -75,6 +80,8 @@ export class Lobby {
   /** What moves without a redraw: the entries / rows and the line describing the picked one. */
   private picks: HTMLElement[] = [];
   private pickDesc: HTMLElement | null = null;
+  private multi: MultiplayerMenu | null = null;
+  private playerName = loadIdentity().name;
 
   constructor(
     container: HTMLElement,
@@ -97,6 +104,15 @@ export class Lobby {
     window.addEventListener('keydown', this.onKey);
     this.render();
     for (const m of [...MAPS.map((e) => e.id), RANGE_ID]) void this.load(m);
+    // First visit: a name before anything else.
+    if (!this.playerName) this.editName(true);
+  }
+
+  private editName(required: boolean): void {
+    askName(this.root, this.playerName, required, (name) => {
+      if (name) this.playerName = name;
+      this.render();
+    });
   }
 
   private save(): void {
@@ -111,6 +127,18 @@ export class Lobby {
   }
 
   private go(screen: Screen): void {
+    if (screen !== 'multi' && this.multi) {
+      this.multi.close();
+      this.multi = null;
+    }
+    if (screen === 'multi')
+      this.multi ??= new MultiplayerMenu({
+        modesFor: (map) => modesOf(this.maps.get(map)),
+        redraw: () => {
+          if (this.screen === 'multi') this.render();
+        },
+        device: this.touch ? 'mobile' : 'desktop',
+      });
     this.screen = screen;
     // The game's code starts downloading while the player sets up.
     if (screen === 'play') this.prefetch();
@@ -122,6 +150,12 @@ export class Lobby {
     else this.go(e);
   }
 
+  /** Back one page (the multiplayer pages step back inside themselves first). */
+  private back(): void {
+    if (this.screen === 'multi' && this.multi?.back()) return;
+    this.go('main');
+  }
+
   private onKey = (e: KeyboardEvent): void => {
     if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
     const key = e.code;
@@ -131,7 +165,7 @@ export class Lobby {
       else if (key === 'Enter') this.activate(ENTRIES[this.entry]!);
       return;
     }
-    if (key === 'Escape' || key === 'Backspace') return this.go('main');
+    if (key === 'Escape' || key === 'Backspace') return this.back();
     if (this.screen !== 'play') return;
     if (key === 'ArrowUp' || key === 'ArrowDown') this.select((this.focus + (key === 'ArrowUp' ? -1 : 1) + ROWS.length) % ROWS.length);
     else if (key === 'ArrowLeft' || key === 'ArrowRight') this.change(ROWS[this.focus]!, key === 'ArrowLeft' ? -1 : 1);
@@ -183,14 +217,17 @@ export class Lobby {
       el('span', 'lb-back-arrow', back).textContent = '◀';
       el('span', '', back).textContent = t('lobby.hint.back');
       if (!this.touch) el('span', 'keycap', back).textContent = 'Esc';
-      back.addEventListener('click', () => this.go('main'));
+      back.addEventListener('click', () => this.back());
       const head = el('div', 'lb-pagehead', top);
       el('div', 'lb-eyebrow', head).textContent = t('title');
-      el('div', 'lb-pagetitle', head).textContent = t(this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'controls' ? 'menu.controls' : 'menu.settings');
+      el('div', 'lb-pagetitle', head).textContent = t(
+        this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : 'menu.settings',
+      );
     }
     const body = el('div', 'lb-body', this.frame);
     if (this.screen === 'main') this.renderMain(body);
     else if (this.screen === 'play') this.renderPlay(body);
+    else if (this.screen === 'multi') this.multi!.render(body);
     else if (this.screen === 'controls') {
       body.classList.add('lb-controls');
       const keys = el('div', 'overlay-hint lb-keys', body);
@@ -232,6 +269,10 @@ export class Lobby {
     this.pickDesc = el('div', 'lb-item-desc', col);
     this.pickDesc.textContent = t(`menu.${ENTRIES[this.entry]!}Desc`);
     el('div', 'lb-version', body).textContent = t('menu.version');
+    const name = el('button', 'lb-name', body);
+    el('span', 'lb-name-label', name).textContent = t('name.label');
+    el('span', 'lb-name-value', name).textContent = this.playerName ?? '—';
+    name.addEventListener('click', () => this.editName(false));
   }
 
   // ---------------------------------------------------------------------------

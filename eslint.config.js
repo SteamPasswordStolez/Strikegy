@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   { ignores: ['dist', 'node_modules'] },
   js.configs.recommended,
-  { files: ['scripts/**', 'vite.config.ts'], languageOptions: { globals: globals.node } },
+  { files: ['scripts/**', 'server/**', 'vite.config.ts'], languageOptions: { globals: globals.node } },
   ...tseslint.configs.recommended,
   {
     languageOptions: { globals: globals.browser },
