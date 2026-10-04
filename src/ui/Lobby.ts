@@ -2,7 +2,6 @@ import { setLocale, t, type MessageKey } from '@/i18n';
 import { isTouchDevice, loadSettings, type Settings } from '@/core/Settings';
 import { loadJSON, saveJSON } from '@/core/storage';
 import { BIG_TEAM, MAPS, RANGE_ID, TEAM_SIZES, matchQuery, snapTeam, type Difficulty, type LobbyMode, type LobbyPick } from '@/data/maps';
-import { CAREER, levelOf, loadCareer, takeLast, type Career } from '@/data/career';
 import type { MapDef } from '@/world/mapTypes';
 import { paintMap } from './mapPainter';
 import { renderHint } from './Overlay';
@@ -50,13 +49,12 @@ function outline(map: MapDef): [number, number][] {
 }
 
 const step = <T>(list: readonly T[], cur: T, d: number): T => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length]!;
-const num = (n: number): string => Math.round(n).toLocaleString('en-US');
 const modeName = (m: LobbyMode): string => t(m === 'skirmish' ? 'lobby.skirmish' : (`mode.${m}` as MessageKey));
 
 /**
  * The main menu: a screen of its own before any match. The game's name and
  * a column of entries (play / firing range / controls / settings) over the
- * last map, drifting slowly behind; the career card in the corner. Play
+ * last map, drifting slowly behind. Play
  * opens the game setup (mode, map, players a side, bot difficulty, the map's
  * picture) and its start button goes straight into the match; the range
  * starts at once. `onStart` gets the match address (main.ts loads the game).
@@ -68,8 +66,6 @@ export class Lobby {
   private focus = 0;
   private pick: LobbyPick;
   private readonly settings: Settings = loadSettings();
-  private readonly career: Career = loadCareer();
-  private readonly last = takeLast();
   private readonly maps = new Map<string, MapDef>();
   private readonly loading = new Set<string>();
   private readonly pictures = new Map<string, HTMLCanvasElement>();
@@ -107,11 +103,10 @@ export class Lobby {
     saveJSON(PICK_KEY, this.pick);
   }
 
-  /** Leaves for the match. */
+  /** Leaves for the match (main.ts takes the menu down once the loading screen is up). */
   private finish(pick: LobbyPick): void {
     this.save();
     window.removeEventListener('keydown', this.onKey);
-    this.root.remove();
     this.onStart(matchQuery(pick));
   }
 
@@ -182,8 +177,8 @@ export class Lobby {
     this.picks = [];
     this.pickDesc = null;
     this.root.className = `lobby lb-scr-${this.screen}`;
-    const top = el('div', 'lb-top', this.frame);
     if (this.screen !== 'main') {
+      const top = el('div', 'lb-top', this.frame);
       const back = el('button', 'lb-back', top);
       el('span', 'lb-back-arrow', back).textContent = '◀';
       el('span', '', back).textContent = t('lobby.hint.back');
@@ -193,7 +188,6 @@ export class Lobby {
       el('div', 'lb-eyebrow', head).textContent = t('title');
       el('div', 'lb-pagetitle', head).textContent = t(this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'controls' ? 'menu.controls' : 'menu.settings');
     }
-    this.profile(top);
     const body = el('div', 'lb-body', this.frame);
     if (this.screen === 'main') this.renderMain(body);
     else if (this.screen === 'play') this.renderPlay(body);
@@ -213,27 +207,6 @@ export class Lobby {
     }
     this.renderHints();
     this.updateBackground();
-  }
-
-  /** Top right: level badge, name, XP toward the next level, what the last match earned. */
-  private profile(parent: HTMLElement): void {
-    const c = this.career;
-    const lv = levelOf(c.xp);
-    const card = el('div', 'lb-ccard', parent);
-    el('div', 'lb-cc-art', card);
-    el('div', 'lb-cc-badge', card).textContent = String(lv.level);
-    const body = el('div', 'lb-cc-body', card);
-    el('div', 'lb-cc-name', body).textContent = t('lobby.player');
-    const line = el('div', 'lb-cc-line', body);
-    el('span', 'lb-cc-lv', line).textContent = `${t('lobby.level')} ${lv.level}`;
-    el('span', 'lb-cc-xp', line).textContent = lv.level >= CAREER.maxLevel ? t('lobby.maxLevel') : `${num(lv.progress * lv.need)} / ${num(lv.need)} XP`;
-    el('div', 'lb-cc-bar', body).style.setProperty('--p', String(lv.progress));
-    el('div', 'lb-cc-record', body).textContent = t('lobby.record').replace('{m}', String(c.matches)).replace('{w}', String(c.wins));
-    if (this.last) {
-      const gain = el('div', `lb-cc-gain${this.last.won ? ' won' : ''}`, card);
-      const up = levelOf(this.last.before).level < lv.level;
-      gain.textContent = `+${num(this.last.xp)} XP${up ? ` · ${t('lobby.levelUp')}` : ''}`;
-    }
   }
 
   // ---------------------------------------------------------------------------

@@ -555,18 +555,45 @@ body {
   clip-path: none;
   animation: none;
 }
-/* Loading: the rule runs while it waits. */
-.kind-info .ov-rule {
-  width: 180px;
-  background: linear-gradient(90deg, transparent, var(--hud-accent), transparent) 0 0 / 50% 100% no-repeat, rgb(255 255 255 / 0.12);
-  animation: ov-load 1.1s linear infinite;
+/* Loading: the rule fills with the load's real steps, and a sheen keeps
+   running over it. Both move by transform only, which the browser animates
+   off the main thread, so they keep moving while a long step (navmesh,
+   shaders) holds the page. */
+.ov-fill {
+  display: none;
+}
+.loading .ov-rule {
+  position: relative;
+  width: min(320px, 60vw);
+  overflow: hidden;
+  background: rgb(255 255 255 / 0.14);
+}
+.loading .ov-fill {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: var(--hud-accent);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left;
+  transition: transform 0.5s ease-out;
+}
+.loading .ov-rule::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.75), transparent);
+  animation: ov-load 1.2s linear infinite;
+  will-change: transform;
 }
 @keyframes ov-load {
   from {
-    background-position: -100% 0, 0 0;
+    transform: translateX(-100%);
   }
   to {
-    background-position: 200% 0, 0 0;
+    transform: translateX(290%);
   }
 }
 .kind-win .overlay-title {
@@ -1900,7 +1927,41 @@ body {
   line-height: 1;
   text-transform: uppercase;
 }
+/* Pause from the deploy screen (Esc too). */
+.deploy-pause {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  align-self: center;
+  padding: 8px 14px;
+  border: 1px solid rgb(255 255 255 / 0.32);
+  background: rgb(0 0 0 / 0.3);
+  color: var(--hud-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.deploy-pause:hover {
+  border-color: #f2f2ee;
+  background: #f2f2ee;
+  color: #0c0f13;
+}
+.deploy-pause-icon {
+  font-size: 10px;
+  letter-spacing: -0.1em;
+}
+.deploy-pause .keycap {
+  font-size: 10px;
+}
+.deploy-pause:hover .keycap {
+  border-color: rgb(0 0 0 / 0.45);
+  color: #0c0f13;
+}
 .deploy-tickets {
+  margin-left: auto;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -2291,6 +2352,10 @@ body {
   }
   .deploy-head {
     padding-bottom: 4px;
+  }
+  .deploy-pause {
+    padding: 5px 10px;
+    font-size: 10px;
   }
   .deploy-eyebrow {
     font-size: 9px;
@@ -2850,7 +2915,7 @@ body {
 /* ---- Main menu (lobby) ------------------------------------------------------ */
 /* A screen of its own before any match: the last map drifting slowly behind
    a dark shade and a faint grid, the name and a column of entries on the left
-   (the picked one an inverted slab), the career card top right. Sub-screens
+   (the picked one an inverted slab). Sub-screens
    (game setup, controls, settings) get a back button and a page title. */
 .lobby {
   position: fixed;
@@ -2954,98 +3019,6 @@ body {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--hud-accent);
-}
-/* Career card: procedural art, the level in a hexagon, name, XP bar. */
-.lb-ccard {
-  position: relative;
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  width: 320px;
-  height: 66px;
-  margin-left: auto;
-  padding: 0 14px 0 6px;
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
-}
-.lb-cc-art {
-  position: absolute;
-  inset: 0;
-  background:
-    repeating-linear-gradient(115deg, rgb(245 209 78 / 0.16) 0 2px, transparent 2px 14px),
-    radial-gradient(circle at 85% 30%, rgb(245 209 78 / 0.35), transparent 45%),
-    linear-gradient(90deg, #121a21 0%, #23313a 55%, #4b4220 100%);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
-}
-.lb-cc-badge {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 52px;
-  justify-self: center;
-  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
-  background: linear-gradient(180deg, #ffe17a, var(--hud-accent) 60%, #c9a52e);
-  color: #0c0f13;
-  font-size: 20px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.lb-cc-body {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.lb-cc-name {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lb-cc-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--hud-dim);
-  font-variant-numeric: tabular-nums;
-}
-.lb-cc-lv {
-  color: var(--hud-accent);
-}
-.lb-cc-bar {
-  height: 3px;
-  background: linear-gradient(90deg, var(--hud-accent) calc(var(--p, 0) * 100%), rgb(255 255 255 / 0.18) 0);
-}
-.lb-cc-record {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  color: var(--hud-faint);
-}
-.lb-cc-gain {
-  position: absolute;
-  top: 4px;
-  right: 16px;
-  padding: 1px 7px;
-  background: var(--hud-accent);
-  color: #0c0f13;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  animation: lb-gain 0.6s 0.3s ease-out both;
-}
-@keyframes lb-gain {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
 }
 .lb-body {
   flex: 1;
@@ -3369,9 +3342,6 @@ body {
     flex-wrap: wrap;
     gap: 12px;
   }
-  .lb-ccard {
-    width: 100%;
-  }
   .lb-play {
     grid-template-columns: minmax(0, 1fr);
     gap: 18px;
@@ -3403,23 +3373,6 @@ body {
   }
   .lb-eyebrow {
     font-size: 9px;
-  }
-  .lb-ccard {
-    grid-template-columns: 40px minmax(0, 1fr);
-    gap: 8px;
-    width: 230px;
-    height: 46px;
-  }
-  .lb-cc-badge {
-    width: 34px;
-    height: 38px;
-    font-size: 15px;
-  }
-  .lb-cc-name {
-    font-size: 12px;
-  }
-  .lb-cc-record {
-    display: none;
   }
   .lb-maincol {
     margin-top: -30px;

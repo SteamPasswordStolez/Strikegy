@@ -7,19 +7,20 @@ const loadGame = () => import('@/core/Game');
 // No map in the address: the lobby. It hands over the match's address, which
 // goes into the history (reload = the same match, back = the lobby) and the
 // game starts in this page (its code was fetched while the room counted down).
-if (!new URLSearchParams(location.search).has('map'))
-  new Lobby(
+// The menu stays up until the game's loading screen covers it.
+if (!new URLSearchParams(location.search).has('map')) {
+  const menu: Lobby = new Lobby(
     container,
     (query) => {
       history.pushState(null, '', query);
       window.addEventListener('popstate', () => location.reload());
-      void startGame(new URLSearchParams(query));
+      void startGame(new URLSearchParams(query), () => menu.root.remove());
     },
     () => void loadGame(),
   );
-else void startGame(new URLSearchParams(location.search));
+} else void startGame(new URLSearchParams(location.search));
 
-async function startGame(params: URLSearchParams): Promise<void> {
+async function startGame(params: URLSearchParams, onLoadingShown?: () => void): Promise<void> {
   const mapId = params.get('map') ?? 'sandbox';
   const mapUrl = `${import.meta.env.BASE_URL}maps/${encodeURIComponent(mapId)}.json`;
 
@@ -40,7 +41,7 @@ async function startGame(params: URLSearchParams): Promise<void> {
 
   // The game itself loads only now: the lobby stays light (no three.js / physics yet).
   const { Game } = await loadGame();
-  Game.create(container, {
+  const created = Game.create(container, {
     mapUrl,
     // Sandbox loadout: every weapon class for feel testing (1-9 / mouse wheel). The
     // practice range (?bots=0) and ?sandbox use it; bot matches use the class picked on the deploy screen.
@@ -50,7 +51,10 @@ async function startGame(params: URLSearchParams): Promise<void> {
     bots,
     mode,
     tickets,
-  })
+  });
+  // Game.create puts its loading screen up before its first await.
+  onLoadingShown?.();
+  void created
     .then((game) => {
       if (import.meta.env.DEV) {
         (window as unknown as { __strikegy: Game }).__strikegy = game;

@@ -1,7 +1,5 @@
 {
   "title": "STRIKEGY",
-  "start.click": "클릭하여 시작",
-  "start.tap": "탭하여 시작",
   "start.hint": "WASD 이동 · Shift 달리기 · Ctrl 앉기(토글)·달리며 슬라이딩 · Space 점프 · 좌클릭 사격 · 우클릭 조준 · R 재장전 · 1·2·3/휠 무기 · G 투척 · Q 구급통 · E(길게) 부활·보급 · T 건설 모드 · V 근접 공격 · Z(누르고 있기) 점수판 · ~ 총기 점검 · F3 FPS",
   "start.hintTouch": "왼쪽 드래그: 이동(끝까지 밀면 달리기) · 오른쪽 드래그: 시점 · 사격 버튼을 누른 채 끌면 조준 이동 · 탄약 표시 탭: 총기 점검 · 위쪽 거점 바 탭: 점수판 · 쓰러진 아군 곁에서 가운데 버튼 길게: 부활 · 건설 버튼: 건설 모드(사격 버튼 길게로 짓기)",
   "paused": "일시정지",
@@ -333,11 +331,6 @@
   "modeDesc.conquest": "수비가 모든 거점을 쥐고 시작하고, 공격이 섹터를 하나씩 돌파합니다. 티켓은 공격팀만 있습니다.",
   "modeDesc.skirmish": "거점 없이 교전만 합니다.",
   "lobby.map": "맵",
-  "lobby.player": "플레이어",
-  "lobby.level": "레벨",
-  "lobby.maxLevel": "최고 레벨",
-  "lobby.record": "{m}전 {w}승",
-  "lobby.levelUp": "레벨 업!",
   "lobby.diffDesc.easy": "봇이 늦게 알아채고 덜 정확하게 쏩니다.",
   "lobby.diffDesc.normal": "기본 난이도입니다.",
   "lobby.diffDesc.hard": "봇이 빨리 반응하고 정확하게 쏩니다.",
@@ -369,5 +362,15 @@
   "menu.version": "STRIKEGY v2 · 개발 중 빌드",
   "lobby.setupTitle": "게임 설정",
   "lobby.start": "게임 시작",
-  "lobby.hint.ok": "확인"
+  "lobby.hint.ok": "확인",
+  "load.map": "맵과 리소스 불러오는 중",
+  "load.terrain": "지형 만드는 중",
+  "load.buildings": "건물 짓는 중",
+  "load.nature": "숲과 물 만드는 중",
+  "load.scenery": "주변 풍경 만드는 중",
+  "load.nav": "길찾기 지도 만드는 중",
+  "load.vehicleNav": "차량 경로 만드는 중",
+  "load.battle": "전장 준비 중",
+  "load.shaders": "그래픽 준비 중",
+  "load.soldiers": "병사 준비 중"
 }

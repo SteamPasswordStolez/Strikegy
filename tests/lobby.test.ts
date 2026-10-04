@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MAPS, RANGE_ID, TEAM_SIZES, matchQuery, snapTeam } from '@/data/maps';
-import { CAREER, levelOf } from '@/data/career';
 import ko from '@/i18n/ko.json';
 import en from '@/i18n/en.json';
 
@@ -34,13 +33,5 @@ describe('lobby', () => {
         expect(table[`mapDesc.${id}`]).toBeTruthy();
       }
     }
-  });
-
-  it('career levels: 2,000 XP to level 2, each level 250 longer, capped', () => {
-    expect(levelOf(0)).toMatchObject({ level: 1, progress: 0, need: 2000 });
-    expect(levelOf(1999).level).toBe(1);
-    expect(levelOf(2000)).toMatchObject({ level: 2, need: 2250 });
-    expect(levelOf(2000 + 2250).level).toBe(3);
-    expect(levelOf(1e9).level).toBe(CAREER.maxLevel);
   });
 });

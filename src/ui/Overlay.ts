@@ -23,6 +23,7 @@ export class Overlay {
   private subEl: HTMLDivElement;
   private hintEl: HTMLDivElement;
   private actionsEl: HTMLDivElement;
+  private fillEl: HTMLDivElement;
   private shown: OverlayKind = 'info';
 
   constructor(parent: HTMLElement) {
@@ -36,6 +37,9 @@ export class Overlay {
     this.titleEl.className = 'overlay-title';
     const rule = document.createElement('div');
     rule.className = 'ov-rule';
+    this.fillEl = document.createElement('div');
+    this.fillEl.className = 'ov-fill';
+    rule.appendChild(this.fillEl);
     this.subEl = document.createElement('div');
     this.subEl.className = 'overlay-sub';
     this.hintEl = document.createElement('div');
@@ -76,6 +80,14 @@ export class Overlay {
       });
       this.actionsEl.appendChild(b);
     }
+  }
+
+  /** Loading: how far along (0..1) and what it is doing now, under the title (cleared by `show`). */
+  setProgress(fraction: number, step: string): void {
+    this.root.classList.add('loading');
+    this.fillEl.style.setProperty('--p', Math.max(0, Math.min(1, fraction)).toFixed(3));
+    this.subEl.textContent = step;
+    this.subEl.style.display = '';
   }
 
   show(title: string, sub = '', hint = '', kind: OverlayKind = 'info'): void {

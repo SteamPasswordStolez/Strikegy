@@ -1,7 +1,5 @@
 {
   "title": "STRIKEGY",
-  "start.click": "Click to start",
-  "start.tap": "Tap to start",
   "start.hint": "WASD move · Shift sprint · Ctrl crouch (toggle, slide from a sprint) · Space jump · LMB fire · RMB aim · R reload · 1/2/3 or wheel weapons · G throw · Q medkit · E (hold) revive / resupply · T build mode · V melee · Z (hold) scoreboard · ~ inspect · F3 FPS",
   "start.hintTouch": "Left drag: move (push all the way to sprint) · Right drag: look · Drag while holding fire to aim · Tap the ammo counter: inspect · Tap the zone bar: scoreboard · Hold the middle button next to a downed mate: revive · Build button: build mode (hold fire to build)",
   "paused": "Paused",
@@ -333,11 +331,6 @@
   "modeDesc.conquest": "The defenders start with every zone; the attackers break through one sector at a time. Only the attackers have tickets.",
   "modeDesc.skirmish": "Just the fight, no zones.",
   "lobby.map": "Map",
-  "lobby.player": "Player",
-  "lobby.level": "Level",
-  "lobby.maxLevel": "Max level",
-  "lobby.record": "{m} played · {w} won",
-  "lobby.levelUp": "Level up!",
   "lobby.diffDesc.easy": "Bots notice you late and miss more.",
   "lobby.diffDesc.normal": "The standard bots.",
   "lobby.diffDesc.hard": "Bots react fast and shoot straight.",
@@ -369,5 +362,15 @@
   "menu.version": "STRIKEGY v2 · development build",
   "lobby.setupTitle": "Game setup",
   "lobby.start": "Start",
-  "lobby.hint.ok": "OK"
+  "lobby.hint.ok": "OK",
+  "load.map": "Loading the map and assets",
+  "load.terrain": "Shaping the terrain",
+  "load.buildings": "Raising the buildings",
+  "load.nature": "Planting forests, filling rivers",
+  "load.scenery": "Building the scenery",
+  "load.nav": "Mapping the paths",
+  "load.vehicleNav": "Mapping vehicle routes",
+  "load.battle": "Setting up the battle",
+  "load.shaders": "Preparing the graphics",
+  "load.soldiers": "Equipping the soldiers"
 }

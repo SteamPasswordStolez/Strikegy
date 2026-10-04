@@ -132,6 +132,11 @@ export class AudioSystem {
     this.startAmbience();
   }
 
+  /** On any click / tap / key: starts the sound when a page opened straight from a link left it waiting for one. */
+  wake(): void {
+    if (this.ctx?.state !== 'running') this.unlock();
+  }
+
   /** Background levels for the current map; starts once audio is unlocked. */
   setAmbience(levels: AmbienceLevels): void {
     this.ambienceLevels = levels;

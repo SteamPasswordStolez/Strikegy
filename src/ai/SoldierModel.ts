@@ -274,9 +274,30 @@ export class SoldierModel {
     this.root.add(this.mesh);
   }
 
-  /** Builds the geometry for these loadouts ahead of time (it takes ~20 ms each). */
+  private static readonly warmed = new Set<string>();
+
+  /** Builds the geometry for these loadouts ahead of time (it takes ~20 ms each); ones already built are skipped. */
   static prewarm(teams: readonly Team[], defs: readonly WeaponDef[]): void {
-    for (const team of teams) for (const def of defs) new SoldierModel(team, def).dispose();
+    for (const team of teams)
+      for (const def of defs) {
+        const key = `${team}:${def.id}`;
+        if (SoldierModel.warmed.has(key)) continue;
+        new SoldierModel(team, def).dispose();
+        SoldierModel.warmed.add(key);
+      }
+  }
+
+  /** `prewarm` in pieces of about 80 ms, with `pause` between them (the loading screen draws meanwhile). */
+  static async prewarmSteps(teams: readonly Team[], defs: readonly WeaponDef[], pause: () => Promise<void>): Promise<void> {
+    let since = performance.now();
+    for (const team of teams)
+      for (const def of defs) {
+        SoldierModel.prewarm([team], [def]);
+        if (performance.now() - since > 80) {
+          await pause();
+          since = performance.now();
+        }
+      }
   }
 
   onHit(): void {

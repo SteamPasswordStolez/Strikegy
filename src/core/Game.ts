@@ -44,6 +44,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
+import { BOT_WEAPONS } from '@/ai/personality';
 import { wishDirection } from '@/player/movement';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
@@ -61,7 +62,6 @@ import { HUD } from '@/ui/HUD';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
 import { SettingsPanel } from '@/ui/SettingsPanel';
-import { addMatch } from '@/data/career';
 import { ZoneMode } from '@/modes/ZoneMode';
 import { ConquestRules, DominationRules, FrontlineRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { ZoneRules } from '@/modes/zoneRules';
@@ -341,7 +341,8 @@ export class Game {
 
   static async create(container: HTMLElement, options: GameOptions): Promise<Game> {
     const game = new Game(container, options);
-    game.overlay.show(t('title'), t('loading'));
+    game.overlay.show(t('title'), t('loading'), '', 'info');
+    game.overlay.setProgress(0.04, t('load.map'));
     await game.init();
     return game;
   }
@@ -365,6 +366,7 @@ export class Game {
     }
     const outdoor = map.world.visualProfile !== 'indoor';
     await Promise.all([art, this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])])]);
+    await this.loadStep(0.3, 'load.terrain');
     this.physics.timestep = 1 / SIM_HZ;
     this.audio.setAmbience(ambienceFor(map.world.visualProfile, (map.zones?.length ?? 0) > 0, map.world.ambience));
     this.atmosphere = new Atmosphere(r.scene, r.fpScene, r.gl, map.world.visualProfile, {
@@ -388,11 +390,13 @@ export class Game {
     const shaped = hasTerrain(map);
     if (shaped) snapToTerrain(map, terrain);
     lap('terrain');
+    await this.loadStep(0.36, 'load.buildings');
     const built = buildBlockout(map, r.scene, this.physics, this.surfaces, this.impacts, shaped ? terrain : null, r.preset === 'low' ? 2 : 1);
     this.navExtra = built.navExtra;
     lap('blockout');
     const props = placeProps(map, r.scene, this.physics, this.models, this.impacts);
     lap('props');
+    await this.loadStep(0.48, 'load.nature');
     const water = terrain.rivers.length ? new WaterMap(terrain) : null;
     if (water) r.scene.add(buildRivers(terrain, r.scene.environment));
     const winter = map.world.visualProfile === 'winter';
@@ -413,6 +417,7 @@ export class Game {
       r.scene.add(this.groundCover.mesh);
     }
     lap('water+forest');
+    await this.loadStep(0.56, 'load.scenery');
     this.fitShadows(map, terrain, built.root, props);
     if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: r.preset === 'low' });
     lap('backdrop');
@@ -476,12 +481,16 @@ export class Game {
     this.weapons.ignoreBody = this.playerBoxes.body;
 
     if (botOpts && botOpts.allies + botOpts.enemies > 0) {
+      await this.loadStep(0.62, 'load.nav');
       // Colliders must be in the broadphase before the navmesh reads them.
       this.physics.step();
       const tNav = performance.now();
       this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined);
       if (import.meta.env.DEV) console.info(`[strikegy] navmesh built in ${Math.round(performance.now() - tNav)} ms`);
       if (this.nav) {
+        // Every soldier + weapon model, built in pieces so the loading screen keeps drawing.
+        await this.loadStep(0.72, 'load.soldiers');
+        await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
         this.bots.grenades = this.throwables;
         this.bots.gadgets = this.gadgets;
@@ -493,12 +502,14 @@ export class Game {
         this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, PLAYER_TEAM, hitId, pellet ? 0.35 : 1);
         // Vehicles come with zone matches: their drivers route on a mesh as wide as a tank.
         if ((map.zones?.length ?? 0) > 0 && !this.options.sandbox) {
+          await this.loadStep(0.8, 'load.vehicleNav');
           const tVeh = performance.now();
           bots.vehicleNav = await VehicleNav.build(this.physics, this.navExtra ?? undefined);
           if (import.meta.env.DEV) console.info(`[strikegy] vehicle navmesh built in ${Math.round(performance.now() - tVeh)} ms`);
         }
       }
     }
+    await this.loadStep(0.88, 'load.battle');
     this.mapImage = paintMap(map, terrain.boundary, 2048);
     this.minimap = new Minimap(this.hud.root, this.mapImage);
     const mode = this.options.mode ?? 'auto';
@@ -533,21 +544,29 @@ export class Game {
     r.scene.traverse((o) => {
       if (o instanceof THREE.Light) o.layers.enableAll();
     });
-    this.warmup();
+    await this.loadStep(0.93, 'load.shaders');
+    await this.warmup();
+    this.overlay.setProgress(1, t('load.shaders'));
 
     // Settle the physics broadphase so the first raycasts see static geometry.
     this.physics.step();
 
-    const touch = !!this.touch;
     this.overlay.setContext(this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName);
-    this.overlay.show(t('title'), touch ? t('start.tap') : t('start.click'), touch ? t('start.hintTouch') : t('start.hint'), 'menu');
-    this.overlay.setActions([{ label: t('lobby.back'), onClick: toLobby }]);
-    // The start screen starts on a click anywhere; the pause menu has its own entries.
-    this.overlay.root.addEventListener('click', () => {
-      if (this.overlay.kind !== 'pause') this.resume();
-    });
     document.addEventListener('pointerlockchange', () => {
       if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
+    });
+    // A page opened straight from a link had no click yet: sound starts on the first one.
+    const wake = () => this.audio.wake();
+    document.addEventListener('pointerdown', wake, { capture: true });
+    document.addEventListener('keydown', wake, { capture: true });
+    // The range on a desktop: a click on the game takes the mouse (also when taking it at the start failed).
+    r.canvas.addEventListener('mousedown', () => {
+      if (this.running && !this.touch && !this.kbm.locked && !this.overlay.visible && !this.deployScreen?.visible) this.kbm.requestLock();
+    });
+    // Esc on a pause opened from the deploy screen goes back to it (no mouse to take there).
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Escape' || e.defaultPrevented || !this.overlay.visible || this.overlay.kind !== 'pause') return;
+      if (this.deployFlow && !this.deployed) this.resume();
     });
     // GPU resets (driver timeout, device removed) lose the WebGL context; recover by reloading.
     r.canvas.addEventListener('webglcontextlost', (e) => {
@@ -573,6 +592,39 @@ export class Game {
 
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.frame);
+    this.begin();
+  }
+
+  /** Loading: moves the bar and lets the page draw it before the next long step. */
+  private async loadStep(fraction: number, step: MessageKey): Promise<void> {
+    this.overlay.setProgress(fraction, t(step));
+    // A frame to draw it; a hidden tab gets no frames, so a timer stands in.
+    await new Promise<void>((done) => {
+      let fired = false;
+      const go = () => {
+        if (fired) return;
+        fired = true;
+        setTimeout(done, 0);
+      };
+      requestAnimationFrame(go);
+      setTimeout(go, 60);
+    });
+  }
+
+  /**
+   * Straight in once loaded (the main menu was the start screen): the deploy
+   * screen, or the range itself. Taking the mouse needs a click; when the menu's
+   * click is too long ago, the first click on the game takes it.
+   */
+  private begin(): void {
+    this.audio.unlock();
+    this.running = true;
+    this.started = true;
+    this.loop.reset();
+    this.overlay.hide();
+    if (this.deployFlow && !this.deployed) this.openDeploy();
+    else if (this.touch) this.touch.setVisible(true);
+    else this.kbm.requestLock();
   }
 
   /**
@@ -580,7 +632,7 @@ export class Game {
    * all shader programs (including shadow depth variants) are compiled up front.
    * Otherwise the first shot, throw or weapon switch stalls the frame.
    */
-  private warmup(): void {
+  private async warmup(): Promise<void> {
     const r = this.renderer;
     const cam = r.camera;
     this.player.eyePosition(1, 0, this.tmpEye);
@@ -598,6 +650,8 @@ export class Game {
       r.scene.add(m);
     });
     this.effects.warmup(cam.position, fwd);
+    // Compile first (off the page where the browser can), then draw: the draws find the shaders ready.
+    await r.precompile();
     for (const id of this.weapons.loadout) {
       this.viewModel.setWeapon(WEAPONS[id]);
       this.viewModel.onFire(false);
@@ -618,6 +672,8 @@ export class Game {
         inspectT: -1,
       });
       r.render();
+      // One weapon a step: the loading screen keeps drawing between them.
+      await this.loadStep(0.96, 'load.shaders');
     }
     r.render();
     for (const m of temp) r.scene.remove(m);
@@ -766,6 +822,8 @@ export class Game {
     if (!this.started || this.matchOver) return;
     this.running = false;
     this.touch?.setVisible(false);
+    // From the deploy screen: it steps aside; resuming opens it again.
+    this.deployScreen?.hide();
     const touch = !!this.touch;
     this.overlay.show(t('paused'), '', view === 'controls' ? t(touch ? 'start.hintTouch' : 'start.hint') : '', 'pause');
     this.overlay.setActions([
@@ -2854,6 +2912,7 @@ export class Game {
       this.mapImage ?? paintMap(map, terrain.boundary),
       (key) => (this.spawnKey = key),
       () => this.deploy(),
+      () => this.pause(),
     );
     if (!this.options.sandbox) this.loadoutPanel = new LoadoutPanel(this.deployScreen.sideTop, this.deployScreen.mapBox, this.loadouts, () => {});
   }
@@ -2870,6 +2929,7 @@ export class Game {
     if (this.matchOver || this.deployed || this.respawnTimer > 0) return;
     const opts = this.deployOptions();
     const choice = opts.find((o) => o.key === this.spawnKey && !o.blocked) ?? opts[0]!;
+    this.audio.unlock();
     this.deployed = true;
     this.loadoutPanel?.close();
     this.respawn(choice.key);
@@ -3275,15 +3335,11 @@ export class Game {
     this.matchOver = true;
     this.touch?.setVisible(false);
     const won = winner === PLAYER_TEAM;
-    // The match's score goes on the career (the lobby's calling card); not the range.
-    const xp = this.bots ? (this.scores.get(PLAYER_ID)?.score ?? 0) : 0;
-    if (this.bots) addMatch(xp, won);
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      const line = this.bots ? `${this.resultLine()} · +${Math.round(xp).toLocaleString('en-US')} XP` : this.resultLine();
-      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), line, t('match.again'), won ? 'win' : 'loss');
+      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t('match.again'), won ? 'win' : 'loss');
       this.overlay.setActions([
         { label: t('lobby.again'), primary: true, onClick: () => location.reload() },
         { label: t('lobby.back'), onClick: toLobby },

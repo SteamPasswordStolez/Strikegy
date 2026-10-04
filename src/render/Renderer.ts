@@ -222,6 +222,26 @@ export class Renderer {
     this.applySize();
   }
 
+  /**
+   * Starts compiling every material's shaders for the variant the frame will
+   * use (into the post chain's float target, or the screen without it) and
+   * resolves when they are ready. Where the browser compiles in parallel
+   * (KHR_parallel_shader_compile) the page stays free meanwhile, so the first
+   * frames don't stall on them.
+   */
+  async precompile(): Promise<void> {
+    const prev = this.gl.getRenderTarget();
+    this.gl.setRenderTarget(this.postfx ? this.postfx.composer.renderTarget1 : null);
+    try {
+      const world = this.gl.compileAsync(this.scene, this.camera);
+      const fp = this.gl.compileAsync(this.fpScene, this.fpCamera);
+      this.gl.setRenderTarget(prev);
+      await Promise.all([world, fp]);
+    } finally {
+      this.gl.setRenderTarget(prev);
+    }
+  }
+
   /** Draws a frame; returns true if the shadow map was re-rendered in it. */
   render(): boolean {
     this.frameIndex++;

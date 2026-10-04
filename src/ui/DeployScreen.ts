@@ -52,7 +52,7 @@ const glyphOf = (o: DeployOption) => (o.kind === 'zone' ? o.key.replace('zone:',
  * the map in the middle with every spawn point on it as a button (click to
  * pick it), the squad and the full spawn list on the right, and a deploy
  * button that names the pick and fills up while the respawn timer runs out.
- * Keys: 1-9 pick, Space / Enter deploy.
+ * Keys: 1-9 pick, Space / Enter deploy, Esc (or the button top right) pauses.
  */
 export class DeployScreen {
   readonly root: HTMLDivElement;
@@ -83,6 +83,7 @@ export class DeployScreen {
     private readonly map: MapImage,
     private readonly onSelect: (key: string) => void,
     private readonly onDeploy: () => void,
+    private readonly onPause: () => void = () => {},
   ) {
     this.root = el('div', 'deploy', parent);
     const head = el('div', 'deploy-head', this.root);
@@ -90,6 +91,11 @@ export class DeployScreen {
     el('div', 'deploy-eyebrow', titles).textContent = t('deploy.title');
     this.title = el('div', 'deploy-title', titles);
     this.tickets = el('div', 'deploy-tickets', head);
+    const pause = el('button', 'deploy-pause', head);
+    el('span', 'deploy-pause-icon', pause).textContent = '❚❚';
+    el('span', '', pause).textContent = t('paused');
+    if (!this.touch) el('span', 'keycap', pause).textContent = 'Esc';
+    pause.addEventListener('click', () => this.onPause());
     const body = el('div', 'deploy-body', this.root);
 
     this.sideTop = el('div', 'deploy-left', body);
@@ -128,6 +134,10 @@ export class DeployScreen {
       } else if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
         this.tryDeploy();
+      } else if (e.code === 'Escape') {
+        // Handled here: the pause screen's own Esc (back to this screen) must not see it.
+        e.preventDefault();
+        this.onPause();
       }
     });
   }
