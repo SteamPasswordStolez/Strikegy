@@ -99,6 +99,15 @@ sudo cloudflared service install
 
 `strikegy.xyz`는 Cloudflare에 있고, `play` CNAME이 노트북에 이미 있던 터널(`d6dacf46…cfargotunnel.com`, howtoboard.com과 같은 터널)을 가리킵니다. 노트북 `/etc/cloudflared/config.yml` ingress에 `play.strikegy.xyz → http://localhost:8787`이 들어 있습니다(바꾸기 전 파일: `config.yml.bak-strikegy-20261004`). 게임은 `public/servers.json`에서 `wss://play.strikegy.xyz/play`를 읽습니다. 이 노트북의 `cert.pem`은 howtoboard.com용이라 `cloudflared tunnel route dns`로는 strikegy.xyz 레코드를 만들지 말고 대시보드에서 넣으세요.
 
+### 지금 설정: 오사카 중계 (2026-10-04)
+
+Cloudflare 무료 플랜은 한국 접속을 LAX(로스앤젤레스)로 보내 왕복이 450 ms(가끔 수 초)였습니다. 그래서 게임 서버는 오라클 클라우드 오사카의 무료 E2.1.Micro(`129.225.175.80`, `ssh ubuntu@...`)를 거칩니다(왕복 약 80 ms). 집 IP는 드러나지 않습니다.
+
+- DNS: `game.strikegy.xyz` A → 129.225.175.80, **DNS only**(회색 구름)
+- 중계 서버: Caddy(`/etc/caddy/Caddyfile`: `game.strikegy.xyz { reverse_proxy 127.0.0.1:18787 }`, 인증서 자동), iptables에 80/443 허용(`netfilter-persistent save`), 오라클 보안 목록 80/443
+- 노트북 → 중계: `server/strikegy-relay.service`(SSH 역방향 터널, 키 `~/.ssh/strikegy_relay`). 중계 서버의 `tunnel` 계정은 `127.0.0.1:18787` 전달만 허용(`/home/tunnel/.ssh/authorized_keys`의 `restrict,port-forwarding,permitlisten=...`)
+- 게임은 `public/servers.json`의 첫 주소 `wss://game.strikegy.xyz/play`, 안 되면 예전 터널 주소로
+
 ## 7. 업데이트
 
 ```bash

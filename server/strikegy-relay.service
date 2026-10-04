@@ -1,0 +1,19 @@
+# The game server reached through a small relay in Oracle Cloud (Osaka), so
+# players connect there (wss://game.strikegy.xyz/play) and the home IP stays
+# hidden: the laptop keeps an SSH reverse tunnel open to the relay, whose
+# Caddy serves TLS and passes the WebSocket down the tunnel to port 8787.
+# The tunnel user on the relay may only forward 127.0.0.1:18787 (see docs/server-setup.md).
+[Unit]
+Description=Strikegy relay tunnel (laptop -> Oracle relay)
+After=network-online.target strikegy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=steampasswordstolen
+ExecStart=/usr/bin/ssh -N -i /home/steampasswordstolen/.ssh/strikegy_relay -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -R 127.0.0.1:18787:127.0.0.1:8787 tunnel@129.225.175.80
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

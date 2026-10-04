@@ -66,8 +66,14 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const perAddress = new Map<string, number>();
 
   wss.on('connection', (ws, req) => {
-    const fwd = req.headers['cf-connecting-ip'];
-    const addr = (Array.isArray(fwd) ? fwd[0] : fwd) ?? req.socket.remoteAddress ?? '?';
+    // Through the relay (Caddy on Oracle, down an SSH tunnel) the socket is local and the
+    // visitor is in X-Forwarded-For; through the Cloudflare tunnel, in CF-Connecting-IP.
+    const local = /^(::ffff:)?127\.|^::1$/.test(req.socket.remoteAddress ?? '');
+    const header = (name: string) => {
+      const v = req.headers[name];
+      return (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim();
+    };
+    const addr = (local ? (header('cf-connecting-ip') ?? header('x-forwarded-for')) : undefined) ?? req.socket.remoteAddress ?? '?';
     const open = perAddress.get(addr) ?? 0;
     if (open >= PER_ADDRESS || wss.clients.size > CONNECTIONS_MAX) {
       ws.close(1013, 'too many connections');

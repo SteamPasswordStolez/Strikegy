@@ -21,7 +21,7 @@ export const SNAPSHOT_EVERY = 3;
 /** Remote soldiers are drawn this many ticks in the past (100 ms: two snapshots to blend between). */
 export const INTERP_TICKS = 6;
 /** Shots are judged against where targets were up to this long ago (s). */
-export const REWIND_MAX = 0.3;
+export const REWIND_MAX = 0.5;
 
 const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
 export const weaponIndex = (id: WeaponId): number => Math.max(0, WEAPON_IDS.indexOf(id));
