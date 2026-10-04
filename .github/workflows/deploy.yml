@@ -2,16 +2,19 @@ name: CI & Deploy
 
 on:
   push:
-    branches: [main, v2]
+    branches: [main, v2, exp]
   pull_request:
+  # The exp branch asks for a redeploy this way (see `redeploy` below).
+  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,6 +33,18 @@ jobs:
       # The strikegy-v2 mirror (github.io) must not claim strikegy.org, which serves p1 from this repo's main.
       - if: github.repository != 'SteamPasswordStolez/Strikegy'
         run: rm -f dist/CNAME
+      # The site: main at the root, the exp branch (multiplayer test builds) under /exp/.
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@v4
+        with:
+          ref: exp
+          path: exp-src
+      - if: github.ref == 'refs/heads/main'
+        run: |
+          if [ -f exp-src/package.json ]; then
+            cd exp-src && npm ci && npm run build && rm -f dist/CNAME
+            mkdir -p ../dist/exp && cp -r dist/. ../dist/exp/
+          fi
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:
@@ -45,3 +60,14 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Pages deploys from main only: a push to exp, once it builds and passes,
+  # reruns main's deploy, which picks up exp for /exp/.
+  redeploy:
+    if: github.ref == 'refs/heads/exp' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run deploy.yml --ref main --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
