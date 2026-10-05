@@ -145,7 +145,6 @@ describe('anti-wallhack', () => {
     const sa = sim.soldiers.get(1000)!;
     const sb = sim.soldiers.get(1001)!;
     const ground = (x: number, z: number) => sim.world.terrain.heightAt(x, z);
-    const head = (x: number, z: number) => ({ x, y: ground(x, z) + 1.6, z });
     // A spot for alpha and two for bravo, 50-150 m away: one in clear sight, one hidden.
     let open: { x: number; z: number } | null = null;
     let hidden: { x: number; z: number } | null = null;
@@ -156,9 +155,13 @@ describe('anti-wallhack', () => {
       const r = 50 + (i % 10) * 10;
       const x = ax + Math.cos(ang) * r;
       const z = az + Math.sin(ang) * r;
-      const blocked = sim.physics.blocked(head(ax, az), head(x, z), Layer.WORLD) && sim.physics.blocked(head(ax, az), { x, y: ground(x, z) + 1.1, z }, Layer.WORLD);
-      if (blocked) hidden ??= { x, z };
-      else open ??= { x, z };
+      // On the map, well inside its edge (the sim keeps people in).
+      const edge = sim.world.terrain.boundary;
+      if (!edge.contains(x, z) || edge.edgeDistance(x, z) < 8) continue;
+      // Hidden: no line from anywhere near alpha's eye to anywhere on bravo (not just grazing over a low wall).
+      const lines = [1.3, 1.6, 1.9].flatMap((e) => [0.4, 1.1, 1.8].map((t) => sim.physics.blocked({ x: ax, y: ground(ax, az) + e, z: az }, { x, y: ground(x, z) + t, z }, Layer.WORLD)));
+      if (lines.every(Boolean)) hidden ??= { x, z };
+      else if (!lines.some(Boolean)) open ??= { x, z };
     }
     expect(open && hidden).toBeTruthy();
     const place = (p: { x: number; z: number }) => {

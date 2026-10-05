@@ -1,15 +1,17 @@
 // Generates public/maps/iron_gate.json — "철문 주둔지" (Iron Gate Garrison).
-// 5-zone Zone map, about 500 x 360 m. The blue FOB stands in the south-west,
-// the red garrison in the north-east behind its fortified checkpoint, the
-// "iron gate" (E). Between them lies an old town around a square (B) with a
-// five-storey hospital on the rise to its north-west, a rail freight yard (A,
-// north-west), a fuel depot with a gas station (C, south-east) and a factory
-// district (D) in front of the blue FOB. Main roads run from both bases to
-// every zone; open fields with copses lie between the zones for the tanks.
+// Third layout (2026-10-05, owner: fights were too rare; BFV references):
+// a compact 3-zone town map, about 330 x 210 m, for 12v12. The blue FOB
+// stands at the west edge, the red garrison at the east edge; between them,
+// on one line, the factory district (A, blue side), the old-town square with
+// its townhall (B, middle) and the walled iron gate checkpoint (C, red side).
+// Three lanes run west-east: the north lane past the five-storey hospital
+// and the rail freight yard, the main road through the middle (tanks), and
+// the south lane past the gas station and its fuel tanks. Everything else is
+// town: streets lined with buildings, alleys and backyards.
 import { writeFileSync } from 'node:fs';
 import { block, edgeDist, inside, lineDist, rng, round, smoothClosed, smoothOpen, stripAlong, wallLine } from './lib.mjs';
 
-const R = rng(20261002);
+const R = rng(20261005);
 const DEG = Math.PI / 180;
 const objects = [];
 const buildings = [];
@@ -20,21 +22,18 @@ const between = (a, b) => a + R() * (b - a);
 
 // --- Outline -------------------------------------------------------------------
 const outline = [
-  [-240, -140], [-200, -170], [-130, -178], [-60, -170], [0, -182], [70, -174], [130, -182], [190, -178], [236, -158],
-  [252, -110], [244, -50], [252, 10], [236, 70], [205, 125], [150, 158], [80, 176], [10, 168], [-60, 180], [-130, 172],
-  [-190, 170], [-238, 150], [-254, 100], [-240, 40], [-252, -30], [-238, -90],
+  [-150, -84], [-118, -102], [-60, -106], [0, -102], [60, -106], [118, -102], [152, -82], [166, -30], [162, 20], [166, 62],
+  [134, 98], [64, 106], [0, 102], [-64, 106], [-132, 98], [-166, 62], [-162, 15], [-166, -34],
 ];
 const boundary = smoothClosed(outline, 2).map(([x, z]) => [round(x, 1), round(z, 1)]);
 const inMap = (x, z, pad = 0) => inside(boundary, x, z) && edgeDist(boundary, x, z) > pad;
 
 // --- Zones, bases, local frames --------------------------------------------------
-const CROAD = [75, 112]; // the south road through the depot
-const Z = { A: [-75, -112], B: [0, 0], C: [81, 116], D: [-115, 55], E: [115, -55] };
-const ZR = { A: 36, B: 34, C: 38, D: 36, E: 34 };
-const FOB = [-185, 108];
-const BLUE = [-180, 105]; // blue spawn centre (front half of the FOB)
-const RED = [176, -100]; // red spawn centre (inside the garrison)
-const HOSP = [-42, -62];
+const Z = { D: [-78, 8], B: [0, 0], E: [78, -8] };
+const ZR = { D: 26, B: 26, E: 25 };
+const BLUE = [-132, 12]; // blue spawn centre
+const RED = [134, -12]; // red spawn centre
+const HOSP = [-2, -66];
 
 /** A local frame at `o` turned by `deg` (map yaw): local x -> world (cos, -sin), local z -> (sin, cos). */
 const frame = (o, deg) => {
@@ -44,11 +43,11 @@ const frame = (o, deg) => {
   f.deg = deg;
   return f;
 };
-const fD = frame(Z.D, 32); // u along the main road through the factories
-const fE = frame(Z.E, 31); // u along the main road toward the red garrison
-const fC = frame(CROAD, 15); // u along the south road
-const fH = frame(HOSP, 30); // hospital: local +z faces the old town
-const fF = frame(FOB, 30); // FOB: local +x faces the front (north-east)
+const fD = frame(Z.D, 0); // u along the main road through the factories
+const fE = frame(Z.E, 0); // u along the main road toward the red garrison
+const fH = frame(HOSP, 0); // hospital: local +z faces the square
+const fF = frame([-130, 12], 0); // FOB: local +x faces the front (east)
+const fC = frame([-6, 70], 0); // gas station, the south lane
 
 // --- Occupancy: oriented boxes of everything solid placed so far -----------------
 function obb(x, z, w, d, yawDeg = 0, pad = 0) {
@@ -130,27 +129,21 @@ function ramp(x, z, yawDeg, len, width, rise, color = '#8f8b82') {
 // --- Terrain -----------------------------------------------------------------------
 const terrain = {
   cell: 2,
-  noise: 0.5,
+  noise: 0.35,
   hills: [
-    { pos: [-190, -50], radius: 55, height: 7 }, // west hills between the FOB road and the yard
-    { pos: [-150, -95], radius: 30, height: 3.5 },
-    { pos: HOSP, radius: 46, height: 3 }, // the hospital stands on a low rise
-    { pos: [40, -136], radius: 40, height: 3.5 }, // field rise south of the rail curve
-    { pos: [178, 36], radius: 45, height: 4 }, // east fields between the depot and the gate
-    { pos: [182, 128], radius: 42, height: 5 },
-    { pos: [-62, 148], radius: 40, height: 3 }, // south fields
-    { pos: [-205, 30], radius: 35, height: 3 },
-    { pos: [35, 62], radius: 26, height: -1.4 }, // a dip between the town and the depot
-    { pos: [192, -112], radius: 70, height: 2.2 }, // garrison plateau
+    { pos: HOSP, radius: 34, height: 2 }, // the hospital stands on a low rise
+    { pos: [-126, -74], radius: 34, height: 2.5 },
+    { pos: [122, 72], radius: 34, height: 2.2 },
+    { pos: [60, 82], radius: 26, height: -1.2 }, // a dip behind the south lane
   ],
   flats: [
-    { pos: [-75, -126], radius: 42, blend: 12 },
-    { pos: Z.B, radius: 46, blend: 15 },
-    { pos: [80, 115], radius: 40, blend: 12 },
-    { pos: Z.D, radius: 42, blend: 12 },
-    { pos: Z.E, radius: 40, blend: 12 },
-    { pos: FOB, radius: 42, blend: 12 },
-    { pos: [192, -110], radius: 50, blend: 12 },
+    { pos: Z.D, radius: 36, blend: 10 },
+    { pos: Z.B, radius: 40, blend: 12 },
+    { pos: Z.E, radius: 36, blend: 10 },
+    { pos: BLUE, radius: 26, blend: 10 },
+    { pos: RED, radius: 28, blend: 10 },
+    { pos: [72, -66], radius: 30, blend: 10 },
+    { pos: [-10, 74], radius: 30, blend: 10 },
   ],
 };
 
@@ -182,47 +175,29 @@ const offRoad = (x, z, pad) =>
     return lineDist(x, z, r.pts) >= m;
   });
 
-// Main road: blue FOB -> factories (D) -> old town square (B) -> iron gate (E) -> red garrison.
-const M1W = road([BLUE, fF(28, 0), fD(-40, 0), Z.D, fD(40, 0), [-55, 20], [-23, 6]], 10, { y: 0.07 });
-const M1E = road([[23, -6], [55, -22], fE(-45, 0), fE(-28, 0), Z.E, fE(28, 0), fE(55, 0), RED], 10, { y: 0.07 });
-// North road: iron gate -> along the rise north of the hospital -> freight yard (A).
-const NORTH = road([fE(-12, -6), fE(-15, -24), fE(-17, -34), [70, -86], [40, -97], [10, -98], [-15, -97], [-35, -100], [-52, -100]], 8, { y: 0.065 });
-// South road: blue FOB -> south fields -> gas station / fuel depot (C) -> east fields -> iron gate.
-road([BLUE, fF(0, 27), [-140, 140], [-90, 142], [-40, 135], [-5, 130], fC(-50, 0), CROAD, fC(50, 0), [138, 70], [146, 25], fE(-9, 34), fE(-9, 24), fE(-9, 6)], 9, { y: 0.065 });
-// West road: factories -> over the west hills -> freight yard.
-road([fD(-38, 0), [-165, 45], [-168, 5], [-155, -35], [-135, -70], [-112, -90]], 8, { y: 0.065 });
-// Branches from the square to the yard (past the hospital) and to the depot.
-const BA = road([[20, -18], [28, -40], [24, -62], [8, -84], [-10, -97]], 7, { y: 0.06, town: true });
-const BC = road([[6, 18], [12, 45], [28, 75], [38, 116]], 7, { y: 0.06, town: true });
-// Hospital drive.
-road([fH(24, 16), [10, -60], [24, -61]], 6, { y: 0.055, smooth: 1 });
-// Old-town streets: two long streets south of the main road, a north-east
-// quarter street, a lane round the hospital side, short cross lanes between them.
-const street = (pts, w = 5.5, y = 0.05) => road(pts, w, { y, town: true, smooth: 1 });
+// Main road (the tank lane): blue FOB -> factories (D) -> square (B) -> iron gate (E) -> red garrison.
+const M1W = road([BLUE, [-110, 12], Z.D, [-50, 6], [-24, 3]], 9, { y: 0.07 });
+const M1E = road([[24, -3], [50, -6], Z.E, [110, -12], RED], 9, { y: 0.07 });
+// North and south streets: the lanes' spines, edge to edge.
+const NS = road([[-170, -50], [-120, -46], [-60, -42], [0, -40], [60, -42], [120, -46], [170, -50]], 5.5, { y: 0.06, town: true, smooth: 1 });
+const SS = road([[-170, 56], [-120, 52], [-60, 48], [0, 46], [60, 48], [120, 52], [170, 56]], 5.5, { y: 0.06, town: true, smooth: 1 });
+// Cross streets either side of the square, linking the three lanes.
+const XW = road([[-44, -42], [-45, 0], [-44, 48]], 5, { y: 0.055, smooth: 1 });
+const XE = road([[44, -42], [45, 0], [44, 48]], 5, { y: 0.055, smooth: 1 });
 const lane = (pts) => road(pts, 4.5, { y: 0.045, town: true, color: LANE, smooth: 1 });
-const STREETS = [
-  street([[-56, 50], [-30, 45], [-2, 40], [34, 33], [62, 20], [86, 17]]),
-  street([[-66, 90], [-42, 83], [-2, 80], [24, 73], [48, 69]]),
-  street([[26, -30], [48, -37], [64, -27]]),
-  street([[-23, -12], [-45, -10], [-68, -4], [-84, 10], [-87, 32]]),
-];
 const LANES = [
-  lane([[-45, 15.5], [-43, 31], [-42, 46]]),
-  lane([[38, -13], [41, 10], [42, 31]]),
-  lane([[-16, 18], [-19, 30], [-22, 43]]),
-  lane([[-50, 50], [-52, 66], [-54, 85]]),
-  lane([[60, 21], [66, 44], [58, 68]]),
-  lane([[-30, 81], [-33, 105], [-36, 133]]),
+  lane([[-100, -45], [-101, -70], [-102, -98]]),
+  lane([[-100, 51], [-101, 76], [-102, 100]]),
+  lane([[100, 51], [101, 76], [102, 100]]),
+  lane([[40, 47], [41, 76], [42, 100]]),
+  lane([[-62, -42], [-64, -70], [-66, -98]]),
+  lane([[63, -32], [63, -42]]), // the checkpoint's north gate
 ];
-// Country lane from the town's east end out to the south road.
-road([[86, 17], [110, 30], [143, 47]], 5, { y: 0.045, color: LANE, smooth: 1 });
 
-// --- Rail ----------------------------------------------------------------------------
-const RAIL_MAIN = smoothOpen([[-290, -140], [-200, -144], [-130, -150], [-60, -151], [0, -150], [40, -156], [75, -172], [100, -205]], 2);
-const S1 = smoothOpen([[-140, -150], [-120, -142], [-100, -139], [-40, -139], [-20, -146], [0, -150]], 2);
-const S2 = smoothOpen([[-120, -142], [-100, -130], [-50, -128], [-38, -129]], 2);
-const S3 = smoothOpen([[-100, -130], [-86, -119], [-52, -118]], 2);
-const tracks = [RAIL_MAIN, S1, S2, S3];
+// --- Rail: along the north edge, a siding into the freight yard ------------------------------------
+const RAIL_MAIN = smoothOpen([[-200, -88], [-120, -89], [-40, -88], [40, -89], [120, -88], [200, -87]], 2);
+const S1 = smoothOpen([[30, -88], [50, -82], [70, -80], [112, -80], [128, -86]], 2);
+const tracks = [RAIL_MAIN, S1];
 for (const line of tracks) {
   const inside_ = line.filter(([x, z]) => inMap(x, z, -25));
   objects.push(...stripAlong(inside_, 3.2, { color: '#5b5048', material: 'ground', y: 0.12, thickness: 0.4 }).filter((s) => inMap(s.pos[0], s.pos[2], -2)));
@@ -324,55 +299,43 @@ function scatter(cx, cz, rMin, rMax, n, models = CRATES) {
   }
 }
 
-// --- Blue FOB (south-west) -------------------------------------------------------------
+// --- Blue FOB (west edge) -----------------------------------------------------------------------
 {
-  // Hesco ring; gates: front (main road), right (south road), left (footpath north).
-  const ring = [fF(28, -26), fF(28, 26), fF(-28, 28), fF(-30, -24), fF(28, -26)];
-  hesco(ring, [[19, 33], [74, 86], [190, 197]]);
-  // Tents and supplies along the sides of the front half; the back half is the vehicle park.
-  for (const [lx, lz] of [[16, -19], [6, -19], [-4, -20]]) thing(fF, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
-  for (const [lx, lz] of [[18, 19], [8, 20]]) thing(fF, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
-  container(fF, -6, 22, 90);
-  container(fF, -14, 22, 90, 2);
-  thing(fF, 22, -12, 0.9, 1.1, 3.4, { material: 'ground', color: SAND, model: 'sandbags' });
-  thing(fF, 22, 12, 0.9, 1.1, 3.4, { material: 'ground', color: SAND, model: 'sandbags' });
-  for (const [lx, lz] of [[27, -24], [26, 24], [-27, 26], [-28, -22]]) tower(...fF(lx, lz), fF.deg);
+  // Hesco ring; gates: front (main road), the north and south streets' side, a footpath back.
+  const ring = [fF(18, -22), fF(18, 22), fF(-18, 22), fF(-18, -22), fF(18, -22)];
+  hesco(ring, [[17, 27], [58, 64], [100, 106], [130, 136]]);
+  for (const [lx, lz] of [[10, -17], [1, -17]]) thing(fF, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
+  for (const [lx, lz] of [[10, 17], [1, 17]]) thing(fF, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
+  container(fF, -8, 18, 90);
+  container(fF, -14, -18, 90, 2);
+  for (const [lx, lz] of [[17, -21], [17, 21], [-17, 21], [-17, -21]]) tower(...fF(lx, lz), fF.deg);
   // Gravel motor pool in the back half (paint only).
-  paint(fF(-15, 0), 26, 44, fF.deg, 0.04, '#8a8070', 'ground');
-  scatter(...fF(4, 0), 10, 20, 5);
+  paint(fF(-9, 0), 16, 30, fF.deg, 0.04, '#8a8070', 'ground');
+  scatter(...fF(6, 0), 6, 12, 3);
 }
 
-// --- Red garrison (north-east) ---------------------------------------------------------
-const BASE_WALL = [[141.5, -117.6], [160, -150], [190, -160], [220, -146], [234, -100], [220, -60], [177.5, -57.6], [141.5, -117.6]];
+// --- Red garrison (east edge) ------------------------------------------------------------------
 {
-  const len = (i) => Math.hypot(BASE_WALL[i + 1][0] - BASE_WALL[i][0], BASE_WALL[i + 1][1] - BASE_WALL[i][1]);
-  let acc = 0;
-  const offs = BASE_WALL.slice(0, -1).map((_, i) => ((acc += len(i)), acc - len(i)));
-  // Main gate where the road comes through from the checkpoint; a side gate to the north fields.
-  const mainAt = offs[6] + Math.hypot(162.1 - 177.5, -83.3 + 57.6);
-  putAll(wallLine(BASE_WALL, { height: 3.6, thick: 0.5, color: '#a39f93', gaps: [[mainAt - 7.5, mainAt + 7.5], [offs[0] + 14, offs[0] + 20], [offs[6] + 6, offs[6] + 9]] }));
-  for (const [x, z] of BASE_WALL.slice(0, -1)) tower(x, z);
-  addBuilding({ pos: [178, -140], size: [26, 12], style: 'hq', floors: 3, rot: 18, doors: 'sn' });
-  addBuilding({ pos: [207, -136], size: [22, 18], style: 'hangar', rot: 18, doors: 's' });
-  addBuilding({ pos: [190, -70], size: [20, 8], style: 'barracks', doors: 'n' });
-  addBuilding({ pos: [210, -73], size: [14, 8], style: 'barracks', doors: 'nw' });
-  for (const [x, z] of [[155, -120], [162, -110]]) put(block(x, z, 5, 3, 4, { yaw: 30, type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' }));
-  for (const [x, z, yaw] of [[226, -118, 165], [225, -106, 168], [198, -86, 90]]) truck(x, z, yaw);
-  // Concrete motor pool east of the spawns (pads and tank spots are found on it at load).
-  paint([203, -104], 30, 32, 18, 0.04, '#8e8c86');
-  container(frame([150, -98], 30), 0, 0, 0, 2);
-  container(frame([155, -92], 30), 0, 0, 10);
-  scatter(170, -125, 4, 12, 4);
+  const WALL = [[116, -40], [150, -44], [156, -14], [150, 14], [116, 12], [116, -40]];
+  // Main gate where the main road comes in (west wall), side gates north and south.
+  putAll(wallLine(WALL, { height: 3.6, thick: 0.5, color: '#a39f93', gaps: [[12, 18], [108, 114], [145, 158]] }));
+  for (const [x, z] of WALL.slice(0, -1)) tower(x, z);
+  addBuilding({ pos: [137, -35], size: [18, 8], style: 'hq', floors: 2, doors: 's' });
+  addBuilding({ pos: [137, 6], size: [16, 7], style: 'barracks', doors: 'n' });
+  truck(148, -22, 0);
+  truck(148, -4, 180, '#4d5a3c');
+  paint([138, -12], 16, 22, 0, 0.04, '#8e8c86');
+  scatter(124, -30, 3, 8, 3);
 }
 
 // --- E: the iron gate checkpoint ---------------------------------------------------------
 {
   const W = { height: 4.2, thick: 0.6, color: '#9a978c', material: 'concrete' };
-  // Front (towards the town): the iron gate in the middle, a breach in the north part.
+  // Front (towards the square): the iron gate in the middle, a breach in the north part.
   putAll(wallLine([fE(-28, -24), fE(-28, 24)], { ...W, gaps: [[18, 30], [5, 8.5]] }));
   // Rear (towards the garrison).
   putAll(wallLine([fE(28, -24), fE(28, 24)], { ...W, gaps: [[18, 30]] }));
-  // North-west side: gate for the north road. South-east side: gate for the south road and a breach.
+  // North side: gate for the lane from the north street. South side: a gate and a breach to the south lane.
   putAll(wallLine([fE(-28, -24), fE(28, -24)], { ...W, gaps: [[8, 18]] }));
   putAll(wallLine([fE(-28, 24), fE(28, 24)], { ...W, gaps: [[14, 24], [42, 45]] }));
   for (const [u, v] of [[-25.5, -21.5], [25.5, -21.5], [-25.5, 21.5], [25.5, 21.5]]) tower(...fE(u, v), fE.deg);
@@ -383,8 +346,8 @@ const BASE_WALL = [[141.5, -117.6], [160, -150], [190, -160], [220, -146], [234,
   }
   const [gx, gz] = fE(-28, 0);
   put({ type: 'wall', pos: [gx, 6.1, gz], size: [1, 0.9, 15.2], rot: [0, fE.deg, 0], material: 'metal', color: '#3f4448', snap: true });
-  // HQ and barracks inside.
-  building(fE, 15, -14, 22, 12, { style: 'hq', floors: 2, doors: 'swe' });
+  // HQ (two floors, the zone's strongpoint) and barracks inside.
+  building(fE, 13, -14, 22, 12, { style: 'hq', floors: 2, doors: 'swe' });
   building(fE, 12, 15.5, 20, 8, { style: 'barracks', doors: 'nw' });
   // Guard booths, hesco firing lines, sandbag nests at the gates, containers, trucks.
   thing(fE, -22, -10, 2.4, 2.8, 2.4, { type: 'wall', material: 'wood', color: '#6d6450', model: 'booth' });
@@ -401,116 +364,41 @@ const BASE_WALL = [[141.5, -117.6], [160, -150], [190, -160], [220, -146], [234,
   container(fE, 22, 15, 0);
   truck(...fE(-4, 10), fE.deg + 90);
   truck(...fE(20, -3.5), fE.deg - 90, '#4d5a3c');
-  scatter(...Z.E, 6, 24, 7);
-  // Outside the gate: a staggered roadblock, wrecks, hesco wings and a dead tank in the field.
-  // Staggered, but with a straight lane a tank fits through (bot drivers kept wedging in a tighter one).
-  barriers(...fE(-40, -7.2), fE.deg + 90, 3);
-  barriers(...fE(-48, 7.2), fE.deg + 90, 3);
-  hesco([fE(-33, -12), fE(-33, -22)]);
-  hesco([fE(-33, 12), fE(-33, 22)]);
-  car(...fE(-37, 11), fE.deg + 70, pick(WRECK));
-  car(...fE(-52, -10), fE.deg + 15, pick(WRECK));
-  put(block(...fE(-58, 20), 3.6, 2.6, 7.2, { yaw: fE.deg + 50, type: 'wall', material: 'metal', color: '#4a4c3e', model: 'tankWreck' }));
-  nest(...fE(-36, -28), fE.deg - 90);
+  scatter(...Z.E, 6, 22, 6);
 }
 
 // --- D: factory district ----------------------------------------------------------------
 {
-  // North of the road: the big hall with an office annex at its east end.
-  building(fD, -4, -25, 44, 22, { style: 'factory', doors: 'snew' });
-  building(fD, 25.6, -24, 14, 12, { style: 'office', floors: 3, doors: 'se' });
-  // South of the road: second hall with a loading dock and trucks backed up to it.
-  building(fD, 6, 32, 38, 20, { style: 'factory', doors: 'nsw' });
-  thing(fD, 6, 20, 32, 1.2, 4, { type: 'floor', material: 'concrete', color: '#9b978d' });
-  ramp(...fD(-10.2, 20), fD.deg - 90, 5, 3.6, 1.2);
-  for (const u of [-4, 6, 16]) truck(...fD(u, 13.6), fD.deg + 180, pick(['#55603f', '#7a6a4a', '#5a5f66']));
-  // Boiler house with its brick chimney, a store shed east.
-  building(fD, -32, 26, 14, 12, { style: 'warehouse', doors: 'ne' });
-  thing(fD, -32, 36, 3.2, 28, 3.2, { type: 'wall', material: 'brick', color: '#7b4a3a' });
-  building(fD, 36, 26, 18, 14, { style: 'warehouse', doors: 'nw' });
-  // Yard clutter, containers, a burnt-out tank on the road edge (the halls furnish themselves).
-  container(fD, -28, -9, 0, 2);
-  container(fD, 30, -9, 90);
-  container(fD, 24, 11, 0);
-  container(fD, -20, 11, 90, 2);
-  put(block(...fD(-14, 8.4), 3.6, 2.6, 7.2, { yaw: fD.deg + 80, type: 'wall', material: 'metal', color: '#4a4c3e', model: 'tankWreck' }));
-  sandbags(...fD(0, -8), 4, fD.deg + 90);
-  sandbags(...fD(-36, 9), 3.5, fD.deg + 90);
-  scatter(...Z.D, 6, 30, 9);
+  // North of the road: the big hall with an office block (three floors) at its east end.
+  building(fD, -4, -22, 36, 16, { style: 'factory', doors: 'snew' });
+  building(fD, 22, -20, 12, 12, { style: 'office', floors: 3, doors: 'sw' });
+  // South of the road: second hall with a loading dock and lorries backed up to it.
+  building(fD, -2, 26, 34, 16, { style: 'factory', doors: 'nsw' });
+  thing(fD, -2, 16.5, 28, 1.2, 3, { type: 'floor', material: 'concrete', color: '#9b978d' });
+  ramp(...fD(-16.2, 16.5), fD.deg - 90, 4, 3, 1.2);
+  for (const u of [-6, 4]) truck(...fD(u, 11.6), fD.deg + 180, pick(['#55603f', '#7a6a4a', '#5a5f66']));
+  // The boiler chimney, a landmark seen from the whole map.
+  thing(fD, -22, 22, 3.2, 28, 3.2, { type: 'wall', material: 'brick', color: '#7b4a3a' });
+  // Yard clutter: containers, a burnt-out tank, sandbags (the halls furnish themselves).
+  // The yard strips either side of the road (the road itself stays clear for tanks).
+  container(fD, -20, -9, 90, 2);
+  container(fD, 12, -9.5, 90);
+  container(fD, 18, 21, 0);
+  car(...fD(-8, -9), fD.deg + 80, pick(WRECK));
+  car(...fD(2, -10.5), fD.deg + 95, pick(WRECK));
+  nest(...fD(-28, -9), fD.deg + 90);
+  sandbags(...fD(24, -8), 3.5, fD.deg);
+  hesco([fD(-2, -12), fD(-2, -7)]);
+  put(block(...fD(-16, 10), 3.6, 2.6, 7.2, { yaw: fD.deg + 20, type: 'wall', material: 'metal', color: '#4a4c3e', model: 'tankWreck' }));
+  car(...fD(12, 8), fD.deg - 70, pick(WRECK));
+  sandbags(...fD(-26, 8), 3.5, fD.deg);
+  sandbags(...fD(20, 9), 3.5, fD.deg);
+  sandbags(...fD(-30, 18), 3.5, fD.deg + 90);
+  nest(...fD(28, 6), fD.deg - 90);
+  scatter(...Z.D, 6, 26, 7);
 }
 
-// --- A: rail freight yard ------------------------------------------------------------------
-{
-  const fA = frame([0, 0], 0);
-  // Freight warehouse behind a loading platform along the spur, a second shed at the west end.
-  addBuilding({ pos: [-78, -102], size: [36, 16], style: 'warehouse', doors: 'nse' });
-  put(block(-77, -113, 44, 1.1, 4, { type: 'floor', material: 'concrete', color: '#a19c90' }));
-  ramp(-99, -113, -90, 5, 3.4, 1.1);
-  ramp(-55, -113, 90, 5, 3.4, 1.1);
-  addBuilding({ pos: [-138, -113], size: [14, 26], style: 'warehouse', doors: 'ew' });
-  // Freight office by the east throat, water tower by the west one.
-  addBuilding({ pos: [-16, -122], size: [14, 9], style: 'station', doors: 'ns' });
-  put(block(-110, -122, 7, 20, 7, { type: 'wall', material: 'metal', color: '#6f6a5e', model: 'waterTower' }));
-  // Wagons on the tracks.
-  for (const x of [-48, -34]) boxcar(RAIL_MAIN, x);
-  for (const x of [-104, -91, -66]) boxcar(S1, x);
-  for (const x of [-78, -54]) boxcar(S2, x);
-  for (const x of [-77, -63]) boxcar(S3, x);
-  // Container stacks east of the sidings (alleys between the rows).
-  for (const [x, z, s] of [[-42, -122, 2], [-42, -114, 3], [-33, -120, 1], [-33, -112, 2], [-24, -116, 2], [-48, -106, 1]]) container(fA, x, z, 90, s);
-  container(fA, -28, -104, 0);
-  container(fA, -120, -96, 20, 2);
-  truck(-55.5, -88, 0, '#7a6a4a');
-  truck(-122, -86, 160);
-  // South yard: lorries backed up to the warehouse, a container row, the yard office.
-  for (const x of [-88, -70]) truck(x, -89.5, 180, pick(['#7a6a4a', '#5a5f66', '#55603f']));
-  for (const [x, s] of [[-98, 2], [-91.5, 1], [-64, 1]]) container(fA, x, -80, 0, s);
-  addBuilding({ pos: [-79, -79], size: [8, 6], style: 'shed', doors: 'ns' });
-  sandbags(-104, -96, 3.5, 0);
-  sandbags(-70, -124, 4, 90);
-  sandbags(-86, -134, 3.5, 90);
-  nest(-30, -132, 180);
-  scatter(...Z.A, 6, 30, 10);
-}
-
-// --- C: fuel depot and gas station -----------------------------------------------------------
-{
-  // Gas station north of the road: canopy over two pump islands, the shop behind it, cars at the pumps.
-  thing(fC, -18, -14, 16, 5.2, 10, { type: 'wall', material: 'metal', color: '#d9d4c7', model: 'fuelCanopy' });
-  for (const s of [-1, 1]) {
-    thing(fC, -18 + s * 4, -14, 1.2, 0.25, 5, { type: 'floor', material: 'concrete', color: '#bdb7aa' });
-    for (const dz of [-1.5, 1.5]) thing(fC, -18 + s * 4, -14 + dz, 0.6, 1.6, 0.9, { color: '#b3312b', material: 'metal', model: 'pump' });
-  }
-  car(...fC(-24.2, -13.5), fC.deg + 2);
-  car(...fC(-11.8, -15), fC.deg - 3);
-  building(fC, -18, -29, 14, 9, { style: 'gasShop', doors: 'se' });
-  for (const [i, u] of [-30, -27.4, -6.6].entries()) if (i !== 1 || R() < 0.7) car(...fC(u, -30), fC.deg + (R() - 0.5) * 6);
-  // Depot south of the road: two big tanks in a bund, two smaller ones, a pipe rack, the loading gantry.
-  const T = (u, v, w, h) => thing(fC, u, v, w, h, w, { type: 'wall', material: 'metal', color: '#c9c6ba', model: 'fuelTank' });
-  T(4, 26, 13, 10);
-  T(23, 26, 13, 10);
-  T(42, 19, 9, 7);
-  T(42, 33, 7, 6);
-  putAll(wallLine([fC(-5, 17), fC(32, 17), fC(32, 36), fC(-5, 36), fC(-5, 17)], { height: 1.2, thick: 0.5, type: 'cover', material: 'concrete', color: '#a7a398', gaps: [[16, 21], [70, 75]] }));
-  for (const y of [0.8, 1.35]) thing(fC, 18, 11, 50, 0.45, 0.45, { lift: y, sink: 0, material: 'metal', color: '#8b8d86' });
-  for (let u = -6; u <= 42; u += 6) thing(fC, u, 11, 0.25, 1.6, 0.8, { material: 'metal', color: '#6b6d66' });
-  thing(fC, 56, 20, 14, 6.5, 8, { type: 'wall', material: 'metal', color: '#c8c3b5', model: 'fuelCanopy' });
-  truck(...fC(56, 20), fC.deg + 90, '#d7d4cc');
-  truck(...fC(54, 33), fC.deg + 95, '#b9b6ae');
-  truck(...fC(-30, 18), fC.deg + 80, '#d7d4cc');
-  building(fC, -12, 28, 8, 6, { style: 'shed', doors: 'n' });
-  nest(...fC(8, 7.5), fC.deg + 180);
-  sandbags(...fC(-14, 6), 4, fC.deg);
-  car(...fC(30, -10), fC.deg + 130, pick(WRECK));
-  // North-east of the road: the depot office, a container stack, a burnt tanker.
-  building(fC, 30, -24, 15, 10, { style: 'office', floors: 2, doors: 'sw' });
-  container(fC, 14, -22, 90, 2);
-  container(fC, 14, -14, 85);
-  truck(...fC(44, -12), fC.deg + 60, '#2f2a26');
-  scatter(...Z.C, 8, 34, 9, ['barrel_03', 'barrel_03', 'metal_jerrycan_green', 'old_tyre', 'wooden_military_crate']);
-}
-
-// --- Hospital: the landmark on the rise between the yard and the square -------------------------
+// --- North lane: the hospital (five floors, the landmark) --------------------------------------
 {
   building(fH, 0, 0, 48, 20, { style: 'hospital', floors: 5, doors: 'snew' });
   // Forecourt with parking bays, the entrance canopy and ambulances.
@@ -519,16 +407,58 @@ const BASE_WALL = [[141.5, -117.6], [160, -150], [190, -160], [220, -146], [234,
   truck(...fH(-8, 13.5), fH.deg + 90, '#e8e6e0');
   truck(...fH(9, 13.5), fH.deg - 90, '#e8e6e0');
   for (const side of [-1, 1]) {
-    for (let k = 0; k < 7; k++) {
+    for (let k = 0; k < 6; k++) {
       const lx = side * (14 + k * 2.6);
       paint(fH(lx - 1.3, 18.5), 0.12, 5, fH.deg, 0.07, '#e5e2da');
-      if (R() < 0.7) car(...fH(lx, 18.5), fH.deg + (R() < 0.5 ? 0 : 180) + (R() - 0.5) * 4);
+      if (R() < 0.6) car(...fH(lx, 18.5), fH.deg + (R() < 0.5 ? 0 : 180) + (R() - 0.5) * 4);
     }
   }
-  // Park behind: benches, sandbags where the defenders dug in.
-  for (const lx of [-16, -4, 8, 20]) thing(fH, lx, -14, 2.2, 0.8, 0.6, { material: 'wood', color: '#6a4a33', model: 'bench' });
-  sandbags(...fH(-26, 4), 3.5, fH.deg + 90);
-  sandbags(...fH(26, -4), 3.5, fH.deg + 90);
+  // Park behind, against the rail: benches, sandbags where the defenders dug in.
+  for (const lx of [-16, -4, 8, 20]) thing(fH, lx, -13.5, 2.2, 0.8, 0.6, { material: 'wood', color: '#6a4a33', model: 'bench' });
+  sandbags(...fH(-27, 4), 3.5, fH.deg + 90);
+  sandbags(...fH(27, -4), 3.5, fH.deg + 90);
+}
+
+// --- North lane: rail freight yard (east) and the water tower (west) -----------------------------
+{
+  addBuilding({ pos: [72, -66], size: [32, 14], style: 'warehouse', doors: 'nse' });
+  put(block(72, -56, 36, 1.1, 4, { type: 'floor', material: 'concrete', color: '#a19c90' }));
+  ramp(54, -56, -90, 4, 3.4, 1.1);
+  ramp(90, -56, 90, 4, 3.4, 1.1);
+  for (const x of [-120, -74, 6]) boxcar(RAIL_MAIN, x);
+  for (const x of [58, 84, 104]) boxcar(S1, x);
+  const fA = frame([0, 0], 0);
+  for (const [x, z, s] of [[100, -66, 2], [108, -64, 1], [104, -56, 2]]) container(fA, x, z, 0, s);
+  container(fA, 40, -58, 90);
+  truck(48, -72, 0, '#7a6a4a');
+  put(block(-84, -72, 7, 20, 7, { type: 'wall', material: 'metal', color: '#6f6a5e', model: 'waterTower' }));
+  sandbags(60, -50, 4, 90);
+  nest(110, -48, 180);
+  scatter(72, -62, 18, 30, 5);
+}
+
+// --- South lane: gas station and fuel tanks ------------------------------------------------------
+{
+  thing(fC, 0, -6, 16, 5.2, 10, { type: 'wall', material: 'metal', color: '#d9d4c7', model: 'fuelCanopy' });
+  for (const s of [-1, 1]) {
+    thing(fC, s * 4, -6, 1.2, 0.25, 5, { type: 'floor', material: 'concrete', color: '#bdb7aa' });
+    for (const dz of [-1.5, 1.5]) thing(fC, s * 4, -6 + dz, 0.6, 1.6, 0.9, { color: '#b3312b', material: 'metal', model: 'pump' });
+  }
+  car(...fC(-6.2, -5.5), fC.deg + 2);
+  car(...fC(6.2, -7), fC.deg - 3);
+  building(fC, 0, 10, 14, 9, { style: 'gasShop', floors: 2, doors: 'ns' });
+  building(fC, 30, 8, 15, 10, { style: 'office', floors: 2, doors: 'nw' });
+  // Two tanks in a low bund west of the shop, a pipe rack, a tanker.
+  const T = (u, v, w, h) => thing(fC, u, v, w, h, w, { type: 'wall', material: 'metal', color: '#c9c6ba', model: 'fuelTank' });
+  T(-30, 14, 9, 7);
+  T(-44, 14, 7, 6);
+  putAll(wallLine([fC(-50, 6), fC(-24, 6), fC(-24, 22), fC(-50, 22), fC(-50, 6)], { height: 1.2, thick: 0.5, type: 'cover', material: 'concrete', color: '#a7a398', gaps: [[10, 15], [52, 57]] }));
+  for (const y of [0.8, 1.35]) thing(fC, -12, 4, 22, 0.45, 0.45, { lift: y, sink: 0, material: 'metal', color: '#8b8d86' });
+  truck(...fC(-18, 24), fC.deg + 90, '#d7d4cc');
+  nest(...fC(16, -4), fC.deg + 180);
+  sandbags(...fC(-14, -10), 4, fC.deg);
+  car(...fC(22, -12), fC.deg + 130, pick(WRECK));
+  scatter(...fC(0, 4), 10, 24, 5, ['barrel_03', 'barrel_03', 'metal_jerrycan_green', 'old_tyre', 'wooden_military_crate']);
 }
 
 // --- B: old-town square ----------------------------------------------------------------------
@@ -548,30 +478,30 @@ const BASE_WALL = [[141.5, -117.6], [160, -150], [190, -160], [220, -146], [234,
   for (const [x, z, yaw] of [[16, 10, 40], [20, 14.5, 120]]) car(x, z, yaw);
   scatter(0, 0, 8, 20, 4, ['wooden_military_crate', 'old_military_crate', 'ammo_box']);
   // The square's own fronts: tall blocks between the street mouths.
-  addBuilding({ pos: [-31.5, -2.5], size: [8, 12], style: 'apartment', floors: 4, rot: 90, doors: 'snew' });
+  addBuilding({ pos: [-31.5, -11], size: [8, 12], style: 'apartment', floors: 4, rot: 90, doors: 'snew' });
   addBuilding({ pos: [-5.7, 25.2], size: [13, 11], style: 'apartment', floors: 4, rot: 180, doors: 'sn' });
   addBuilding({ pos: [19.5, 26], size: [11, 11], style: 'office', rot: 180, doors: 'se' });
   addBuilding({ pos: [30.5, 10], size: [14, 12], style: 'tower', rot: -90, doors: 'sn' });
   addBuilding({ pos: [-28.5, -23.5], size: [11, 10], style: 'shop', floors: 3, rot: 0, doors: 'se' });
 }
 
-// --- Old town: buildings lining the streets ------------------------------------------------------
-const TOWN = [[-100, -12], [-84, -38], [-58, -28], [-10, -50], [4, -80], [0, -114], [66, -114], [74, -78], [70, -60], [92, -25], [104, 22], [86, 58], [52, 92], [0, 108], [-50, 104], [-92, 80], [-104, 30]];
+// --- Town: buildings lining the streets ------------------------------------------------------
+const TOWN = [[-112, -100], [112, -100], [112, 100], [-112, 100]];
 const keepOut = [
-  [Z.D, ZR.D + 8],
-  [Z.E, ZR.E + 6],
-  [fE(-45, 0), 20],
-  [Z.C, ZR.C + 8],
-  [Z.A, ZR.A + 6],
+  [Z.D, 24],
+  [Z.E, ZR.E + 4],
 ];
 const hospitalYard = obb(...fH(0, 4), 66, 38, fH.deg);
 const square = obb(0, 0, 46, 36, 0);
+const checkpoint = obb(...Z.E, 60, 52, fE.deg);
+const freightYard = obb(78, -64, 64, 24, 0);
+const gasStation = obb(...fC(-8, 6), 70, 40, fC.deg);
 let townLots = 0;
 function lotOK(r) {
-  if (!inside(TOWN, r.x, r.z) || overlap(r, hospitalYard) || overlap(r, square)) return false;
+  if (!inside(TOWN, r.x, r.z) || [hospitalYard, square, checkpoint, freightYard, gasStation].some((o) => overlap(r, o))) return false;
   for (const [x, z] of samples(r, 2)) {
     if (!inMap(x, z, 6) || keepOut.some(([c, cr]) => Math.hypot(x - c[0], z - c[1]) < cr)) return false;
-    if (!offRoad(x, z, 1.2)) return false;
+    if (!offRoad(x, z, 1.2) || nearRail(x, z, 4)) return false;
   }
   return isFree(r);
 }
@@ -646,33 +576,32 @@ const SQUARE_EDGES = [
 ];
 for (const e of SQUARE_EDGES) frontage(e, 0, 1, 'square');
 for (const r of [M1W, M1E]) for (const side of [-1, 1]) frontage(r.pts, r.w / 2, side, 'main');
-for (const r of [BA, BC, ...STREETS, ...LANES]) for (const side of [-1, 1]) frontage(r.pts, r.w / 2, side, 'street');
-for (const side of [-1, 1]) frontage(NORTH.pts, NORTH.w / 2, side, 'street'); // rail workers' row on the north road
+for (const r of [NS, SS, XW, XE, ...LANES]) for (const side of [-1, 1]) frontage(r.pts, r.w / 2, side, 'street');
 // Courtyards: a shed or garage here and there behind the street fronts.
-for (let gx = -100; gx <= 95; gx += 9) {
-  for (let gz = -60; gz <= 104; gz += 9) {
+for (let gx = -104; gx <= 104; gx += 8) {
+  for (let gz = -96; gz <= 96; gz += 8) {
     const x = gx + (R() - 0.5) * 4;
     const z = gz + (R() - 0.5) * 4;
-    if (R() < 0.7) continue;
+    if (R() < 0.45) continue;
     const r = obb(x, z, between(5, 7), between(4.5, 6), R() * 360, 1.5);
     if (!lotOK(r)) continue;
     addBuilding({ pos: [round(x), round(z)], size: [round(r.hw * 2 - 3, 1), round(r.hd * 2 - 3, 1)], style: 'shed', rot: round(Math.atan2(r.ax[1], r.ax[0]) / -DEG, 1), doors: pick(['s', 'n', 'e']) });
   }
 }
 
-// --- Cars along the kerbs, barricades where the streets enter the zones -----------------------------
+// --- Cars along the kerbs, roadblocks on the main road ------------------------------------------
 let parked = 0;
-for (const r of [M1W, M1E, BA, BC, STREETS[0], STREETS[1]]) {
+for (const r of [M1W, M1E, NS, SS]) {
   const total = lengthOf(r.pts);
   for (const side of [-1, 1]) {
     for (let s = 6; s < total - 6; s += between(5.5, 9)) {
-      if (R() < (r.w >= 10 ? 0.62 : 0.7)) continue;
+      if (R() < (r.w >= 9 ? 0.6 : 0.62)) continue;
       const p = along(r.pts, s);
       const off = r.w / 2 - 1.1;
       const x = p.x - p.tz * side * off;
       const z = p.z + p.tx * side * off;
-      // Not in junctions, the square or the zones' middles.
-      if (!inMap(x, z, 5) || Math.abs(x) < 27 && Math.abs(z) < 22) continue;
+      // Not in junctions, the square, the bases or the zones' middles.
+      if (!inMap(x, z, 5) || (Math.abs(x) < 27 && Math.abs(z) < 22) || Math.abs(x) > 110) continue;
       if (roads.some((o) => o !== r && lineDist(x, z, o.pts) < o.w / 2 + 3)) continue;
       if (Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < 14)) continue;
       const box = obb(x, z, 1.9, 4.4, p.yaw, 0.3);
@@ -698,76 +627,10 @@ function roadblock(r, s, opts = {}) {
   sandbags(...at(-half - 0.2, -4), 3.2, p.yaw + 90 + 90);
   barriers(...at(-half * 0.45, 3.5), p.yaw + 90, 2);
 }
-roadblock(M1W, sAtX(M1W.pts, -63), {});
-roadblock(M1E, sAtX(M1E.pts, 58), {});
-roadblock(BC, 38, { both: false });
-roadblock(BA, 26, { both: false });
+roadblock(M1W, sAtX(M1W.pts, -36), {});
+roadblock(M1E, sAtX(M1E.pts, 34), {});
 
-// --- Out in the fields: a chapel on the west hill, two farms, stone walls, wrecks -------------
-const STONE = '#8d887e';
-/** A low stone field wall along a line, broken where it meets roads, tracks or anything solid. */
-function fieldWall(pts) {
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, az] = pts[i];
-    const [bx, bz] = pts[i + 1];
-    const len = Math.hypot(bx - ax, bz - az);
-    const n = Math.max(1, Math.round(len / 4));
-    const yaw = (Math.atan2(bx - ax, bz - az) * 180) / Math.PI;
-    for (let k = 0; k < n; k++) {
-      if (R() < 0.14) continue; // tumbled-down gaps
-      const t = (k + 0.5) / n;
-      const x = ax + (bx - ax) * t;
-      const z = az + (bz - az) * t;
-      const piece = obb(x, z, 0.7, len / n + 0.05, yaw, 0.4);
-      if (!inMap(x, z, 3) || !offRoad(x, z, 2) || nearRail(x, z, 3) || !isFree(piece)) continue;
-      put(block(x, z, 0.7, between(0.95, 1.15), len / n + 0.05, { yaw, type: 'cover', material: 'concrete', color: STONE }));
-    }
-  }
-}
-{
-  // Chapel with its steeple in a walled churchyard on the crest of the west hill.
-  const fK = frame([-192, -50], 10);
-  building(fK, 0, 2, 9.5, 19, { style: 'chapel', doors: 'se' });
-  thing(fK, 0, -10, 5, 22, 5, { type: 'wall', material: 'brick', color: '#948b7e', model: 'steeple' });
-  putAll(wallLine([fK(-14, -20), fK(14, -20), fK(14, 22), fK(-14, 22), fK(-14, -20)], { height: 1.1, thick: 0.6, type: 'cover', material: 'concrete', color: STONE, gaps: [[60, 64], [84, 88], [124, 127]] }));
-  for (let i = 0; i < 14; i++) thing(fK, (i % 2 ? 1 : -1) * between(7, 11.5), -14 + Math.floor(i / 2) * 4.6, 0.7, 0.9, 0.22, { type: 'cover', material: 'concrete', color: '#9b968c' });
-  occupy(...fK(0, 1), 30, 44, fK.deg);
-}
-{
-  // Farm by the south road: barn, farmhouse, hay, logs, a walled yard.
-  const fM = frame([-112, 119], 0);
-  building(fM, -6, 0, 20, 12, { style: 'barn', doors: 'ew' });
-  building(fM, 16, 2, 10, 9, { style: 'house', floors: 2, rot: 180, doors: 'snew' });
-  for (const [u, v, yaw] of [[-4, 10, 0], [-1, 10.5, 10], [2, 10, -5], [-6, -9, 90]]) thing(fM, u, v, 2.6, 1.5, 1.5, { yaw, material: 'wood', color: '#b89a5a', model: 'hayBale' });
-  thing(fM, 8, -9, 6, 1.6, 2.4, { material: 'wood', color: '#86684a', model: 'logPile' });
-  thing(fM, 6, 9, 1.6, 1.3, 2.4, { yaw: 30, material: 'wood', color: '#7a5a3a', model: 'cart' });
-  fieldWall([fM(-20, -12), fM(26, -12), fM(26, 12)]);
-}
-{
-  // Farm in the east fields between the depot and the gate.
-  const fM = frame([186, 76], 20);
-  building(fM, 0, 0, 18, 12, { style: 'barn', doors: 'ew' });
-  building(fM, -16, 14, 9, 9, { style: 'house', floors: 2, doors: 'sw' });
-  for (const [u, v, yaw] of [[10, 10, 0], [13, 10.4, 6], [10, 13, 90]]) thing(fM, u, v, 2.6, 1.5, 1.5, { yaw, material: 'wood', color: '#b89a5a', model: 'hayBale' });
-  thing(fM, -6, -10, 6, 1.6, 2.4, { material: 'wood', color: '#86684a', model: 'logPile' });
-  fieldWall([fM(-26, -14), fM(18, -14), fM(18, 22)]);
-}
-for (const line of [
-  [[-218, 12], [-182, 2], [-150, -14]],
-  [[-80, 152], [-40, 158], [0, 152], [30, 156]],
-  [[150, -8], [182, 2], [214, -8]],
-  [[120, 52], [134, 84], [154, 104]],
-  [[16, -118], [55, -122], [88, -112]],
-  [[212, 20], [208, 52]],
-  [[-150, -100], [-170, -128], [-206, -128]],
-  [[-60, 104], [-90, 102]],
-]) fieldWall(line);
-// Burnt-out tank in the east fields, a burnt truck by the north road, a wreck by the south road.
-put(block(162, 36, 3.6, 2.6, 7.2, { yaw: 35, type: 'wall', material: 'metal', color: '#4a4c3e', model: 'tankWreck' }));
-truck(56, -108, 75, '#2f2a26');
-car(-60, 146, 80, pick(WRECK));
-
-// --- Trees: copses in the fields and the hospital park ----------------------------------------------
+// --- Trees: the hospital park and a few backyards ----------------------------------------------------
 function copse(cx, cz, radius, n) {
   for (let i = 0, placed = 0; placed < n && i < n * 10; i++) {
     const a = R() * Math.PI * 2;
@@ -782,33 +645,27 @@ function copse(cx, cz, radius, n) {
   }
 }
 for (const [x, z, r, n] of [
-  [-195, -60, 40, 60], // west hills
-  [-205, 20, 22, 18],
-  [-150, -10, 18, 12],
-  [-150, 148, 16, 10], // south fields
-  [-75, 128, 14, 10],
-  [-55, 150, 24, 20],
-  [5, 150, 18, 12],
-  [135, 140, 22, 18], // behind the depot
-  [185, 60, 24, 22], // east fields
-  [170, 5, 14, 9],
-  [105, 30, 14, 10],
-  [40, -130, 26, 22], // north field by the rail curve
-  [90, -125, 18, 12],
-  [-165, -150, 20, 12],
-  [-200, 150, 14, 8],
-  [...fH(-10, -18), 16, 10], // hospital park
-  [228, -30, 16, 10],
+  [...fH(-12, -16), 14, 8], // hospital park
+  [...fH(16, -16), 10, 5],
+  [-136, -66, 20, 12], // behind the FOB
+  [-138, 76, 18, 10],
+  [138, -70, 18, 10], // behind the garrison
+  [136, 70, 20, 12],
+  [-80, 84, 12, 6], // backyards
+  [76, 84, 12, 6],
+  [-30, -84, 10, 5],
 ]) copse(x, z, r, n);
 
 // --- Spawns & zones ----------------------------------------------------------------------------
 const spawns = [];
 for (let i = 0; i < 8; i++) {
   const a = (i / 8) * Math.PI * 2;
-  spawns.push({ team: 'blue', pos: [round(BLUE[0] + Math.cos(a) * 6), 0.1, round(BLUE[1] + Math.sin(a) * 5)], yaw: -60 });
-  spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 6), 0.1, round(RED[1] + Math.sin(a) * 5)], yaw: 120 });
+  spawns.push({ team: 'blue', pos: [round(BLUE[0] + Math.cos(a) * 6), 0.1, round(BLUE[1] + Math.sin(a) * 5)], yaw: -90 });
+  spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 6), 0.1, round(RED[1] + Math.sin(a) * 5)], yaw: 90 });
 }
-const zones = Object.entries(Z).map(([id, [x, z]]) => ({ id, pos: [x, 0, z], radius: ZR[id] }));
+// Zone ids in order from the blue side: A the factories, B the square, C the iron gate.
+const ZONE_ID = { D: 'A', B: 'B', E: 'C' };
+const zones = Object.entries(Z).map(([id, [x, z]]) => ({ id: ZONE_ID[id], pos: [x, 0, z], radius: ZR[id] }));
 
 // --- Self-check: hand-placed buildings off the roads, nothing outside the outline ---------------
 const problems = [];
@@ -828,6 +685,12 @@ const zs = boundary.map((p) => p[1]);
 const margin = 70;
 const halfX = Math.max(-Math.min(...xs), Math.max(...xs)) + margin;
 const halfZ = Math.max(-Math.min(...zs), Math.max(...zs)) + margin;
+let area = 0;
+for (let i = 0; i < boundary.length; i++) {
+  const [ax, az] = boundary[i];
+  const [bx, bz] = boundary[(i + 1) % boundary.length];
+  area += ax * bz - bx * az;
+}
 
 const map = {
   meta: { id: 'iron_gate', name: '철문 주둔지', version: 2 },
@@ -840,9 +703,8 @@ const map = {
   },
   spawns,
   zones,
-  // Modes (owner, 2026-10-03): Frontline D -> A -> B -> C -> E (A, B and C sit about
-  // level between the bases; ordered by how much nearer the blue base they are); Zone to 500.
-  modes: { zone: { target: 500 }, frontline: { sectors: [['D'], ['A'], ['B'], ['C'], ['E']] } },
+  // Modes: Frontline A -> B -> C (B starts neutral); Zone to 300 (three zones, like Bilbao).
+  modes: { zone: { target: 300 }, frontline: { sectors: [['A'], ['B'], ['C']] } },
   objects,
   buildings,
   props,
@@ -853,6 +715,6 @@ const styles = {};
 for (const b of buildings) styles[b.style + (b.solid ? '*' : '')] = (styles[b.style + (b.solid ? '*' : '')] ?? 0) + 1;
 console.log(
   `iron_gate: ${objects.length} objects, ${buildings.length} buildings (${townLots} town lots), ${props.length} props, ${trees.length} trees, ${parked} parked cars, ` +
-    `outline ${round(Math.max(...xs) - Math.min(...xs), 0)} x ${round(Math.max(...zs) - Math.min(...zs), 0)} m, size ${map.world.size}`,
+    `outline ${round(Math.max(...xs) - Math.min(...xs), 0)} x ${round(Math.max(...zs) - Math.min(...zs), 0)} m (${round(Math.abs(area) / 2, 0)} m²), size ${map.world.size}`,
 );
 console.log(Object.entries(styles).map(([k, v]) => `${k} ${v}`).join(', '));
