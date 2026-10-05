@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import type { WeaponClass } from '@/weapons/weaponData';
 import type { ImpactSurface } from '@/physics/surfaces';
 import type { ReloadCue } from '@/core/events';
+import type { EngineHost } from './engines';
 import { Ambience } from './Ambience';
 import type { AmbienceLevels } from './ambienceDirector';
 
@@ -72,16 +73,36 @@ const HIT_SAMPLE: Record<ImpactSurface, string> = {
   grass: 'hit_dirt',
   snow: 'hit_rubber',
 };
+/**
+ * How big a blast sounds (the game maps its blast kinds onto these):
+ * reach (the panner's reference distance: bigger carries further), voice
+ * weight, playback rate (bigger = deeper), whether the heavy recordings are
+ * used, and the sub-bass thump's level.
+ */
+export type BoomSize = 'small' | 'grenade' | 'rocket' | 'shell' | 'heavy';
+const BOOM: Record<BoomSize, { ref: number; weight: number; rate: number; big: boolean; sub: number }> = {
+  small: { ref: 3, weight: 2, rate: 1.3, big: false, sub: 0.25 },
+  grenade: { ref: 5, weight: 4, rate: 1, big: false, sub: 0.7 },
+  rocket: { ref: 7, weight: 5, rate: 1.05, big: true, sub: 0.8 },
+  shell: { ref: 12, weight: 7, rate: 0.9, big: true, sub: 1 },
+  heavy: { ref: 20, weight: 10, rate: 0.78, big: true, sub: 1.3 },
+};
+/** Speed of sound (m/s): far blasts and big guns are heard after they are seen. */
+const SOUND_SPEED = 343;
+/** Nearer than this, no delay (it would only feel like lag). */
+const DELAY_FROM_M = 40;
 /** Beyond this distance remote gunfire uses the "far" recordings. */
 const FAR_GUNFIRE_M = 45;
 /**
  * Voice limits for world sounds. Every spatial sound costs a panner on the
  * audio thread; big bot fights (10v15) fire well over 100 sounds a second and
  * the thread falls behind, which the player hears as audio cutting out. Only
- * the loudest voices play, and only the nearest few use (expensive) HRTF.
+ * the loudest voices play, and only the nearest few use (expensive) HRTF
+ * (2026-10-05: 40 / 10 -> 32 / 6 after more reports of sound dropping out;
+ * the F3 panel shows dropped voices and the browser's glitch count).
  */
-const MAX_SPATIAL = 40;
-const MAX_HRTF = 10;
+const MAX_SPATIAL = 32;
+const MAX_HRTF = 6;
 const HRTF_RANGE_M = 30;
 /** Other people's footsteps are inaudible past this anyway. */
 const REMOTE_STEP_RANGE_M = 30;
@@ -116,6 +137,9 @@ export class AudioSystem {
   private samples = new Map<string, AudioBuffer[]>();
   private voices: Voice[] = [];
   private listenerPos = { x: 0, y: 0, z: 0 };
+  /** World sounds skipped or cut for louder ones (F3). */
+  private culled = 0;
+  private culledRate = { at: 0, count: 0, perSecond: 0 };
   private ambience: Ambience | null = null;
   private ambienceLevels: AmbienceLevels | null = null;
 
@@ -123,6 +147,28 @@ export class AudioSystem {
   maxHrtf = MAX_HRTF;
 
   constructor(private volume: number) {}
+
+  /**
+   * For the F3 panel: whether the sound is running, world voices now, voices
+   * dropped a second, and (Chrome) how often the audio thread missed its
+   * deadline (each one is a click or gap the player hears).
+   */
+  stats(): string {
+    const ctx = this.ctx;
+    if (!ctx) return 'audio off';
+    const now = performance.now();
+    const r = this.culledRate;
+    if (now - r.at >= 1000) {
+      r.perSecond = r.at ? Math.round(((this.culled - r.count) * 1000) / (now - r.at)) : 0;
+      r.at = now;
+      r.count = this.culled;
+    }
+    const t = ctx.currentTime;
+    const live = this.voices.filter((v) => v.until > t).length;
+    const play = (ctx as AudioContext & { playoutStats?: { fallbackFramesEvents?: number } }).playoutStats;
+    const glitches = play?.fallbackFramesEvents;
+    return `audio ${ctx.state} · ${live}/${MAX_SPATIAL} voices · ${r.perSecond} dropped/s${glitches !== undefined ? ` · ${glitches} glitches` : ''}`;
+  }
 
   /** Must be called from a user gesture. */
   unlock(): void {
@@ -213,13 +259,20 @@ export class AudioSystem {
   }
 
   private build(): void {
-    const ctx = new AudioContext();
+    const ctx = new AudioContext({ latencyHint: 'interactive' });
     this.ctx = ctx;
+    // Browsers suspend (or, on iOS, interrupt) a context now and then; bring it back while the page is shown.
+    const revive = () => {
+      if (ctx.state !== 'running' && ctx.state !== 'closed' && document.visibilityState === 'visible') void ctx.resume().catch(() => {});
+    };
+    ctx.addEventListener('statechange', revive);
+    document.addEventListener('visibilitychange', revive);
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 6;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.2;
+    comp.threshold.value = -16;
+    comp.knee.value = 10;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.25;
     comp.connect(ctx.destination);
     this.master = ctx.createGain();
     this.master.gain.value = this.volume;
@@ -305,6 +358,7 @@ export class AudioSystem {
     if (this.voices.length >= MAX_SPATIAL) {
       let quietest = this.voices[0]!;
       for (const v of this.voices) if (v.loud < quietest.loud) quietest = v;
+      this.culled++;
       if (quietest.loud >= loud) return null;
       quietest.gain.gain.setTargetAtTime(0, now, 0.015);
       this.voices.splice(this.voices.indexOf(quietest), 1);
@@ -322,8 +376,8 @@ export class AudioSystem {
    * limiting and get null when culled.
    */
   private out(pos: null, reverbSend: number): AudioNode;
-  private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number): AudioNode | null;
-  private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1): AudioNode | null {
+  private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number, ref?: number): AudioNode | null;
+  private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1, ref = 2.5): AudioNode | null {
     const ctx = this.ctx!;
     const input = ctx.createGain();
     let dry: AudioNode = input;
@@ -333,9 +387,9 @@ export class AudioSystem {
       const p = ctx.createPanner();
       p.panningModel = voice.hrtf ? 'HRTF' : 'equalpower';
       p.distanceModel = 'inverse';
-      p.refDistance = 2.5;
-      p.rolloffFactor = 1.1;
-      p.maxDistance = 600;
+      p.refDistance = ref;
+      p.rolloffFactor = ref > 2.5 ? 1 : 1.1;
+      p.maxDistance = ref > 2.5 ? 3000 : 600;
       p.positionX.value = pos.x;
       p.positionY.value = pos.y;
       p.positionZ.value = pos.z;
@@ -814,24 +868,68 @@ export class AudioSystem {
     this.noiseBurst(out, t, 0.04, g * 0.5, { type: 'bandpass', freq: 1200, q: 1 });
   }
 
-  explosion(pos: THREE.Vector3, distance: number): void {
+  /**
+   * A blast at `pos`, `distance` from the listener, sized by what went off:
+   * heard after it is seen when far (speed of sound), the heavy recordings for
+   * shells and bigger, a far-off rumble rolling on behind big ones, a sub-bass
+   * thump that weakens with distance.
+   */
+  explosion(pos: THREE.Vector3, distance: number, size: BoomSize = 'grenade'): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
-    this.excite(2 / Math.max(4, distance));
-    const out = this.out(pos, 0.9, 4, 3.5);
+    const b = BOOM[size];
+    const t = this.ctx!.currentTime + (distance > DELAY_FROM_M ? Math.min(3, distance / SOUND_SPEED) : 0);
+    this.excite((b.weight / 2) / Math.max(4, distance));
+    const out = this.out(pos, 0.9, b.weight, 4.5, b.ref);
     if (!out) return;
-    // Distance muffles high frequencies.
+    const far = distance > (b.big ? 90 : 60);
+    const rate = b.rate * rand(0.94, 1.04);
+    let played: boolean;
+    if (b.big) {
+      played = this.sample(far ? 'explosion_big_far' : 'explosion_big', out, t, 1, rate);
+      // The old recordings under the heavy one: body and a longer tail.
+      this.sample(far ? 'explosion_far' : 'explosion', out, t, 0.55, rate);
+      if (distance > 140 && (size === 'shell' || size === 'heavy')) this.sample('rumble_far', out, t + 0.08, 0.9, rate);
+    } else played = this.sample(far ? 'explosion_far' : 'explosion', out, t, size === 'small' ? 0.6 : 1, rate);
+    // Sub thump: felt close by, gone far away.
+    const sub = b.sub * Math.max(0.15, 1 - distance / 300);
+    this.tone(out, t, 80 / Math.sqrt(b.rate), 0.8 + 0.4 * b.sub, 0.7 * sub, 'sine', 28);
+    if (played) return;
+    // Procedural fallback.
     const top = Math.max(500, 6000 - distance * 60);
-    if (this.sample(distance > 60 ? 'explosion_far' : 'explosion', out, t, 1, rand(0.94, 1.04))) {
-      this.tone(out, t, 80, 0.8, 0.7, 'sine', 28);
-      return;
-    }
     this.noiseBurst(out, t, 0.04, 1.4, { type: 'lowpass', freq: top });
     this.noiseBurst(out, t, 1.6, 1.2, { type: 'lowpass', freq: Math.min(top, 1400), endFreq: 90 });
     this.tone(out, t, 90, 0.9, 1.2, 'sine', 28);
     for (let i = 0; i < 6; i++) {
       this.noiseBurst(out, t + rand(0.05, 0.5), 0.05, 0.15, { type: 'bandpass', freq: rand(800, 2500), q: 2 });
     }
+  }
+
+  /** A tank or field gun firing at `pos`: the big report (delayed when far), a deep thump. */
+  bigGun(pos: THREE.Vector3, distance: number): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime + (distance > DELAY_FROM_M ? Math.min(3, distance / SOUND_SPEED) : 0);
+    this.excite(3 / Math.max(4, distance));
+    const out = this.out(pos, 0.8, 7, 2.5, 14);
+    if (!out) return;
+    const rate = rand(0.95, 1.03);
+    if (!this.sample(distance > 80 ? 'cannon_far' : 'cannon', out, t, 1, rate)) this.sample(distance > 60 ? 'explosion_far' : 'explosion', out, t, 0.8, 1.2);
+    this.tone(out, t, 70, 0.5, 0.6 * Math.max(0.2, 1 - distance / 250), 'sine', 30);
+  }
+
+  /** What the engine sounds need (null until the sound is running). */
+  engineHost(): EngineHost | null {
+    if (!this.ctx || !this.world || !this.noise) return null;
+    return {
+      ctx: this.ctx,
+      dest: this.world,
+      noise: this.noise,
+      buffer: (id) => this.samples.get(id)?.[0] ?? null,
+      oneShot: (id, pos, gain, rate, ref) => {
+        if (!this.ready) return;
+        const out = this.out(pos, 0.5, 6, 4, ref);
+        if (out) this.sample(id, out, this.ctx!.currentTime, gain, rate);
+      },
+    };
   }
 
   flashbang(pos: THREE.Vector3): void {

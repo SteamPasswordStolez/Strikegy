@@ -11,6 +11,7 @@ import { askName } from './NameDialog';
 import { loadIdentity } from '@/net/identity';
 import { inRoom } from '@/core/session';
 import type { MatchStart } from '@/net/lobbyProtocol';
+import { CREDITS } from '@/data/credits';
 import type { ServerLink } from '@/net/ServerLink';
 
 const PICK_KEY = 'strikegy.lobby.v1';
@@ -20,10 +21,10 @@ const ROWS: readonly Row[] = ['mode', 'map', 'team', 'difficulty'];
 const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map', team: 'lobby.team', difficulty: 'lobby.difficulty' };
 
 /** The main menu's entries, top to bottom. */
-const ALL_ENTRIES = ['play', 'multi', 'range', 'controls', 'settings'] as const;
+const ALL_ENTRIES = ['play', 'multi', 'range', 'controls', 'settings', 'credits'] as const;
 type Entry = (typeof ALL_ENTRIES)[number];
 const ENTRIES: readonly Entry[] = ALL_ENTRIES;
-type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings';
+type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -233,7 +234,7 @@ export class Lobby {
       const head = el('div', 'lb-pagehead', top);
       el('div', 'lb-eyebrow', head).textContent = t('title');
       el('div', 'lb-pagetitle', head).textContent = t(
-        this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : 'menu.settings',
+        this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : this.screen === 'credits' ? 'menu.credits' : 'menu.settings',
       );
     }
     const body = el('div', 'lb-body', this.frame);
@@ -244,6 +245,19 @@ export class Lobby {
       body.classList.add('lb-controls');
       const keys = el('div', 'overlay-hint lb-keys', body);
       renderHint(keys, t(this.touch ? 'start.hintTouch' : 'start.hint'));
+    } else if (this.screen === 'credits') {
+      body.classList.add('lb-controls', 'lb-credits');
+      const list = el('div', 'lb-credit-list', body);
+      el('p', 'lb-credit-note', list).textContent = t('credits.note');
+      for (const c of CREDITS) {
+        const row = el('a', 'lb-credit', list);
+        row.href = c.url;
+        row.target = '_blank';
+        row.rel = 'noopener noreferrer';
+        el('span', 'lb-credit-work', row).textContent = c.work;
+        el('span', 'lb-credit-by', row).textContent = c.author;
+        el('span', 'lb-credit-lic', row).textContent = c.license;
+      }
     } else {
       body.classList.add('lb-settings');
       const panel = new SettingsPanel(this.settings, {

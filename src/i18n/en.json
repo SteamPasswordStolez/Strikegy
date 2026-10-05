@@ -451,5 +451,8 @@
   "mp.endedSub": "The room's owner ended the match.",
   "lobby.renderScale": "Resolution scale",
   "setDesc.renderScale": "The resolution the game draws at. Lower runs faster and looks softer. It never changes by itself.",
-  "load.tactics": "Finding cover"
+  "load.tactics": "Finding cover",
+  "menu.credits": "Credits",
+  "menu.creditsDesc": "Where the game's sounds and pictures come from, and their licences.",
+  "credits.note": "This game uses the works below. Thank you. (The CC-BY 3.0 works belong to the authors named.)"
 }

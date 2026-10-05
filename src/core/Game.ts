@@ -39,6 +39,8 @@ import { NavWorld, VehicleNav } from '@/ai/NavWorld';
 import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT, type AdoptSpec, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
+import { EngineSounds, type EngineSource } from '@/audio/engines';
+import type { BoomSize } from '@/audio/AudioSystem';
 import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
@@ -134,6 +136,17 @@ export interface GameOptions {
   /** A match on the game server (multiplayer): the connection and the match's start message. */
   net?: NetOptions;
 }
+
+/** How big a blast (local or from the game server) sounds. */
+function boomSize(kind: string): BoomSize {
+  if (kind === 'cannon') return 'small';
+  if (kind === 'rocket' || kind === 'missile' || kind === 'atshell') return 'rocket';
+  if (kind === 'shell' || kind === 'mortar' || kind === 'salvo') return 'shell';
+  if (kind === 'artillery' || kind === 'howitzer' || kind === 'wreck') return 'heavy';
+  return 'grenade';
+}
+/** Camera shake by blast size (big shells shake from further off). */
+const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1.1, shell: 1.4, heavy: 1.8 };
 
 export class Game {
   readonly bus = new EventBus<GameEvents>();
@@ -534,7 +547,7 @@ export class Game {
       vehicle: (owner, near) => this.callRocketTank(owner, near),
       planeDown: (pos, team, by) => {
         this.effects.explosion(pos);
-        this.audio.explosion(pos, this.renderer.camera.position.distanceTo(pos));
+        this.audio.explosion(pos, this.renderer.camera.position.distanceTo(pos), 'heavy');
         if (by) this.hud.addKill({ attacker: by.id === this.myId ? playerName(t('feed.you')) : by.name, victim: t('support.recon'), weapon: by.weapon, headshot: false, attackerTeam: by.team ?? otherTeam(team), victimTeam: team });
       },
     }, Math.random, this.registry);
@@ -1055,7 +1068,7 @@ export class Game {
     const tEnd = performance.now();
     perf.record(
       { frameMs, simMs, updateMs: tDraw - tStart - simMs, renderMs: tEnd - tDraw },
-      `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}${this.netLabel()}`,
+      `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}${this.netLabel()} · ${this.audio.stats()}`,
     );
   };
 
@@ -1453,8 +1466,8 @@ export class Game {
     if (type !== 'flash' && type !== 'smoke') {
       const dist = this.renderer.camera.position.distanceTo(point);
       this.effects.explosion(point);
-      this.audio.explosion(point, dist);
-      this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - dist * 0.003));
+      this.audio.explosion(point, dist, boomSize(type));
+      this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - dist * 0.003) * BOOM_SHAKE[boomSize(type)]);
       return;
     }
     // Flash and smoke work here as in solo play (the flash blinds by where this view looks).
@@ -1960,7 +1973,7 @@ export class Game {
       } else vel = dir.clone().multiplyScalar(sh.speed).add(v.flight ? v.velocity : new THREE.Vector3());
       this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id, undefined, v.body);
       if (m.id === 'rockets') this.audio.gadget('rocket', byPlayer ? null : muzzle);
-      else this.audio.explosion(muzzle, Math.max(30, listenerDist));
+      else this.audio.bigGun(muzzle, listenerDist);
       if (byPlayer) this.shake = Math.min(0.06, this.shake + 0.035);
       return;
     }
@@ -2020,7 +2033,7 @@ export class Game {
     const at = v.pos.clone();
     this.effects.explosion(at);
     this.effects.explosion(at.clone().setY(at.y + 1));
-    this.audio.explosion(at, this.renderer.camera.position.distanceTo(at));
+    this.audio.explosion(at, this.renderer.camera.position.distanceTo(at), 'heavy');
     this.renderer.requestShadowUpdate();
     const owner: GrenadeOwner = { id: by?.id ?? -1, name: by?.name ?? '', team: by?.team ?? otherTeam(this.myTeam) };
     const weapon = by?.weapon ?? t(`vehicle.${v.kind}`);
@@ -2293,8 +2306,8 @@ export class Game {
     const listenerDist = this.renderer.camera.position.distanceTo(point);
     const probe = point.clone().setY(point.y + 0.25);
     this.effects.explosion(point);
-    this.audio.explosion(point, listenerDist);
-    this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003));
+    this.audio.explosion(point, listenerDist, boomSize(kind));
+    this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003) * BOOM_SHAKE[boomSize(kind)]);
     if (kind !== 'frag') this.bots?.explosionAt(point);
     // Fortifications in the blast take damage (colliders go at the next physics step).
     for (const s of this.fort?.blast(point, spec.radius, (d) => fragDamage(spec, d, false) * spec.fortMult) ?? []) {
@@ -2659,7 +2672,37 @@ export class Game {
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);
+    this.updateEngines(cam.position);
   }
+
+  /** Engine sounds: every vehicle and recon plane near enough, retuned each frame (see audio/engines.ts). */
+  private updateEngines(ear: THREE.Vector3): void {
+    if (!this.engines) {
+      const host = this.audio.engineHost();
+      if (!host) return;
+      this.engines = new EngineSounds(host);
+    }
+    const list = this.engineList;
+    list.length = 0;
+    for (const v of this.vehicles?.vehicles ?? []) {
+      list.push({ id: v.id, kind: v.kind, pos: v.model.root.position, velocity: v.velocity, crewed: v.seats.some(Boolean), wrecked: v.wrecked, throttle: v.flight?.throttle ?? null });
+    }
+    let i = 0;
+    for (const p of this.support.planes()) list.push({ id: 90000 + i++, kind: 'recon', pos: p.pos, velocity: this.reconVel, crewed: true, wrecked: false, throttle: null });
+    // The listener's own motion (for the Doppler shift).
+    const dt = Math.max(1e-3, this.elapsed - this.earAt);
+    this.earVel.subVectors(ear, this.earPrev).divideScalar(dt);
+    if (this.earVel.lengthSq() > 200 * 200) this.earVel.set(0, 0, 0);
+    this.earPrev.copy(ear);
+    this.earAt = this.elapsed;
+    this.engines.update(list, ear, this.earVel);
+  }
+  private engines: EngineSounds | null = null;
+  private readonly engineList: EngineSource[] = [];
+  private readonly earVel = new THREE.Vector3();
+  private readonly earPrev = new THREE.Vector3();
+  private earAt = 0;
+  private readonly reconVel = new THREE.Vector3(0, 0, 0);
 
   /**
    * In a vehicle: first person from the seat by default (the gunner a little
@@ -4049,6 +4092,7 @@ export class Game {
   }
 
   dispose(): void {
+    this.engines?.dispose();
     cancelAnimationFrame(this.rafId);
     for (const s of this.sources) s.dispose();
     this.bus.clear();

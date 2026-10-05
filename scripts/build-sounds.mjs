@@ -6,6 +6,8 @@
 // delay gunshots. Entries with {a,b,c} in `src` produce numbered variants, and
 // `cuts: [[start, dur], ...]` cuts numbered variants out of one longer recording.
 // `filter` is an extra ffmpeg filter chain run first (e.g. denoising).
+// `loop: true` keeps a seamless loop whole (no onset trim, no fade); `rate`
+// writes at another sample rate (engine drones and far rumbles need no 24 kHz).
 //
 //   npm run sounds                       rebuild everything
 //   npm run sounds -- --only gun_ar,bird only these ids (and only their sources are fetched)
@@ -90,17 +92,17 @@ for (const [id, spec] of selected) {
     const chain = [
       ...(start ? [`atrim=start=${start}`, 'asetpts=PTS-STARTPTS'] : []),
       ...(spec.filter ? [spec.filter] : []),
-      // Start exactly at the first transient so shots line up with the muzzle flash.
-      'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.004',
+      // Start exactly at the first transient so shots line up with the muzzle flash (loops stay whole).
+      ...(spec.loop ? [] : ['silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.004']),
       // Average stereo to mono (mono sources pass through; `pan` fails on them).
       ...(channels(input) > 1 ? ['pan=mono|c0=0.5*c0+0.5*c1'] : []),
     ];
-    if (dur) chain.push(`atrim=0:${dur}`, `afade=t=out:st=${(dur * 0.55).toFixed(3)}:d=${(dur * 0.45).toFixed(3)}`);
+    if (dur && !spec.loop) chain.push(`atrim=0:${dur}`, `afade=t=out:st=${(dur * 0.55).toFixed(3)}:d=${(dur * 0.45).toFixed(3)}`);
     const base = chain.join(',');
     const probe = ffmpeg(['-i', input, '-af', `${base},volumedetect`, '-f', 'null', '-']);
     const peak = Number(/max_volume: (-?[\d.]+) dB/.exec(probe)?.[1] ?? '0');
     const gain = -1 - peak;
-    ffmpeg(['-loglevel', 'error', '-y', '-i', input, '-af', `${base},volume=${gain.toFixed(2)}dB`, '-ar', '24000', '-ac', '1', '-sample_fmt', 's16', dest]);
+    ffmpeg(['-loglevel', 'error', '-y', '-i', input, '-af', `${base},volume=${gain.toFixed(2)}dB`, '-ar', String(spec.rate ?? 24000), '-ac', '1', '-sample_fmt', 's16', dest]);
     total += fs.statSync(dest).size;
     count++;
   });

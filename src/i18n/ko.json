@@ -451,5 +451,8 @@
   "mp.endedSub": "방 주인이 경기를 끝냈습니다.",
   "lobby.renderScale": "해상도 배율",
   "setDesc.renderScale": "화면을 그리는 해상도입니다. 낮추면 프레임이 오르고 흐려집니다. 자동으로 바뀌지 않습니다.",
-  "load.tactics": "엄폐 지점 찾는 중"
+  "load.tactics": "엄폐 지점 찾는 중",
+  "menu.credits": "크레딧",
+  "menu.creditsDesc": "게임에 쓴 소리와 그림의 출처와 라이선스입니다.",
+  "credits.note": "이 게임은 아래 작품들을 씁니다. 고맙습니다. (CC-BY 3.0 작품은 표기된 작가의 저작물입니다.)"
 }

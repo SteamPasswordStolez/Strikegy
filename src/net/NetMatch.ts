@@ -749,7 +749,7 @@ export class NetMatch {
     view.effects.muzzleFlash(muzzle, dir);
     if (m.gun.shell) {
       if (m.id === 'rockets') view.audio.gadget('rocket', muzzle);
-      else view.audio.explosion(muzzle, Math.max(30, dist));
+      else view.audio.bigGun(muzzle, dist);
       return;
     }
     for (let i = 0; i < n; i++) {

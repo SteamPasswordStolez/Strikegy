@@ -36,5 +36,13 @@
   "pump": 1,
   "bolt_open": 2,
   "bolt_close": 2,
-  "bird": 2
+  "bird": 2,
+  "engine_heavy": 1,
+  "prop_loop": 1,
+  "jet_pass": 1,
+  "cannon": 1,
+  "cannon_far": 1,
+  "explosion_big": 1,
+  "explosion_big_far": 1,
+  "rumble_far": 1
 }
