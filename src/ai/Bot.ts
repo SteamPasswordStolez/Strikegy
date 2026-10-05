@@ -104,6 +104,16 @@ export interface BotServices {
   separation(bot: Bot, out: THREE.Vector3, wx?: number, wz?: number, speed?: number): THREE.Vector3;
   /** Someone else already stands at `p` (a bot heading there stops beside them). */
   spotTaken(bot: Bot, p: THREE.Vector3): boolean;
+  /**
+   * Living enemies `bot` has in view looking along (yaw, pitch): within sight
+   * (`airSight` for anyone in an aircraft), inside the half angle of the view
+   * cone and, unless `viewUpDeg` is null, within that much of `pitch` — or
+   * within 1.5 m. Returns how many; `viewHit(i)` / `viewDist(i)` give each.
+   */
+  inView(bot: Bot, sight: number, airSight: number, halfFovDeg: number, viewUpDeg: number | null, yaw: number, pitch: number): number;
+  viewHit(i: number): Combatant;
+  viewDist(i: number): number;
+  combatantById(id: number): Combatant | null;
   /** Class gadget: fire a rocket / rifle grenade at `at`, or put a beacon / mine down there. False if it can't. */
   useGadget(bot: Bot, kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3): boolean;
   /** Spots enemy mines in view nearby; true if one the team knows of is within a few steps. */
@@ -152,6 +162,8 @@ export function setNextBotId(id: number): void {
 
 /** Half the view's height (deg) above / below where a bot looks: what it can notice without looking up. */
 const VIEW_UP = 50;
+/** Scratch for `perceive`: ids of the enemies in view this time. */
+const SEEN = new Set<number>();
 
 /** Height above a bot (m) past which a shot or a sound comes from an aircraft: no place to chase or shoot at. */
 const OVERHEAD = 25;
@@ -706,41 +718,29 @@ export class Bot implements Damageable, Combatant {
     this.perceiveCount++;
     let best: Combatant | null = null;
     let bestDist = Infinity;
-    // First pass: who is in view at all (cheap maths, no rays). Out of view, any
-    // notice fades; quiet ones nobody was noticing need no bookkeeping.
+    // First pass: who is in view at all (the wasm core, no rays). Out of view,
+    // any notice fades; quiet ones nobody was noticing need no bookkeeping.
     const cand = this.cand;
     let n = 0;
-    for (const e of s.enemiesOf(this.team)) {
-      if (!e.alive) {
-        this.notice.delete(e.id);
-        continue;
-      }
+    // Vehicle gunners watch the sky for aircraft further out.
+    const inView = s.inView(this, skill.sight, this.riding ? skill.sight * 3 : skill.sight, skill.fov / 2, this.riding ? null : VIEW_UP, this.aimYaw, this.aimPitch);
+    const seen = SEEN;
+    seen.clear();
+    for (let h = 0; h < inView; h++) {
+      const e = s.viewHit(h);
+      if (!e.alive) continue;
       const progress = this.notice.get(e.id) ?? 0;
       // Pilots overhead, crews out of reach under armour: not someone to fight from here.
       if (!s.canEngage(this, e)) {
         if (progress > 0) this.notice.set(e.id, 0);
         continue;
       }
-      const dx = e.feet.x - this.feet.x;
-      const dy = e.feet.y - this.feet.y;
-      const dz = e.feet.z - this.feet.z;
-      const flat = Math.hypot(dx, dz);
-      const dist = Math.hypot(flat, dy);
+      seen.add(e.id);
+      const dist = s.viewDist(h);
       const firing = e.firingUntil > s.time;
-      // Vehicle gunners watch the sky for aircraft further out.
-      const sight = this.riding && s.coverOf(e) === 'air' ? skill.sight * 3 : skill.sight;
-      if (progress === 0 && !firing && dist > sight) continue;
-      const off = offAxisDeg(this.aimYaw, dx, dz);
-      // Up and down too: the view is about as tall as a person's (not straight overhead).
-      const offUp = Math.abs(Math.atan2(dy, flat) - this.aimPitch) / DEG;
-      // Out of view nobody is noticed, except someone bumping right into us.
-      const inView = dist < sight && ((off < skill.fov / 2 && (offUp < VIEW_UP || !!this.riding)) || dist < 1.5);
-      if (!inView) {
-        if (progress > 0) this.notice.set(e.id, Math.max(0, progress - dt * 0.5));
-        continue;
-      }
       // Distant, quiet enemies not yet noticed at all are looked for every other time (halves the rays).
       if (progress === 0 && !firing && dist > 25 && (this.perceiveCount + e.id) % 2 === 1) continue;
+      const off = offAxisDeg(this.aimYaw, e.feet.x - this.feet.x, e.feet.z - this.feet.z);
       // Who matters most: whoever shoots at us, the current target, those being noticed, the closest.
       let score = dist;
       if (e === this.target) score *= 0.3;
@@ -754,6 +754,17 @@ export class Bot implements Damageable, Combatant {
       c.firing = firing;
       c.score = score;
       n++;
+    }
+    // Noticed but out of view (or gone): the notice fades.
+    for (const [id, progress] of this.notice) {
+      if (seen.has(id)) continue;
+      const e = s.combatantById(id);
+      if (!e || !e.alive) {
+        this.notice.delete(id);
+        continue;
+      }
+      if (progress <= 0) continue;
+      this.notice.set(id, s.canEngage(this, e) ? Math.max(0, progress - dt * 0.5) : 0);
     }
     // Second pass: line of sight for the few that matter most (a crowd in view
     // can't all be tracked at once); the rest keep where they were.

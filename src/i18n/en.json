@@ -26,6 +26,7 @@
   "touch.grenade": "NADE",
   "error.gpu": "The graphics device was reset",
   "error.gpuReload": "Click to reload",
+  "error.wasm": "This browser is too old to run the game (needs WebAssembly SIMD)",
   "hud.killedBy": "Killed by",
   "hud.allies": "ALLIES",
   "hud.enemies": "ENEMIES",

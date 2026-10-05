@@ -27,6 +27,8 @@ import { SUPPORT, type SupportId } from '@/data/support';
 import type { Danger } from '@/modes/supportWorld';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
+import { core } from '@/wasm/core';
+import { CROWD_AIR, CROWD_BOT, CROWD_HAS_GOAL, Crowd } from './crowd';
 
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
@@ -71,7 +73,6 @@ const BLOB_SIZE = 1.1;
 const squadKey = (team: Team, squad: number): string => `${team}:${squad}`;
 /** Neighbour grid cell (m); at least the separation radius. */
 const CELL = 2;
-const cellKey = (x: number, z: number): number => (Math.floor(x / CELL) + 32768) * 65536 + (Math.floor(z / CELL) + 32768);
 /** How long one pair's line-of-sight result is reused by the other side. */
 const SIGHT_SHARE_SEC = 0.09;
 const SIGHT_SHARE_FAR_SEC = 0.25;
@@ -254,6 +255,8 @@ interface BotEntry {
   watch: THREE.Vector3 | null;
   /** Window this bot holds (marksmen and anchors near their objective). */
   post: Post | null;
+  /** Slot in the crowd arrays (= index in `entries`). */
+  ci: number;
   squad: number;
   /** Squad leader to stay close to (the player's squad), else null. */
   leader: Combatant | null;
@@ -289,7 +292,15 @@ export class BotManager implements BotServices {
    */
   viewers: (() => Iterable<THREE.Vector3>) | null = null;
   private readonly enemies: Record<Team, Combatant[]> = { blue: [], red: [] };
-  private readonly grid = new Map<number, Bot[]>();
+  /** Everyone as arrays in the wasm core: slot i = entries[i], then the player. */
+  private readonly crowd: Crowd;
+  /** Crowd slots: who holds each (null: free), each combatant's, by combatant id, and the free ones. */
+  private readonly owners: (Combatant | null)[] = [];
+  private readonly slots = new Map<Combatant, number>();
+  private readonly slotById = new Map<number, number>();
+  private readonly freeSlots: number[] = [];
+  /** Scratch: the people's slots this step. */
+  private readonly humanSlots: number[] = [];
   private readonly contacts = new Map<string, SquadContact>();
   private leaves: { data: Float32Array; cols: number; rows: number; x0: number; z0: number } | null = null;
   private water: WaterMap | null = null;
@@ -402,12 +413,24 @@ export class BotManager implements BotServices {
           flankFor: -1,
           watch: null,
           post: null,
+          ci: 0,
         });
         this.byBot.set(bot, this.entries[this.entries.length - 1]!);
       }
     };
     add(PLAYER_TEAM, opts.allies);
     add(otherTeam(PLAYER_TEAM), opts.enemies);
+    this.crowd = new Crowd(core(), {
+      cell: CELL,
+      sepRadius: SEPARATION_RADIUS,
+      sepStanding: SEPARATION_STANDING,
+      sepSpeed: SEPARATION_SPEED,
+      moving: MOVING,
+      avoidAhead: AVOID_AHEAD,
+      avoidWidth: AVOID_WIDTH,
+      spotTaken: SPOT_TAKEN,
+    });
+    for (const e of this.entries) e.ci = this.slotFor(e.bot);
     const room = Math.max(this.entries.length, opts.capacity ?? 0);
     this.blobs = this.makeBlobs(room);
     scene.add(this.blobs);
@@ -465,6 +488,7 @@ export class BotManager implements BotServices {
     for (const team of ['blue', 'red'] as const) this.plan(team);
     this.index();
     this.indexSeats();
+    this.syncCrowd();
     this.dodgeGrenades();
     this.dodgeShells();
     for (const team of ['blue', 'red'] as const) this.considerSupport(team);
@@ -503,6 +527,7 @@ export class BotManager implements BotServices {
       if (b.dead && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
       e.simAlive = b.alive;
       e.simDead = b.dead;
+      this.putBot(e);
     }
     for (const [id, r] of this.revivers) if (!r.target.downed || !r.bot.alive || r.bot.reviveOf !== r.target) this.revivers.delete(id);
     this.shareMedkits();
@@ -792,9 +817,9 @@ export class BotManager implements BotServices {
 
   /** Bots (either side) on or by each river crossing, counted once a step. */
   private bridgeCrowds(crossings: readonly (readonly [number, number])[]): number[] {
-    if (this.crowdStep === this.stepCount) return this.crowd;
+    if (this.crowdStep === this.stepCount) return this.bridgeCount;
     this.crowdStep = this.stepCount;
-    this.crowd.length = 0;
+    this.bridgeCount.length = 0;
     const r2 = BRIDGE_CROWD_RADIUS * BRIDGE_CROWD_RADIUS;
     for (const c of crossings) {
       let n = 0;
@@ -802,11 +827,11 @@ export class BotManager implements BotServices {
         const f = e.bot.feet;
         if (e.bot.alive && !e.bot.riding && (f.x - c[0]) ** 2 + (f.z - c[1]) ** 2 < r2) n++;
       }
-      this.crowd.push(n);
+      this.bridgeCount.push(n);
     }
-    return this.crowd;
+    return this.bridgeCount;
   }
-  private crowd: number[] = [];
+  private bridgeCount: number[] = [];
   private crowdStep = -1;
 
   /** Buildings: window firing spots (kept if they are on the navmesh) and footprints. */
@@ -1074,7 +1099,7 @@ export class BotManager implements BotServices {
   // ---------------------------------------------------------------------------
   // BotServices
 
-  /** Per-step lookups: each team's enemies and a grid of bots for neighbour queries. */
+  /** Per-step lookups: each team's enemies. */
   private index(): void {
     for (const team of ['blue', 'red'] as const) {
       const out = this.enemies[team];
@@ -1082,19 +1107,55 @@ export class BotManager implements BotServices {
       for (const e of this.entries) if (e.bot.team !== team && !e.bot.benched) out.push(e.bot);
       for (const h of this.humans()) if (h.team !== team) out.push(h);
     }
-    // Drop cells nobody stood in last step: every cell ever visited used to stay,
-    // and clearing them all grew to ~29k cells (4 ms a step) over a long match.
-    for (const [key, cell] of this.grid) {
-      if (cell.length === 0) this.grid.delete(key);
-      else cell.length = 0;
+  }
+
+  /** Everyone into the crowd arrays and the bots into its neighbour grid (after `indexSeats`). */
+  private syncCrowd(): void {
+    for (const e of this.entries) this.putBot(e);
+    const seen = this.humanSlots;
+    seen.length = 0;
+    for (const h of this.humans()) {
+      const slot = this.slotFor(h);
+      this.crowd.put(slot, h, this.seatCover.get(h.id) === 'air' ? CROWD_AIR : 0);
+      seen.push(slot);
     }
-    for (const e of this.entries) {
-      if (!e.bot.alive) continue;
-      const key = cellKey(e.bot.feet.x, e.bot.feet.z);
-      let cell = this.grid.get(key);
-      if (!cell) this.grid.set(key, (cell = []));
-      cell.push(e.bot);
+    // People who left: their slots go.
+    for (const [c, slot] of this.slots) if (!this.byBot.has(c) && !seen.includes(slot)) this.freeSlot(c);
+    this.crowd.setHumans(seen);
+    this.crowd.setCount(this.owners.length);
+    this.crowd.buildGrid();
+  }
+
+  /** One bot's slot, again after it stepped (others' queries in the same step see where it went). */
+  private putBot(e: BotEntry): void {
+    const b = e.bot;
+    this.crowd.put(e.ci, b, CROWD_BOT | (b.hasGoal ? CROWD_HAS_GOAL : 0) | (this.seatCover.get(b.id) === 'air' ? CROWD_AIR : 0));
+  }
+
+  /**
+   * A combatant's slot in the crowd arrays, handed out on first use and kept
+   * while it is here (bots are adopted / dropped in multiplayer, people come
+   * and go), so the arrays never need reshuffling.
+   */
+  private slotFor(c: Combatant): number {
+    let slot = this.slots.get(c);
+    if (slot === undefined) {
+      slot = this.freeSlots.pop() ?? this.owners.length;
+      this.owners[slot] = c;
+      this.slots.set(c, slot);
+      this.slotById.set(c.id, slot);
     }
+    return slot;
+  }
+
+  private freeSlot(c: Combatant): void {
+    const slot = this.slots.get(c);
+    if (slot === undefined) return;
+    this.slots.delete(c);
+    if (this.slotById.get(c.id) === slot) this.slotById.delete(c.id);
+    this.owners[slot] = null;
+    this.crowd.clear(slot);
+    this.freeSlots.push(slot);
   }
 
   enemiesOf(team: Team): readonly Combatant[] {
@@ -1968,6 +2029,7 @@ export class BotManager implements BotServices {
       flankFor: -1,
       watch: null,
       post: null,
+      ci: this.slotFor(bot),
     };
     this.entries.push(e);
     this.byBot.set(bot, e);
@@ -1987,6 +2049,7 @@ export class BotManager implements BotServices {
     e.bot.dispose(this.physics);
     this.entries.splice(i, 1);
     this.byBot.delete(e.bot);
+    this.freeSlot(e.bot);
   }
 
   /**
@@ -2070,63 +2133,26 @@ export class BotManager implements BotServices {
   }
 
   separation(bot: Bot, out: THREE.Vector3, wx = 0, wz = 0, speed = 0): THREE.Vector3 {
-    out.set(0, 0, 0);
-    this.steer = 0;
-    const cx = Math.floor(bot.feet.x / CELL);
-    const cz = Math.floor(bot.feet.z / CELL);
-    for (let i = -1; i <= 1; i++) {
-      for (let j = -1; j <= 1; j++) {
-        const cell = this.grid.get((cx + i + 32768) * 65536 + (cz + j + 32768));
-        if (!cell) continue;
-        for (const o of cell) if (o !== bot) this.repel(bot, o, 1, out, wx, wz, speed);
-      }
-    }
-    // Bots walk on the navmesh without colliding: keep them off people too.
-    for (const h of this.humans()) this.repel(bot, h, 1.2, out, wx, wz, speed);
-    if (this.steer !== 0) {
-      // Step around whoever is in the way (to the right of the walking direction is (-wz, wx)).
-      const k = THREE.MathUtils.clamp(this.steer, -1, 1) * speed * 0.9;
-      out.x += -wz * k;
-      out.z += wx * k;
-    }
-    return out;
+    // Whoever walks gives way, a walker steps around whoever is ahead on its line,
+    // both keep right head-on; people count 1.2x as wide (see `crowd_separation`).
+    return this.crowd.separation(this.entryOf(bot).ci, wx, wz, speed, out);
   }
 
-  /** Sideways steer summed over neighbours by `repel` (-1 left .. +1 right). */
-  private steer = 0;
+  inView(bot: Bot, sight: number, airSight: number, halfFovDeg: number, viewUpDeg: number | null, yaw: number, pitch: number): number {
+    return this.crowd.view(this.entryOf(bot).ci, sight, airSight, halfFovDeg, viewUpDeg, yaw, pitch);
+  }
 
-  private repel(bot: Bot, o: Combatant, scale: number, out: THREE.Vector3, wx: number, wz: number, speed: number): void {
-    if (!o.alive || Math.abs(o.feet.y - bot.feet.y) > 1.5) return;
-    const dx = bot.feet.x - o.feet.x;
-    const dz = bot.feet.z - o.feet.z;
-    const d = Math.hypot(dx, dz);
-    const moving = speed > 0.1;
-    const oSpeed = Math.hypot(o.velocity.x, o.velocity.z);
-    const oMoving = !o.downed && oSpeed > MOVING;
-    const radius = (moving || oMoving ? SEPARATION_RADIUS : SEPARATION_STANDING) * scale;
-    if (d < radius) {
-      // Whoever walks gives way: someone standing (on a post, in cover, down) is
-      // only nudged by a walker, who goes around instead of shoving.
-      const share = moving ? (oMoving ? 1 : 1.4) : oMoving ? 0.35 : 1;
-      const k = (1 - d / radius) * SEPARATION_SPEED * share;
-      if (d < 1e-3) {
-        // Exactly on top of each other: split by id.
-        out.x += (bot.id > o.id ? 1 : -1) * k;
-      } else {
-        out.x += (dx / d) * k;
-        out.z += (dz / d) * k;
-      }
-    }
-    if (!moving) return;
-    // Someone ahead on this bot's line: veer before bumping into them.
-    const ahead = -dx * wx - dz * wz;
-    if (ahead < 0.05 || ahead > AVOID_AHEAD) return;
-    const lat = dx * wz - dz * wx; // their offset to this bot's right
-    if (Math.abs(lat) > AVOID_WIDTH * scale) return;
-    // Walking toward each other: both keep right. Otherwise pass on the side away from them.
-    const headOn = oMoving && (o.velocity.x * wx + o.velocity.z * wz) < -0.3 * oSpeed;
-    const side = headOn || Math.abs(lat) < 0.05 ? 1 : -Math.sign(lat);
-    this.steer += side * (1 - ahead / AVOID_AHEAD) * (1 - Math.abs(lat) / (AVOID_WIDTH * scale) * 0.5);
+  viewHit(i: number): Combatant {
+    return this.owners[this.crowd.hits[i]!]!;
+  }
+
+  viewDist(i: number): number {
+    return this.crowd.hitDist[i]!;
+  }
+
+  combatantById(id: number): Combatant | null {
+    const slot = this.slotById.get(id);
+    return slot === undefined ? null : this.owners[slot] ?? null;
   }
 
   useGadget(bot: Bot, kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3): boolean {
@@ -2202,19 +2228,7 @@ export class BotManager implements BotServices {
   }
 
   spotTaken(bot: Bot, p: THREE.Vector3): boolean {
-    const cell = this.grid.get(cellKey(p.x, p.z));
-    const check = (o: Bot): boolean =>
-      o !== bot && o.alive && !o.hasGoal && Math.abs(o.feet.y - p.y) < 1.5 && Math.hypot(o.feet.x - p.x, o.feet.z - p.z) < SPOT_TAKEN;
-    if (cell?.some(check)) return true;
-    // The spot may sit on a cell edge: look around it too.
-    for (let i = -1; i <= 1; i++) {
-      for (let j = -1; j <= 1; j++) {
-        if (i === 0 && j === 0) continue;
-        const c = this.grid.get(cellKey(p.x + i * SPOT_TAKEN, p.z + j * SPOT_TAKEN));
-        if (c && c !== cell && c.some(check)) return true;
-      }
-    }
-    return false;
+    return this.crowd.spotTaken(this.entryOf(bot).ci, p);
   }
 
   /** Something audible happened at `pos`; enemies of `source` within `radius` hear it. */

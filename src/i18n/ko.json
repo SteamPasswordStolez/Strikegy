@@ -26,6 +26,7 @@
   "touch.grenade": "투척",
   "error.gpu": "그래픽 장치가 재설정되었습니다",
   "error.gpuReload": "클릭하여 다시 불러오기",
+  "error.wasm": "이 브라우저는 너무 오래되어 게임을 실행할 수 없습니다 (WebAssembly SIMD 필요)",
   "hud.killedBy": "처치:",
   "hud.allies": "아군",
   "hud.enemies": "적군",

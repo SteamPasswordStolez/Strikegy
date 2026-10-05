@@ -1,0 +1,20 @@
+[package]
+name = "strikegy-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Hot CPU kernels of the game, compiled to wasm32 with SIMD128 (see README.md).
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+
+[profile.dev]
+panic = "abort"

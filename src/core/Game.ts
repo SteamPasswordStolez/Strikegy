@@ -1,4 +1,5 @@
 import { disposeTree } from '@/render/dispose';
+import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
 import { EventBus } from './EventBus';
 import type { DamageCause, GameEvents, GrenadeOwner, HitPart } from './events';
@@ -448,6 +449,12 @@ export class Game {
       this.audio.preload(`${ASSET_BASE}sounds/`),
       this.models.load(this.options.viewModels ?? []),
     ]);
+    try {
+      await loadCore();
+    } catch (err) {
+      this.overlay.show(t('error.wasm'), String(err instanceof Error ? err.message : err));
+      throw err;
+    }
     try {
       [this.physics, map] = await Promise.all([PhysicsWorld.create(), fetchMap(this.options.mapUrl)]);
     } catch (err) {
