@@ -35,6 +35,10 @@ const LANE_WIDTH = 1.8;
 const SUPPRESSION_DECAY = 0.3;
 /** Radius for weighing local odds (known enemies vs friends around). */
 const ODDS_RANGE = 40;
+/** Melee: in this reach (m) with an empty or reloading gun, or this close anyway; a swing every `every` s. */
+const MELEE_BOT = { reach: 2, close: 1.3, every: 0.9 };
+/** Hit this many times at one cover spot: find another (not within 3 m of it). */
+const COVER_HITS = 2;
 
 /** Preferred fighting distance per weapon class (meters). */
 const PREFERRED_RANGE: Record<WeaponDef['class'], number> = { ar: 20, smg: 10, lmg: 24, sg: 6, dmr: 32, sr: 40, pistol: 10 };
@@ -141,6 +145,14 @@ export interface BotServices {
   reviverFor(c: Combatant): Bot | null;
   /** Finished reviving `c`. */
   revive(bot: Bot, c: Combatant): void;
+  /** Sides playing the smarter way (see BotSkill.smart). */
+  readonly smart: Readonly<Record<Team, boolean>>;
+  /** Where to look while walking: the most dangerous side within 90° of `moveYaw`, or null. */
+  scanYaw(bot: Bot, moveYaw: number): number | null;
+  /** The squad moves in halves under fire: where this bot covers from (it holds), or null when it may move. */
+  overwatch(bot: Bot): THREE.Vector3 | null;
+  /** A melee blow at `target` in reach; false when it can't land. */
+  melee(bot: Bot, target: Combatant): boolean;
 }
 
 let nextBotId = 1;
@@ -268,6 +280,21 @@ export class Bot implements Damageable, Combatant {
   private repathAt = 0;
   private cover: THREE.Vector3 | null = null;
   private coverUntil = 0;
+  /** How the cover spot is used: low (stand up over it to shoot) or with a side step out from a wall. */
+  private coverLow = true;
+  private coverLean: THREE.Vector3 | null = null;
+  /** Leaving a spot that got this bot hit: cover searches skip points near it (until `avoidUntil`). */
+  coverAvoid: THREE.Vector3 | null = null;
+  private avoidUntil = 0;
+  private coverHits = 0;
+  /** Smarter bots: the side to watch while walking (yaw), or null. */
+  private scan: number | null = null;
+  /** Only the target's head shows (over cover): aim there. */
+  private aimHead = false;
+  private headCheckAt = 0;
+  /** The target's velocity when it was lost from view (where to look for it). */
+  private readonly lostVel = new THREE.Vector3();
+  private meleeAt = 0;
   private strafe = 0;
   private strafeUntil = 0;
   /** Fighting from cover: standing up to shoot (peek) or crouched behind it, until the given time. */
@@ -391,6 +418,12 @@ export class Bot implements Damageable, Combatant {
     this.path.length = 0;
     this.hasGoal = false;
     this.cover = null;
+    this.coverLean = null;
+    this.coverLow = true;
+    this.coverAvoid = null;
+    this.coverHits = 0;
+    this.scan = null;
+    this.aimHead = false;
     this.peeking = false;
     this.suppressUntil = -Infinity;
     // One grenade type per life, like the player: rushers favour flashes,
@@ -434,6 +467,7 @@ export class Bot implements Damageable, Combatant {
     if (!this.alive || this.nowRef < this.shieldUntil) return false;
     const killed = this.health.damage(amount);
     this.lastHurt = this.nowRef;
+    if (this.inCover) this.coverHits++;
     void part;
     // Getting shot reveals roughly where it came from (not a plane's position:
     // chasing or shooting at a spot in the sky gets nowhere).
@@ -800,8 +834,41 @@ export class Bot implements Damageable, Combatant {
       }
       this.notice.set(e.id, progress);
     }
-    if (best !== this.target) this.tracked = 0;
+    if (best !== this.target) {
+      // Lost from view: remember which way they were going.
+      if (this.target && !best) {
+        this.lostVel.copy(this.target.velocity).setY(0);
+        if (this.lostVel.lengthSq() > 49) this.lostVel.setLength(7);
+      }
+      this.tracked = 0;
+      this.headCheckAt = 0;
+      this.aimHead = false;
+    }
     this.target = best;
+    // Over cover often only the head shows: aim at what can be seen.
+    if (best && s.time >= this.headCheckAt) {
+      this.headCheckAt = s.time + 0.3;
+      this.aimHead = !s.lineOfSight(eye, this.tmp2.copy(best.feet).setY(best.feet.y + best.eyeHeight * 0.7));
+    }
+  }
+
+  /** Height on the target to aim at (the chest, or the head when that is all that shows). */
+  private aimHeight(t: Combatant): number {
+    return t.eyeHeight * (this.aimHead ? 0.95 : 0.78);
+  }
+
+  /** The cover spot taken from the map's tactical points: low cover, or a side step to peek from a wall. */
+  setCoverStyle(low: boolean, lean: THREE.Vector3 | null): void {
+    this.coverLow = low;
+    this.coverLean = lean;
+  }
+
+  /** Throws a smoke grenade onto `at` if it has one (a squad going in screens its way). */
+  throwSmoke(at: THREE.Vector3, s: BotServices): boolean {
+    if (this.smokes <= 0 || this.weapon.reloading || !s.throwGrenade(this, 'smoke', at)) return false;
+    this.smokes--;
+    this.afterThrow(at, s);
+    return true;
   }
 
   private think(s: BotServices): void {
@@ -829,19 +896,33 @@ export class Bot implements Damageable, Combatant {
         : this.suppression > 0.3 && this.heardAge(s.time) < 2
           ? this.heard.pos
           : null;
+    // Hit again and again at one spot: they have it zeroed, move to another.
+    const smart = s.smart[this.team];
+    if (smart && this.coverHits >= COVER_HITS && this.cover) {
+      this.coverAvoid = this.cover.clone();
+      this.avoidUntil = s.time + 8;
+      this.coverHits = 0;
+      this.coverUntil = 0;
+    }
+    if (this.coverAvoid && s.time > this.avoidUntil) this.coverAvoid = null;
     if (threat && (!this.cover || s.time > this.coverUntil)) {
       // Keep a cover spot while it still hides us; only look for a new one when it doesn't.
-      if (this.cover && this.coverHolds(this.cover, threat, s)) {
+      if (this.cover && !this.coverAvoid && this.coverHolds(this.cover, threat, s)) {
         this.coverUntil = s.time + 3;
       } else {
+        // Without a tactical point the spot is plain cover (crouch behind it, stand to shoot).
+        this.coverLow = true;
+        this.coverLean = null;
         const found = s.findCover(this, threat);
         if (found !== undefined) {
           this.cover = found;
           this.coverUntil = s.time + 3;
+          this.coverHits = 0;
         }
       }
     } else if (!threat) {
       this.cover = null;
+      this.coverLean = null;
     }
     const inCover = !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
     // Teammates' sightings only matter nearby; otherwise the whole team converges on one fight.
@@ -895,7 +976,8 @@ export class Bot implements Damageable, Combatant {
         else this.hasGoal = false;
         break;
       case 'hunt':
-        this.setGoal(ownAge <= teamAge + 2 ? this.lastSeen.pos : team!.pos, s);
+        // Smarter: where they were heading, not just where they were seen.
+        this.setGoal(ownAge <= teamAge + 2 ? (smart ? this.predicted(s, ownAge) : this.lastSeen.pos) : team!.pos, s);
         // Steadier types keep firing at the spot while they close in.
         if (this.personality.caution > 0.4) this.planSuppress(s);
         break;
@@ -908,12 +990,69 @@ export class Bot implements Damageable, Combatant {
         }
         break;
     }
+    // A squad fighting moves in halves: this half holds (in cover) and covers the other.
+    if (smart && !this.target && (this.action === 'advance' || this.action === 'hunt')) {
+      const over = s.overwatch(this);
+      if (over) this.coverMove(over, inCover, s);
+    }
+    // Where to look while walking: the dangerous side, not just the path.
+    this.scan = smart && !this.target && this.hasGoal && this.path.length > 0 ? s.scanYaw(this, this.pathYaw()) : null;
+    // Up close with an empty (or reloading) gun, or right on top of them: the rifle butt.
+    const t = this.target;
+    if (t && s.time >= this.meleeAt) {
+      const d = this.feet.distanceTo(t.feet);
+      if (d < MELEE_BOT.close || (d < MELEE_BOT.reach && (w.ammo === 0 || w.reloading))) {
+        this.meleeAt = s.time + MELEE_BOT.every;
+        this.faceToward(t.feet, 1);
+        if (s.melee(this, t)) this.pauseUntil = s.time + 0.5;
+      }
+    }
     // Someone just vanished into smoke: keep firing into it.
     if (!this.target && s.time - this.lastSeen.time < 3.5 && s.inSmoke(this.lastSeen.pos)) this.planSuppress(s, true);
     // Reload opportunistically when nothing is visible.
     if (!this.target && w.ammo < this.def.magSize * 0.4 && w.canReload()) w.startReload();
     this.considerGrenade(s, inCover);
     this.considerGadget(s, inCover);
+  }
+
+  /** Where an enemy lost from view `age` s ago is likely now: along their way, on the mesh. */
+  private predicted(s: BotServices, age: number): THREE.Vector3 {
+    const p = this.tmp3.copy(this.lastSeen.pos).addScaledVector(this.lostVel, Math.min(age, 1.5));
+    return s.nav.closest(p, this.tmp3) ?? this.lastSeen.pos;
+  }
+
+  /** Heading of the next stretch of the path (yaw, 0 = -Z). */
+  private pathYaw(): number {
+    const c = this.path[Math.min(this.pathIndex, this.path.length - 1)]!;
+    return Math.atan2(-(c.x - this.feet.x), -(c.z - this.feet.z));
+  }
+
+  /**
+   * Covering the squad's move: stay in cover (or get to some, close by) and
+   * keep the enemy's heads down at `at`, rather than walking up.
+   */
+  private coverMove(at: THREE.Vector3, inCover: boolean, s: BotServices): void {
+    if (inCover) {
+      this.hasGoal = false;
+    } else if (this.cover && this.cover.distanceTo(this.feet) < 14) {
+      this.setGoal(this.cover, s);
+    } else {
+      this.coverLow = true;
+      this.coverLean = null;
+      const c = s.findCover(this, at);
+      if (c) {
+        this.cover = c;
+        this.coverUntil = s.time + 3;
+        this.setGoal(c, s);
+      } else this.hasGoal = false;
+    }
+    // A few bursts at the fight (not a constant stream).
+    const auto = this.def.fireMode === 'auto' || this.def.fireMode === 'burst';
+    if (!auto || s.time < this.suppressUntil || Math.random() > 0.35 || this.weapon.ammo < this.def.magSize * 0.3) return;
+    const spot = this.tmp.copy(at).setY(at.y + 1.1);
+    if (s.wallsBlock(this.eyePos(this.eye), spot)) return;
+    this.suppressPos.copy(spot);
+    this.suppressUntil = s.time + 1 + Math.random();
   }
 
   /** Hurt and out of the line of fire: patch up with a medkit. */
@@ -1301,7 +1440,8 @@ export class Bot implements Damageable, Combatant {
   }
 
   private get inCover(): boolean {
-    return !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
+    if (!this.cover) return false;
+    return this.cover.distanceTo(this.feet) < 0.8 || (!!this.coverLean && this.coverLean.distanceTo(this.feet) < 0.6);
   }
 
   /** Behind cover in a fight: alternate standing up to shoot and ducking back down. */
@@ -1321,6 +1461,18 @@ export class Bot implements Damageable, Combatant {
     } else if (!this.peeking && s.time > this.peekSwitchAt && !this.weapon.reloading) {
       this.peeking = true;
       this.peekSwitchAt = s.time + ((1 + p.aggression * 1.6) * (0.7 + Math.random() * 0.6)) / pinned;
+    }
+    // Behind a wall: peeking is a side step out from it, ducking back is the step in.
+    const lean = this.coverLean;
+    if (lean && this.cover && !this.coverLow) {
+      const want = this.peeking ? lean : this.cover;
+      if (want.distanceTo(this.feet) > 0.25) {
+        this.goal.copy(want);
+        this.path.length = 0;
+        this.path.push(want.clone());
+        this.pathIndex = 0;
+        this.hasGoal = true;
+      }
     }
   }
 
@@ -1366,7 +1518,7 @@ export class Bot implements Damageable, Combatant {
         this.jitterAt = s.time + 0.3 + Math.random() * 0.35;
       }
       this.jitter.lerp(this.jitterGoal, 1 - Math.exp(-6 * dt));
-      const aimAt = this.tmp.copy(t.feet).setY(t.feet.y + t.eyeHeight * 0.78);
+      const aimAt = this.tmp.copy(t.feet).setY(t.feet.y + this.aimHeight(t));
       // Lead moving targets a little.
       aimAt.addScaledVector(t.velocity, 0.08);
       const eye = this.eyePos(this.eye);
@@ -1392,6 +1544,9 @@ export class Bot implements Damageable, Combatant {
       // At a post: watch the assigned direction.
       const w = s.watchDir(this)!;
       yaw = Math.atan2(-w.x, -w.z);
+    } else if (this.hasGoal && this.path.length > 0 && this.scan !== null && this.action !== 'hunt') {
+      // Smarter: walking, watch the side the danger is on (checking corners and windows).
+      yaw = this.scan;
     } else if (this.hasGoal && this.path.length > 0) {
       // Look where we are going, or toward the last threat when hunting.
       const look = this.action === 'hunt' || this.action === 'investigate' ? this.goal : this.path[Math.min(this.pathIndex, this.path.length - 1)]!;
@@ -1560,7 +1715,7 @@ export class Bot implements Damageable, Combatant {
     const armour = !!t && s.coverOf(t) === 'armour';
     if ((t || suppress) && !armour && !w.reloading && w.ammo > 0) {
       const eye = this.eyePos(this.eye);
-      const aimAt = t ? this.tmp.copy(t.feet).setY(t.feet.y + t.eyeHeight * 0.78) : this.tmp.copy(this.suppressPos);
+      const aimAt = t ? this.tmp.copy(t.feet).setY(t.feet.y + this.aimHeight(t)) : this.tmp.copy(this.suppressPos);
       const [ty, tp] = yawPitchOf(aimAt.x - eye.x, aimAt.y - eye.y, aimAt.z - eye.z);
       const off = Math.hypot(wrapAngle(ty - this.aimYaw), tp - this.aimPitch) / DEG;
       const dist = eye.distanceTo(aimAt);

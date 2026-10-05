@@ -8,7 +8,7 @@ import type { Effects } from '@/render/Effects';
 import { LAYER_FX } from '@/render/layers';
 import type { SpawnPoint, Team } from '@/world/mapTypes';
 import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
-import type { ShotCaster } from '@/weapons/WeaponController';
+import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
@@ -27,6 +27,10 @@ import { SUPPORT, type SupportId } from '@/data/support';
 import type { Danger } from '@/modes/supportWorld';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
+import { TANK_KINDS } from '@/vehicles/vehicleData';
+import { t as tr } from '@/i18n';
+import type { TacticalMap } from './tactics';
+import { DangerMap } from './danger';
 
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
@@ -128,6 +132,57 @@ const LEAF_STEP = 2;
 /** Foliage per unit of tree scale in a cell, per sample. */
 const LEAF_WEIGHT = 0.25;
 const COVER_SAMPLES = 10;
+/**
+ * Smarter behaviour (normal / hard bots): cover from the map's tactical
+ * points within `coverReach` m; danger stamped once a second (spotted enemy:
+ * `seen` within `seenR` m, armour twice that; a soldier down: `down` at the
+ * spot and `killer` around the shooter); a way in is weighed against danger
+ * (`routeWeight` m per unit of danger and metre walked, `routeSwing` m to the
+ * side for the alternatives, at most `routes` alternatives a step); squads
+ * gather `stageOut` m outside an enemy-held zone and go in together once
+ * `stageShare` of them are there (or after `stageWait` s); in a fight a squad
+ * moves in halves, swapping every `bound` s.
+ */
+const TACTIC = {
+  coverReach: 16,
+  seen: 0.7,
+  seenR: 40,
+  down: 1.6,
+  killer: 1.1,
+  routeWeight: 1.4,
+  routeSwing: 32,
+  routes: 2,
+  stageOut: 24,
+  stageShare: 0.6,
+  stageWait: 18,
+  bound: 3.5,
+  melee: 2.1,
+};
+
+/**
+ * Bot tank crews: they hold a firing position off their objective instead
+ * of driving into it (`stand` m out on their own side: gun tanks, tank
+ * destroyers, lobbing guns; further back when badly hurt), rethink it every
+ * `rethink` s, stop and turn the hull for the tank destroyer's narrow gun,
+ * and look for enemy vehicles to put the main gun on every `pick` s
+ * (within `reach` m). Lobbing guns also fire at enemies their side has
+ * spotted that they can't see themselves.
+ */
+const ARMOUR = { stand: { tank: 60, td: 85, lob: 170 }, hurt: 0.35, hurtStand: 1.7, rethink: 25, pick: 0.6, reach: 450, holdAt: 9 };
+
+/** Gun armour (tanks, the rocket truck): crews stay aboard and hold a position. */
+function armoured(v: Vehicle): boolean {
+  return TANK_KINDS.includes(v.kind) || v.kind === 'rocket';
+}
+
+/** A squad gathering outside a zone before going in. */
+interface Staging {
+  zone: THREE.Vector3;
+  pos: THREE.Vector3;
+  made: number;
+  since: number;
+  go: boolean;
+}
 
 export interface BotOptions {
   allies: number;
@@ -135,6 +190,8 @@ export interface BotOptions {
   difficulty: Difficulty;
   /** Room for this many bots in the instanced drawing (bots added later with `adopt`). */
   capacity?: number;
+  /** This side (or both) plays the older, plainer behaviour (comparison runs, `?plain=red`). */
+  plain?: Team | 'both' | null;
 }
 
 /**
@@ -171,6 +228,8 @@ export interface BotObjective {
   guard?: boolean;
   /** Unit direction attacks come from. */
   front?: THREE.Vector3;
+  /** Held by the other side (attackers gather before going in). */
+  enemyHeld?: boolean;
 }
 
 /** Game-mode hooks: where squads go and where bots respawn. */
@@ -245,7 +304,25 @@ interface BotEntry {
   /** Walking to a vehicle seat (claimed until `until`). */
   board: { vehicle: number; seat: number; until: number } | null;
   /** Driving: the path being followed and stuck handling. */
-  drive: { path: THREE.Vector3[]; at: number; repathAt: number; waitUntil: number; stuckFor: number; backUntil: number; tries: number; backSteer?: number; stuckAt?: THREE.Vector3; yieldSince?: number } | null;
+  drive: {
+    path: THREE.Vector3[];
+    at: number;
+    repathAt: number;
+    waitUntil: number;
+    stuckFor: number;
+    backUntil: number;
+    tries: number;
+    backSteer?: number;
+    stuckAt?: THREE.Vector3;
+    yieldSince?: number;
+    /** Armour: the firing position held off its objective, which objective it is for, and when to rethink it. */
+    post?: THREE.Vector3;
+    postFor?: THREE.Vector3;
+    postAt?: number;
+    /** Armour main gun: the enemy vehicle it is on, rechecked at `pickAt`. */
+    prey?: Vehicle | null;
+    pickAt?: number;
+  } | null;
   /** Riding without a driver since (gunners hold on a little). */
   alone?: number;
   /** Bot pilots: what they're going after, and a pull-up after an attack run. */
@@ -261,6 +338,8 @@ interface BotEntry {
   slot: number;
   /** Detour on the way to the objective (the squad's approach route), cleared once passed. */
   via: THREE.Vector3 | null;
+  /** Tactical point held in the objective zone (-1: a random spot in it). */
+  spot: number;
 }
 
 /** A weapon of the bot's class that suits its fighting style (re-rolled every life). */
@@ -341,6 +420,19 @@ export class BotManager implements BotServices {
   remote: BotRemote | null = null;
   /** A team throws at most one grenade per this many seconds. */
   private readonly grenadeAt: Record<Team, number> = { blue: 0, red: 0 };
+  /** The map's tactical points (cover, peek spots, positions in zones), once found. */
+  tactics: TacticalMap | null = null;
+  /** Each side's danger map (see danger.ts), with the tactical points. */
+  private danger: Record<Team, DangerMap> | null = null;
+  private dangerTick = 0;
+  /** Sides playing the smarter behaviour (not easy bots; `plain` turns one side's off to compare). */
+  readonly smart: Record<Team, boolean>;
+  private routeBudget = 0;
+  /** Bot id -> tactical point it took as cover. */
+  private readonly coverClaims = new Map<number, number>();
+  /** Squads gathering before an assault (team:squad). */
+  private readonly staging = new Map<string, Staging>();
+  private readonly near: number[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -359,6 +451,8 @@ export class BotManager implements BotServices {
     this.humans = typeof player === 'function' ? player : () => [player];
     this.skill = SKILLS[opts.difficulty];
     this.damageScale = DAMAGE_SCALE[opts.difficulty];
+    const plain = (team: Team) => opts.plain === team || opts.plain === 'both';
+    this.smart = { blue: this.skill.smart && !plain('blue'), red: this.skill.smart && !plain('red') };
     const teamState = (team: Team): TeamState => {
       const own = spawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
       const base = own.length
@@ -402,6 +496,7 @@ export class BotManager implements BotServices {
           flankFor: -1,
           watch: null,
           post: null,
+          spot: -1,
         });
         this.byBot.set(bot, this.entries[this.entries.length - 1]!);
       }
@@ -462,6 +557,12 @@ export class BotManager implements BotServices {
   step(dt: number): void {
     this.time += dt;
     this.coverBudget = COVER_SEARCHES_PER_STEP;
+    this.routeBudget = TACTIC.routes;
+    if (this.time >= this.dangerTick) {
+      this.dangerTick = this.time + 1;
+      this.updateDanger();
+      this.updateStaging();
+    }
     for (const team of ['blue', 'red'] as const) this.plan(team);
     this.index();
     this.indexSeats();
@@ -495,6 +596,8 @@ export class BotManager implements BotServices {
         // Down: out of the fight (the kill was reported when the shot landed), and out of any vehicle.
         this.alightBot(e);
         this.release(e);
+        this.releaseCover(b);
+        this.releaseSpot(e);
         this.shareKill(b);
         this.releaseRevive(b);
         this.releaseWork(b);
@@ -674,6 +777,11 @@ export class BotManager implements BotServices {
   /** Mates near a fallen bot learn where the fatal shot came from. */
   private shareKill(victim: Bot): void {
     const killer = victim.killerPos;
+    const d = this.danger?.[victim.team];
+    if (d) {
+      d.stamp(victim.feet.x, victim.feet.z, 18, TACTIC.down);
+      if (killer) d.stamp(killer.x, killer.z, 30, TACTIC.killer);
+    }
     if (!killer) return;
     const r2 = KILL_INTEL_RANGE * KILL_INTEL_RANGE;
     for (const e of this.entries) {
@@ -755,6 +863,7 @@ export class BotManager implements BotServices {
 
   route(bot: Bot, to: THREE.Vector3, out: THREE.Vector3[]): boolean {
     if (!this.nav.path(bot.feet, to, out)) return false;
+    this.saferWay(bot, to, out);
     const w = this.water;
     // Already in the river, or fighting: just go.
     if (!w || !w.crossings.length || bot.target || this.waterDepth(bot.feet) > 0.1) return true;
@@ -788,6 +897,48 @@ export class BotManager implements BotServices {
     out.length = 0;
     for (const p of alt) out.push(p);
     return true;
+  }
+
+  /**
+   * Smarter bots walking somewhere (not fighting) weigh the way they found
+   * against the side's danger map: when it crosses open ground the enemy
+   * covers, a way round either side may be worth the extra walk (bolder bots
+   * accept more danger). At most a couple of these a step.
+   */
+  private saferWay(bot: Bot, to: THREE.Vector3, out: THREE.Vector3[]): void {
+    const dm = this.danger?.[bot.team];
+    if (!dm || !this.smart[bot.team] || bot.target || this.routeBudget <= 0) return;
+    if (bot.action !== 'advance' && bot.action !== 'investigate') return;
+    const length = (p: readonly THREE.Vector3[]) => {
+      let n = 0;
+      for (let i = 1; i < p.length; i++) n += p[i]!.distanceTo(p[i - 1]!);
+      return n;
+    };
+    const direct = length(out);
+    if (direct < 40) return;
+    const weight = TACTIC.routeWeight * (1.3 - bot.personality.aggression * 0.6);
+    const danger = dm.pathCost(out, this.openness);
+    if (danger * weight < 12) return;
+    this.routeBudget--;
+    let best = direct + danger * weight;
+    let pick: THREE.Vector3[] | null = null;
+    const dir = this.tmp.subVectors(to, bot.feet).setY(0).normalize();
+    for (const side of [-1, 1]) {
+      const mid = new THREE.Vector3().lerpVectors(bot.feet, to, 0.5);
+      mid.x += -dir.z * TACTIC.routeSwing * side;
+      mid.z += dir.x * TACTIC.routeSwing * side;
+      const via = this.nav.closest(mid);
+      if (!via || !this.nav.path(bot.feet, via, this.legA) || !this.nav.path(via, to, this.legB)) continue;
+      const alt = [...this.legA, ...this.legB.slice(1)];
+      const cost = length(alt) + dm.pathCost(alt, this.openness) * weight;
+      if (cost < best) {
+        best = cost;
+        pick = alt;
+      }
+    }
+    if (!pick) return;
+    out.length = 0;
+    for (const p of pick) out.push(p);
   }
 
   /** Bots (either side) on or by each river crossing, counted once a step. */
@@ -834,6 +985,52 @@ export class BotManager implements BotServices {
     if (e.post) e.post.owner = null;
     e.post = null;
   }
+
+  private releaseSpot(e: BotEntry): void {
+    const tm = this.tactics;
+    if (tm && e.spot >= 0 && tm.claim[e.spot] === -e.bot.id) tm.claim[e.spot] = 0;
+    e.spot = -1;
+  }
+
+  private releaseCover(bot: Bot): void {
+    const i = this.coverClaims.get(bot.id);
+    if (i === undefined) return;
+    if (this.tactics && this.tactics.claim[i] === bot.id) this.tactics.claim[i] = 0;
+    this.coverClaims.delete(bot.id);
+  }
+
+  /**
+   * The map's tactical points (see tactics.ts) and its size: cover searches,
+   * zone positions and danger maps use them from now on.
+   */
+  setTactics(map: TacticalMap, size: readonly [number, number]): void {
+    this.tactics = map;
+    const [w, d] = size;
+    this.danger = { blue: new DangerMap(-w / 2, -d / 2, w / 2, d / 2), red: new DangerMap(-w / 2, -d / 2, w / 2, d / 2) };
+  }
+
+  /** Danger at a point for `team` (0 without danger maps). */
+  dangerAt(team: Team, p: THREE.Vector3): number {
+    return this.danger?.[team].at(p.x, p.z) ?? 0;
+  }
+
+  /** Once a second: danger fades, and every enemy a side has spotted stamps it again. */
+  private updateDanger(): void {
+    const dm = this.danger;
+    if (!dm) return;
+    for (const team of ['blue', 'red'] as const) {
+      const d = dm[team];
+      d.decay(1);
+      for (const e of this.enemies[team]) {
+        if (!e.alive || this.time - (this.spottedAt.get(e.id) ?? -Infinity) > SPOT_SEC * 2) continue;
+        const armour = this.seatCover.get(e.id) === 'armour';
+        d.stamp(e.feet.x, e.feet.z, TACTIC.seenR * (armour ? 2 : 1), TACTIC.seen * (armour ? 1.6 : 1));
+      }
+    }
+  }
+
+  /** How open a spot is (1 = no cover around, less the more tactical points share its cell). */
+  private openness = (x: number, z: number): number => 1 / (1 + 0.2 * (this.tactics?.density(x, z) ?? 0));
 
   /**
    * Marksmen and anchors take a free window near their objective that looks
@@ -969,15 +1166,18 @@ export class BotManager implements BotServices {
           guards.set(g, list);
         } else {
           e.watch = null;
-          if (changed) {
+          if (changed || (e.spot < 0 && this.smart[team])) {
             const a = Math.random() * Math.PI * 2;
             const r = Math.sqrt(Math.random()) * g.radius * 0.7;
             e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+            this.zoneSpot(e, g);
           }
         }
         if (changed) e.via = e.bot.alive ? this.approach(e.bot.feet, g.pos, sides[k]!) : null;
         this.assignPost(e);
       }
+      // Squads going for a zone the enemy holds gather outside it first.
+      if (this.smart[team]) for (const q of squads) if (!byPlayer.has(q)) this.planStaging(team, q, pick.get(q) ?? null);
       // Guard posts: spread along the side of the zone facing the enemy, each watching outward.
       for (const [g, list] of guards) {
         const front = g.front ?? new THREE.Vector3(0, 0, -1);
@@ -987,6 +1187,8 @@ export class BotManager implements BotServices {
           const r = g.radius * (0.55 + 0.15 * (j % 3));
           e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
           e.watch = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).lerp(front, 0.4).normalize();
+          // Smarter: a covered spot in the zone facing the way attacks come from.
+          if (this.zoneSpot(e, g)) e.watch = front.clone();
         });
       }
       t.objective.copy(goals[0]!.pos);
@@ -1008,6 +1210,129 @@ export class BotManager implements BotServices {
     for (const e of this.entries) {
       if (e.bot.team !== team) continue;
       e.offset.set((Math.random() - 0.5) * 10, 0, (Math.random() - 0.5) * 10);
+    }
+  }
+
+  /**
+   * Smarter bots take a tactical point in their objective zone that covers
+   * them from the side attacks come from (toward the enemy's base): one bot a
+   * point, a few metres from the others, chosen among the better ones at
+   * random so a squad spreads round the zone. Sets the bot's offset to it.
+   */
+  private zoneSpot(e: BotEntry, g: BotObjective): boolean {
+    const tm = this.tactics;
+    // Still holding a point in this zone: keep it (guards don't shuffle round every plan).
+    if (tm && e.spot >= 0 && tm.claim[e.spot] === -e.bot.id && Math.hypot(tm.x[e.spot]! - g.pos.x, tm.z[e.spot]! - g.pos.z) < g.radius) {
+      e.offset.set(tm.x[e.spot]! - g.pos.x, tm.y[e.spot]! - g.pos.y, tm.z[e.spot]! - g.pos.z);
+      return true;
+    }
+    this.releaseSpot(e);
+    if (!tm || !this.smart[e.bot.team] || !g.front) return false;
+    const list = tm.near(g.pos.x, g.pos.z, g.radius * 0.95, this.near);
+    const tx = g.pos.x + g.front.x * 60;
+    const tz = g.pos.z + g.front.z * 60;
+    const cand: { i: number; score: number }[] = [];
+    for (const i of list) {
+      if (tm.claim[i] !== 0 || Math.abs(tm.y[i]! - g.pos.y) > 10) continue;
+      const kind = tm.cover(i, tx, tz);
+      if (!kind) continue;
+      const shoot = kind === 1 || tm.leanSide(i, tx, tz) !== 0;
+      cand.push({ i, score: (shoot ? 0 : 3) + Math.random() * 4 });
+    }
+    if (!cand.length) return false;
+    cand.sort((a, b) => a.score - b.score);
+    // Spots other bots hold in this zone: not right beside one of them.
+    const held: number[] = [];
+    const reach2 = (g.radius + 5) ** 2;
+    for (const o of this.entries) {
+      if (o.spot >= 0 && o !== e && (tm.x[o.spot]! - g.pos.x) ** 2 + (tm.z[o.spot]! - g.pos.z) ** 2 < reach2) held.push(o.spot);
+    }
+    for (const c of cand) {
+      let crowded = false;
+      for (const h of held) {
+        if ((tm.x[h]! - tm.x[c.i]!) ** 2 + (tm.z[h]! - tm.z[c.i]!) ** 2 < 16) {
+          crowded = true;
+          break;
+        }
+      }
+      if (crowded) continue;
+      e.spot = c.i;
+      // Negative ids mark zone positions (cover searches leave them to their owner).
+      tm.claim[c.i] = -e.bot.id;
+      e.offset.set(tm.x[c.i]! - g.pos.x, tm.y[c.i]! - g.pos.y, tm.z[c.i]! - g.pos.z);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * A squad sent at a zone the enemy holds gathers outside it first (on its
+   * own side, at a covered spot if there is one) when it is still far off;
+   * any other objective clears its staging.
+   */
+  private planStaging(team: Team, squad: number, g: BotObjective | null): void {
+    const key = `${team}:${squad}`;
+    const st = this.staging.get(key);
+    if (!g || !g.enemyHeld || g.defend) {
+      this.staging.delete(key);
+      return;
+    }
+    if (st && st.zone.distanceToSquared(g.pos) < 1) return;
+    const members = this.entries.filter((x) => x.bot.team === team && x.squad === squad && x.bot.alive && !x.bot.riding);
+    if (members.length < 2) {
+      this.staging.delete(key);
+      return;
+    }
+    const c = members.reduce((a, x) => a.add(x.bot.feet), new THREE.Vector3()).divideScalar(members.length);
+    const out = g.radius + TACTIC.stageOut;
+    if (c.distanceTo(g.pos) < out + 15) {
+      this.staging.delete(key);
+      return;
+    }
+    const dir = new THREE.Vector3(c.x - g.pos.x, 0, c.z - g.pos.z).normalize();
+    const want = new THREE.Vector3(g.pos.x + dir.x * out, g.pos.y, g.pos.z + dir.z * out);
+    let pos = this.nav.closest(want) ?? want;
+    const tm = this.tactics;
+    if (tm) {
+      let best = -1;
+      let bestD = 12 * 12;
+      for (const i of tm.near(want.x, want.z, 12, this.near)) {
+        if (!tm.cover(i, g.pos.x, g.pos.z)) continue;
+        const d = (tm.x[i]! - want.x) ** 2 + (tm.z[i]! - want.z) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      if (best >= 0) pos = new THREE.Vector3(tm.x[best]!, tm.y[best]!, tm.z[best]!);
+    }
+    this.staging.set(key, { zone: g.pos.clone(), pos, made: this.time, since: -1, go: false });
+    for (const m of members) m.via = null;
+  }
+
+  /**
+   * Once a second: a gathering squad goes in when most of it is there (or it
+   * has waited long enough, or the fight found it); its first member with a
+   * smoke grenade screens the way in.
+   */
+  private updateStaging(): void {
+    for (const [key, st] of this.staging) {
+      if (st.go) continue;
+      const [team, q] = key.split(':') as [Team, string];
+      const squad = Number(q);
+      const members = this.entries.filter((x) => x.bot.team === team && x.squad === squad && x.bot.alive && !x.bot.riding);
+      if (!members.length) {
+        this.staging.delete(key);
+        continue;
+      }
+      const there = members.filter((x) => x.bot.feet.distanceTo(st.pos) < 12);
+      if (there.length && st.since < 0) st.since = this.time;
+      const fight = members.some((x) => x.bot.inCombat(this.time));
+      const ready = there.length / members.length >= TACTIC.stageShare;
+      if (!ready && !fight && (st.since < 0 || this.time - st.since < TACTIC.stageWait) && this.time - st.made < 75) continue;
+      st.go = true;
+      const at = new THREE.Vector3().lerpVectors(st.pos, st.zone, 0.55);
+      for (const x of there) if (x.bot.throwSmoke(at, this)) break;
     }
   }
 
@@ -1178,6 +1503,7 @@ export class BotManager implements BotServices {
   findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null | undefined {
     if (this.coverBudget <= 0) return undefined;
     this.coverBudget--;
+    if (this.tactics && this.smart[bot.team]) return this.tacticalCover(bot, threat, this.tactics);
     const threatEye = new THREE.Vector3(threat.x, threat.y + 1.6, threat.z);
     let best: THREE.Vector3 | null = null;
     let bestScore = Infinity;
@@ -1205,6 +1531,108 @@ export class BotManager implements BotServices {
     return best;
   }
 
+  /**
+   * Cover from the map's tactical points: the nearest ones that hide a
+   * crouched soldier from `threat`, best those it can also shoot from
+   * (standing over low cover, or a side step out from a wall), not toward
+   * the threat across open ground, not one another bot holds; the best few
+   * are checked with a real sight line. Tells the bot how to peek from it.
+   */
+  private tacticalCover(bot: Bot, threat: THREE.Vector3, tm: TacticalMap): THREE.Vector3 | null {
+    const list = tm.near(bot.feet.x, bot.feet.z, TACTIC.coverReach, this.near);
+    const avoid = bot.coverAvoid;
+    const tx = threat.x;
+    const tz = threat.z;
+    const toThreat = Math.hypot(tx - bot.feet.x, tz - bot.feet.z);
+    const best: { i: number; score: number; kind: number; lean: number }[] = [];
+    for (const i of list) {
+      const x = tm.x[i]!;
+      const z = tm.z[i]!;
+      if (Math.abs(tm.y[i]! - bot.feet.y) > 2.5) continue;
+      const held = tm.claim[i]!;
+      if (held !== 0 && held !== bot.id && held !== -bot.id) continue;
+      if (avoid && (x - avoid.x) ** 2 + (z - avoid.z) ** 2 < 9) continue;
+      const dThreat = Math.hypot(tx - x, tz - z);
+      if (dThreat < 6) continue;
+      const kind = tm.cover(i, tx, tz);
+      if (!kind) continue;
+      const lean = kind === 2 ? tm.leanSide(i, tx, tz) : 0;
+      const d = Math.hypot(x - bot.feet.x, z - bot.feet.z);
+      // Shooting position first; running at the enemy to reach it is worse.
+      let score = d + (kind === 1 || lean !== 0 ? 0 : 6) - Math.min(dThreat, 30) * 0.12;
+      if (dThreat < toThreat - 6) score += (toThreat - dThreat) * 0.5;
+      if (best.length < 4 || score < best[best.length - 1]!.score) {
+        best.push({ i, score, kind, lean });
+        best.sort((a, b) => a.score - b.score);
+        if (best.length > 4) best.pop();
+      }
+    }
+    const eye = this.tmp.set(tx, threat.y + 1.6, tz);
+    for (const c of best.slice(0, 3)) {
+      const p = this.tmp2.set(tm.x[c.i]!, tm.y[c.i]! + 0.85, tm.z[c.i]!);
+      if (this.lineOfSight(eye, p)) continue;
+      this.releaseCover(bot);
+      tm.claim[c.i] = bot.id;
+      this.coverClaims.set(bot.id, c.i);
+      const spot = new THREE.Vector3(tm.x[c.i]!, tm.y[c.i]!, tm.z[c.i]!);
+      let lean: THREE.Vector3 | null = null;
+      if (c.lean !== 0) {
+        lean = new THREE.Vector3();
+        tm.leanSpot(c.i, tx, tz, c.lean, lean);
+      }
+      bot.setCoverStyle(c.kind === 1, lean);
+      return spot;
+    }
+    return null;
+  }
+
+  /**
+   * Smarter behaviour, where to look while walking: the most dangerous side
+   * within 90° of the way the bot is heading (null: just look ahead).
+   */
+  scanYaw(bot: Bot, moveYaw: number): number | null {
+    if (!this.smart[bot.team]) return null;
+    return this.danger?.[bot.team].watchYaw(bot.feet.x, bot.feet.z, moveYaw, Math.PI / 2) ?? null;
+  }
+
+  /**
+   * In a squad fight the squad moves in halves: one half moves while the
+   * other holds and covers it, swapping every few seconds. Where the covering
+   * half shoots at (the squad's fight), or null when this bot may move.
+   */
+  overwatch(bot: Bot): THREE.Vector3 | null {
+    if (!this.smart[bot.team]) return null;
+    const e = this.entryOf(bot);
+    if (e.leader || e.squad < 0) return null;
+    const c = this.squadContact(bot);
+    if (!c || this.time - c.time > 6 || c.pos.distanceTo(bot.feet) > 80) return null;
+    const phase = Math.floor(this.time / TACTIC.bound) % 2;
+    return e.slot % 2 === phase ? c.pos : null;
+  }
+
+  /** A swing with the rifle butt at `target` in reach: one hit, the melee damage. */
+  melee(bot: Bot, target: Combatant): boolean {
+    const eye = bot.eyePos(new THREE.Vector3());
+    const aim = target.feet.clone().setY(target.feet.y + target.eyeHeight * 0.7);
+    const dir = aim.sub(eye);
+    const dist = dir.length();
+    if (dist > TACTIC.melee + 0.4) return false;
+    dir.divideScalar(dist);
+    const hit = this.physics.raycast(eye, dir, TACTIC.melee + 0.4, Layer.WORLD | Layer.HITBOX, undefined, bot.hitboxes.body);
+    const t = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+    if (!t || !t.owner.alive || t.owner.team === bot.team) return false;
+    const dmg = (t.part === 'head' ? MELEE_DAMAGE.head : MELEE_DAMAGE.body) * this.damageScale;
+    const name = tr('weapon.melee');
+    const source: DamageSource = { pos: eye, name: bot.name, team: bot.team, weapon: name, id: bot.id };
+    const killed = t.owner.applyDamage(dmg, t.part, source);
+    this.bus.emit('combat:hit', { targetId: t.owner.id, part: t.part, damage: dmg, killed, point: new THREE.Vector3(hit!.point.x, hit!.point.y, hit!.point.z), byPlayer: false });
+    if (killed) {
+      this.bus.emit('combat:kill', { attacker: bot.name, victim: t.owner.name, weapon: name, headshot: t.part === 'head', byPlayer: false, attackerTeam: bot.team, victimTeam: t.owner.team ?? null, attackerId: bot.id, victimId: t.owner.id });
+    }
+    this.audio.gadget('place', bot.feet);
+    return true;
+  }
+
   squadGoal(bot: Bot): THREE.Vector3 {
     const t = this.teams[bot.team];
     const e = this.entryOf(bot);
@@ -1212,6 +1640,12 @@ export class BotManager implements BotServices {
     if (follow) return follow;
     if (this.isFlanking(bot)) return e.flankGoal!.clone();
     if (e.post) return e.post.pos.clone();
+    const st = this.staging.get(`${bot.team}:${e.squad}`);
+    if (st && !st.go && e.objective && st.zone.distanceToSquared(e.objective.pos) < 1) {
+      // Gathering outside the zone: around the staging spot, a few metres apart.
+      const a = e.slot * 2.1;
+      return this.nav.closest(this.tmp.set(st.pos.x + Math.cos(a) * 2.5, st.pos.y, st.pos.z + Math.sin(a) * 2.5)) ?? st.pos.clone();
+    }
     if (e.objective) {
       if (e.via) {
         const toGoal = bot.feet.distanceTo(e.objective.pos);
@@ -1510,7 +1944,8 @@ export class BotManager implements BotServices {
     if (v.mounts[r.seat] && !(v.flight && role === 'driver')) this.botGunner(bot, v, r.seat);
     // Getting out: near the objective with the vehicle stopped, or left without a driver.
     const goal = e.objective?.pos;
-    const near = !!goal && goal.distanceTo(bot.feet) < VEHICLE_DROP;
+    // Gun crews in armour stay aboard at the objective (passengers get out).
+    const near = !!goal && goal.distanceTo(bot.feet) < VEHICLE_DROP && !(armoured(v) && role !== 'passenger');
     const stopped = v.velocity.length() < 1.5;
     const noDriver = !v.seats[0];
     if (stopped && (near || (noDriver && role !== 'gunner') || (noDriver && !bot.target && this.time > (e.alone ??= this.time + 6)))) {
@@ -1656,18 +2091,36 @@ export class BotManager implements BotServices {
       out.brake = true;
       return;
     }
-    const goal = e.objective?.pos;
-    if (!goal || goal.distanceTo(v.pos) < VEHICLE_DROP) {
+    const armour = armoured(v);
+    let goal = e.objective?.pos;
+    if (armour && goal) {
+      goal = this.armourPost(e, v, goal);
+      // A tank destroyer's gun barely turns: the hull swings onto its prey (or what the driver sees).
+      const prey = d.prey && !d.prey.wrecked ? d.prey.pos : e.bot.target?.alive ? e.bot.target.feet : null;
+      if (v.kind === 'td' && prey && prey.distanceTo(v.pos) < ARMOUR.reach) return this.faceHull(v, prey, out);
+      if (goal.distanceTo(v.pos) < ARMOUR.holdAt) {
+        // At the firing position: hold, front toward the objective.
+        if (v.kind !== 'spg' && v.kind !== 'rocket') this.faceHull(v, e.objective!.pos, out);
+        else out.brake = true;
+        return;
+      }
+    } else if (!goal || goal.distanceTo(v.pos) < VEHICLE_DROP) {
       out.brake = true;
       return;
     }
+    if (!goal) return;
     const speed = v.forwardSpeed();
     const getOut = (): void => {
       out.throttle = 0;
       out.brake = true;
       if (Math.abs(speed) < 1.5) for (const x of this.entries) if (x.bot.riding?.vehicle === v.id) this.alightBot(x);
     };
-    if (d.tries > DRIVE.giveUp) return getOut();
+    if (d.tries > DRIVE.giveUp) {
+      if (!armour) return getOut();
+      // Armour doesn't bail out of a jam: it tries for another position.
+      d.tries = 0;
+      d.postAt = 0;
+    }
     if (this.time > d.repathAt || d.at >= d.path.length) {
       d.repathAt = this.time + 8;
       d.path.length = 0;
@@ -1680,7 +2133,11 @@ export class BotManager implements BotServices {
     while (d.at < d.path.length - 1 && Math.hypot(d.path[d.at]!.x - v.pos.x, d.path[d.at]!.z - v.pos.z) < look) d.at++;
     const to = d.path[d.at]!;
     const toDist = Math.hypot(to.x - v.pos.x, to.z - v.pos.z);
-    if (d.at === d.path.length - 1 && toDist < 8) return getOut();
+    if (d.at === d.path.length - 1 && toDist < 8) {
+      if (!armour) return getOut();
+      out.brake = true;
+      return;
+    }
     const want = Math.atan2(-(to.x - v.pos.x), -(to.z - v.pos.z));
     const diff = Math.atan2(Math.sin(want - v.yaw), Math.cos(want - v.yaw));
     if (this.time < d.backUntil) {
@@ -1757,21 +2214,142 @@ export class BotManager implements BotServices {
   }
 
   /**
+   * Where an armoured vehicle holds off `obj`: on its own side of it at the
+   * gun's standing-off distance, open ground on the mesh, with a clear line
+   * to the objective for guns that fire straight (any line for lobbing ones),
+   * the nearest such spot. Kept a while; rethought when the objective changes.
+   */
+  private armourPost(e: BotEntry, v: Vehicle, obj: THREE.Vector3): THREE.Vector3 {
+    const d = e.drive!;
+    if (d.post && d.postFor && d.postFor.distanceToSquared(obj) < 1 && this.time < (d.postAt ?? 0)) return d.post;
+    const lob = v.kind === 'spg' || v.kind === 'rocket';
+    let stand = lob ? ARMOUR.stand.lob : v.kind === 'td' ? ARMOUR.stand.td : ARMOUR.stand.tank;
+    if (v.health < v.spec.health * ARMOUR.hurt) stand *= ARMOUR.hurtStand;
+    const home = this.teams[e.bot.team].base;
+    const a0 = Math.atan2(home.z - obj.z, home.x - obj.x);
+    let best: THREE.Vector3 | null = null;
+    let fallback: THREE.Vector3 | null = null;
+    let bestD = Infinity;
+    const eye = new THREE.Vector3();
+    const zone = new THREE.Vector3(obj.x, obj.y + 1.5, obj.z);
+    for (const k of [0, -1, 1, -2, 2, -3, 3]) {
+      const a = a0 + k * 0.35;
+      const r = stand * (0.9 + Math.random() * 0.25);
+      const want = new THREE.Vector3(obj.x + Math.cos(a) * r, obj.y, obj.z + Math.sin(a) * r);
+      const p = this.nav.closestFar(want);
+      if (!p || p.distanceTo(want) > 15) continue;
+      fallback ??= p.clone();
+      if (!lob && this.physics.blocked(eye.set(p.x, p.y + 2.8, p.z), zone, Layer.WORLD)) continue;
+      const dd = p.distanceTo(v.pos);
+      if (dd < bestD) {
+        bestD = dd;
+        best = p.clone();
+      }
+    }
+    d.post = best ?? fallback ?? obj.clone();
+    d.postFor = obj.clone();
+    d.postAt = this.time + ARMOUR.rethink;
+    d.repathAt = 0;
+    return d.post;
+  }
+
+  /** Brakes and turns a tracked hull on the spot toward `p` (stops when roughly there). */
+  private faceHull(v: Vehicle, p: THREE.Vector3, out: DriveInput): void {
+    const want = Math.atan2(-(p.x - v.pos.x), -(p.z - v.pos.z));
+    const diff = Math.atan2(Math.sin(want - v.yaw), Math.cos(want - v.yaw));
+    out.throttle = 0;
+    if (Math.abs(diff) > 0.12) out.steer = diff > 0 ? -1 : 1;
+    else out.brake = true;
+  }
+
+  /**
+   * Main gun target for armour: the nearest enemy vehicle within reach the
+   * gun can see (rechecked every `ARMOUR.pick` s), else null.
+   */
+  private armourPrey(e: BotEntry, v: Vehicle, muzzle: THREE.Vector3): Vehicle | null {
+    const d = e.drive;
+    if (!d) return null;
+    if (this.time < (d.pickAt ?? 0)) return d.prey && !d.prey.wrecked ? d.prey : null;
+    d.pickAt = this.time + ARMOUR.pick;
+    let best: Vehicle | null = null;
+    let bestD = ARMOUR.reach;
+    const team = e.bot.team;
+    for (const o of this.vehicles?.vehicles ?? []) {
+      if (o === v || o.wrecked || o.flight) continue;
+      const side = o.team ?? (o.seats.find((x) => x)?.team ?? null);
+      if (!side || side === team) continue;
+      const dist = o.pos.distanceTo(v.pos);
+      if (dist >= bestD) continue;
+      if (this.physics.blocked(muzzle, this.tmp.copy(o.pos).setY(o.pos.y + 0.5), Layer.WORLD)) continue;
+      best = o;
+      bestD = dist;
+    }
+    d.prey = best;
+    return best;
+  }
+
+  /**
+   * Aim point for a shell that flies straight (with a little drop): ahead of
+   * a moving target by the shell's flight time, and up by the drop over it.
+   */
+  private shellLead(muzzle: THREE.Vector3, at: THREE.Vector3, vel: THREE.Vector3, speed: number, gravity: number): THREE.Vector3 {
+    const out = at.clone();
+    let time = muzzle.distanceTo(out) / speed;
+    for (let i = 0; i < 2; i++) {
+      out.copy(at).addScaledVector(vel, time);
+      time = muzzle.distanceTo(out) / speed;
+    }
+    out.y += 0.5 * gravity * time * time;
+    return out;
+  }
+
+  /**
+   * Lobbing guns: an enemy the side has spotted (not necessarily seen from
+   * here) within the gun's range, the one with most others round it.
+   */
+  private lobTarget(bot: Bot, from: THREE.Vector3, range: number): Combatant | null {
+    let best: Combatant | null = null;
+    let bestN = 0;
+    for (const e of this.enemies[bot.team]) {
+      if (!e.alive || this.time - (this.spottedAt.get(e.id) ?? -Infinity) > SPOT_SEC * 2) continue;
+      const d = e.feet.distanceTo(from);
+      if (d < 60 || d > range) continue;
+      let n = 1;
+      for (const o of this.enemies[bot.team]) if (o !== e && o.alive && o.feet.distanceToSquared(e.feet) < 144) n++;
+      if (n > bestN) {
+        bestN = n;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  /**
    * A bot on a gun seat (a gunner, or a tank driver on the main gun) swings
    * it onto whoever it sees and fires: MGs in bursts, shell guns when loaded
    * (enemy vehicles and groups first for those; the howitzer only at range).
    */
   private botGunner(bot: Bot, v: Vehicle, seat: number): void {
     const m = v.mounts[seat];
-    const t = bot.target;
     if (!m) return;
-    const firing = !!t && t.alive;
-    if (!firing) {
+    const muzzle = v.muzzleOf(seat, this.tmp2);
+    const shell = m.gun.shell;
+    const smartGun = this.smart[bot.team] && !!shell;
+    const e = this.entryOf(bot);
+    // Armour main gun: enemy vehicles first.
+    const prey = smartGun && !shell!.lob && seat === 0 ? this.armourPrey(e, v, muzzle) : null;
+    let t: Combatant | null = bot.target && bot.target.alive ? bot.target : null;
+    // Lobbing guns also fire at what the side has spotted.
+    if (smartGun && shell!.lob && !t) t = this.lobTarget(bot, v.pos, m.gun.range);
+    if (!t && !prey) {
       v.pullTrigger(seat, false, this.time, STEP);
       return;
     }
-    const muzzle = v.muzzleOf(seat, this.tmp2);
-    const aim = t.feet.clone().setY(t.feet.y + (m.gun.shell ? 0.6 : 1.1));
+    let aim: THREE.Vector3;
+    if (prey) aim = prey.pos.clone().setY(prey.pos.y + 0.4);
+    else aim = t!.feet.clone().setY(t!.feet.y + (shell ? 0.6 : 1.1));
+    // Straight-flying shells: lead the target and allow for the drop.
+    if (smartGun && !shell!.lob) aim = this.shellLead(muzzle, aim, prey ? prey.velocity : t!.velocity, shell!.speed, shell!.gravity);
     const dir = aim.clone().sub(muzzle);
     const dist = dir.length();
     const yaw = Math.atan2(-dir.x, -dir.z);
@@ -1786,8 +2364,8 @@ export class BotManager implements BotServices {
     }
     const shellOk = !m.gun.shell || (m.gun.shell.lob ? dist > 60 : dist > 8);
     if (dist > m.gun.range || !shellOk || !v.pullTrigger(seat, true, this.time, STEP)) return;
-    // Bots' aim error, a bit wider than with a rifle.
-    const err = this.skill.aimErrorMin * 0.04 * dist;
+    // Bots' aim error, a bit wider than with a rifle (the plainer bots' much wider).
+    const err = this.skill.aimErrorMin * (smartGun ? 0.022 : 0.04) * dist;
     aim.x += (Math.random() - 0.5) * err;
     aim.y += (Math.random() - 0.5) * err * 0.5;
     aim.z += (Math.random() - 0.5) * err;
@@ -1893,6 +2471,12 @@ export class BotManager implements BotServices {
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean {
     const e = this.entryOf(bot);
     if (e.flankGoal && e.flankGoal.distanceTo(current) > 4 && this.isFlanking(bot)) return true;
+    // A gathering squad just went in, or was told to gather: off to the new spot.
+    const st = this.staging.get(`${bot.team}:${e.squad}`);
+    if (st && e.objective && st.zone.distanceToSquared(e.objective.pos) < 1) {
+      const atStage = current.distanceTo(st.pos) < 6;
+      if (st.go === atStage) return true;
+    }
     const l = e.leader;
     if (!l || !l.alive) return false;
     // Re-path only when the spot near the leader was given up for a new one.
@@ -1968,6 +2552,7 @@ export class BotManager implements BotServices {
       flankFor: -1,
       watch: null,
       post: null,
+      spot: -1,
     };
     this.entries.push(e);
     this.byBot.set(bot, e);

@@ -48,6 +48,7 @@ import { vehicleWorldFor } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
+import { loadTactics } from '@/ai/tacticsLoad';
 import { wishDirection } from '@/player/movement';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
@@ -600,6 +601,12 @@ export class Game {
         this.bots.gadgets = this.gadgets;
         this.bots.squadKey = (b) => this.squadKeyOf(b.team, b.id);
         this.bots.setTactical(built.windows, built.footprints);
+        // Cover, peek spots and zone positions for the bots (cached like the navmesh).
+        await this.loadStep(0.76, 'load.tactics');
+        const tTac = performance.now();
+        const tactics = await loadTactics(this.nav, this.physics, () => this.loadStep(0.76, 'load.tactics'));
+        this.bots.setTactics(tactics, map.world.size);
+        if (import.meta.env.DEV) console.info(`[strikegy] tactical points: ${tactics.count} in ${Math.round(performance.now() - tTac)} ms`);
         if (map.trees) this.bots.setForest(map.trees, map.world.size);
         if (water) this.bots.setWater(water);
         const bots = this.bots;

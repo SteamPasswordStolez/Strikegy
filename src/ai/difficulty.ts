@@ -19,6 +19,12 @@ export interface BotSkill {
   fov: number;
   /** Max spotting distance, meters. */
   sight: number;
+  /**
+   * Plays the smarter way: cover from the map's tactical points, positions in
+   * zones, safer routes, gathering before an assault, moving in halves under
+   * fire, peeking round walls (easy bots don't).
+   */
+  smart: boolean;
 }
 
 export const SKILLS: Record<Difficulty, BotSkill> = {
@@ -32,6 +38,7 @@ export const SKILLS: Record<Difficulty, BotSkill> = {
     burstPause: [0.45, 0.8],
     fov: 100,
     sight: 55,
+    smart: false,
   },
   normal: {
     reaction: 0.6,
@@ -43,6 +50,7 @@ export const SKILLS: Record<Difficulty, BotSkill> = {
     burstPause: [0.3, 0.55],
     fov: 115,
     sight: 70,
+    smart: true,
   },
   hard: {
     reaction: 0.38,
@@ -54,5 +62,6 @@ export const SKILLS: Record<Difficulty, BotSkill> = {
     burstPause: [0.2, 0.4],
     fov: 125,
     sight: 85,
+    smart: true,
   },
 };
