@@ -60,6 +60,12 @@ Performance work: measure first. A reliable CPU benchmark in a hidden/automated 
 - `src/audio/` — `AudioSystem` (samples + procedural fallbacks, world voice limits: 40 voices, HRTF for the nearest 10 within 30 m; keep these), `Ambience` / `ambienceDirector` (wind bed, birds, far-off fighting; levels from the visual profile or `world.ambience` in the map JSON). Samples come from `sounds.manifest.json` via `npm run sounds` (`-- --only id,...` builds just those; needs ffmpeg and 7z/unzip).
 - Physics layers in `src/physics/PhysicsWorld.ts` (WORLD, PLAYER, HITBOX, DEBRIS, BOT, BOUNDS).
 
+## Handoff (2026-10-06, local session -> cloud; everything is pushed)
+
+Done this session (2026-10-05/06), all on `v2`: the parked bot pass merged (`BotManager.tactic` parts; scan / staging / overwatch off by default after A/Bs; tactical points baked with `npm run nav` and used by the server and hosted-bot browsers), `npm run bots:ab` / `npm run bots:pace`, Iron Gate redesigned (see the rule above), recorded engine / jet / cannon / big-blast sounds and blasts by size (`src/audio/engines.ts`, `AudioSystem.explosion(pos, dist, size)`, `bigGun`), a credits page (`src/data/credits.ts`; the CC-BY sounds must stay credited there), steadier audio (fewer voices / HRTF, gentler compressor, auto-resume) with audio stats in F3, and doorstep ramps at every ground-floor door (`BuiltBuilding.doors`, `doorstep` in buildBlockout): the character's autostep did not climb the 0.2 m ground-floor step, so people had to jump in (walk-in test: 3-6 of 25 doors before, 24-25 of 25 after).
+
+Open, in the owner's order (2026-10-06): **bots: movement on foot and vehicle driving** (owner asked; not started: measure first, e.g. stuck time, path give-ups, distance driven, like the 2026-10-03 `DRIVE` numbers); redesign the other maps like Iron Gate (Ardennes is worst at 0.26 downs a minute, then Lyon, Persia; Bilbao only needs filling), after the owner has tried Iron Gate; sound: the owner should listen (engines, jets, blasts were only checked to run without errors) and read the F3 audio line when sound drops out (dropped voices / glitches) before more audio work; after server-side changes the laptop needs `git pull && npm ci && npm run nav && sudo systemctl restart strikegy` (from a session on the owner's PC; cloud sessions can't reach it).
+
 ## Handoff (2026-10-03, end of the local session; everything is pushed, v2 = strikegy-v2 main = 01723a0)
 
 The "better looks and faster" plan (owner's order 2 -> 3 -> 4 -> 1) stands at:

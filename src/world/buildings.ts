@@ -186,6 +186,17 @@ export interface BuiltBuilding {
   decor: MapObject[];
   /** Visual-only non-indexed meshes (no colliders). */
   shapes: BuildingShape[];
+  /**
+   * Ground-floor doors: the middle of the doorway at the wall's inner face (y =
+   * the ground floor's top), the way out (unit x / z) and the opening's width.
+   */
+  doors: BuildingDoor[];
+}
+
+export interface BuildingDoor {
+  pos: [number, number, number];
+  out: [number, number];
+  width: number;
 }
 
 /** Radius of the level pad the terrain should provide under a building. */
@@ -301,7 +312,7 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
     solidFacades(ctx, spec);
     spec.extras?.(ctx);
     roof(spec, ctx);
-    return { objects: out, height: roofHeight(spec, W, D, H), windows, decor, shapes };
+    return { objects: out, height: roofHeight(spec, W, D, H), windows, decor, shapes, doors: [] };
   }
 
   // Rooms: corridor along local x (double-loaded when deep enough, else along the south wall).
@@ -358,7 +369,20 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
   if (layout) layRooms(ctx, layout, spec);
   spec.extras?.(ctx);
   roof(spec, ctx);
-  return { objects: out, height: roofHeight(spec, W, D, H), windows, decor, shapes };
+  const doorsOut: BuildingDoor[] = [];
+  for (const side of sides) {
+    const d = ctx.doorAt[side.id];
+    if (!d) continue;
+    // At the wall's inner face: a doorstep ramp then also covers the doorway itself.
+    const [lx, lz] = sidePoint(side, d.u, -WALL / 2);
+    const [nx, nz] = side.normal;
+    doorsOut.push({
+      pos: [b.pos[0] + lx * cos + lz * sin, baseY + GROUND_TOP, b.pos[1] - lx * sin + lz * cos],
+      out: [nx * cos + nz * sin, -nx * sin + nz * cos],
+      width: d.width,
+    });
+  }
+  return { objects: out, height: roofHeight(spec, W, D, H), windows, decor, shapes, doors: doorsOut };
 }
 
 /**

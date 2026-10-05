@@ -5,7 +5,8 @@ import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
-import { buildBuilding, type WindowSpot } from './buildings';
+import { buildBuilding, type BuildingDoor, type WindowSpot } from './buildings';
+import { WALL } from './buildingParts';
 import { buildKit, kitMaterials, MODEL_KINDS, type KitMaterial } from './modelKits';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
@@ -168,6 +169,11 @@ export function buildBlockout(
       pushTinted(batches, surfaces, sh.material, sh.color, sh.geo, '', true);
     }
     windows.push(...built.windows);
+    // A doorstep ramp where the ground outside a door lies lower than the floor (neighbouring pads
+    // and slopes left steps of up to ~0.45 m: people had to jump to get in).
+    if (terrain) for (const d of built.doors) {
+      for (const obj of doorstep(d, terrain)) addBox(obj, batches, physics, surfaces, impacts);
+    }
     footprints.push({ x: b.pos[0], z: b.pos[1], yaw: ((b.rot ?? 0) * Math.PI) / 180, hw: b.size[0] / 2, hd: b.size[1] / 2 });
   }
 
@@ -214,6 +220,43 @@ export function buildBlockout(
 const PAINT_MAX_LIFT = 0.2;
 /** Grid step of draped floors (m). */
 const DRAPE_STEP = 1.5;
+
+/**
+ * A short ramp from the ground up to a door's sill when the ground outside is
+ * more than a few cm lower (at most 1 in 2.5, at least 1 m long); nothing
+ * when it is level enough to step over.
+ */
+function doorstep(d: BuildingDoor, terrain: Terrain): MapObject[] {
+  const [x, top, z] = d.pos;
+  const [ox, oz] = d.out;
+  // Ground just outside the wall (the door point is at its inner face).
+  const ground = Math.min(terrain.heightAt(x + ox * (WALL + 0.5), z + oz * (WALL + 0.5)), terrain.heightAt(x + ox * (WALL + 1.3), z + oz * (WALL + 1.3)));
+  const rise = top - ground;
+  if (rise < DOORSTEP_MIN) return [];
+  const len = WALL + Math.max(1, Math.min(4, rise * 2.5));
+  const pitch = Math.atan2(rise, len);
+  const slope = Math.hypot(len, rise);
+  // Centre half way down the slope; the box is tipped about its own x axis (rising toward the door).
+  const yaw = Math.atan2(ox, oz);
+  return [{
+    type: 'floor',
+    pos: [x + (ox * len) / 2, ground + rise / 2 - 0.12, z + (oz * len) / 2],
+    size: [d.width + 0.4, 0.25, slope + 0.1],
+    rot: eulerYawPitch(yaw, pitch),
+    material: 'concrete',
+    color: '#8f8b82',
+  }];
+}
+/** Steps lower than this are left to the character's autostep (m). */
+const DOORSTEP_MIN = 0.12;
+/** Euler XYZ (degrees) for a box turned by `yaw` (rad), then tipped by `pitch` (rad) about its own x axis. */
+function eulerYawPitch(yaw: number, pitch: number): [number, number, number] {
+  const sp = Math.sin(yaw);
+  const cp = Math.cos(yaw);
+  const st = Math.sin(pitch);
+  const ct = Math.cos(pitch);
+  return [Math.atan2(st, cp * ct) / DEG, Math.asin(sp * ct) / DEG, Math.atan2(-sp * st, cp) / DEG];
+}
 
 function isGroundPaint(obj: MapObject, terrain: Terrain): boolean {
   if (!obj.snap || obj.type !== 'floor' || obj.size[1] > 0.5 || obj.rot?.[0] || obj.rot?.[2]) return false;
