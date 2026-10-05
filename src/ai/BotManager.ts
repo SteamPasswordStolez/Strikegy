@@ -7,17 +7,18 @@ import type { AudioSystem } from '@/audio/AudioSystem';
 import type { Effects } from '@/render/Effects';
 import { LAYER_FX } from '@/render/layers';
 import type { SpawnPoint, Team } from '@/world/mapTypes';
-import { WEAPONS, damageAtDistance, type WeaponDef } from '@/weapons/weaponData';
-import { Bot, type BotServices } from './Bot';
+import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import type { ShotCaster } from '@/weapons/WeaponController';
+import { Bot, setNextBotId, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel, buildFarSoldierPose } from './SoldierModel';
-import { BOT_WEAPONS, botClass, rollPersonality, weaponFor } from './personality';
+import { BOT_WEAPONS, botClass, rollPersonality, weaponFor, type Personality } from './personality';
 import { botName } from './names';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from './types';
-import { CLASSES, GIVE_RANGE, MEDKIT } from '@/data/classes';
+import { CLASSES, GIVE_RANGE, MEDKIT, type ClassId } from '@/data/classes';
 import type { WaterMap } from '@/world/water';
 import { REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Fortifications } from '@/modes/fortify';
 import type { GadgetWorld } from '@/modes/gadgetWorld';
@@ -132,6 +133,33 @@ export interface BotOptions {
   allies: number;
   enemies: number;
   difficulty: Difficulty;
+  /** Room for this many bots in the instanced drawing (bots added later with `adopt`). */
+  capacity?: number;
+}
+
+/**
+ * A browser running some of the game server's bots: what they do that the
+ * server must do for real (it judges the rounds, heals, revives).
+ */
+export interface BotRemote {
+  shot(bot: Bot, dir: THREE.Vector3): void;
+  revive(bot: Bot, target: Combatant): void;
+  medkit(bot: Bot): void;
+}
+
+/** A bot handed to a browser to run: who it is and where (see `BotManager.adopt`). */
+export interface AdoptSpec {
+  id: number;
+  name: string;
+  team: Team;
+  cls: ClassId;
+  weapon: WeaponId;
+  personality: Personality;
+  pos: [number, number, number];
+  yaw: number;
+  health: number;
+  medkits: number;
+  grenades: [number, number, number];
 }
 
 /** A place for a squad to go: take it, or (defend) guard it facing `front`. */
@@ -308,7 +336,9 @@ export class BotManager implements BotServices {
   /** Job key -> the bot doing it. */
   private readonly workers = new Map<string, Bot>();
   /** Set by the game: where bot grenades go. */
-  grenades: Throwables | null = null;
+  grenades: Pick<Throwables, 'launch' | 'frags'> | null = null;
+  /** In a browser running bots for the game server: where their rounds, revives and medkits go. */
+  remote: BotRemote | null = null;
   /** A team throws at most one grenade per this many seconds. */
   private readonly grenadeAt: Record<Team, number> = { blue: 0, red: 0 };
 
@@ -378,16 +408,17 @@ export class BotManager implements BotServices {
     };
     add(PLAYER_TEAM, opts.allies);
     add(otherTeam(PLAYER_TEAM), opts.enemies);
-    this.blobs = this.makeBlobs(this.entries.length);
+    const room = Math.max(this.entries.length, opts.capacity ?? 0);
+    this.blobs = this.makeBlobs(room);
     scene.add(this.blobs);
-    this.markers = this.makeMarkerPoints(this.entries.length, false);
-    this.crosses = this.makeMarkerPoints(this.entries.length, true);
+    this.markers = this.makeMarkerPoints(room, false);
+    this.crosses = this.makeMarkerPoints(room, true);
     scene.add(this.markers, this.crosses);
     const farMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     for (const team of ['blue', 'red'] as const) {
       // The near soldier, simplified and frozen in each pose: standing, mid-stride, crouched.
       this.far[team] = FAR_POSES.map((pose) => {
-        const m = new THREE.InstancedMesh(buildFarSoldierPose(team, pose), farMat, Math.max(1, this.entries.length));
+        const m = new THREE.InstancedMesh(buildFarSoldierPose(team, pose), farMat, Math.max(1, room));
         m.count = 0;
         m.frustumCulled = false;
         scene.add(m);
@@ -454,7 +485,9 @@ export class BotManager implements BotServices {
       b.nearViewer = near;
       const every = b.riding ? 1 : d2 > LOD_FAR_SQ ? 3 : d2 > LOD_MID_SQ ? 2 : 1;
       b.lodDt += dt;
-      if (every === 1 || (this.stepCount + b.id) % every === 0) {
+      // Run in a person's browser: put where that browser has it (MatchSim), nothing to think here.
+      if (b.puppet && b.alive && !b.riding) b.lodDt = 0;
+      else if (every === 1 || (this.stepCount + b.id) % every === 0) {
         b.step(b.lodDt, this);
         b.lodDt = 0;
       }
@@ -525,6 +558,8 @@ export class BotManager implements BotServices {
 
   revive(bot: Bot, c: Combatant): void {
     if (!c.downed) return;
+    // Run for the game server: it does the reviving.
+    if (this.remote) return this.remote.revive(bot, c);
     const health = CLASSES[bot.cls].reviveHealth;
     if (c instanceof Bot) c.revive(health, this.time);
     else this.hooks?.revivePlayer?.(bot, health, c);
@@ -1338,7 +1373,7 @@ export class BotManager implements BotServices {
     this.vehicleCheckAt = this.time + 1;
     for (const e of this.entries) {
       const b = e.bot;
-      if (!b.alive || b.riding) continue;
+      if (!b.alive || b.riding || b.puppet) continue;
       if (e.board) {
         const v = vw.get(e.board.vehicle);
         const taken = !v || v.wrecked || !!v.seats[e.board.seat] || (v.team && v.team !== b.team);
@@ -1894,9 +1929,76 @@ export class BotManager implements BotServices {
     }
   }
 
-  fire(bot: Bot, dir: THREE.Vector3): void {
+  /** A bot patched itself up (see BotServices). */
+  usedMedkit(bot: Bot): void {
+    this.remote?.medkit(bot);
+  }
+
+  /**
+   * Takes on a bot the game server hands this browser to run: made here as
+   * it is there (id, class, weapon, personality, health, kit), at its place.
+   */
+  adopt(o: AdoptSpec): Bot {
+    setNextBotId(o.id);
+    const bot = new Bot(o.name, o.team, WEAPONS[o.weapon], this.physics, this.registry, o.cls, o.personality);
+    bot.spawn(new THREE.Vector3(...o.pos), o.yaw, WEAPONS[o.weapon]);
+    bot.health.value = o.health;
+    bot.medkits = o.medkits;
+    bot.grenadeCounts = o.grenades;
+    const model = new SoldierModel(o.team, bot.def);
+    this.scene.add(model.root);
+    const e: BotEntry = {
+      bot,
+      model,
+      marker: null,
+      offset: new THREE.Vector3(),
+      role: o.id % 3 === 2 ? 'flank' : 'assault',
+      flankSide: o.id % 2 ? 1 : -1,
+      wasAlive: true,
+      simAlive: true,
+      simDead: false,
+      objective: null,
+      squad: -1,
+      leader: null,
+      slot: 0,
+      board: null,
+      drive: null,
+      via: null,
+      flankGoal: null,
+      flankFor: -1,
+      watch: null,
+      post: null,
+    };
+    this.entries.push(e);
+    this.byBot.set(bot, e);
+    return bot;
+  }
+
+  /** Hands a bot back (to the game server): gone from here. */
+  drop(id: number): void {
+    const i = this.entries.findIndex((x) => x.bot.id === id);
+    if (i < 0) return;
+    const e = this.entries[i]!;
+    this.release(e);
+    this.releaseRevive(e.bot);
+    this.releaseWork(e.bot);
+    e.model.root.removeFromParent();
+    e.model.dispose();
+    e.bot.dispose(this.physics);
+    this.entries.splice(i, 1);
+    this.byBot.delete(e.bot);
+  }
+
+  /**
+   * One trigger pull (all pellets) along `dir` from the bot's eye, with the
+   * bot's spread. `cast`: judge it there instead of against the world as it
+   * is now (the game server, for a bot a browser runs: where that browser
+   * saw everyone).
+   */
+  fire(bot: Bot, dir: THREE.Vector3, cast?: ShotCaster): void {
     const def = bot.def;
     bot.shots = (bot.shots + 1) & 0xffff;
+    this.remote?.shot(bot, dir);
     const eye = bot.eyePos(new THREE.Vector3());
     const moving = Math.min(1, bot.horizontalSpeed / 4.6);
     const spread = (def.spreadAds + (def.spreadHip - def.spreadAds) * (bot.crouching ? 0.1 : 0.35) + moving * 1.2) * DEG;
@@ -1913,15 +2015,18 @@ export class BotManager implements BotServices {
       const a = Math.random() * Math.PI * 2;
       const d = dir.clone().addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
       const max = def.range * 1.5;
-      const hit = this.physics.raycast(eye, d, max, Layer.WORLD | Layer.HITBOX, undefined, bot.hitboxes.body);
-      const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : eye.clone().addScaledVector(d, max);
-      const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
+      const judged = cast ? cast(eye, d, max) : null;
+      const hit = cast ? null : this.physics.raycast(eye, d, max, Layer.WORLD | Layer.HITBOX, undefined, bot.hitboxes.body);
+      const point = judged ? judged.point : hit?.point;
+      const to = point ? new THREE.Vector3(point.x, point.y, point.z) : eye.clone().addScaledVector(d, max);
+      const target = judged ? (judged.target ?? undefined) : hit ? this.registry.lookup(hit.collider.handle) : undefined;
+      const distance = judged ? judged.distance : (hit?.distance ?? max);
       this.nearMiss(eye, to, bot.team, target?.owner.id ?? -1, pellets > 1 ? 0.35 : 1);
-      if (hit && target) {
+      if (point && target) {
         const owner = target.owner;
         // No friendly fire: the round is simply stopped.
         if (owner.alive && owner.team !== bot.team) {
-          const dmg = computeDamage(damageAtDistance(def, hit.distance), target.part, def.headshotMult) * this.damageScale;
+          const dmg = computeDamage(damageAtDistance(def, distance), target.part, def.headshotMult) * this.damageScale;
           const killed = owner.applyDamage(dmg, target.part, source);
           this.bus.emit('combat:hit', { targetId: owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: false, attackerId: bot.id });
           if (killed) {
@@ -1940,7 +2045,7 @@ export class BotManager implements BotServices {
           const hitEntry = this.byBot.get(owner as Bot);
           hitEntry?.model.onHit();
         }
-      } else if (hit && (pellets === 1 || Math.random() < 0.4)) {
+      } else if (hit && !cast && (pellets === 1 || Math.random() < 0.4)) {
         this.bus.emit('combat:impact', {
           point: to,
           normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z),

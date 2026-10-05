@@ -172,50 +172,184 @@ const VEL_Q = 50;
 const qVel = (x: number): number => Math.max(-32767, Math.min(32767, Math.round(x * VEL_Q)));
 const qUnit = (x: number): number => Math.max(-32767, Math.min(32767, Math.round(x * 32767)));
 
-/** An input frame with the driven vehicle's place after the inputs. */
-export function encodeInputsDrive(list: readonly NetInput[], drive: NetDrive | null): Uint8Array {
+/** One bot a browser runs for the server, as it has it now. */
+export interface NetBotState {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  aimYaw: number;
+  aimPitch: number;
+  crouch: boolean;
+}
+
+/** What a bot a browser runs did that the server must do: a trigger pull, a throw, a revive, a medkit. */
+export type NetBotEvent =
+  | { k: 'shot'; id: number; dir: [number, number, number] }
+  | { k: 'throw'; id: number; type: 'frag' | 'flash' | 'smoke'; origin: [number, number, number]; vel: [number, number, number] }
+  | { k: 'revive'; id: number; target: number }
+  | { k: 'medkit'; id: number };
+
+/** The bots a browser runs: where they are and what they did, at view tick `view` (what it drew others at). */
+export interface NetBots {
+  view: number;
+  states: NetBotState[];
+  events: NetBotEvent[];
+}
+
+/** After an input frame's inputs: tagged sections. */
+const TAIL = { drive: 1, bots: 2 } as const;
+const BOT_BYTES = 21;
+const GRENADE_KINDS = ['frag', 'flash', 'smoke'] as const;
+const EVENT_BYTES = { shot: 6, throw: 19, revive: 2, medkit: 0 } as const;
+
+/** An input frame, with the driven vehicle's place and the bots this browser runs after the inputs. */
+export function encodeInputFrame(list: readonly NetInput[], drive: NetDrive | null, bots: NetBots | null = null): Uint8Array {
   const base = encodeInputs(list);
-  if (!drive) return base;
-  const buf = new Uint8Array(base.byteLength + DRIVE_BYTES);
+  if (!drive && !bots) return base;
+  const states = bots ? bots.states.slice(0, 255) : [];
+  const events = bots ? bots.events.slice(0, 255) : [];
+  let size = base.byteLength + (drive ? 1 + DRIVE_BYTES : 0);
+  if (bots) {
+    size += 1 + 4 + 1 + states.length * BOT_BYTES + 1;
+    for (const e of events) size += 3 + EVENT_BYTES[e.k];
+  }
+  const buf = new Uint8Array(size);
   buf.set(base);
   const v = new DataView(buf.buffer);
-  const o = base.byteLength;
-  v.setUint16(o, drive.vehicle & 0xffff);
-  v.setFloat32(o + 2, drive.x);
-  v.setFloat32(o + 6, drive.y);
-  v.setFloat32(o + 10, drive.z);
-  v.setInt16(o + 14, qUnit(drive.qx));
-  v.setInt16(o + 16, qUnit(drive.qy));
-  v.setInt16(o + 18, qUnit(drive.qz));
-  v.setInt16(o + 20, qUnit(drive.qw));
-  v.setInt16(o + 22, qVel(drive.vx));
-  v.setInt16(o + 24, qVel(drive.vy));
-  v.setInt16(o + 26, qVel(drive.vz));
-  v.setUint8(o + 28, Math.max(0, Math.min(255, Math.round(drive.throttle * 255))));
+  let o = base.byteLength;
+  if (drive) {
+    v.setUint8(o++, TAIL.drive);
+    v.setUint16(o, drive.vehicle & 0xffff);
+    v.setFloat32(o + 2, drive.x);
+    v.setFloat32(o + 6, drive.y);
+    v.setFloat32(o + 10, drive.z);
+    v.setInt16(o + 14, qUnit(drive.qx));
+    v.setInt16(o + 16, qUnit(drive.qy));
+    v.setInt16(o + 18, qUnit(drive.qz));
+    v.setInt16(o + 20, qUnit(drive.qw));
+    v.setInt16(o + 22, qVel(drive.vx));
+    v.setInt16(o + 24, qVel(drive.vy));
+    v.setInt16(o + 26, qVel(drive.vz));
+    v.setUint8(o + 28, Math.max(0, Math.min(255, Math.round(drive.throttle * 255))));
+    o += DRIVE_BYTES;
+  }
+  if (bots) {
+    v.setUint8(o++, TAIL.bots);
+    v.setFloat32(o, bots.view);
+    o += 4;
+    v.setUint8(o++, states.length);
+    for (const b of states) {
+      v.setUint16(o, b.id & 0xffff);
+      v.setFloat32(o + 2, b.x);
+      v.setFloat32(o + 6, b.y);
+      v.setFloat32(o + 10, b.z);
+      v.setUint16(o + 14, qYaw(b.yaw));
+      v.setUint16(o + 16, qYaw(b.aimYaw));
+      v.setInt16(o + 18, qPitch(b.aimPitch));
+      v.setUint8(o + 20, b.crouch ? 1 : 0);
+      o += BOT_BYTES;
+    }
+    v.setUint8(o++, events.length);
+    for (const e of events) {
+      v.setUint8(o, e.k === 'shot' ? 1 : e.k === 'throw' ? 2 : e.k === 'revive' ? 3 : 4);
+      v.setUint16(o + 1, e.id & 0xffff);
+      o += 3;
+      if (e.k === 'shot') {
+        for (const c of e.dir) {
+          v.setInt16(o, qUnit(c));
+          o += 2;
+        }
+      } else if (e.k === 'throw') {
+        v.setUint8(o++, GRENADE_KINDS.indexOf(e.type));
+        for (const c of e.origin) {
+          v.setFloat32(o, c);
+          o += 4;
+        }
+        for (const c of e.vel) {
+          v.setInt16(o, qVel(c));
+          o += 2;
+        }
+      } else if (e.k === 'revive') {
+        v.setUint16(o, e.target & 0xffff);
+        o += 2;
+      }
+    }
+  }
   return buf;
 }
 
-/** The driven vehicle's place in an input frame, if it has one. */
-export function decodeDrive(data: Uint8Array): NetDrive | null {
+/** What follows an input frame's inputs (the driven vehicle, the bots this browser runs); null when malformed. */
+export function decodeTail(data: Uint8Array): { drive: NetDrive | null; bots: NetBots | null } | null {
   if (data.byteLength < 2) return null;
   const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const o = 2 + v.getUint8(1) * INPUT_BYTES;
-  if (data.byteLength !== o + DRIVE_BYTES) return null;
-  const x = v.getFloat32(o + 2);
-  const y = v.getFloat32(o + 6);
-  const z = v.getFloat32(o + 10);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-  let qx = v.getInt16(o + 14) / 32767;
-  let qy = v.getInt16(o + 16) / 32767;
-  let qz = v.getInt16(o + 18) / 32767;
-  let qw = v.getInt16(o + 20) / 32767;
-  const len = Math.hypot(qx, qy, qz, qw);
-  if (len < 0.5) return null;
-  qx /= len;
-  qy /= len;
-  qz /= len;
-  qw /= len;
-  return { vehicle: v.getUint16(o), x, y, z, qx, qy, qz, qw, vx: v.getInt16(o + 22) / VEL_Q, vy: v.getInt16(o + 24) / VEL_Q, vz: v.getInt16(o + 26) / VEL_Q, throttle: v.getUint8(o + 28) / 255 };
+  let o = 2 + v.getUint8(1) * INPUT_BYTES;
+  const end = data.byteLength;
+  if (o > end) return null;
+  let drive: NetDrive | null = null;
+  let bots: NetBots | null = null;
+  while (o < end) {
+    const tag = v.getUint8(o++);
+    if (tag === TAIL.drive && !drive) {
+      if (o + DRIVE_BYTES > end) return null;
+      const x = v.getFloat32(o + 2);
+      const y = v.getFloat32(o + 6);
+      const z = v.getFloat32(o + 10);
+      let qx = v.getInt16(o + 14) / 32767;
+      let qy = v.getInt16(o + 16) / 32767;
+      let qz = v.getInt16(o + 18) / 32767;
+      let qw = v.getInt16(o + 20) / 32767;
+      const len = Math.hypot(qx, qy, qz, qw);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || len < 0.5) return null;
+      qx /= len;
+      qy /= len;
+      qz /= len;
+      qw /= len;
+      drive = { vehicle: v.getUint16(o), x, y, z, qx, qy, qz, qw, vx: v.getInt16(o + 22) / VEL_Q, vy: v.getInt16(o + 24) / VEL_Q, vz: v.getInt16(o + 26) / VEL_Q, throttle: v.getUint8(o + 28) / 255 };
+      o += DRIVE_BYTES;
+    } else if (tag === TAIL.bots && !bots) {
+      if (o + 5 > end) return null;
+      const view = v.getFloat32(o);
+      const n = v.getUint8(o + 4);
+      o += 5;
+      if (o + n * BOT_BYTES + 1 > end || !Number.isFinite(view)) return null;
+      bots = { view, states: [], events: [] };
+      for (let i = 0; i < n; i++) {
+        const x = v.getFloat32(o + 2);
+        const y = v.getFloat32(o + 6);
+        const z = v.getFloat32(o + 10);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+        bots.states.push({ id: v.getUint16(o), x, y, z, yaw: v.getUint16(o + 14) / YAW_Q, aimYaw: v.getUint16(o + 16) / YAW_Q, aimPitch: v.getInt16(o + 18) / PITCH_Q, crouch: (v.getUint8(o + 20) & 1) !== 0 });
+        o += BOT_BYTES;
+      }
+      const m = v.getUint8(o++);
+      for (let i = 0; i < m; i++) {
+        if (o + 3 > end) return null;
+        const kind = v.getUint8(o);
+        const id = v.getUint16(o + 1);
+        o += 3;
+        if (kind === 1) {
+          if (o + 6 > end) return null;
+          bots.events.push({ k: 'shot', id, dir: [v.getInt16(o) / 32767, v.getInt16(o + 2) / 32767, v.getInt16(o + 4) / 32767] });
+          o += 6;
+        } else if (kind === 2) {
+          if (o + 19 > end) return null;
+          const type = GRENADE_KINDS[v.getUint8(o)];
+          const origin: [number, number, number] = [v.getFloat32(o + 1), v.getFloat32(o + 5), v.getFloat32(o + 9)];
+          if (!type || !origin.every(Number.isFinite)) return null;
+          bots.events.push({ k: 'throw', id, type, origin, vel: [v.getInt16(o + 13) / VEL_Q, v.getInt16(o + 15) / VEL_Q, v.getInt16(o + 17) / VEL_Q] });
+          o += 19;
+        } else if (kind === 3) {
+          if (o + 2 > end) return null;
+          bots.events.push({ k: 'revive', id, target: v.getUint16(o) });
+          o += 2;
+        } else if (kind === 4) bots.events.push({ k: 'medkit', id });
+        else return null;
+      }
+    } else return null;
+  }
+  return { drive, bots };
 }
 
 /** Inputs from a frame; null when the frame is malformed. */
@@ -224,7 +358,7 @@ export function decodeInputs(data: Uint8Array): NetInput[] | null {
   const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
   if (v.getUint8(0) !== FRAME.input) return null;
   const n = v.getUint8(1);
-  if (data.byteLength !== 2 + n * INPUT_BYTES && data.byteLength !== 2 + n * INPUT_BYTES + DRIVE_BYTES) return null;
+  if (data.byteLength < 2 + n * INPUT_BYTES || (data.byteLength > 2 + n * INPUT_BYTES && !decodeTail(data))) return null;
   const out: NetInput[] = [];
   let o = 2;
   for (let i = 0; i < n; i++) {

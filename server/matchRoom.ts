@@ -15,7 +15,7 @@ import { setNavFiles } from '../src/ai/navCache.ts';
 import { sanitizeLoadout, type ClassId, type Loadout } from '../src/data/classes.ts';
 import { STATION } from '../src/modes/fortify.ts';
 import { createInputState, type InputState } from '../src/input/InputState.ts';
-import type { Lineup, MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
+import type { AdoptBot, Lineup, MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
 import {
   REWIND_MAX,
   SF,
@@ -24,12 +24,15 @@ import {
   THING,
   VF,
   applyInput,
-  decodeDrive,
+  decodeTail,
   decodeInputs,
   encodeSoldiers,
   encodeThings,
   encodeVehicles,
   snapshotFor,
+  type NetBotEvent,
+  type NetBotState,
+  type NetBots,
   type NetDrive,
   type NetInput,
   type NetSoldier,
@@ -104,7 +107,25 @@ interface Seat {
   drive: NetDrive | null;
   /** Vehicle moves refused (too fast): logged now and then. */
   refused: number;
+  /** This player's browser can run bots (a desktop that said so when ready). */
+  hostBots: boolean;
+  /** What its browser last sent for the bots it runs (applied at the next tick). */
+  botStates: Map<number, NetBotState>;
+  botEvents: NetBotEvent[];
+  botView: number;
+  /** Bot moves refused (too fast): logged now and then. */
+  botRefused: number;
+  /** Sim time of the last input frame (a tab in the background sends none: its bots go back to the server). */
+  lastFrameAt: number;
 }
+
+/** No input frame for this long (s): the browser's bots go back to the server. */
+const HOST_STALE = 1;
+
+/** Bots one browser runs at most. */
+const HOST_MAX = 8;
+/** How often bots are handed out to browsers or taken back (ticks). */
+const ASSIGN_EVERY = 60;
 
 export interface MatchRoomOptions {
   room: string;
@@ -120,6 +141,8 @@ export interface MatchRoomOptions {
   ended?: (winner: Team) => void;
   /** Where map JSON files are (default: public/maps of the checkout). */
   mapsDir?: string;
+  /** Bots run in people's browsers (squads with people in them; default on). */
+  botShare?: boolean;
 }
 
 export class MatchRoom {
@@ -176,7 +199,7 @@ export class MatchRoom {
       const team = this.smallerTeam();
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0 };
+      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, botRefused: 0, lastFrameAt: -Infinity };
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -205,6 +228,7 @@ export class MatchRoom {
       roster: this.roster(),
       life,
       size: Math.max(1, Math.floor((this.opts.size ?? 24) / 2)) * 2,
+      difficulty: this.opts.difficulty ?? 'normal',
     };
     conn.text({ t: 'match', match: start });
   }
@@ -213,6 +237,7 @@ export class MatchRoom {
   detach(uid: string): void {
     const seat = this.seats.get(uid);
     if (!seat) return;
+    this.releaseAll(seat);
     seat.conn = null;
     seat.ready = false;
     seat.queue.length = 0;
@@ -222,15 +247,19 @@ export class MatchRoom {
   leave(uid: string): void {
     const seat = this.seats.get(uid);
     if (!seat) return;
+    this.releaseAll(seat);
     this.sim.removeSoldier(seat.soldier.id);
     this.seats.delete(uid);
     this.byId.delete(seat.soldier.id);
     this.sendRoster();
   }
 
-  ready(uid: string): void {
+  ready(uid: string, hostBots = false): void {
     const seat = this.seats.get(uid);
     if (!seat) return;
+    // A reload: whatever this browser ran before is gone.
+    this.releaseAll(seat, false);
+    seat.hostBots = hostBots;
     seat.ready = true;
     seat.lastSeq = 0;
     seat.ack = 0;
@@ -262,8 +291,10 @@ export class MatchRoom {
     if (!seat || !seat.ready) return;
     const list = decodeInputs(data);
     if (!list) return;
-    const drive = decodeDrive(data);
-    if (drive) seat.drive = drive;
+    seat.lastFrameAt = this.sim.time;
+    const tail = decodeTail(data);
+    if (tail?.drive) seat.drive = tail.drive;
+    if (tail?.bots) this.takeBots(seat, tail.bots);
     for (const inp of list) {
       // In order, no repeats (a reconnect starts the count again).
       if (inp.seq <= seat.lastSeq && seat.lastSeq - inp.seq < 1e6) continue;
@@ -326,12 +357,13 @@ export class MatchRoom {
         inp.swayYaw = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayYaw));
         inp.swayPitch = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayPitch));
         applyInput(inp, seat.input);
-        s.weapons.shotCaster = sim.casterFor(s, inp.view, maxRewind);
+        s.weapons.shotCaster = sim.casterFor(s.id, inp.view, maxRewind);
         sim.stepSoldier(s, { state: seat.input, yaw: inp.yaw, pitch: inp.pitch, swayYaw: inp.swayYaw, swayPitch: inp.swayPitch });
         seat.ack = inp.seq;
       }
       // No input this tick: down and waiting still bleed out; on the field, nothing moves.
       if (!take && !(s.alive && s.deployed)) sim.stepSoldier(s, null);
+      this.applyBots(seat, maxRewind);
       // The vehicle this player drives: where their browser has it.
       if (seat.drive && sim.vehicles) {
         if (!sim.vehicles.applyDrive(s, seat.drive) && ++seat.refused % 120 === 1) this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: vehicle moved too fast (${seat.refused})`);
@@ -339,9 +371,137 @@ export class MatchRoom {
       }
     }
     sim.endStep(SIM_DT);
+    this.checkBots();
+    if (sim.tick % ASSIGN_EVERY === 0) this.assignBots();
     if (sim.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
     if (sim.tick % STATE_EVERY === 0) for (const seat of this.seats.values()) this.sendState(seat);
     this.flushEvents();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bots run in people's browsers (room setting `botShare`)
+
+  /** Bot id -> the seat whose browser runs it. */
+  private readonly owners = new Map<number, Seat>();
+
+  /** What a browser sent for the bots it runs: kept for the next tick. */
+  private takeBots(seat: Seat, frame: NetBots): void {
+    seat.botView = frame.view;
+    for (const st of frame.states) if (this.owners.get(st.id) === seat) seat.botStates.set(st.id, st);
+    for (const e of frame.events) if (seat.botEvents.length < 64 && this.owners.get(e.id) === seat) seat.botEvents.push(e);
+  }
+
+  private applyBots(seat: Seat, maxRewind: number): void {
+    const bots = this.sim.bots;
+    if (!bots || (!seat.botStates.size && !seat.botEvents.length)) return;
+    const byId = (id: number) => (this.owners.get(id) === seat ? bots.bots.find((b) => b.id === id) : undefined);
+    for (const st of seat.botStates.values()) {
+      const b = byId(st.id);
+      if (b && !this.sim.puppetMove(b, new THREE.Vector3(st.x, st.y, st.z), st.yaw, st.aimYaw, st.aimPitch, st.crouch) && ++seat.botRefused % 120 === 1) {
+        this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: bot moved too fast (${seat.botRefused})`);
+      }
+    }
+    seat.botStates.clear();
+    for (const e of seat.botEvents) {
+      const b = byId(e.id);
+      if (!b) continue;
+      if (e.k === 'shot') this.sim.puppetShot(b, new THREE.Vector3(...e.dir), seat.botView, maxRewind);
+      else if (e.k === 'throw') this.sim.puppetThrow(b, e.type, new THREE.Vector3(...e.origin), new THREE.Vector3(...e.vel));
+      else if (e.k === 'revive') this.sim.puppetRevive(b, e.target);
+      else this.sim.puppetMedkit(b);
+    }
+    seat.botEvents.length = 0;
+  }
+
+  /** Bots down, dead, benched or in a vehicle go back to the server at once. */
+  private checkBots(): void {
+    if (!this.owners.size) return;
+    const back = new Map<Seat, number[]>();
+    for (const [id, seat] of this.owners) {
+      const b = this.sim.bots?.bots.find((x) => x.id === id);
+      if (b && b.alive && !b.benched && !b.riding && this.sim.time - seat.lastFrameAt < HOST_STALE) continue;
+      if (b) this.sim.unpuppet(b);
+      this.owners.delete(id);
+      const list = back.get(seat) ?? [];
+      list.push(id);
+      back.set(seat, list);
+    }
+    for (const [seat, ids] of back) seat.events.push({ k: 'release', ids });
+  }
+
+  /**
+   * Hands the bots of each squad with people in it to one of those people's
+   * browsers (desktops that can run them, up to `HOST_MAX` each), and takes
+   * back what no longer fits.
+   */
+  private assignBots(): void {
+    const bots = this.sim.bots;
+    if (!bots || this.opts.botShare === false || this.over) return;
+    const host = (id: number): Seat | undefined => {
+      const seat = this.byId.get(id);
+      return seat && seat.ready && seat.conn && seat.hostBots && this.sim.time - seat.lastFrameAt < HOST_STALE / 2 ? seat : undefined;
+    };
+    const want = new Map<number, Seat>();
+    const load = new Map<Seat, number>();
+    for (const sq of this.sim.squads) {
+      const owner = sq.members.map((m) => host(m.id)).find((s) => s);
+      if (!owner) continue;
+      for (const m of sq.members) {
+        const b = bots.bots.find((x) => x.id === m.id);
+        if (!b || !b.alive || b.benched || b.riding) continue;
+        const n = load.get(owner) ?? 0;
+        if (n >= HOST_MAX) break;
+        load.set(owner, n + 1);
+        want.set(b.id, owner);
+      }
+    }
+    const released = new Map<Seat, number[]>();
+    for (const [id, seat] of this.owners) {
+      if (want.get(id) === seat) continue;
+      this.owners.delete(id);
+      const b = bots.bots.find((x) => x.id === id);
+      if (b) this.sim.unpuppet(b);
+      released.set(seat, [...(released.get(seat) ?? []), id]);
+    }
+    for (const [seat, ids] of released) seat.events.push({ k: 'release', ids });
+    const adopted = new Map<Seat, AdoptBot[]>();
+    for (const [id, seat] of want) {
+      if (this.owners.has(id)) continue;
+      const b = bots.bots.find((x) => x.id === id)!;
+      this.owners.set(id, seat);
+      b.puppet = true;
+      const f = b.feet;
+      const spec: AdoptBot = {
+        id,
+        name: b.name,
+        team: b.team,
+        cls: b.cls,
+        weapon: b.def.id,
+        personality: b.personality,
+        pos: [f.x, f.y, f.z],
+        yaw: b.yaw,
+        health: b.health.value,
+        medkits: Number.isFinite(b.medkits) ? b.medkits : 99,
+        grenades: b.grenadeCounts,
+      };
+      adopted.set(seat, [...(adopted.get(seat) ?? []), spec]);
+    }
+    for (const [seat, list] of adopted) seat.events.push({ k: 'adopt', bots: list });
+  }
+
+  /** Every bot this seat's browser runs goes back to the server (`tell`: say so). */
+  private releaseAll(seat: Seat, tell = true): void {
+    const ids: number[] = [];
+    for (const [id, s] of this.owners) {
+      if (s !== seat) continue;
+      this.owners.delete(id);
+      const b = this.sim.bots?.bots.find((x) => x.id === id);
+      if (b) this.sim.unpuppet(b);
+      ids.push(id);
+    }
+    seat.botStates.clear();
+    seat.botEvents.length = 0;
+    if (tell && ids.length) seat.events.push({ k: 'release', ids });
   }
 
   // ---------------------------------------------------------------------------

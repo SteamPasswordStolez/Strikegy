@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -107,6 +107,24 @@ export interface MatchStart {
   life?: { pos: [number, number, number]; yaw: number; seed: number; kit: unknown };
   /** Soldiers the room holds in all (vehicle limits scale with it). */
   size?: number;
+  /** How well the bots play (a browser running some of them plays them so). */
+  difficulty?: 'easy' | 'normal' | 'hard';
+}
+
+/** A bot handed to a browser to run (see `BotManager.adopt`). */
+export interface AdoptBot {
+  id: number;
+  name: string;
+  team: Side;
+  cls: 'assault' | 'medic' | 'support' | 'recon';
+  weapon: string;
+  /** Its personality, as the server rolled it. */
+  personality: unknown;
+  pos: [number, number, number];
+  yaw: number;
+  health: number;
+  medkits: number;
+  grenades: [number, number, number];
 }
 
 /** A score table row as sent. */
@@ -158,6 +176,10 @@ export type MatchEvent =
   | { k: 'seat'; v: number | null; seat: number; chute?: [number, number, number, number, number, number]; pos?: [number, number, number] }
   /** To a side: a rocket tank came for `who` at zone `zone`. */
   | { k: 'rocketTank'; zone: string; who: string; id: number }
+  /** To a browser that runs bots: run these from now on (as they are on the server). */
+  | { k: 'adopt'; bots: AdoptBot[] }
+  /** To a browser that runs bots: the server runs these again. */
+  | { k: 'release'; ids: number[] }
   /** A mate handed `to` a medkit or ammo (to both of them); a supply crate gave `to` a refill (`by` -1). */
   | { k: 'given'; kind: 'medkit' | 'ammo' | 'crate'; by: number; to: number }
   /** A squad leader called something in (browsers show the planes, crates and markers). */
@@ -182,8 +204,8 @@ export type ClientMsg =
   | { t: 'kick'; member: string }
   /** Round trip to the server: answered with `pong` carrying the same `at`. */
   | { t: 'ping'; at: number }
-  /** The match is loaded here: snapshots may come. */
-  | { t: 'ready' }
+  /** The match is loaded here: snapshots may come (`hostBots`: this browser can run some of the bots). */
+  | { t: 'ready'; hostBots?: boolean }
   /** On the field at `key` ('base', 'zone:<id>', 'beacon:<id>', 'mate:<id>') with the kit picked on the deploy screen. */
   | { t: 'deploy'; key: string; kit: unknown }
   /** A squad leader calls `kind` in onto `point` (the rocket tank: no point). */
@@ -271,11 +293,12 @@ export function parseClientMsg(text: string): ClientMsg | null {
       return typeof raw.v === 'number' && str(raw.name, 64) && str(raw.uid, 64) && (raw.device === 'desktop' || raw.device === 'mobile')
         ? (raw as ClientMsg)
         : null;
+    case 'ready':
+      return { t: 'ready', hostBots: raw.hostBots === true };
     case 'list':
     case 'leave':
     case 'start':
     case 'end':
-    case 'ready':
       return { t: raw.t };
     case 'deploy':
       return str(raw.key, 32) && isObj(raw.kit) ? { t: 'deploy', key: raw.key, kit: raw.kit } : null;

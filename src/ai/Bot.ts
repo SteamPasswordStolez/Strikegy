@@ -126,6 +126,8 @@ export interface BotServices {
   canEngage(bot: Bot, e: Combatant): boolean;
   /** One step in a vehicle seat: carried along, driving / firing the mounted gun; false once out. */
   rideStep(bot: Bot, dt: number): void;
+  /** A bot patched itself up (a browser running bots for the game server tells it). */
+  usedMedkit?(bot: Bot): void;
   /** How much foliage (tree crowns) lies between two points: 0 = none, ~1 = a few thick trees. */
   foliage(from: THREE.Vector3, to: THREE.Vector3): number;
   /** Depth of water over a point (0 when dry). */
@@ -212,6 +214,12 @@ export class Bot implements Damageable, Combatant {
   shots = 0;
   /** Off the field for a person who took this bot's place (game server rooms with bots). */
   benched = false;
+  /**
+   * Run by a person's browser (game server rooms that share the bots out):
+   * the server doesn't think or move for it, it is put where that browser
+   * has it (`puppetTo`); down, dead or in a vehicle the server runs it again.
+   */
+  puppet = false;
   action: BotAction = 'advance';
   /** Current enemy being fought (visible and noticed). */
   target: Combatant | null = null;
@@ -486,6 +494,29 @@ export class Bot implements Damageable, Combatant {
       this.hitboxes.setEnabled(true);
       this.body.setTranslation(this.center(), true);
     }
+  }
+
+  /** Where a browser running this bot has it (see `puppet`), `dt` after the last time. */
+  puppetTo(feet: THREE.Vector3, yaw: number, aimYaw: number, aimPitch: number, crouch: boolean, dt: number): void {
+    this.prevFeet.copy(this.feet);
+    this.velocity.subVectors(feet, this.feet).divideScalar(Math.max(dt, 1 / 60));
+    this.feet.copy(feet);
+    this.yaw = yaw;
+    this.aimYaw = aimYaw;
+    this.aimPitch = aimPitch;
+    this.setCrouch(crouch);
+    this.grounded = true;
+    this.body.setNextKinematicTranslation(this.center());
+    this.hitboxes.sync(this.feet, this.yaw, this.height);
+  }
+
+  /** Grenades carried (frags, smokes, flashes), to hand a bot over to another sim as it is. */
+  get grenadeCounts(): [number, number, number] {
+    return [this.frags, this.smokes, this.flashes];
+  }
+
+  set grenadeCounts(n: [number, number, number]) {
+    [this.frags, this.smokes, this.flashes] = n;
   }
 
   /** Carried in a seat: eye at `eye`, moving with the vehicle. */
@@ -890,6 +921,7 @@ export class Bot implements Damageable, Combatant {
     if (this.health.value > 45 || s.time < this.medkitReadyAt || this.medkits <= 0) return;
     if (s.time - this.lastHurt < 0.8 || (this.target && !this.inCover)) return;
     this.health.value = 100;
+    s.usedMedkit?.(this);
     this.pauseUntil = s.time + MEDKIT.useTime;
     if (this.cls === 'medic') this.medkitReadyAt = s.time + MEDKIT.medicCooldown;
     else this.medkits--;

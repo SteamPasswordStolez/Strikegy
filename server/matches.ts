@@ -49,6 +49,7 @@ export class Matches implements MatchHost {
       lineup: settings.lineup,
       size: settings.size,
       difficulty: settings.difficulty,
+      botShare: settings.botShare,
       log: this.opts.log,
       mapsDir: this.opts.mapsDir,
       ended: () => setTimeout(() => this.opts.ended?.(room), 0),
@@ -99,7 +100,7 @@ export class Matches implements MatchHost {
   message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void {
     const m = this.rooms.get(room);
     if (!m) return;
-    if (msg.t === 'ready') m.ready(uid);
+    if (msg.t === 'ready') m.ready(uid, msg.hostBots === true);
     else if (msg.t === 'deploy') m.deploy(uid, msg.key, msg.kit);
     else m.callIn(uid, msg.kind, msg.point);
   }

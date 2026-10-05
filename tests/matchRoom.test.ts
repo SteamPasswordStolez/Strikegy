@@ -4,7 +4,7 @@ import { rayHitbox } from '@/combat/CharacterHitboxes';
 import { createInputState } from '@/input/InputState';
 import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
 import { PROTOCOL_VERSION } from '@/net/lobbyProtocol';
-import { decodeInputs, decodeSnapshot, encodeInputs, encodeInputsDrive, packInput, type Snapshot } from '@/net/matchProtocol';
+import { decodeInputs, decodeSnapshot, encodeInputs, encodeInputFrame, packInput, type Snapshot } from '@/net/matchProtocol';
 import { Layer } from '@/physics/PhysicsWorld';
 import { LobbyCore, SEAT_GRACE, type Conn, type MatchHost } from '../server/lobby';
 import { MatchRoom } from '../server/matchRoom';
@@ -165,7 +165,7 @@ describe('vehicles on the game server', () => {
     const idle = createInputState();
     const q = tank.quat;
     const drive = (x: number, z: number) =>
-      encodeInputsDrive([packInput(idle, ++seq, sim.tick, 0, 0, 0, 0)], { vehicle: tank.id & 0xffff, x, y: tank.pos.y, z, qx: q.x, qy: q.y, qz: q.z, qw: q.w, vx: 0, vy: 0, vz: 0, throttle: 0 });
+      encodeInputFrame([packInput(idle, ++seq, sim.tick, 0, 0, 0, 0)], { vehicle: tank.id & 0xffff, x, y: tank.pos.y, z, qx: q.x, qy: q.y, qz: q.z, qw: q.w, vx: 0, vy: 0, vz: 0, throttle: 0 });
     const from = tank.pos.clone();
     room.binary('ua', drive(from.x + 1, from.z));
     room.tick();
@@ -203,6 +203,47 @@ describe('vehicles on the game server', () => {
       room.tick();
     }
     expect(y0 - sb.player.feet.y).toBeGreaterThan(6);
+    room.dispose();
+  }, 60_000);
+});
+
+describe("bots run in a person's browser", () => {
+  it("a desktop gets its squad's bots, moves them (checked) and fires for them; they go back when it goes quiet", async () => {
+    const room = await MatchRoom.create({ room: 'rh', map: 'lyon', mode: 'zone', lineup: 'usersBots', size: 8 });
+    const sim = room.sim;
+    const a = line();
+    room.join('ua', 'alpha', a.line);
+    room.ready('ua', true);
+    let seq = 0;
+    const idle = createInputState();
+    const frame = (bots: Parameters<typeof encodeInputFrame>[2] = null) => room.binary('ua', encodeInputFrame([packInput(idle, ++seq, sim.tick, 0, 0, 0, 0)], null, bots));
+    for (let i = 0; i < 61; i++) {
+      frame();
+      room.tick();
+    }
+    const adopt = a.events().find((e) => e.k === 'adopt');
+    expect(adopt && adopt.k === 'adopt' && adopt.bots.length).toBe(3);
+    const ids = adopt && adopt.k === 'adopt' ? adopt.bots.map((b) => b.id) : [];
+    const bot = sim.bots!.bots.find((b) => b.id === ids[0])!;
+    expect(bot.puppet).toBe(true);
+    // Its place from the browser: 0.1 m on is taken, 40 m in a tick is not.
+    const from = bot.feet.clone();
+    const state = (x: number) => ({ id: bot.id, x, y: from.y, z: from.z, yaw: 0, aimYaw: 0, aimPitch: 0, crouch: false });
+    frame({ view: sim.tick, states: [state(from.x + 0.1)], events: [] });
+    room.tick();
+    expect(bot.feet.x).toBeCloseTo(from.x + 0.1, 3);
+    frame({ view: sim.tick, states: [state(from.x + 40)], events: [] });
+    room.tick();
+    expect(bot.feet.x).toBeCloseTo(from.x + 0.1, 3);
+    // A trigger pull: the server fires it (the round counter goes up).
+    const shots = bot.shots;
+    frame({ view: sim.tick, states: [], events: [{ k: 'shot', id: bot.id, dir: [0, 0, -1] }] });
+    room.tick();
+    expect(bot.shots).toBe(shots + 1);
+    // Nothing from the browser for a second and a half: the server runs them again.
+    for (let i = 0; i < 90; i++) room.tick();
+    expect(bot.puppet).toBe(false);
+    expect(a.events().some((e) => e.k === 'release')).toBe(true);
     room.dispose();
   }, 60_000);
 });

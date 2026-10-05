@@ -926,7 +926,7 @@ export class MatchSim {
    * at `viewTick` (the browser draws others a little in the past), at most
    * `maxRewind` ticks back. Walls are the world as it is now.
    */
-  casterFor(shooter: Soldier, viewTick: number, maxRewind: number): ShotCaster {
+  casterFor(shooter: number, viewTick: number, maxRewind: number): ShotCaster {
     const now = this.tick;
     const at = Math.max(now - maxRewind, Math.min(now, viewTick));
     return (eye, dir, maxDist) => {
@@ -954,8 +954,8 @@ export class MatchSim {
         }
       }
       // Only who is still up now can be hurt (going down or dying in between ends it).
-      for (const o of this.soldiers.values()) if (o !== shooter && o.deployed && o.alive && !o.downed && this.exposed(o)) test(o.id, o.target);
-      for (const b of this.bots?.bots ?? []) if (b.alive && !b.benched && !b.riding) test(b.id, b);
+      for (const o of this.soldiers.values()) if (o.id !== shooter && o.deployed && o.alive && !o.downed && this.exposed(o)) test(o.id, o.target);
+      for (const b of this.bots?.bots ?? []) if (b.id !== shooter && b.alive && !b.benched && !b.riding) test(b.id, b);
       const h = hit as { target: Damageable; part: HitPart } | null;
       if (h) {
         const point = { x: eye.x + dir.x * best, y: eye.y + dir.y * best, z: eye.z + dir.z * best };
@@ -964,6 +964,86 @@ export class MatchSim {
       if (!wall) return null;
       return { distance: wall.distance, point: wall.point, normal: wall.normal, handle: wall.collider.handle, target: null };
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bots run in people's browsers (`Bot.puppet`)
+
+  /** When each such bot was last moved, fired (and the rounds it may still fire), threw or patched up (sim time). */
+  private readonly puppetClock = new Map<number, { moved: number; shot: number; rounds: number; threw: number; healed: number }>();
+
+  private clockOf(id: number) {
+    let c = this.puppetClock.get(id);
+    if (!c) this.puppetClock.set(id, (c = { moved: this.time, shot: this.time, rounds: 2, threw: -Infinity, healed: -Infinity }));
+    return c;
+  }
+
+  /**
+   * Where the browser running `bot` has it: the server's copy goes there
+   * unless that is further than a sprint (and a fall) could take it since
+   * the last time (false: refused, it stays).
+   */
+  puppetMove(bot: Bot, to: THREE.Vector3, yaw: number, aimYaw: number, aimPitch: number, crouch: boolean): boolean {
+    if (!bot.puppet || !bot.alive || bot.riding) return true;
+    const c = this.clockOf(bot.id);
+    const dt = Math.max(SIM_DT, this.time - c.moved);
+    const flat = Math.hypot(to.x - bot.feet.x, to.z - bot.feet.z);
+    const rise = to.y - bot.feet.y;
+    if (flat > MOVE.sprintSpeed * 1.6 * dt + 1.5 || rise > 3 * dt + 1.5 || rise < -(30 * dt + 3)) return false;
+    bot.puppetTo(to, yaw, aimYaw, aimPitch, crouch, dt);
+    c.moved = this.time;
+    return true;
+  }
+
+  /**
+   * A trigger pull by a bot a browser runs: judged where that browser saw
+   * everyone (`viewTick`), with the bot's spread added here, no faster than
+   * its gun fires.
+   */
+  puppetShot(bot: Bot, dir: THREE.Vector3, viewTick: number, maxRewind: number): void {
+    if (!bot.puppet || !bot.alive || !this.bots || dir.lengthSq() < 0.5) return;
+    // Rounds come a frame's worth at a time: a small allowance that refills at the gun's rate.
+    const c = this.clockOf(bot.id);
+    const rpm = bot.def.rpm ?? 600;
+    c.rounds = Math.min(3, c.rounds + ((this.time - c.shot) * rpm) / 60 / 0.9);
+    c.shot = this.time;
+    if (c.rounds < 1) return;
+    c.rounds -= 1;
+    this.bots.fire(bot, dir.clone().normalize(), this.casterFor(bot.id, viewTick, maxRewind));
+  }
+
+  /** A grenade thrown by a bot a browser runs (from about its eye, not too hard, not too often). */
+  puppetThrow(bot: Bot, type: 'frag' | 'flash' | 'smoke', origin: THREE.Vector3, vel: THREE.Vector3): void {
+    if (!bot.puppet || !bot.alive) return;
+    const c = this.clockOf(bot.id);
+    if (this.time - c.threw < 2 || origin.distanceTo(bot.eyePos(this.v1)) > 2.5 || vel.length() > 45) return;
+    c.threw = this.time;
+    this.throwables.launch(type, origin, vel, { id: bot.id, name: bot.name, team: bot.team });
+  }
+
+  /** A bot a browser runs revived `target` (a person or a bot down within reach). */
+  puppetRevive(bot: Bot, target: number): void {
+    if (!bot.puppet || !bot.alive || !this.bots) return;
+    const person = this.soldiers.get(target);
+    const who = person?.deployed ? person.combatant : this.bots.bots.find((b) => b.id === target);
+    if (!who || who.team !== bot.team || !who.downed || who.feet.distanceTo(bot.feet) > REVIVE_RANGE + 1.5) return;
+    this.bots.revive(bot, who);
+  }
+
+  /** A bot a browser runs patched itself up. */
+  puppetMedkit(bot: Bot): void {
+    if (!bot.puppet || !bot.alive) return;
+    const c = this.clockOf(bot.id);
+    if (this.time - c.healed < 4 || (bot.cls !== 'medic' && bot.medkits <= 0)) return;
+    c.healed = this.time;
+    bot.health.value = 100;
+    if (bot.cls !== 'medic') bot.medkits--;
+  }
+
+  /** Back to the server's own running (the browser let it go, or it went down, died or got in a vehicle). */
+  unpuppet(bot: Bot): void {
+    bot.puppet = false;
+    this.puppetClock.delete(bot.id);
   }
 
   dispose(): void {

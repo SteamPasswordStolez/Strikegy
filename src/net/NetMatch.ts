@@ -19,6 +19,7 @@ import { SoldierModel } from '@/ai/SoldierModel';
 import type { AudioSystem } from '@/audio/AudioSystem';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import type { Damageable, HitboxRegistry } from '@/combat/Hitboxes';
+import type { Combatant } from '@/ai/types';
 import type { InputState } from '@/input/InputState';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
@@ -32,7 +33,7 @@ import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Team } from '@/world/mapTypes';
 import type { ServerLink } from './ServerLink';
 import type { MatchEvent, MatchSoldierInfo, MatchStart, ServerMsg } from './lobbyProtocol';
-import { INTERP_TICKS, SF, THING, TICK_HZ, VF, decodeSnapshot, encodeInputsDrive, packInput, type NetInput, type NetVehicle, type Snapshot } from './matchProtocol';
+import { INTERP_TICKS, SF, THING, TICK_HZ, VF, decodeSnapshot, encodeInputFrame, packInput, type NetBots, type NetInput, type NetVehicle, type Snapshot } from './matchProtocol';
 
 export interface NetOptions {
   link: ServerLink;
@@ -120,6 +121,14 @@ class Remote {
   alive = false;
   /** In a vehicle in the moment drawn (not drawn: the vehicle is). */
   riding = false;
+  /** A bot this browser runs itself (drawn and hit there): this copy only keeps its place for the map. */
+  hidden = false;
+  /** When it last fired (s, performance clock), and how it moves in the moment drawn (m/s). */
+  firedAt = -Infinity;
+  readonly vel = new THREE.Vector3();
+  private crouched = false;
+  /** As the bots this browser runs see it. */
+  readonly combatant: Combatant;
   private readonly muzzle = new THREE.Vector3();
   private readonly fwd = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -148,6 +157,39 @@ class Remote {
     };
     this.boxes = new CharacterHitboxes(view.physics, view.registry, this.target);
     this.boxes.setEnabled(false);
+    const now = () => performance.now() / 1000;
+    this.combatant = {
+      id,
+      get name() {
+        return self.name;
+      },
+      get team() {
+        return self.team;
+      },
+      // In a vehicle: not something a rifle can take on (the server's bots handle those).
+      get alive() {
+        return self.alive && !self.riding;
+      },
+      get downed() {
+        return self.downed;
+      },
+      get feet() {
+        return self.pos;
+      },
+      get velocity() {
+        return self.vel;
+      },
+      get eyeHeight() {
+        return (self.crouched ? MOVE.crouchHeight : MOVE.standHeight) - MOVE.eyeInset;
+      },
+      get firingUntil() {
+        return now() - self.firedAt < 0.6 ? Infinity : -Infinity;
+      },
+      get yaw() {
+        return self.yaw;
+      },
+      inCombat: () => now() - self.firedAt < 3,
+    };
   }
 
   get feet(): THREE.Vector3 {
@@ -200,6 +242,8 @@ class Remote {
     const downed = (flags & SF.downed) !== 0;
     this.alive = deployed && (flags & SF.alive) !== 0 && !downed;
     this.riding = (flags & SF.riding) !== 0;
+    this.crouched = (flags & SF.crouch) !== 0;
+    if (dt > 0) this.vel.subVectors(this.pos, this.prevPos).divideScalar(dt);
     const speed = span > 0 ? Math.hypot(b.x - a.x, b.z - a.z) / (span / TICK_HZ) : 0;
     const k = 1 - Math.exp(-10 * dt);
     this.crouch += (((flags & SF.crouch) !== 0 ? 1 : 0) - this.crouch) * k;
@@ -220,6 +264,13 @@ class Remote {
     }
     this.visible = deployed || this.goneFor >= 0;
     if (downed && !wasDown) this.model?.onDeath();
+    if (this.hidden) {
+      this.boxes.setEnabled(false);
+      this.model?.root.removeFromParent();
+      this.tag?.removeFromParent();
+      this.shotsSeen = -1;
+      return;
+    }
 
     // Hitboxes where this browser sees the soldier.
     this.boxes.setEnabled(this.alive && !this.riding);
@@ -253,7 +304,10 @@ class Remote {
     if (this.shotsSeen < 0) this.shotsSeen = shots;
     const fresh = (shots - this.shotsSeen) & 0xff;
     this.shotsSeen = shots;
-    if (fresh > 0 && fresh < 20 && this.alive) this.fired(Math.min(3, fresh), weapon, yaw, pitch);
+    if (fresh > 0 && fresh < 20 && this.alive) {
+      this.firedAt = performance.now() / 1000;
+      this.fired(Math.min(3, fresh), weapon, yaw, pitch);
+    }
   }
 
   private fired(n: number, weapon: WeaponId, yaw: number, pitch: number): void {
@@ -356,6 +410,12 @@ export class NetMatch {
   drive: Vehicle | null = null;
   /** A vehicle came into view (the game may be waiting to get in it). */
   onVehicle: (v: Vehicle) => void = () => {};
+  /** Bots this browser runs for the server (drawn and hit by its own copies). */
+  readonly owned = new Set<number>();
+  /** What those bots are doing, for the next input frame (null: none). */
+  botFrame: (() => NetBots | null) | null = null;
+  /** The server's word on one of those bots (it judges health, going down and dying). */
+  onOwned: (id: number, flags: number, health: number) => void = () => {};
   private readonly tracks = new Map<number, VehicleTrack>();
   private readonly vq = new THREE.Quaternion();
   private readonly vp = new THREE.Vector3();
@@ -425,9 +485,14 @@ export class NetMatch {
     return this.roster.get(id)?.name ?? '?';
   }
 
-  /** Loaded and drawing: snapshots may come. */
-  ready(): void {
-    this.link.send({ t: 'ready' });
+  /** Loaded and drawing: snapshots may come (`hostBots`: this browser can run some of the bots). */
+  ready(hostBots = false): void {
+    this.link.send({ t: 'ready', hostBots });
+  }
+
+  /** Everyone else on the field as bots see them (not the bots this browser runs). */
+  *combatants(): Iterable<Combatant> {
+    for (const r of this.remotes.values()) if (r.visible && !r.hidden) yield r.combatant;
   }
 
   deploy(key: string, kit: unknown): void {
@@ -485,7 +550,7 @@ export class NetMatch {
     if (!this.outbox.length) return;
     const d = this.drive;
     const drive = d && !d.wrecked ? { vehicle: d.id, x: d.pos.x, y: d.pos.y, z: d.pos.z, qx: d.quat.x, qy: d.quat.y, qz: d.quat.z, qw: d.quat.w, vx: d.velocity.x, vy: d.velocity.y, vz: d.velocity.z, throttle: d.flight?.throttle ?? 0 } : null;
-    this.link.sendBinary(encodeInputsDrive(this.outbox, drive));
+    this.link.sendBinary(encodeInputFrame(this.outbox, drive, this.botFrame?.() ?? null));
     this.outbox.length = 0;
   }
 
@@ -526,6 +591,8 @@ export class NetMatch {
         this.remotes.set(s.id, r);
       }
       r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots });
+      r.hidden = this.owned.has(s.id);
+      if (r.hidden) this.onOwned(s.id, s.flags, s.health);
     }
     for (const t of snap.things) {
       let th = this.things.get(t.id);

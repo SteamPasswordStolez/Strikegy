@@ -36,7 +36,7 @@ import { Player } from '@/player/Player';
 import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import { NavWorld, VehicleNav } from '@/ai/NavWorld';
-import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT, type BotOptions } from '@/ai/BotManager';
+import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT, type AdoptSpec, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
 import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
@@ -101,7 +101,7 @@ import { NetMatch, type NetOptions } from '@/net/NetMatch';
 import { forgetPlay } from './session';
 import { seeded } from '@/sim/MatchSim';
 import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
-import { SF } from '@/net/matchProtocol';
+import { SF, type NetBotEvent } from '@/net/matchProtocol';
 import { sanitizeLoadout, type Loadout } from '@/data/classes';
 
 const DEG = Math.PI / 180;
@@ -578,7 +578,13 @@ export class Game {
     this.grenades.reset(firstKit.grenade);
     this.weapons.endlessReserve = !this.options.sandbox && firstKit.cls === 'support';
 
-    if (botOpts && botOpts.allies + botOpts.enemies > 0) {
+    const net = this.options.net;
+    if (net && !this.touch && net.start.roster.some((r) => r.bot) && (map.zones?.length ?? 0) > 0) {
+      // A desktop in a room with bots runs some of them (setupNetBots): they need the navmesh (before the fortifications, which cut it).
+      await this.loadStep(0.62, 'load.nav');
+      this.physics.step();
+      this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined);
+    } else if (botOpts && botOpts.allies + botOpts.enemies > 0) {
       await this.loadStep(0.62, 'load.nav');
       // Colliders must be in the broadphase before the navmesh reads them.
       this.physics.step();
@@ -616,7 +622,7 @@ export class Game {
       this.setupFortifications(map, terrain, water, built);
       if (this.bots && !this.options.sandbox) this.setupVehicles(map);
     }
-    if (this.options.net) await this.setupNet(map, terrain);
+    if (this.options.net) await this.setupNet(map, terrain, built, water);
     if (this.bots) {
       this.setupSquads(map, terrain);
       const support = this.support;
@@ -692,7 +698,7 @@ export class Game {
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.frame);
     this.begin();
-    this.net?.ready();
+    this.net?.ready(!!this.netBots);
   }
 
   /** Loading: moves the bar and lets the page draw it before the next long step. */
@@ -1009,6 +1015,7 @@ export class Game {
 
     for (const tg of this.targets) tg.update(simDt);
     this.bots?.render(this.lastAlpha, dt, this.renderer.camera);
+    this.netBots?.render(this.lastAlpha, dt, this.renderer.camera);
     if (this.net) {
       this.net.flush();
       this.net.render(dt);
@@ -1241,6 +1248,7 @@ export class Game {
     } else if (this.playerDowned) this.me.stepDowned(dt, input.jumpHeld);
     else this.respawnTimer -= dt;
     this.me.syncBoxes();
+    this.netBots?.step(dt);
     this.throwables.step(dt);
     this.support.step(dt);
     this.physics.step();
@@ -3649,7 +3657,7 @@ export class Game {
   }
 
   /** Others' models, the match connection, the deploy screen and the server's news. */
-  private async setupNet(map: MapDef, terrain: Terrain): Promise<void> {
+  private async setupNet(map: MapDef, terrain: Terrain, built: { windows: Parameters<BotManager['setTactical']>[0]; footprints: Parameters<BotManager['setTactical']>[1] }, water: WaterMap | null): Promise<void> {
     const opts = this.options.net!;
     await this.loadStep(0.72, 'load.soldiers');
     await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
@@ -3698,6 +3706,7 @@ export class Game {
         { label: t('lobby.back'), onClick: () => this.quit() },
       ]);
     };
+    await this.setupNetBots(net, map, built, water);
     for (const s of opts.start.roster) this.scores.add(s.id, s.name, s.team);
     this.deployFlow = true;
     this.deployed = false;
@@ -3713,6 +3722,88 @@ export class Game {
     // Reloaded mid-match: the soldier is still out there.
     const life = opts.start.life;
     if (life) this.netSpawned({ k: 'spawn', id: this.myId, ...life });
+  }
+
+  /** Bots this browser runs for the game server (desktops, rooms with bots): see `BotManager.adopt`. */
+  private netBots: BotManager | null = null;
+  /** What those bots did since the last input frame (the server does it for real). */
+  private readonly netBotEvents: NetBotEvent[] = [];
+
+  /**
+   * A desktop in a room with bots runs some of them (its squad's) for the
+   * server: they think and move here as in solo play against everyone this
+   * browser draws, and their place, rounds, throws, revives and medkits go to
+   * the server, which judges them (`MatchRoom.applyBots`).
+   */
+  private async setupNetBots(net: NetMatch, map: MapDef, built: Parameters<Game['setupNet']>[2], water: WaterMap | null): Promise<void> {
+    const start = net.start;
+    if (!this.nav) return;
+    const bots = new BotManager(this.renderer.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, () => this.netHumans(net), map.spawns, {
+      allies: 0,
+      enemies: 0,
+      difficulty: start.difficulty ?? 'normal',
+      capacity: 12,
+    });
+    bots.setTactical(built.windows, built.footprints);
+    if (map.trees) bots.setForest(map.trees, map.world.size);
+    if (water) bots.setWater(water);
+    bots.viewers = () => [this.player.feet];
+    bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;
+    bots.hooks = {
+      objectives: (team) => this.zoneMode?.objectives(team) ?? [],
+      // Down or dead they go back to the server, which respawns them.
+      spawnAt: (bot) => ({ pos: bot.feet.clone(), yaw: bot.yaw }),
+    };
+    const ev = this.netBotEvents;
+    const v3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
+    bots.grenades = {
+      launch: (type, origin, vel, owner) => ev.push({ k: 'throw', id: owner.id, type, origin: v3(origin), vel: v3(vel) }),
+      *frags() {},
+    };
+    bots.remote = {
+      shot: (bot, dir) => ev.push({ k: 'shot', id: bot.id, dir: v3(dir) }),
+      revive: (bot, target) => ev.push({ k: 'revive', id: bot.id, target: target.id }),
+      medkit: (bot) => ev.push({ k: 'medkit', id: bot.id }),
+    };
+    this.netBots = bots;
+    net.botFrame = () => {
+      const list = bots.bots;
+      if (!list.length && !ev.length) return null;
+      const states = list.filter((b) => b.alive).map((b) => ({ id: b.id, x: b.feet.x, y: b.feet.y, z: b.feet.z, yaw: b.yaw, aimYaw: b.aimYaw, aimPitch: b.aimPitch, crouch: b.crouching }));
+      return { view: net.viewTick(), states, events: ev.splice(0) };
+    };
+    net.onOwned = (id, flags, health) => {
+      const b = bots.bots.find((x) => x.id === id);
+      if (!b) return;
+      // Down or dead on the server: it runs the bot again (it says so too).
+      if (!(flags & SF.alive) || flags & SF.downed) this.dropNetBot(id);
+      else b.health.value = health;
+    };
+  }
+
+  /** Everyone the bots this browser runs can see or help: this player and everyone drawn here. */
+  private *netHumans(net: NetMatch): Iterable<Combatant> {
+    if (this.deployed) yield this.playerCombatant;
+    yield* net.combatants();
+  }
+
+  private dropNetBot(id: number): void {
+    this.netBots?.drop(id);
+    this.net?.owned.delete(id);
+    this.netBotSquads();
+  }
+
+  /** The bots this browser runs, in their squads as the server has them (they pick their own objectives). */
+  private netBotSquads(): void {
+    const bots = this.netBots;
+    const net = this.net;
+    if (!bots || !net) return;
+    const bySquad = new Map<number, number[]>();
+    for (const b of bots.bots) {
+      const sq = net.roster.get(b.id)?.squad ?? 0;
+      bySquad.set(sq, [...(bySquad.get(sq) ?? []), b.id]);
+    }
+    bots.setSquads([...bySquad.entries()].map(([index, botIds]) => ({ index, botIds, leader: null })));
   }
 
   /** The match's news from the server. */
@@ -3799,6 +3890,18 @@ export class Game {
           break;
         case 'seat':
           this.netSeat(e);
+          break;
+        case 'adopt':
+          for (const spec of e.bots) {
+            if (!this.netBots || !this.net) break;
+            this.netBots.drop(spec.id);
+            this.netBots.adopt(spec as AdoptSpec);
+            this.net.owned.add(spec.id);
+          }
+          this.netBotSquads();
+          break;
+        case 'release':
+          for (const id of e.ids) this.dropNetBot(id);
           break;
         case 'rocketTank':
           this.hud.notify(t('support.rocketArrived').replace('{zone}', e.zone).replace('{who}', e.id === this.myId ? playerName(t('feed.you')) : e.who), 'ally');

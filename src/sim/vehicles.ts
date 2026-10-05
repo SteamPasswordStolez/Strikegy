@@ -535,7 +535,7 @@ export class MatchVehicles {
       if (this.world.tanks(team) >= this.world.tankLimit() || Math.random() < 0.5) continue;
       const spot = this.world.freeTankSpot(team);
       if (!spot) continue;
-      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && !b.benched && b.feet.distanceTo(spot.pos) < 40 && !b.inCombat(bots.time));
+      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && !b.benched && !b.puppet && b.feet.distanceTo(spot.pos) < 40 && !b.inCombat(bots.time));
       if (!bot) continue;
       const v = this.world.spawnTank(TANK_KINDS[Math.floor(Math.random() * TANK_KINDS.length)]!, team);
       if (v) bots.seatBot(bot, v, 0);
@@ -558,7 +558,7 @@ export class MatchVehicles {
       const people = [...this.sim.soldiers.values()].some((s) => s.team === team);
       if (people && this.sim.time - free < BOT_JETS.peopleFirst) continue;
       const base = this.sim.baseCenter(team);
-      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && !b.benched && b.feet.distanceTo(base) < BOT_JETS.nearBase && !b.inCombat(bots.time));
+      const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && !b.benched && !b.puppet && b.feet.distanceTo(base) < BOT_JETS.nearBase && !b.inCombat(bots.time));
       if (!bot) continue;
       const v = this.spawnJet(JET_KINDS[Math.floor(Math.random() * JET_KINDS.length)]!, team);
       if (v) bots.seatBot(bot as Bot, v, 0);
