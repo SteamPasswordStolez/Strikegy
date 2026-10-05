@@ -354,9 +354,17 @@ export class MatchVehicles {
     const to = this.tmp.set(d.x, d.y, d.z);
     const dist = to.distanceTo(v.pos);
     if (dist > top * DRIVE_SLACK.speed * since + DRIVE_SLACK.metres) return false;
+    // An aircraft can't hang still: one that stopped (its browser had it hit something) has crashed.
+    if (v.flight && Math.hypot(d.vx, d.vy, d.vz) < v.spec.flight!.minSpeed * 0.3) {
+      v.health = 0;
+      v.crashed = true;
+      return true;
+    }
     if (dist > 0.01) {
       const dir = this.tmp2.copy(to).sub(v.pos).divideScalar(dist);
-      const hit = this.physics.raycast(v.pos, dir, dist, Layer.WORLD, undefined, v.body);
+      // Aircraft: the nose reaches ahead of the middle (as `Vehicle.fly` checks).
+      const reach = v.flight ? dist + v.spec.half[2] * 0.6 : dist;
+      const hit = this.physics.raycast(v.pos, dir, reach, Layer.WORLD, undefined, v.body);
       // An aircraft flying into something crashes; a ground vehicle doesn't go through walls.
       if (hit && v.flight) {
         v.health = 0;

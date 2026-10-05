@@ -429,9 +429,11 @@ export class Vehicle implements Damageable {
     root.quaternion.slerpQuaternions(this.prevQuat, this.quat, alpha);
     const c = this.controller;
     const spec = this.spec;
+    // Moved from outside (see `remote`), the wheels' suspension isn't run: each wheel reaches for the ground itself.
+    const reach = c && this.remote && !this.farLook ? this.wheelReach(root.position, root.quaternion) : null;
     if (c) this.model.wheels.forEach((w, i) => {
       if (this.kind === 'bike' && i % 2 === 1) return;
-      const sus = c.wheelSuspensionLength(i) ?? spec.suspension.rest;
+      const sus = reach ? reach[i]! : (c.wheelSuspensionLength(i) ?? spec.suspension.rest);
       w.position.y = spec.wheels[i]!.pos[1] - sus;
       const rot = c.wheelRotation(i) ?? 0;
       this.wheelSpin[i] = rot;
@@ -444,6 +446,23 @@ export class Vehicle implements Damageable {
       if (n.gun) n.gun.rotation.x = m.pitch;
     });
   }
+
+  /**
+   * Suspension length per wheel for a vehicle placed from outside: a ray
+   * down from each wheel's mount to the ground, as the wheel would rest
+   * (fully out when nothing is under it).
+   */
+  private wheelReach(pos: THREE.Vector3, quat: THREE.Quaternion): number[] {
+    const s = this.spec;
+    const max = s.suspension.rest + s.suspension.travel;
+    const down = this.tmpDown.set(0, -1, 0).applyQuaternion(quat);
+    return s.wheels.map((w) => {
+      const from = this.tmpLocal.set(w.pos[0], w.pos[1], w.pos[2]).applyQuaternion(quat).add(pos);
+      const hit = this.physics.raycast(from, down, max + s.wheelRadius, Layer.WORLD, this.collider);
+      return hit ? Math.max(0, Math.min(max, hit.distance - s.wheelRadius)) : s.suspension.rest;
+    });
+  }
+  private readonly tmpDown = new THREE.Vector3();
 
   /** Where someone getting out of `seat` stands: beside it on the ground, else behind / in front, else on top. */
   exitSpot(seat: number, physics: PhysicsWorld): THREE.Vector3 {

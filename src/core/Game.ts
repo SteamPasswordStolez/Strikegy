@@ -1048,9 +1048,24 @@ export class Game {
     const tEnd = performance.now();
     perf.record(
       { frameMs, simMs, updateMs: tDraw - tStart - simMs, renderMs: tEnd - tDraw },
-      `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}`,
+      `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}${this.netLabel()}`,
     );
   };
+
+  /** In a match on the game server: how match data travels (UDP or TCP) and snapshots a second, for the F3 panel. */
+  private netRate = { at: 0, count: 0, perSecond: 0 };
+  private netLabel(): string {
+    const net = this.net;
+    if (!net) return '';
+    const now = performance.now();
+    const r = this.netRate;
+    if (now - r.at >= 1000) {
+      r.perSecond = r.at ? Math.round(((net.snapshots - r.count) * 1000) / (now - r.at)) : 0;
+      r.at = now;
+      r.count = net.snapshots;
+    }
+    return ` · ${net.link.udp ? 'UDP' : 'TCP'} ${r.perSecond}/s`;
+  }
 
   /** What the local view does when its soldier is hurt, goes down, gets up or dies. */
   private soldierHooks(): SoldierHooks {
@@ -3071,7 +3086,8 @@ export class Game {
   private updateScoreboard(dt: number, held: boolean): void {
     const sb = this.scoreboard;
     if (this.matchOver) return;
-    const show = held && !!this.bots && !this.overlay.visible;
+    // Bot matches and matches on the game server have a table (the range doesn't).
+    const show = held && (!!this.bots || !!this.net) && !this.overlay.visible;
     sb.setVisible(show);
     if (!show) {
       this.scoreboardTimer = 0;
@@ -3087,6 +3103,15 @@ export class Game {
     const zm = this.zoneMode;
     const alive = new Map<number, boolean>();
     for (const c of this.combatants()) alive.set(c.id, c.alive);
+    // On the game server: everyone drawn here (enemies out of sight count as up; the table doesn't tell).
+    if (this.net) {
+      alive.set(this.myId, this.player.alive && this.deployed);
+      for (const info of this.net.roster.values()) {
+        if (info.id === this.myId) continue;
+        const r = this.net.remote(info.id);
+        alive.set(info.id, info.team !== this.myTeam || (r?.alive ?? false));
+      }
+    }
     const side = (team: Team): ScoreboardSide => ({
       label: t(team === this.myTeam ? 'hud.allies' : 'hud.enemies'),
       stat: zm ? this.modeScoreLine(team) : null,
