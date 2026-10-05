@@ -1,13 +1,15 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import type { Combatant } from '@/ai/types';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import type { DamageSource, Damageable, HitboxRegistry } from '@/combat/Hitboxes';
 import type { DamageCause, GameBus } from '@/core/events';
 import { ASSAULT_WADE_EASE, DOWN, MEDKIT, loadoutWeapons, moveBonus, type ClassId, type Loadout } from '@/data/classes';
 import type { InputState } from '@/input/InputState';
-import type { PhysicsWorld } from '@/physics/PhysicsWorld';
+import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import { Player } from '@/player/Player';
+import { wishDirection } from '@/player/movement';
+import type { Vehicle } from '@/vehicles/Vehicle';
 import { fallDamage } from '@/player/health';
 import { GrenadeInventory } from '@/weapons/Throwables';
 import type { GrenadeType } from '@/combat/explosions';
@@ -22,6 +24,8 @@ export const RESPAWN_SEC = 4;
 /** The weapon is unusable this long after starting a throw, and the next throw waits this long. */
 export const THROW_BLOCK = 0.55;
 export const THROW_COOLDOWN = 0.8;
+/** Under a parachute: falling speed and steering drift (m/s). */
+export const CHUTE = { fall: 8, steer: 4.5 };
 /** How long a shot keeps a soldier "firing" for bots spotting it (combat clock, s). */
 const FIRING_GLOW = 0.6;
 
@@ -129,6 +133,10 @@ export class Soldier {
   buildMode = false;
   /** Seconds of hands-on work (building, restocking) going on now, or -1. */
   working = -1;
+  /** In a vehicle (match on the game server): which one and the seat. */
+  ride: { v: Vehicle; seat: number } | null = null;
+  /** Under a parachute after bailing out of a plane high up: the drift (null: not). */
+  chute: THREE.Vector3 | null = null;
   private readonly now: () => number;
   private readonly combatClock: () => number;
   private readonly bus: GameBus;
@@ -250,6 +258,35 @@ export class Soldier {
     this.throwCooldown = THROW_COOLDOWN;
     this.bus.emit('grenade:thrown', { type, remaining: this.grenades.count });
     return true;
+  }
+
+  /** Out of a plane at `at`: a canopy opens, drifting down from there (keeping some of the plane's speed at first). */
+  openChute(at: THREE.Vector3, carry: THREE.Vector3): void {
+    this.chute = carry.clone().multiplyScalar(0.25).setY(-CHUTE.fall);
+    this.player.ride(at.clone().setY(at.y + this.player.eyeHeight), this.chute);
+  }
+
+  /**
+   * Under the canopy: WASD steers, it comes down at `CHUTE.fall` and lands on
+   * whatever is below (then on foot). True on landing.
+   */
+  stepChute(dt: number, input: InputState, physics: PhysicsWorld): boolean {
+    const p = this.player;
+    const vel = this.chute!;
+    const [wx, wz] = input.moveX || input.moveY ? wishDirection(input.moveX, input.moveY, p.yaw) : [0, 0];
+    const k = Math.min(1, dt * 1.5);
+    vel.x += (wx * CHUTE.steer - vel.x) * k;
+    vel.z += (wz * CHUTE.steer - vel.z) * k;
+    vel.y = -CHUTE.fall;
+    const step = vel.clone().multiplyScalar(dt);
+    const hit = physics.raycast(p.feet.clone().setY(p.feet.y + 0.5), step.clone().normalize(), step.length() + 0.5, Layer.WORLD);
+    if (hit) {
+      this.chute = null;
+      p.dismount(new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z));
+      return true;
+    }
+    p.ride(p.feet.clone().add(step).setY(p.feet.y + step.y + p.eyeHeight), vel);
+    return false;
   }
 
   /** Throw timers run down. */
@@ -378,6 +415,9 @@ export class Soldier {
   spawn(at: THREE.Vector3, yaw: number, kit: Loadout, weapons: WeaponId[] | null = null): void {
     const p = this.player;
     p.health.reset();
+    this.ride = null;
+    this.chute = null;
+    p.dismount(at);
     p.teleport(at, yaw);
     this.boxes.setEnabled(true);
     this.killedBy = null;

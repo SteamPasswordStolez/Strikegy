@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Bot, setNextBotId } from '@/ai/Bot';
 import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT } from '@/ai/BotManager';
 import type { Difficulty } from '@/ai/difficulty';
-import { NavWorld } from '@/ai/NavWorld';
+import { NavWorld, VehicleNav } from '@/ai/NavWorld';
 import type { Combatant } from '@/ai/types';
 import type { AudioSystem } from '@/audio/AudioSystem';
 import { rayHitbox } from '@/combat/CharacterHitboxes';
@@ -33,6 +33,7 @@ import { FortModels } from '@/world/fortModels';
 import type { MapDef, Team } from '@/world/mapTypes';
 import { kitToggles, needsStation, restockAmmo, stepFort, stepGadget, stepGive, type GiveClock, type KitWorld } from './kit';
 import { Soldier } from './Soldier';
+import { MatchVehicles } from './vehicles';
 import { buildWorld, fortPlanFor, type SimWorld } from './world';
 
 const DEG = Math.PI / 180;
@@ -90,7 +91,7 @@ export function seeded(seed: number): () => number {
 }
 
 /** What goes off where everyone should see it. */
-export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell';
+export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck';
 
 /** Where a deployed soldier came out and the seed of its spread for this life. */
 export interface Deployed {
@@ -107,8 +108,7 @@ const SILENT = new Proxy({}, { get: () => () => undefined }) as unknown as Audio
  * soldiers people play and the bots, the zone mode and the score table,
  * grenades, gadgets, fortifications, squads and call-ins. Each step takes
  * every soldier's input, moves and fires for them, runs the bots, the zone
- * rules and the physics. Vehicles come in a later step (they still live in
- * `Game`).
+ * rules and the physics. Vehicles: `MatchVehicles` (zone matches).
  */
 export class MatchSim {
   readonly bus = new EventBus<GameEvents>();
@@ -126,6 +126,8 @@ export class MatchSim {
   readonly support: SupportWorld;
   /** The bots (rooms with bots), on the navmesh. */
   readonly bots: BotManager | null;
+  /** Vehicles (zone matches). */
+  readonly vehicles: MatchVehicles | null;
   /** Squads of each side (four each; people take the places of bots; the first member leads). */
   readonly squads: Squad[] = [];
   /** Something went off where everyone should see it (grenades, rockets, mines, rifle smoke, shells). */
@@ -163,6 +165,7 @@ export class MatchSim {
     readonly world: SimWorld,
     opts: MatchOptions,
     nav: NavWorld | null,
+    vehicleNav: VehicleNav | null = null,
   ) {
     physics.timestep = SIM_DT;
     this.throwables = new Throwables(new THREE.Scene(), physics, this.bus);
@@ -179,6 +182,7 @@ export class MatchSim {
         this.addSmoke(point, GRENADES.smoke.radius);
         this.onBoom('riflesmoke', point);
       },
+      shell: (gun, point, owner, target, part) => this.vehicles?.shellHit(gun, point, owner, target, part),
     });
     this.support = new SupportWorld(physics, {
       shell: (kind, point, owner) => {
@@ -197,6 +201,7 @@ export class MatchSim {
         if (ids.length) this.onSpotted(team, ids);
       },
       resupply: (team, pos, reach) => this.crateResupply(team, pos, reach),
+      vehicle: (owner, near) => this.vehicles?.callRocketTank(owner, near) ?? false,
     });
     const fort = this.fort;
     this.kit = {
@@ -212,6 +217,10 @@ export class MatchSim {
       points: (id, p) => this.scores.award(id, p),
     };
     this.bots = nav && opts.bots ? this.makeBots(nav, opts.bots) : null;
+    if (this.bots) this.bots.vehicleNav = vehicleNav;
+    const size = (opts.teamSize?.blue ?? 12) + (opts.teamSize?.red ?? 12);
+    this.vehicles = this.zoneMode ? new MatchVehicles(this, map, size) : null;
+    if (this.vehicles) this.vehicles.onBoom = (kind, point) => this.onBoom(kind, point);
     this.wire();
     // Colliders into the broadphase before the first query.
     physics.step();
@@ -223,12 +232,15 @@ export class MatchSim {
     const impacts = new SurfaceRegistry();
     const world = buildWorld(map, physics, impacts);
     let nav: NavWorld | null = null;
+    let vehicleNav: VehicleNav | null = null;
     if (opts.bots && opts.bots.blue + opts.bots.red > 0) {
       // Colliders into the broadphase before the navmesh reads them.
       physics.step();
       nav = await NavWorld.build(physics, world.built.navExtra ?? undefined);
+      // Bot drivers route on a mesh as wide as a tank.
+      if ((map.zones?.length ?? 0) > 0) vehicleNav = await VehicleNav.build(physics, world.built.navExtra ?? undefined);
     }
-    return new MatchSim(physics, impacts, world, opts, nav);
+    return new MatchSim(physics, impacts, world, opts, nav, vehicleNav);
   }
 
   // ---------------------------------------------------------------------------
@@ -318,7 +330,7 @@ export class MatchSim {
   /** Where a bot respawns: on a person leading its squad when allowed, else the spawn nearest its objective. */
   private botSpawn(bot: Bot, objective: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number } {
     const sq = this.squadOf(bot.id);
-    const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, this.time)) : [];
+    const mates = sq ? sq.mates(bot.id).filter((m) => !mateSpawnBlock(m, this.time, this.riding(m.id))) : [];
     const lead = sq?.members[0];
     if (lead && !(lead instanceof Bot) && mates.includes(lead)) return this.spawnAt(bot.team, `mate:${lead.id}`, bot.id);
     const enemy = this.baseCenter(bot.team === 'blue' ? 'red' : 'blue');
@@ -345,7 +357,12 @@ export class MatchSim {
     return this.spawnAt(bot.team, best.key, bot.id);
   }
 
-  private baseCenter(team: Team): THREE.Vector3 {
+  /** Someone (a person or a bot) sits in a vehicle (nobody spawns beside them). */
+  riding(id: number): boolean {
+    return !!this.soldiers.get(id)?.ride || !!this.bots?.bots.find((b) => b.id === id)?.riding;
+  }
+
+  baseCenter(team: Team): THREE.Vector3 {
     return this.zoneMode?.base(team).clone() ?? this.base(team).pos;
   }
 
@@ -500,13 +517,13 @@ export class MatchSim {
   /**
    * A squad leader calls `kind` in onto `point` (aimed within reach). False
    * when not allowed: not the leader, not on the field, too far, too little
-   * RP, the side's cooldown, or the rocket tank (no vehicles on the server yet).
+   * RP, the side's cooldown (the rocket tank comes to the zone nearest `point`).
    */
   callIn(id: number, kind: string, point: THREE.Vector3 | null): boolean {
     const s = this.soldiers.get(id);
     const q = this.squadOf(id);
     if (!s || !q || q.members[0]?.id !== id || !s.deployed || !s.alive || s.downed) return false;
-    if (!(SUPPORT_ORDER as readonly string[]).includes(kind) || kind === 'rocketTank' || !point) return false;
+    if (!(SUPPORT_ORDER as readonly string[]).includes(kind) || !point) return false;
     if (point.distanceTo(s.player.feet) > CALL_RANGE + 5) return false;
     const owner: GadgetOwner = { id, name: s.combatant.name, team: s.team, squad: `${q.team}:${q.name}` };
     if (!this.support.request(kind as SupportId, point, owner, this.squadRp(q), false)) return false;
@@ -538,6 +555,7 @@ export class MatchSim {
   removeSoldier(id: number): void {
     const s = this.soldiers.get(id);
     if (!s) return;
+    this.vehicles?.leave(s, false);
     s.dispose();
     this.soldiers.delete(id);
     this.poses.delete(id);
@@ -570,7 +588,7 @@ export class MatchSim {
       at = { pos: nav?.randomAround(beacon.pos, 1.5) ?? beacon.pos.clone(), yaw: beacon.mesh.rotation.y };
     }
     const mate = kind === 'mate' ? this.squadOf(selfId)?.members.find((m) => String(m.id) === ref && m.id !== selfId) : undefined;
-    if (mate && !mateSpawnBlock(mate, this.time)) {
+    if (mate && !mateSpawnBlock(mate, this.time, this.riding(mate.id))) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const back = new THREE.Vector3(Math.sin(mate.yaw), 0, Math.cos(mate.yaw)).multiplyScalar(2.2);
       const lateral = new THREE.Vector3(Math.cos(mate.yaw), 0, -Math.sin(mate.yaw)).multiplyScalar(side * 1.2);
@@ -638,6 +656,7 @@ export class MatchSim {
   beginStep(dt = SIM_DT): void {
     this.time += dt;
     this.tick++;
+    this.vehicles?.beginStep();
   }
 
   /**
@@ -655,7 +674,13 @@ export class MatchSim {
     }
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
-    if (s.alive && s.deployed) {
+    // Down or dead in a vehicle: out of it.
+    if (s.ride && (!s.alive || s.downed)) this.vehicles?.leave(s, false);
+    if (s.alive && s.deployed && s.ride) this.vehicles!.stepRide(s, input, dt);
+    else if (s.alive && s.deployed && s.chute) {
+      if (s.stepChute(dt, input, this.physics)) s.weapons.drawTimer = 0.35;
+      else s.weapons.step(dt, input, s.player, false);
+    } else if (s.alive && s.deployed) {
       // In the order the browser predicts it (Game.netStep).
       s.stepTimers(dt);
       kitToggles(s, input, !!this.fort);
@@ -671,6 +696,11 @@ export class MatchSim {
       if (gave) {
         this.scores.resupply(s.id);
         this.onGive(s, gave.mate, gave.kind);
+      }
+      // E by a vehicle (nobody to revive or hand something to): in.
+      if (!reviving && !gave && input.interactPressed && this.vehicles?.tryEnter(s)) {
+        consumePulses(input);
+        return;
       }
       if (reviving || gave) s.working = -1;
       else stepFort(s, input, dt, this.kit);
@@ -698,18 +728,26 @@ export class MatchSim {
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
+    this.vehicles?.step(dt);
     this.physics.step();
+    this.vehicles?.afterStep();
     for (const s of this.soldiers.values()) {
       const p = s.player;
-      this.recordPose(s.id, p.feet, p.yaw, p.bodyHeight, s.deployed && p.alive && !s.downed);
+      this.recordPose(s.id, p.feet, p.yaw, p.bodyHeight, s.deployed && p.alive && !s.downed && this.exposed(s));
     }
     for (const b of this.bots?.bots ?? []) if (!b.benched) this.recordPose(b.id, b.feet, b.yaw, b.bodyHeight, b.alive && !b.riding);
     for (let i = this.smokes.length - 1; i >= 0; i--) if (this.smokes[i]!.until < this.time) this.smokes.splice(i, 1);
   }
 
+  /** Out in the open (on foot, under a canopy or in an open seat): bullets can find them. */
+  private exposed(s: Soldier): boolean {
+    const r = s.ride;
+    return !r || r.v.spec.seats[r.seat]!.exposed;
+  }
+
   private *mineWalkers(): Iterable<MineWalker> {
     for (const s of this.soldiers.values()) {
-      if (!s.deployed) continue;
+      if (!s.deployed || s.ride || s.chute) continue;
       const p = s.player;
       yield { id: s.id, team: s.team, alive: p.alive, downed: s.downed, feet: p.feet, velocity: p.velocity, eyeHeight: p.eyeHeight };
     }
@@ -726,7 +764,7 @@ export class MatchSim {
     if (killed) this.reportKill(owner, target.id, target.name, target.team ?? null, weapon);
   }
 
-  private reportKill(owner: GrenadeOwner, victimId: number, victim: string, victimTeam: Team | null, weapon: string): void {
+  reportKill(owner: GrenadeOwner, victimId: number, victim: string, victimTeam: Team | null, weapon: string): void {
     this.bus.emit('combat:kill', { attacker: owner.name, victim, weapon, headshot: false, byPlayer: false, attackerTeam: owner.team, victimTeam, attackerId: owner.id, victimId });
   }
 
@@ -793,6 +831,7 @@ export class MatchSim {
     if (kind === 'frag') this.gadgets.blast(point, spec.radius * 0.6);
     else this.bots?.explosionAt(point);
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
+    this.vehicles?.blast(kind, point, owner, (d) => fragDamage(spec, d, false), source);
     const probe = { x: point.x, y: point.y + 0.25, z: point.z };
     const hurt = (target: Damageable, chest: THREE.Vector3, self: boolean): boolean => {
       const dmg = fragDamage(spec, chest.distanceTo(point), this.physics.blocked(probe, chest, Layer.WORLD));
@@ -804,7 +843,7 @@ export class MatchSim {
       return killed;
     };
     for (const s of this.soldiers.values()) {
-      if (!s.deployed || !s.alive || s.downed) continue;
+      if (!s.deployed || !s.alive || s.downed || !this.exposed(s)) continue;
       const self = s.id === owner.id;
       if (!self && s.team === owner.team) continue;
       const chest = this.v1.set(s.player.feet.x, s.player.feet.y + 1.1, s.player.feet.z);
@@ -903,8 +942,19 @@ export class MatchSim {
           hit = { target, part: r.part };
         }
       };
+      // Vehicles as they are now: a hull is world geometry, an aircraft a hitbox only.
+      const vw = this.vehicles?.world;
+      if (vw) {
+        const own = wall ? vw.byCollider(wall.collider.handle) : undefined;
+        if (own) hit = { target: own, part: 'body' };
+        const air = this.physics.raycast(eye, dir, best, Layer.HITBOX, undefined, undefined, (c) => !!vw.byCollider(c.handle)?.flight);
+        if (air && air.distance < best) {
+          best = air.distance;
+          hit = { target: vw.byCollider(air.collider.handle)!, part: 'body' };
+        }
+      }
       // Only who is still up now can be hurt (going down or dying in between ends it).
-      for (const o of this.soldiers.values()) if (o !== shooter && o.deployed && o.alive && !o.downed) test(o.id, o.target);
+      for (const o of this.soldiers.values()) if (o !== shooter && o.deployed && o.alive && !o.downed && this.exposed(o)) test(o.id, o.target);
       for (const b of this.bots?.bots ?? []) if (b.alive && !b.benched && !b.riding) test(b.id, b);
       const h = hit as { target: Damageable; part: HitPart } | null;
       if (h) {

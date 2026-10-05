@@ -129,6 +129,8 @@ export class PhysicsWorld {
     mask: number,
     exclude?: RAPIER.Collider,
     excludeBody?: RAPIER.RigidBody,
+    /** Only colliders this passes count. */
+    only?: (c: RAPIER.Collider) => boolean,
   ): RayHit | null {
     const ray = new RAPIER.Ray(origin, dir);
     const hit = this.world.castRayAndGetNormal(
@@ -139,6 +141,7 @@ export class PhysicsWorld {
       groups(0xffff, mask),
       exclude,
       excludeBody,
+      only,
     );
     if (!hit) return null;
     const p = ray.pointAt(hit.timeOfImpact);

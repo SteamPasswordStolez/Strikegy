@@ -22,17 +22,23 @@ import {
   SNAPSHOT_EVERY,
   TICK_HZ,
   THING,
+  VF,
   applyInput,
+  decodeDrive,
   decodeInputs,
   encodeSoldiers,
   encodeThings,
+  encodeVehicles,
   snapshotFor,
+  type NetDrive,
   type NetInput,
   type NetSoldier,
+  type NetVehicle,
 } from '../src/net/matchProtocol.ts';
 import type { ModeKind } from '../src/modes/matchRules.ts';
 import { MatchSim, SIM_DT, seeded } from '../src/sim/MatchSim.ts';
 import type { Soldier } from '../src/sim/Soldier.ts';
+import type { Vehicle } from '../src/vehicles/Vehicle.ts';
 import type { WeaponId } from '../src/weapons/weaponData.ts';
 import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
@@ -94,6 +100,10 @@ interface Seat {
   hits: number;
   farHeads: number;
   flagged: boolean;
+  /** Where this player's browser last had the vehicle they drive (put there at the next tick). */
+  drive: NetDrive | null;
+  /** Vehicle moves refused (too fast): logged now and then. */
+  refused: number;
 }
 
 export interface MatchRoomOptions {
@@ -166,7 +176,7 @@ export class MatchRoom {
       const team = this.smallerTeam();
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false };
+      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0 };
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -194,6 +204,7 @@ export class MatchRoom {
       tick: this.sim.tick,
       roster: this.roster(),
       life,
+      size: Math.max(1, Math.floor((this.opts.size ?? 24) / 2)) * 2,
     };
     conn.text({ t: 'match', match: start });
   }
@@ -236,10 +247,13 @@ export class MatchRoom {
     if (!seat || this.over) return;
     const kit = cleanKit(rawKit);
     const s = seat.soldier;
-    const at = this.sim.deploy(s.id, /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6})$/.test(key) ? key : 'base', kit);
+    const ok = /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6}|tank:[a-z]{2,12}|jet:[a-z]{2,12}|veh:\d{1,6})$/.test(key);
+    const at = this.sim.deploy(s.id, ok ? key : 'base', kit);
     if (!at) return;
     seat.kit = kit;
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
+    // Into a vehicle after the spawn (its browser takes the seat after the new life).
+    if (ok && /^(tank|jet|veh):/.test(key)) this.sim.vehicles?.board(s, key);
   }
 
   /** A binary frame from a player (inputs). */
@@ -248,6 +262,8 @@ export class MatchRoom {
     if (!seat || !seat.ready) return;
     const list = decodeInputs(data);
     if (!list) return;
+    const drive = decodeDrive(data);
+    if (drive) seat.drive = drive;
     for (const inp of list) {
       // In order, no repeats (a reconnect starts the count again).
       if (inp.seq <= seat.lastSeq && seat.lastSeq - inp.seq < 1e6) continue;
@@ -316,6 +332,11 @@ export class MatchRoom {
       }
       // No input this tick: down and waiting still bleed out; on the field, nothing moves.
       if (!take && !(s.alive && s.deployed)) sim.stepSoldier(s, null);
+      // The vehicle this player drives: where their browser has it.
+      if (seat.drive && sim.vehicles) {
+        if (!sim.vehicles.applyDrive(s, seat.drive) && ++seat.refused % 120 === 1) this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: vehicle moved too fast (${seat.refused})`);
+        seat.drive = null;
+      }
     }
     sim.endStep(SIM_DT);
     if (sim.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
@@ -334,6 +355,7 @@ export class MatchRoom {
     const list2 = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
     for (const g of this.sim.gadgets.things()) list2.push({ id: 0x8000 | (g.id & 0x3fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
     const things = encodeThings(list2);
+    const vehicles = encodeVehicles((this.sim.vehicles?.world.vehicles ?? []).map(netVehicle));
     for (const seat of this.seats.values()) {
       if (!seat.conn || !seat.ready) continue;
       const s = seat.soldier;
@@ -357,6 +379,7 @@ export class MatchRoom {
           },
           shared,
           things,
+          vehicles,
         ),
       );
     }
@@ -482,6 +505,20 @@ export class MatchRoom {
       this.opts.ended?.(e.winner);
     });
     this.sim.scores.onPoints = (id, points, reason) => this.byId.get(id)?.events.push({ k: 'points', points, reason });
+    const vehicles = this.sim.vehicles;
+    if (vehicles) {
+      vehicles.onSeat = (s, v, seat, chute) => {
+        const to = this.byId.get(s.id);
+        if (!to) return;
+        const f = s.player.feet;
+        if (v) to.events.push({ k: 'seat', v: v.id, seat });
+        else if (chute && s.chute) to.events.push({ k: 'seat', v: null, seat: -1, chute: [f.x, f.y, f.z, s.chute.x, s.chute.y, s.chute.z] });
+        else to.events.push({ k: 'seat', v: null, seat: -1, pos: [f.x, f.y, f.z] });
+      };
+      vehicles.onRocketTank = (team, zone, who, id) => {
+        for (const seat of this.seats.values()) if (seat.soldier.team === team) seat.events.push({ k: 'rocketTank', zone, who, id });
+      };
+    }
   }
 
   /** Each seat's soldier reports going down, dying and getting hurt. */
@@ -515,6 +552,8 @@ function netSoldier(seat: Seat): NetSoldier {
   if (w.state.reloading) flags |= SF.reloading;
   if (s.cls !== 'medic' && s.medkits === 0) flags |= SF.needMedkit;
   if (w.needsAmmo) flags |= SF.needAmmo;
+  if (s.ride) flags |= SF.riding;
+  if (s.chute) flags |= SF.chute;
   return { id: s.id, flags, x: p.feet.x, y: p.feet.y, z: p.feet.z, yaw: p.yaw, pitch: p.pitch, weapon: w.def.id as WeaponId, health: p.health.value, shots: w.shots & 0xff };
 }
 
@@ -528,7 +567,31 @@ function netBot(b: Bot): NetSoldier {
   if (b.horizontalSpeed > 5) flags |= SF.sprint;
   if (b.grounded) flags |= SF.grounded;
   if (b.medkits === 0 && b.cls !== 'medic') flags |= SF.needMedkit;
+  if (b.riding) flags |= SF.riding;
   return { id: b.id, flags, x: b.feet.x, y: b.feet.y, z: b.feet.z, yaw: b.aimYaw, pitch: b.aimPitch, weapon: b.def.id as WeaponId, health: b.health.value, shots: b.shots & 0xff };
+}
+
+/** A vehicle as everyone sees it. */
+function netVehicle(v: Vehicle): NetVehicle {
+  let flags = 0;
+  if (v.wrecked) flags |= VF.wrecked;
+  if (v.home === 'blue') flags |= VF.homeBlue;
+  if (v.home === 'red') flags |= VF.homeRed;
+  return {
+    id: v.id,
+    kind: v.kind,
+    flags,
+    x: v.pos.x,
+    y: v.pos.y,
+    z: v.pos.z,
+    qx: v.quat.x,
+    qy: v.quat.y,
+    qz: v.quat.z,
+    qw: v.quat.w,
+    health: Math.max(0, v.health) / v.spec.health,
+    driverOnly: v.driverOnly ?? -1,
+    seats: v.seats.map((o, i) => ({ id: o?.id ?? -1, yaw: v.mounts[i]?.yaw ?? 0, pitch: v.mounts[i]?.pitch ?? 0, shots: v.seatShots[i] ?? 0 })),
+  };
 }
 
 /** A kit from a browser, made safe (unknown class: assault). */

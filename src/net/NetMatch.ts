@@ -9,6 +9,10 @@
  *   browser's rounds stop on them (the server judges the damage).
  * - The match's news and tables come as JSON and go to the game (`onEvents`,
  *   `onState`, `onRoster`).
+ * - Vehicles are copies in the game's vehicle world, put where the server
+ *   had them at the moment drawn (kinematic bodies, so the player bumps into
+ *   them), except the one this browser's player drives: that one it drives
+ *   itself and sends where it has it with the inputs.
  */
 import * as THREE from 'three';
 import { SoldierModel } from '@/ai/SoldierModel';
@@ -23,10 +27,12 @@ import { gadgetModel } from '@/modes/gadgetWorld';
 import { LAYER_FX } from '@/render/layers';
 import type { Soldier } from '@/sim/Soldier';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import type { Vehicle } from '@/vehicles/Vehicle';
+import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Team } from '@/world/mapTypes';
 import type { ServerLink } from './ServerLink';
 import type { MatchEvent, MatchSoldierInfo, MatchStart, ServerMsg } from './lobbyProtocol';
-import { INTERP_TICKS, SF, THING, TICK_HZ, decodeSnapshot, encodeInputs, packInput, type NetInput, type Snapshot } from './matchProtocol';
+import { INTERP_TICKS, SF, THING, TICK_HZ, VF, decodeSnapshot, encodeInputsDrive, packInput, type NetInput, type NetVehicle, type Snapshot } from './matchProtocol';
 
 export interface NetOptions {
   link: ServerLink;
@@ -112,6 +118,8 @@ class Remote {
   /** On the field in the moment drawn. */
   visible = false;
   alive = false;
+  /** In a vehicle in the moment drawn (not drawn: the vehicle is). */
+  riding = false;
   private readonly muzzle = new THREE.Vector3();
   private readonly fwd = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -191,6 +199,7 @@ class Remote {
     const deployed = (flags & SF.deployed) !== 0;
     const downed = (flags & SF.downed) !== 0;
     this.alive = deployed && (flags & SF.alive) !== 0 && !downed;
+    this.riding = (flags & SF.riding) !== 0;
     const speed = span > 0 ? Math.hypot(b.x - a.x, b.z - a.z) / (span / TICK_HZ) : 0;
     const k = 1 - Math.exp(-10 * dt);
     this.crouch += (((flags & SF.crouch) !== 0 ? 1 : 0) - this.crouch) * k;
@@ -213,11 +222,11 @@ class Remote {
     if (downed && !wasDown) this.model?.onDeath();
 
     // Hitboxes where this browser sees the soldier.
-    this.boxes.setEnabled(this.alive);
-    if (this.alive) this.boxes.sync(this.pos, yaw, (flags & SF.crouch) !== 0 ? MOVE.crouchHeight : MOVE.standHeight);
+    this.boxes.setEnabled(this.alive && !this.riding);
+    if (this.alive && !this.riding) this.boxes.sync(this.pos, yaw, (flags & SF.crouch) !== 0 ? MOVE.crouchHeight : MOVE.standHeight);
 
     const weapon = (f < 0.5 ? a : b).weapon;
-    if (!this.visible) {
+    if (!this.visible || this.riding) {
       this.model?.root.removeFromParent();
       this.tag?.removeFromParent();
       return;
@@ -291,6 +300,24 @@ class Remote {
   }
 }
 
+/** A vehicle as the server had it at a tick. */
+interface VehicleSample {
+  tick: number;
+  pos: THREE.Vector3;
+  quat: THREE.Quaternion;
+  seats: NetVehicle['seats'];
+}
+
+/** A vehicle this browser draws from the server's snapshots. */
+interface VehicleTrack {
+  v: Vehicle;
+  samples: VehicleSample[];
+  /** Last snapshot tick it was in. */
+  seen: number;
+  /** Rounds seen fired per seat. */
+  shots: number[];
+}
+
 /** A grenade (or the like) in the air as the server last saw it: drawn between its samples. */
 interface Thing {
   kind: number;
@@ -323,6 +350,15 @@ export class NetMatch {
   /** A grenade went off where (and when) this browser draws things. */
   onBoom: (e: Extract<MatchEvent, { k: 'boom' }>) => void = () => {};
   private readonly remotes = new Map<number, Remote>();
+  /** The game's vehicle world (zone matches): copies of the server's vehicles go in there. */
+  vehicles: VehicleWorld | null = null;
+  /** The vehicle this browser's player drives (this browser moves it), or null. */
+  drive: Vehicle | null = null;
+  /** A vehicle came into view (the game may be waiting to get in it). */
+  onVehicle: (v: Vehicle) => void = () => {};
+  private readonly tracks = new Map<number, VehicleTrack>();
+  private readonly vq = new THREE.Quaternion();
+  private readonly vp = new THREE.Vector3();
   /** Server tick = this + now (ms) * TICK_HZ / 1000, smoothed from snapshot arrivals. */
   private offset: number | null = null;
   private seq = 0;
@@ -444,10 +480,12 @@ export class NetMatch {
     this.predicted.clear();
   }
 
-  /** Sends this frame's inputs in one frame. */
+  /** Sends this frame's inputs in one frame (with where the vehicle this player drives is). */
   flush(): void {
     if (!this.outbox.length) return;
-    this.link.sendBinary(encodeInputs(this.outbox));
+    const d = this.drive;
+    const drive = d && !d.wrecked ? { vehicle: d.id, x: d.pos.x, y: d.pos.y, z: d.pos.z, qx: d.quat.x, qy: d.quat.y, qz: d.quat.z, qw: d.quat.w, vx: d.velocity.x, vy: d.velocity.y, vz: d.velocity.z, throttle: d.flight?.throttle ?? 0 } : null;
+    this.link.sendBinary(encodeInputsDrive(this.outbox, drive));
     this.outbox.length = 0;
   }
 
@@ -500,9 +538,128 @@ export class NetMatch {
       th.samples.push({ tick: snap.tick, x: t.x, y: t.y, z: t.z });
       if (th.samples.length > 12) th.samples.shift();
     }
+    this.takeVehicles(snap.tick, snap.vehicles);
     const mine = snap.soldiers.find((s) => s.id === this.myId);
     if (snap.self && mine) this.correct(snap.self, mine.flags);
     this.lastSelf = snap.self;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vehicles
+
+  private takeVehicles(tick: number, list: readonly NetVehicle[]): void {
+    const vw = this.vehicles;
+    if (!vw) return;
+    for (const n of list) {
+      let tr = this.tracks.get(n.id);
+      const pos = new THREE.Vector3(n.x, n.y, n.z);
+      const quat = new THREE.Quaternion(n.qx, n.qy, n.qz, n.qw).normalize();
+      if (!tr || !vw.get(tr.v.id)) {
+        const home = n.flags & VF.homeBlue ? 'blue' : n.flags & VF.homeRed ? 'red' : null;
+        const yaw = new THREE.Euler().setFromQuaternion(quat, 'YXZ').y;
+        const v = vw.spawn(n.kind, pos, yaw, home, n.id);
+        v.setRemote(true);
+        v.snap(pos, quat);
+        if (v.flight) v.flightFromQuat();
+        tr = { v, samples: [], seen: tick, shots: n.seats.map((s) => s.shots) };
+        this.tracks.set(n.id, tr);
+        this.onVehicle(v);
+      }
+      const v = tr.v;
+      tr.seen = tick;
+      tr.samples.push({ tick, pos, quat, seats: n.seats });
+      if (tr.samples.length > 12) tr.samples.shift();
+      v.health = n.health * v.spec.health;
+      v.driverOnly = n.driverOnly < 0 ? null : n.driverOnly;
+      if (n.flags & VF.wrecked && !v.wrecked) vw.burnOut(v);
+      // Who sits where (this browser's own seat too: the game moves its player in and out on the server's word).
+      n.seats.forEach((s, i) => {
+        v.seats[i] = s.id < 0 ? null : { id: s.id, team: s.id === this.myId ? this.myTeam : (this.roster.get(s.id)?.team ?? v.home ?? 'red') };
+      });
+    }
+  }
+
+  /**
+   * Puts every vehicle but the one this player drives where the server had
+   * it at the moment drawn, turns their guns and draws the rounds they fired
+   * (call before the vehicles are drawn). Vehicles gone from the snapshots go.
+   */
+  placeVehicles(): void {
+    const vw = this.vehicles;
+    if (!vw) return;
+    const tick = this.viewTick();
+    for (const [id, tr] of this.tracks) {
+      const v = tr.v;
+      const list = tr.samples;
+      const last = list[list.length - 1]!;
+      if (!vw.get(v.id) || (tr.seen < this.serverTick() - 12 && last.tick < tick)) {
+        if (vw.get(v.id) && v !== this.drive) vw.remove(v);
+        this.tracks.delete(id);
+        continue;
+      }
+      if (v === this.drive) continue;
+      let a = list[0]!;
+      let b = a;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i]!.tick <= tick) {
+          a = list[i]!;
+          b = list[i + 1] ?? a;
+          break;
+        }
+      }
+      const span = b.tick - a.tick;
+      const f = span > 0 ? Math.min(1, Math.max(0, (tick - a.tick) / span)) : 0;
+      this.vp.lerpVectors(a.pos, b.pos, f);
+      this.vq.slerpQuaternions(a.quat, b.quat, f);
+      if (span > 0) v.velocity.subVectors(b.pos, a.pos).multiplyScalar(TICK_HZ / span);
+      v.snap(this.vp, this.vq);
+      if (v.flight) v.flightFromQuat();
+      const seats = (f < 0.5 ? a : b).seats;
+      seats.forEach((s, i) => {
+        const m = v.mounts[i];
+        if (!m || s.id === this.myId) return;
+        m.yaw = s.yaw;
+        m.pitch = s.pitch;
+        if (v.altMounts[i]) {
+          v.altMounts[i]!.yaw = s.yaw;
+          v.altMounts[i]!.pitch = s.pitch;
+        }
+      });
+      // Rounds fired by the moment drawn (this player's own are drawn when fired).
+      a.seats.forEach((s, i) => {
+        const fresh = (s.shots - (tr.shots[i] ?? s.shots)) & 0xff;
+        tr.shots[i] = s.shots;
+        if (fresh > 0 && fresh < 30 && s.id !== this.myId && s.id >= 0) this.mountFired(v, i, Math.min(3, fresh));
+      });
+    }
+  }
+
+  /** A seat gun firing as drawn here: flash, sound and (for the MGs and cannon) a tracer to where it points. */
+  mountFired(v: Vehicle, seat: number, n: number): void {
+    const m = v.mounts[seat];
+    if (!m) return;
+    const view = this.view;
+    v.syncModel(1);
+    const muzzle = v.muzzleOf(seat, new THREE.Vector3());
+    const node = v.model.mounts[seat];
+    const dir = new THREE.Vector3();
+    if (v.flight && v.spec.seats[seat]!.role === 'driver') dir.set(0, 0, -1).applyQuaternion(v.quat);
+    else if (node) dir.subVectors(muzzle, node.gun.getWorldPosition(this.vp));
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1).applyQuaternion(v.quat);
+    dir.normalize();
+    const dist = muzzle.distanceTo(view.camera.position);
+    view.effects.muzzleFlash(muzzle, dir);
+    if (m.gun.shell) {
+      if (m.id === 'rockets') view.audio.gadget('rocket', muzzle);
+      else view.audio.explosion(muzzle, Math.max(30, dist));
+      return;
+    }
+    for (let i = 0; i < n; i++) {
+      const hit = view.physics.raycast(muzzle, dir, m.gun.range, Layer.WORLD, undefined, v.body);
+      const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, m.gun.range);
+      view.effects.spawnShots([{ from: muzzle.clone(), to }], muzzle);
+    }
+    view.audio.remoteGunshot(m.gun.blast > 0 ? 'sr' : 'lmg', muzzle, dist);
   }
 
   /** The server's word on where this browser's soldier was after input `ack`. */
@@ -510,6 +667,12 @@ export class NetMatch {
     const me = this.me;
     const p = me.player;
     if (!(flags & SF.deployed) || !(flags & SF.alive) || !me.deployed || !p.alive) return;
+    // In a vehicle the vehicle carries the soldier (and the server's copy is a step behind).
+    if (flags & SF.riding) {
+      if (self.health > 0) p.health.value = self.health;
+      this.predicted.clear();
+      return;
+    }
     if (!(flags & SF.downed) && self.health > 0) p.health.value = self.health;
     const then = this.predicted.get(self.ack);
     for (const k of this.predicted.keys()) if (k <= self.ack) this.predicted.delete(k);
@@ -570,5 +733,6 @@ export class NetMatch {
     this.remotes.clear();
     for (const th of this.things.values()) th.mesh.removeFromParent();
     this.things.clear();
+    this.tracks.clear();
   }
 }

@@ -63,9 +63,12 @@ export class Vehicle implements Damageable {
   private readonly controller: RAPIER.DynamicRayCastVehicleController | null = null;
   /** Aircraft only. */
   readonly flight: Flight | null = null;
-  /** Centre of the air space (the map centre) and the playable radius, set by the game. */
+  /** Centre of the air space (the map centre) and the playable radius, set by the game (defaults for new vehicles). */
   static airCenter = new THREE.Vector3();
   static airRadius = 300;
+  /** This vehicle's air space (a game server runs rooms on different maps side by side). */
+  airCenter: THREE.Vector3 = Vehicle.airCenter;
+  airRadius = Vehicle.airRadius;
   readonly seats: (Occupant | null)[];
   health: number;
   /** Destroyed: a burning wreck until `removeAt`. */
@@ -90,6 +93,14 @@ export class Vehicle implements Damageable {
   readonly velocity = new THREE.Vector3();
   /** Who last hurt it (credited if it blows up). */
   lastHurtBy: DamageSource | null = null;
+  /**
+   * Moved from outside instead of by its own physics (`place`): a vehicle a
+   * person drives in a match on the game server (that person's browser
+   * drives it), and every vehicle the browser only draws there.
+   */
+  remote = false;
+  /** Rounds fired by each seat's main gun, counting up (others draw new ones). */
+  readonly seatShots: number[];
   private wheelSpin: number[];
 
   constructor(
@@ -108,6 +119,7 @@ export class Vehicle implements Damageable {
     this.mounts = spec.seats.map((s, seat) => mount(seat, s.gun));
     this.altMounts = spec.seats.map((s, seat) => mount(seat, s.alt));
     this.wheelSpin = spec.wheels.map(() => 0);
+    this.seatShots = spec.seats.map(() => 0);
     const world = physics.world;
     const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
     if (spec.flight) {
@@ -216,6 +228,7 @@ export class Vehicle implements Damageable {
 
   /** Before the physics step: wheels, engine, brakes, a hand keeping it upright (aircraft: `fly`). */
   drive(dt: number, input: DriveInput | null): void {
+    if (this.remote) return;
     if (this.flight) {
       this.fly(dt, input);
       return;
@@ -282,12 +295,12 @@ export class Vehicle implements Damageable {
     let wantPitch = THREE.MathUtils.clamp(input?.aimPitch ?? (piloted ? 0 : -0.25), -1.2, 1.2);
     if (!piloted) wantPitch = this.wrecked ? -0.9 : -0.25;
     // Air space edge: head for the centre. Outside the playable area, stay above the scenery hills.
-    const c = Vehicle.airCenter;
+    const c = this.airCenter;
     const out = Math.hypot(this.pos.x - c.x, this.pos.z - c.z);
-    f.turningBack = out > Vehicle.airRadius + AIRSPACE.margin;
+    f.turningBack = out > this.airRadius + AIRSPACE.margin;
     if (f.turningBack) wantYaw = Math.atan2(-(c.x - this.pos.x), -(c.z - this.pos.z));
     // The floor rises from just inside the edge, so a plane leaving low is already climbing.
-    const floorY = c.y + AIRSPACE.outsideAlt * THREE.MathUtils.clamp((out - Vehicle.airRadius + 80) / 160, 0, 1);
+    const floorY = c.y + AIRSPACE.outsideAlt * THREE.MathUtils.clamp((out - this.airRadius + 80) / 160, 0, 1);
     if (this.pos.y < floorY && !this.wrecked) wantPitch = Math.max(wantPitch, THREE.MathUtils.clamp((floorY - this.pos.y) * 0.015, 0.15, 0.7));
     if (piloted) f.throttle = THREE.MathUtils.clamp(f.throttle + input.throttle * dt * 0.7, 0, 1);
     // Turn toward the wanted heading and pitch at the turn rate (less when slow).
@@ -337,13 +350,58 @@ export class Vehicle implements Damageable {
     this.readBody();
   }
 
+  /**
+   * Moved from outside (see `remote`): on (ground vehicles become kinematic,
+   * pushed where they're put) or back to its own physics, keeping `velocity`.
+   */
+  setRemote(on: boolean): void {
+    if (this.remote === on) return;
+    this.remote = on;
+    if (this.flight) {
+      // Flying on by itself from where it was put: its heading from the hull.
+      if (!on) this.flightFromQuat();
+      return;
+    }
+    this.body.setBodyType(on ? RAPIER.RigidBodyType.KinematicPositionBased : RAPIER.RigidBodyType.Dynamic, true);
+    if (!on) this.body.setLinvel(this.velocity, true);
+  }
+
+  /** A remote vehicle to `pos` / `quat` at the next physics step, moving at `vel`. */
+  place(pos: THREE.Vector3, quat: THREE.Quaternion, vel: THREE.Vector3): void {
+    this.body.setNextKinematicTranslation(pos);
+    this.body.setNextKinematicRotation(quat);
+    this.velocity.copy(vel);
+  }
+
+  /** Straight there (a remote vehicle first seen, or one that jumped): no blend from where it was. */
+  snap(pos: THREE.Vector3, quat: THREE.Quaternion): void {
+    this.body.setTranslation(pos, true);
+    this.body.setRotation(quat, true);
+    this.pos.copy(pos);
+    this.quat.copy(quat);
+    this.prevPos.copy(pos);
+    this.prevQuat.copy(quat);
+  }
+
+  /** An aircraft's heading, pitch and roll from how its hull is turned (its speed from its velocity). */
+  flightFromQuat(): void {
+    const f = this.flight;
+    if (!f) return;
+    const e = new THREE.Euler().setFromQuaternion(this.quat, 'YXZ');
+    f.yaw = e.y;
+    f.pitch = e.x;
+    f.roll = e.z;
+    const speed = this.velocity.length();
+    if (speed > 1) f.speed = speed;
+  }
+
   private readBody(): void {
     const t = this.body.translation();
     const r = this.body.rotation();
     this.pos.set(t.x, t.y, t.z);
     this.quat.set(r.x, r.y, r.z, r.w);
-    // Aircraft keep the velocity they flew with (a kinematic body reports none).
-    if (this.flight) return;
+    // Aircraft keep the velocity they flew with (a kinematic body reports none); remote ones what they were given.
+    if (this.flight || this.remote) return;
     const v = this.body.linvel();
     this.velocity.set(v.x, v.y, v.z);
   }
@@ -404,7 +462,10 @@ export class Vehicle implements Damageable {
       const down = physics.raycast({ x: at.x, y: at.y + 1.5, z: at.z }, { x: 0, y: -1, z: 0 }, 5, Layer.WORLD, this.collider);
       if (!down || down.normal.y < 0.6) continue;
       const g = new THREE.Vector3(down.point.x, down.point.y, down.point.z);
-      if (physics.blocked(this.pos, g.clone().setY(g.y + 0.9), Layer.WORLD)) continue;
+      // Nothing between the hull and the spot (the hull itself aside: the ray starts inside it).
+      const dir = g.clone().setY(g.y + 0.9).sub(this.pos);
+      const dist = dir.length();
+      if (physics.raycast(this.pos, dir.divideScalar(dist), dist - 0.05, Layer.WORLD, undefined, this.body)) continue;
       return g;
     }
     return this.pos.clone().setY(this.pos.y + this.spec.half[1] + 0.3);
@@ -449,6 +510,7 @@ export class Vehicle implements Damageable {
     if (m.overheated && m.heat <= 0) m.overheated = false;
     if (!firing || m.overheated || time < m.nextShot) return false;
     m.nextShot = time + 60 / g.rpm;
+    if (!alt) this.seatShots[seat] = (this.seatShots[seat]! + 1) & 0xff;
     if (g.burst > 1) {
       m.heat += 1 / g.burst;
       if (m.heat >= 1) m.overheated = true;

@@ -68,6 +68,8 @@ export class VehicleWorld {
   readonly vehicles: Vehicle[] = [];
   private nextId = FIRST_ID;
   private time = 0;
+  /** The map's air space for new vehicles (null: Vehicle's defaults). */
+  air: { center: THREE.Vector3; radius: number } | null = null;
   private readonly byHandle = new Map<number, Vehicle>();
 
   constructor(
@@ -133,8 +135,12 @@ export class VehicleWorld {
     return spot ? this.spawn(kind, spot.pos, spot.yaw, team) : null;
   }
 
-  spawn(kind: VehicleKind, pos: THREE.Vector3, yaw: number, home: Team | null): Vehicle {
-    const v = new Vehicle(this.nextId++, kind, this.physics, pos, yaw, home);
+  spawn(kind: VehicleKind, pos: THREE.Vector3, yaw: number, home: Team | null, id = this.nextId++): Vehicle {
+    const v = new Vehicle(id, kind, this.physics, pos, yaw, home);
+    if (this.air) {
+      v.airCenter = this.air.center;
+      v.airRadius = this.air.radius;
+    }
     v.usedAt = this.time;
     this.vehicles.push(v);
     for (const c of [v.collider, v.wingCollider]) {
@@ -221,18 +227,23 @@ export class VehicleWorld {
   }
 
   private wreck(v: Vehicle): void {
+    this.burnOut(v);
+    v.removeAt = this.time + WRECK_LIFE;
+    this.hooks.destroyed(v, v.lastHurtBy);
+  }
+
+  /** A wreck: dark all over (a browser in a match on the game server shows what the server wrecked). */
+  burnOut(v: Vehicle): void {
     v.wrecked = true;
     v.health = 0;
-    v.removeAt = this.time + WRECK_LIFE;
-    // Burnt out: dark all over.
     v.model.root.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) m.material = WRECK_MAT;
     });
-    this.hooks.destroyed(v, v.lastHurtBy);
   }
 
-  private remove(v: Vehicle): void {
+  /** Off the map and out of the physics. */
+  remove(v: Vehicle): void {
     this.vehicles.splice(this.vehicles.indexOf(v), 1);
     for (const c of [v.collider, v.wingCollider]) {
       if (!c) continue;

@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -105,6 +105,8 @@ export interface MatchStart {
   roster: MatchSoldierInfo[];
   /** Back to a soldier still on the field (a reload mid-match): carry on from here. */
   life?: { pos: [number, number, number]; yaw: number; seed: number; kit: unknown };
+  /** Soldiers the room holds in all (vehicle limits scale with it). */
+  size?: number;
 }
 
 /** A score table row as sent. */
@@ -143,7 +145,19 @@ export type MatchEvent =
   | { k: 'zone'; type: 'captured' | 'neutralized'; zone: string; team: Side }
   | { k: 'mode'; e: unknown }
   /** A grenade went off at tick `tick` (browsers show it when they draw that moment). */
-  | { k: 'boom'; type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell'; pos: [number, number, number]; tick: number }
+  | {
+      k: 'boom';
+      type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck';
+      pos: [number, number, number];
+      tick: number;
+    }
+  /**
+   * To the soldier's player: now in seat `seat` of vehicle `v` (null: out of
+   * it; `chute`: bailed out under a parachute at x, y, z moving vx, vy, vz).
+   */
+  | { k: 'seat'; v: number | null; seat: number; chute?: [number, number, number, number, number, number]; pos?: [number, number, number] }
+  /** To a side: a rocket tank came for `who` at zone `zone`. */
+  | { k: 'rocketTank'; zone: string; who: string; id: number }
   /** A mate handed `to` a medkit or ammo (to both of them); a supply crate gave `to` a refill (`by` -1). */
   | { k: 'given'; kind: 'medkit' | 'ammo' | 'crate'; by: number; to: number }
   /** A squad leader called something in (browsers show the planes, crates and markers). */

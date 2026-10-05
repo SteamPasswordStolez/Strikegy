@@ -44,6 +44,7 @@ import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type Gadge
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
+import { vehicleWorldFor } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
@@ -991,8 +992,10 @@ export class Game {
       const alpha = this.loop.advance(dt, (h) => this.simStep(h));
       this.lastAlpha = alpha;
       simMs = performance.now() - tSim;
+      this.net?.placeVehicles();
       this.vehicles?.render(alpha, this.renderer.camera.position);
       this.updateAirMarkers();
+      if (this.net) this.syncNetChute();
       this.renderRider(alpha, dt);
       if (this.chute) {
         const p = this.player;
@@ -1203,7 +1206,13 @@ export class Game {
     w.sway.yaw = n.swayYaw;
     w.sway.pitch = n.swayPitch;
     const me = this.me;
-    if (p.alive && this.deployed) {
+    if (p.alive && this.deployed && this.ride) this.netRide(dt, input, net);
+    else if (p.alive && this.deployed && me.chute) {
+      // Under the canopy: the same drift the server runs; the gun still works.
+      if (me.stepChute(dt, input, this.physics)) w.drawTimer = DRAW_TIME;
+      else w.step(dt, input, p, false);
+      net.stepped(n.seq, p.feet);
+    } else if (p.alive && this.deployed) {
       // In the order the server steps a soldier (MatchSim.stepSoldier).
       const kit = this.netKit();
       me.stepTimers(dt);
@@ -1235,7 +1244,95 @@ export class Game {
     this.throwables.step(dt);
     this.support.step(dt);
     this.physics.step();
+    this.vehicles?.afterStep();
     consumePulses(input);
+  }
+
+  /**
+   * In a vehicle in a match on the game server: the driver drives it here
+   * (and the server is sent where it is), a gunner's gun follows the view
+   * and fires here for the look and sound (the server fires the real
+   * rounds). Getting in, out and changing seats is the server's word
+   * (`netSeat`).
+   */
+  private netRide(dt: number, input: InputState, net: NetMatch): void {
+    const { v, seat } = this.ride!;
+    const p = this.player;
+    this.interact = null;
+    if (input.viewToggle) this.rideThird = !this.rideThird;
+    const spec = v.spec.seats[seat]!;
+    if (spec.role === 'driver' && net.drive === v) v.drive(dt, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
+    if (spec.gun) {
+      v.aimMount(seat, p.yaw, p.pitch);
+      if (v.pullTrigger(seat, input.fire, this.simTime, dt)) {
+        net.mountFired(v, seat, 1);
+        this.shake = Math.min(0.03, this.shake + (v.mounts[seat]!.gun.blast > 0 ? 0.012 : 0.004));
+      }
+    }
+    if (v.altMounts[seat] && v.pullTrigger(seat, input.ads, this.simTime, dt, true)) this.audio.gadget('rocket', null);
+    p.ride(v.seatEye(seat, this.tmpEye), v.velocity);
+  }
+
+  /** A seat the server put this player in, waiting for its vehicle to show up in the snapshots. */
+  private pendingSeat: { v: number; seat: number } | null = null;
+
+  /** In or out of a vehicle, as the server says. */
+  private netSeat(e: Extract<MatchEvent, { k: 'seat' }>): void {
+    const net = this.net!;
+    this.pendingSeat = null;
+    const was = this.ride;
+    if (was && net.drive === was.v) {
+      was.v.setRemote(true);
+      net.drive = null;
+    }
+    if (e.v === null) {
+      this.ride = null;
+      const p = this.player;
+      if (e.chute) {
+        const [x, y, z, vx, vy, vz] = e.chute;
+        this.me.chute = new THREE.Vector3(vx, vy, vz);
+        p.ride(new THREE.Vector3(x, y + p.eyeHeight, z), this.me.chute);
+        this.audio.gadget('place', null);
+      } else p.dismount(e.pos ? new THREE.Vector3(...e.pos) : p.feet.clone());
+      this.weapons.drawTimer = DRAW_TIME;
+      net.respawned();
+      return;
+    }
+    const v = this.vehicles?.get(e.v);
+    if (v) this.netBoard(v, e.seat);
+    else this.pendingSeat = { v: e.v, seat: e.seat };
+  }
+
+  private netBoard(v: Vehicle, seat: number): void {
+    this.ride = { v, seat };
+    this.me.chute = null;
+    this.gadgetOut = false;
+    this.buildMode = false;
+    this.supportAim = null;
+    this.weapons.adsBlend = 0;
+    if (seat === 0) {
+      // This browser drives it from here on.
+      v.setRemote(false);
+      this.net!.drive = v;
+    }
+    // In a plane the view starts along the nose (the plane turns toward the view).
+    if (v.flight && seat === 0) {
+      this.player.yaw = v.flight.yaw;
+      this.player.pitch = v.flight.pitch;
+    }
+    this.audio.gadget('place', null);
+  }
+
+  /** The canopy over this player's soldier while it hangs under one (match on the game server). */
+  private syncNetChute(): void {
+    if (this.me.chute && !this.chute) {
+      this.chute = buildParachute();
+      this.renderer.scene.add(this.chute);
+    } else if (!this.me.chute && this.chute) {
+      this.renderer.scene.remove(this.chute);
+      disposeTree(this.chute, true);
+      this.chute = null;
+    }
   }
 
   /**
@@ -1444,6 +1541,8 @@ export class Game {
    * told where it is.
    */
   private callRocketTank(owner: GadgetOwner, near: THREE.Vector3): boolean {
+    // On the game server the server brings it out (it shows up in the snapshots).
+    if (this.net) return true;
     const vw = this.vehicles;
     const zm = this.zoneMode;
     if (!vw?.heavy || !zm) return false;
@@ -1951,7 +2050,12 @@ export class Game {
     this.supportMenu.open = false;
     // The rocket tank isn't aimed: it comes to the zone nearest the leader (not on the game server yet).
     if (id === 'rocketTank') {
-      if (this.net) return;
+      if (this.net) {
+        const f = this.player.feet;
+        this.net.link.send({ t: 'callin', kind: id, point: [f.x, f.y, f.z] });
+        this.audio.click();
+        return;
+      }
       const sq = this.playerSquad!;
       const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: `${sq.team}:${sq.name}` };
       if (this.support.request(id, this.player.feet, owner, s.rp, false)) this.audio.click();
@@ -3557,6 +3661,19 @@ export class Game {
     this.netSquads(net);
     net.onBoom = (e) => this.netBoom(e.type, new THREE.Vector3(...e.pos));
     net.onState = (m) => this.onNetState(m);
+    // Vehicles (zone matches): copies of the server's, in a world laid out the same way (pads, tank spots, limits).
+    if ((map.zones?.length ?? 0) > 0) {
+      this.vehicles = vehicleWorldFor(this.physics, this.registry, { destroyed: () => {}, roadkill: () => {} }, map, opts.start.size ?? 24);
+      r.scene.add(this.vehicles.group);
+      net.vehicles = this.vehicles;
+      net.onVehicle = (v) => {
+        const p = this.pendingSeat;
+        if (p && p.v === v.id) {
+          this.pendingSeat = null;
+          this.netBoard(v, p.seat);
+        }
+      };
+    }
     net.onClosed = () => {
       if (this.matchOver) return;
       this.running = false;
@@ -3657,7 +3774,7 @@ export class Game {
           if (kind === 'recon' || kind === 'supply') this.support.request(kind, at, e.owner, Infinity, ours, true);
           else {
             this.support.account(kind, e.owner);
-            if (ours) this.support.marker(kind, at);
+            if (ours && kind !== 'rocketTank') this.support.marker(kind, at);
           }
           if (ours) this.hud.notify(`${t('support.called').replace('{name}', t(`support.${kind}` as MessageKey))} — ${e.owner.id === this.myId ? playerName(t('feed.you')) : e.owner.name}`, 'ally');
           break;
@@ -3679,6 +3796,12 @@ export class Game {
             if (e.kind !== 'crate') this.hud.notify(`${t(e.kind === 'medkit' ? 'notify.gotMedkit' : 'notify.gotAmmo')} — ${this.net?.nameOf(e.by) ?? ''}`, 'ally');
           } else if (e.kind !== 'crate') this.hud.notify(`${t(e.kind === 'medkit' ? 'act.giveMedkit' : 'act.giveAmmo')} → ${this.net?.nameOf(e.to) ?? ''}`, 'ally');
           this.audio.resupply();
+          break;
+        case 'seat':
+          this.netSeat(e);
+          break;
+        case 'rocketTank':
+          this.hud.notify(t('support.rocketArrived').replace('{zone}', e.zone).replace('{who}', e.id === this.myId ? playerName(t('feed.you')) : e.who), 'ally');
           break;
         case 'end':
           this.bus.emit('match:ended', { winner: e.winner });
@@ -3733,6 +3856,13 @@ export class Game {
   /** On the field where the server put this browser's soldier. */
   private netSpawned(e: Extract<MatchEvent, { k: 'spawn' }>): void {
     this.netDeploying = false;
+    // A new life starts on foot (a vehicle key's seat comes right after).
+    if (this.ride && this.net?.drive === this.ride.v) {
+      this.ride.v.setRemote(true);
+      this.net.drive = null;
+    }
+    this.ride = null;
+    this.pendingSeat = null;
     const raw = (typeof e.kit === 'object' && e.kit ? e.kit : {}) as Partial<Loadout>;
     const kit = sanitizeLoadout({ ...raw, cls: raw.cls ?? this.loadouts.current.cls });
     this.deployed = true;

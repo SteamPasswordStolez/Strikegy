@@ -4,7 +4,7 @@ import { rayHitbox } from '@/combat/CharacterHitboxes';
 import { createInputState } from '@/input/InputState';
 import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
 import { PROTOCOL_VERSION } from '@/net/lobbyProtocol';
-import { decodeInputs, decodeSnapshot, encodeInputs, packInput, type Snapshot } from '@/net/matchProtocol';
+import { decodeInputs, decodeSnapshot, encodeInputs, encodeInputsDrive, packInput, type Snapshot } from '@/net/matchProtocol';
 import { Layer } from '@/physics/PhysicsWorld';
 import { LobbyCore, SEAT_GRACE, type Conn, type MatchHost } from '../server/lobby';
 import { MatchRoom } from '../server/matchRoom';
@@ -126,6 +126,85 @@ describe('a match room on the game server', () => {
     expect(last.self!.ack).toBeLessThanOrEqual(seqA);
     room.dispose();
   });
+});
+
+describe('vehicles on the game server', () => {
+  it('a tank from the deploy screen: seated, driven from the browser (checked), out again; a jet bail-out under a parachute', async () => {
+    const room = await MatchRoom.create({ room: 'rv', map: 'iron_gate', mode: 'zone', size: 24 });
+    const sim = room.sim;
+    const a = line();
+    const b = line();
+    room.join('ua', 'alpha', a.line);
+    room.join('ub', 'bravo', b.line);
+    const start = a.texts.find((m) => m.t === 'match');
+    expect(start && start.t === 'match' && start.match.size).toBe(24);
+    room.ready('ua');
+    room.ready('ub');
+    room.deploy('ua', 'tank:tank', { cls: 'assault' });
+    room.deploy('ub', 'jet:fighter', { cls: 'recon' });
+    room.tick();
+    const sa = sim.soldiers.get(1000)!;
+    const sb = sim.soldiers.get(1001)!;
+    const evA = a.events();
+    // The spawn first, then the seat.
+    expect(evA.findIndex((e) => e.k === 'spawn')).toBeLessThan(evA.findIndex((e) => e.k === 'seat'));
+    const seat = evA.find((e) => e.k === 'seat');
+    expect(seat).toMatchObject({ k: 'seat', seat: 0 });
+    const tank = sa.ride!.v;
+    expect(tank.kind).toBe('tank');
+    expect(tank.remote).toBe(true);
+    for (let i = 0; i < 3; i++) room.tick();
+    const snap = a.snaps.at(-1)!;
+    const nv = snap.vehicles.find((v) => v.id === (tank.id & 0xffff))!;
+    expect(nv.kind).toBe('tank');
+    expect(nv.seats[0]!.id).toBe(1000);
+    expect(snap.soldiers.find((s) => s.id === 1000)!.flags & 1024).toBeTruthy();
+
+    // The browser drives it 1 m on: the server's copy follows. 200 m in a tick is refused.
+    let seq = 0;
+    const idle = createInputState();
+    const q = tank.quat;
+    const drive = (x: number, z: number) =>
+      encodeInputsDrive([packInput(idle, ++seq, sim.tick, 0, 0, 0, 0)], { vehicle: tank.id & 0xffff, x, y: tank.pos.y, z, qx: q.x, qy: q.y, qz: q.z, qw: q.w, vx: 0, vy: 0, vz: 0, throttle: 0 });
+    const from = tank.pos.clone();
+    room.binary('ua', drive(from.x + 1, from.z));
+    room.tick();
+    expect(tank.pos.x).toBeCloseTo(from.x + 1, 1);
+    room.binary('ua', drive(from.x + 200, from.z));
+    room.tick();
+    expect(tank.pos.x).toBeCloseTo(from.x + 1, 1);
+
+    // E: out beside it, the tank back on its own physics.
+    const out = createInputState();
+    out.interactPressed = true;
+    room.binary('ua', encodeInputs([packInput(out, ++seq, sim.tick, 0, 0, 0, 0)]));
+    room.tick();
+    expect(sa.ride).toBeNull();
+    expect(tank.remote).toBe(false);
+    expect(tank.seats[0]).toBeNull();
+    const left = a.events().filter((e) => e.k === 'seat').at(-1);
+    expect(left).toMatchObject({ k: 'seat', v: null });
+    expect(left && left.k === 'seat' && left.pos).toBeTruthy();
+
+    // Bravo's fighter: high up; bailing out opens a canopy and drifts down.
+    const jet = sb.ride!.v;
+    expect(jet.flight).toBeTruthy();
+    const ground = sim.world.terrain.heightAt(jet.pos.x, jet.pos.z);
+    expect(jet.pos.y - ground).toBeGreaterThan(100);
+    let seqB = 0;
+    room.binary('ub', encodeInputs([packInput(out, ++seqB, sim.tick, 0, 0, 0, 0)]));
+    room.tick();
+    expect(sb.ride).toBeNull();
+    expect(sb.chute).not.toBeNull();
+    expect(b.events().filter((e) => e.k === 'seat').at(-1)).toMatchObject({ k: 'seat', v: null, chute: expect.any(Array) });
+    const y0 = sb.player.feet.y;
+    for (let i = 0; i < 60; i++) {
+      room.binary('ub', encodeInputs([packInput(idle, ++seqB, sim.tick, 0, 0, 0, 0)]));
+      room.tick();
+    }
+    expect(y0 - sb.player.feet.y).toBeGreaterThan(6);
+    room.dispose();
+  }, 60_000);
 });
 
 describe('a room with bots', () => {

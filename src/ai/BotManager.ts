@@ -25,7 +25,7 @@ import { RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
 import { SUPPORT, type SupportId } from '@/data/support';
 import type { Danger } from '@/modes/supportWorld';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
-import { Vehicle as VehicleAir, type Vehicle, type DriveInput } from '@/vehicles/Vehicle';
+import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
 
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
@@ -300,7 +300,8 @@ export class BotManager implements BotServices {
   /** Where hulls fit (see VehicleNav); drivers fall back to the people's mesh without it. */
   vehicleNav: VehicleNav | null = null;
   driveInputs = new Map<number, DriveInput>();
-  playerRiding: (() => boolean) | null = null;
+  /** Whether a person (not a bot) sits in a vehicle. */
+  playerRiding: ((id: number) => boolean) | null = null;
   /** Fires one round from a vehicle's seat gun at a point (the game's shared vehicle gun code). */
   fireMount: ((v: Vehicle, seat: number, shooter: { id: number; name: string; team: Team }, aim: THREE.Vector3 | null, alt?: boolean) => void) | null = null;
   private vehicleCheckAt = 0;
@@ -1426,7 +1427,7 @@ export class BotManager implements BotServices {
   }
 
   inVehicle(c: Combatant): boolean {
-    if (!(c instanceof Bot)) return this.playerRiding?.() ?? false;
+    if (!(c instanceof Bot)) return this.playerRiding?.(c.id) ?? false;
     return !!this.entries.find((x) => x.bot.id === c.id)?.bot.riding;
   }
 
@@ -1497,7 +1498,7 @@ export class BotManager implements BotServices {
     this.driveInputs.set(v.id, out);
     const below = this.physics.raycast(v.pos, DOWN, 2000, Layer.WORLD);
     // Off the edge of the terrain: the battlefield's height.
-    const ground = below ? v.pos.y - below.distance : VehicleAir.airCenter.y;
+    const ground = below ? v.pos.y - below.distance : v.airCenter.y;
     const height = v.pos.y - ground;
     const cruise = ground + 170;
     const p = (e.flightPlan ??= { target: null, kind: 'none', until: 0, pullUntil: 0 });
@@ -1583,9 +1584,9 @@ export class BotManager implements BotServices {
       }
     } else {
       // Nothing to hit: circle the battlefield at cruise height.
-      const c = VehicleAir.airCenter;
+      const c = v.airCenter;
       const ang = Math.atan2(v.pos.z - c.z, v.pos.x - c.x) + 0.35;
-      const r = VehicleAir.airRadius * 0.75;
+      const r = v.airRadius * 0.75;
       const want = new THREE.Vector3(c.x + Math.cos(ang) * r, cruise, c.z + Math.sin(ang) * r);
       const a = lookAt(want);
       out.aimYaw = a.yaw;

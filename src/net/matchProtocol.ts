@@ -10,6 +10,7 @@
  * browser predicted.
  */
 import type { InputState } from '@/input/InputState';
+import { VEHICLES, type VehicleKind } from '@/vehicles/vehicleData';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 
 export const FRAME = { input: 1, snapshot: 2 } as const;
@@ -24,6 +25,7 @@ export const INTERP_TICKS = 6;
 export const REWIND_MAX = 0.5;
 
 const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
+const VEHICLE_KINDS = Object.keys(VEHICLES) as VehicleKind[];
 export const weaponIndex = (id: WeaponId): number => Math.max(0, WEAPON_IDS.indexOf(id));
 export const weaponAt = (i: number): WeaponId => WEAPON_IDS[i] ?? WEAPON_IDS[0]!;
 
@@ -144,13 +146,85 @@ export function encodeInputs(list: readonly NetInput[]): Uint8Array {
   return new Uint8Array(buf);
 }
 
+/**
+ * Where the browser has the vehicle its player drives (it drives it there;
+ * the server checks the move and puts its copy there): sent after the
+ * frame's inputs.
+ */
+export interface NetDrive {
+  vehicle: number;
+  x: number;
+  y: number;
+  z: number;
+  qx: number;
+  qy: number;
+  qz: number;
+  qw: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  /** Aircraft throttle 0..1. */
+  throttle: number;
+}
+
+const DRIVE_BYTES = 29;
+const VEL_Q = 50;
+const qVel = (x: number): number => Math.max(-32767, Math.min(32767, Math.round(x * VEL_Q)));
+const qUnit = (x: number): number => Math.max(-32767, Math.min(32767, Math.round(x * 32767)));
+
+/** An input frame with the driven vehicle's place after the inputs. */
+export function encodeInputsDrive(list: readonly NetInput[], drive: NetDrive | null): Uint8Array {
+  const base = encodeInputs(list);
+  if (!drive) return base;
+  const buf = new Uint8Array(base.byteLength + DRIVE_BYTES);
+  buf.set(base);
+  const v = new DataView(buf.buffer);
+  const o = base.byteLength;
+  v.setUint16(o, drive.vehicle & 0xffff);
+  v.setFloat32(o + 2, drive.x);
+  v.setFloat32(o + 6, drive.y);
+  v.setFloat32(o + 10, drive.z);
+  v.setInt16(o + 14, qUnit(drive.qx));
+  v.setInt16(o + 16, qUnit(drive.qy));
+  v.setInt16(o + 18, qUnit(drive.qz));
+  v.setInt16(o + 20, qUnit(drive.qw));
+  v.setInt16(o + 22, qVel(drive.vx));
+  v.setInt16(o + 24, qVel(drive.vy));
+  v.setInt16(o + 26, qVel(drive.vz));
+  v.setUint8(o + 28, Math.max(0, Math.min(255, Math.round(drive.throttle * 255))));
+  return buf;
+}
+
+/** The driven vehicle's place in an input frame, if it has one. */
+export function decodeDrive(data: Uint8Array): NetDrive | null {
+  if (data.byteLength < 2) return null;
+  const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const o = 2 + v.getUint8(1) * INPUT_BYTES;
+  if (data.byteLength !== o + DRIVE_BYTES) return null;
+  const x = v.getFloat32(o + 2);
+  const y = v.getFloat32(o + 6);
+  const z = v.getFloat32(o + 10);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  let qx = v.getInt16(o + 14) / 32767;
+  let qy = v.getInt16(o + 16) / 32767;
+  let qz = v.getInt16(o + 18) / 32767;
+  let qw = v.getInt16(o + 20) / 32767;
+  const len = Math.hypot(qx, qy, qz, qw);
+  if (len < 0.5) return null;
+  qx /= len;
+  qy /= len;
+  qz /= len;
+  qw /= len;
+  return { vehicle: v.getUint16(o), x, y, z, qx, qy, qz, qw, vx: v.getInt16(o + 22) / VEL_Q, vy: v.getInt16(o + 24) / VEL_Q, vz: v.getInt16(o + 26) / VEL_Q, throttle: v.getUint8(o + 28) / 255 };
+}
+
 /** Inputs from a frame; null when the frame is malformed. */
 export function decodeInputs(data: Uint8Array): NetInput[] | null {
   if (data.byteLength < 2) return null;
   const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
   if (v.getUint8(0) !== FRAME.input) return null;
   const n = v.getUint8(1);
-  if (data.byteLength !== 2 + n * INPUT_BYTES) return null;
+  if (data.byteLength !== 2 + n * INPUT_BYTES && data.byteLength !== 2 + n * INPUT_BYTES + DRIVE_BYTES) return null;
   const out: NetInput[] = [];
   let o = 2;
   for (let i = 0; i < n; i++) {
@@ -189,6 +263,10 @@ export const SF = {
   /** Out of medkits (a medic could hand one over) / short of ammo (a support could). */
   needMedkit: 256,
   needAmmo: 512,
+  /** In a vehicle (drawn there, if at all). */
+  riding: 1024,
+  /** Under a parachute. */
+  chute: 2048,
 } as const;
 
 /** One soldier as everyone sees it. */
@@ -234,11 +312,114 @@ export interface NetThing {
   z: number;
 }
 
+/** Vehicle state bits in a snapshot. */
+export const VF = { wrecked: 1, homeBlue: 2, homeRed: 4 } as const;
+
+/** One vehicle as everyone sees it. */
+export interface NetVehicle {
+  id: number;
+  kind: VehicleKind;
+  flags: number;
+  x: number;
+  y: number;
+  z: number;
+  qx: number;
+  qy: number;
+  qz: number;
+  qw: number;
+  /** Health as a fraction of full, 0..1. */
+  health: number;
+  /** Only this soldier may drive it (a called-in rocket tank), or -1. */
+  driverOnly: number;
+  /** Per seat: who sits there (-1: nobody), the gun's yaw / pitch on the hull and its rounds fired (wraps at 256). */
+  seats: { id: number; yaw: number; pitch: number; shots: number }[];
+}
+
 export interface Snapshot {
   tick: number;
   self: NetSelf | null;
   soldiers: NetSoldier[];
   things: NetThing[];
+  vehicles: NetVehicle[];
+}
+
+const VEHICLE_BYTES = 21;
+const SEAT_BYTES = 5;
+const qAngle = (a: number): number => Math.max(-127, Math.min(127, Math.round((Math.atan2(Math.sin(a), Math.cos(a)) / Math.PI) * 127)));
+
+/** The vehicles of a tick (shared by every receiver). */
+export function encodeVehicles(list: readonly NetVehicle[]): Uint8Array {
+  const n = Math.min(255, list.length);
+  let size = 1;
+  for (let i = 0; i < n; i++) size += VEHICLE_BYTES + VEHICLES[list[i]!.kind].seats.length * SEAT_BYTES;
+  const buf = new Uint8Array(size);
+  const v = new DataView(buf.buffer);
+  v.setUint8(0, n);
+  let o = 1;
+  for (let i = 0; i < n; i++) {
+    const x = list[i]!;
+    v.setUint16(o, x.id & 0xffff);
+    v.setUint8(o + 2, Math.max(0, VEHICLE_KINDS.indexOf(x.kind)));
+    v.setUint8(o + 3, x.flags);
+    v.setUint16(o + 4, qX(x.x));
+    v.setUint16(o + 6, qY(x.y));
+    v.setUint16(o + 8, qX(x.z));
+    v.setInt16(o + 10, qUnit(x.qx));
+    v.setInt16(o + 12, qUnit(x.qy));
+    v.setInt16(o + 14, qUnit(x.qz));
+    v.setInt16(o + 16, qUnit(x.qw));
+    v.setUint8(o + 18, Math.max(0, Math.min(255, Math.round(x.health * 255))));
+    v.setUint16(o + 19, x.driverOnly < 0 ? 0xffff : x.driverOnly & 0xffff);
+    o += VEHICLE_BYTES;
+    const seats = VEHICLES[x.kind].seats.length;
+    for (let s = 0; s < seats; s++) {
+      const st = x.seats[s];
+      v.setUint16(o, !st || st.id < 0 ? 0xffff : st.id & 0xffff);
+      v.setInt8(o + 2, qAngle(st?.yaw ?? 0));
+      v.setInt8(o + 3, Math.max(-127, Math.min(127, Math.round(((st?.pitch ?? 0) / (Math.PI / 2)) * 127))));
+      v.setUint8(o + 4, (st?.shots ?? 0) & 0xff);
+      o += SEAT_BYTES;
+    }
+  }
+  return buf;
+}
+
+function decodeVehicles(v: DataView, o: number): { list: NetVehicle[]; end: number } | null {
+  if (v.byteLength < o + 1) return null;
+  const n = v.getUint8(o);
+  o += 1;
+  const list: NetVehicle[] = [];
+  for (let i = 0; i < n; i++) {
+    if (v.byteLength < o + VEHICLE_BYTES) return null;
+    const kind = VEHICLE_KINDS[v.getUint8(o + 2)];
+    if (!kind) return null;
+    const seats = VEHICLES[kind].seats.length;
+    if (v.byteLength < o + VEHICLE_BYTES + seats * SEAT_BYTES) return null;
+    const only = v.getUint16(o + 19);
+    const x: NetVehicle = {
+      id: v.getUint16(o),
+      kind,
+      flags: v.getUint8(o + 3),
+      x: v.getUint16(o + 4) / XZ_Q - 1024,
+      y: v.getUint16(o + 6) / Y_Q - 256,
+      z: v.getUint16(o + 8) / XZ_Q - 1024,
+      qx: v.getInt16(o + 10) / 32767,
+      qy: v.getInt16(o + 12) / 32767,
+      qz: v.getInt16(o + 14) / 32767,
+      qw: v.getInt16(o + 16) / 32767,
+      health: v.getUint8(o + 18) / 255,
+      driverOnly: only === 0xffff ? -1 : only,
+      seats: [],
+    };
+    o += VEHICLE_BYTES;
+    for (let s = 0; s < seats; s++) {
+      const id = v.getUint16(o);
+      x.seats.push({ id: id === 0xffff ? -1 : id, yaw: (v.getInt8(o + 2) / 127) * Math.PI, pitch: (v.getInt8(o + 3) / 127) * (Math.PI / 2), shots: v.getUint8(o + 4) });
+      o += SEAT_BYTES;
+    }
+    list.push(x);
+  }
+  return { list, end: o };
 }
 
 const THING_BYTES = 9;
@@ -298,9 +479,9 @@ export function encodeSoldiers(list: readonly NetSoldier[]): Uint8Array {
 }
 
 /** A whole snapshot frame for one receiver. */
-export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8Array, things: Uint8Array = EMPTY_THINGS): Uint8Array {
+export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8Array, things: Uint8Array = EMPTY_THINGS, vehicles: Uint8Array = EMPTY_VEHICLES): Uint8Array {
   const head = 6 + (self ? SELF_BYTES : 0);
-  const buf = new Uint8Array(head + soldiers.byteLength + things.byteLength);
+  const buf = new Uint8Array(head + soldiers.byteLength + things.byteLength + vehicles.byteLength);
   const v = new DataView(buf.buffer);
   v.setUint8(0, FRAME.snapshot);
   v.setUint32(1, tick);
@@ -319,10 +500,12 @@ export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8A
   }
   buf.set(soldiers, head);
   buf.set(things, head + soldiers.byteLength);
+  buf.set(vehicles, head + soldiers.byteLength + things.byteLength);
   return buf;
 }
 
 const EMPTY_THINGS = new Uint8Array(2);
+const EMPTY_VEHICLES = new Uint8Array(1);
 
 export function decodeSnapshot(data: Uint8Array): Snapshot | null {
   if (data.byteLength < 8) return null;
@@ -369,13 +552,15 @@ export function decodeSnapshot(data: Uint8Array): Snapshot | null {
   }
   const m = v.getUint16(o);
   o += 2;
-  if (data.byteLength !== o + m * THING_BYTES) return null;
+  if (data.byteLength < o + m * THING_BYTES) return null;
   const things: NetThing[] = [];
   for (let i = 0; i < m; i++) {
     things.push({ id: v.getUint16(o), kind: v.getUint8(o + 2), x: v.getUint16(o + 3) / XZ_Q - 1024, y: v.getUint16(o + 5) / Y_Q - 256, z: v.getUint16(o + 7) / XZ_Q - 1024 });
     o += THING_BYTES;
   }
-  return { tick, self, soldiers, things };
+  const veh = decodeVehicles(v, o);
+  if (!veh || veh.end !== data.byteLength) return null;
+  return { tick, self, soldiers, things, vehicles: veh.list };
 }
 
 /** The frame kind of a binary message (0: unknown). */
