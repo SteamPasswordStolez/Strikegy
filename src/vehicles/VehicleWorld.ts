@@ -308,14 +308,24 @@ export class VehicleWorld {
     const moving = this.vehicles.filter((v) => !v.wrecked && v.driver && v.velocity.length() > ROADKILL.speed);
     if (!moving.length) return;
     const local = new THREE.Vector3();
+    const pad = ROADKILL.pad;
+    // Each one's turn undone once, and a circle round it for a quick miss.
+    const inv = moving.map((v) => v.quat.clone().invert());
+    const reach = moving.map((v) => {
+      const [hx, , hz] = v.spec.half;
+      return (hx + pad) ** 2 + (hz + pad) ** 2;
+    });
     for (const w of walkers) {
       if (!w.alive) continue;
-      for (const v of moving) {
+      for (let i = 0; i < moving.length; i++) {
+        const v = moving[i]!;
+        const dx = w.feet.x - v.pos.x;
+        const dz = w.feet.z - v.pos.z;
+        if (dx * dx + dz * dz > reach[i]!) continue;
         if (v.seats.some((s) => s?.id === w.id)) continue;
         if (v.driver!.team === w.team) continue;
-        local.copy(w.feet).setY(w.feet.y + 0.9).sub(v.pos).applyQuaternion(v.quat.clone().invert());
+        local.copy(w.feet).setY(w.feet.y + 0.9).sub(v.pos).applyQuaternion(inv[i]!);
         const [hx, hy, hz] = v.spec.half;
-        const pad = ROADKILL.pad;
         if (Math.abs(local.x) < hx + pad && Math.abs(local.z) < hz + pad && local.y > -hy - 1.2 && local.y < hy + 1) {
           this.hooks.roadkill(v, w);
           break;
