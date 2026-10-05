@@ -12,6 +12,7 @@ import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
 import { LobbyCore, type MatchHost } from './lobby.ts';
 import { Matches } from './matches.ts';
 import { WorkerMatches } from './workerMatches.ts';
+import { ServerRtc, rtcSetup } from './rtc.ts';
 
 /** Open connections one address may have (a household's tabs), and the server in all. */
 const PER_ADDRESS = 12;
@@ -44,6 +45,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches });
   const core = lobby;
   const sweep = setInterval(() => core.sweep(), 5000);
+  // Match data over UDP when the TURN login is there (the server laptop); otherwise WebSocket only.
+  const rtc = opts.matches === null ? null : rtcSetup();
+  if (rtc) log(`udp: ${'turn' in rtc ? `through ${rtc.turn.host}:${rtc.turn.port}` : 'direct (local testing)'}`);
 
   const http: Server = createServer((req, res) => {
     if (req.url === '/health') {
@@ -90,11 +94,16 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       if (n <= 0) perAddress.delete(addr);
       else perAddress.set(addr, n);
     });
+    /** This player's UDP data channel, once asked for (snapshots go there while it is up). */
+    let channel: ServerRtc | null = null;
+    let channelAsks = 0;
+    let rtcMsgs = 0;
     const id = core.open({
       send: (text) => {
         if (ws.readyState === ws.OPEN) ws.send(text);
       },
       binary: (data) => {
+        if (channel?.send(data)) return;
         if (ws.readyState === ws.OPEN) ws.send(data, { binary: true });
       },
       close: () => ws.close(),
@@ -105,9 +114,37 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
         core.binary(id, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
         return;
       }
-      void core.message(id, data.toString());
+      const text = data.toString();
+      // The data channel's set-up is the gateway's own business (a few messages a connection).
+      if (text.startsWith('{"t":"rtc"')) {
+        if (!rtc || ++rtcMsgs > 80 || text.length > 20000) return;
+        let m: { sdp?: unknown; type?: unknown; cand?: unknown; mid?: unknown };
+        try {
+          m = JSON.parse(text) as typeof m;
+        } catch {
+          return;
+        }
+        const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
+        if (m.sdp === undefined && m.cand === undefined) {
+          if (++channelAsks > 4) return;
+          channel?.close();
+          channel = new ServerRtc(
+            rtc,
+            (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg)),
+            (d) => core.binary(id, d),
+          );
+          return;
+        }
+        channel?.remote({ sdp: str(m.sdp, 16000), type: str(m.type, 8), cand: str(m.cand, 512), mid: str(m.mid, 16) });
+        return;
+      }
+      void core.message(id, text);
     });
-    ws.on('close', () => core.close(id));
+    ws.on('close', () => {
+      channel?.close();
+      channel = null;
+      core.close(id);
+    });
     ws.on('error', () => ws.close());
   });
 

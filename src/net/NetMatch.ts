@@ -67,6 +67,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 const KEEP = 30;
 /** A corpse stays this long after the soldier left the field (s). */
 const CORPSE_SEC = 4;
+/** Inputs each UDP frame carries (the newest and the few before it, in case those frames were lost). */
+const REDUNDANT = 6;
 /** Differences from the server's position smaller than this are left alone (m). */
 const CORRECT_MIN = 0.02;
 
@@ -423,6 +425,8 @@ export class NetMatch {
   private offset: number | null = null;
   private seq = 0;
   private readonly outbox: NetInput[] = [];
+  /** Inputs sent that the server hasn't stepped yet: over UDP the last few go again with every frame (a lost frame costs nothing). */
+  private readonly unacked: NetInput[] = [];
   /** Where this browser had its soldier after each input it stepped, by seq. */
   private readonly predicted = new Map<number, { x: number; y: number; z: number }>();
   private readonly offs: (() => void)[] = [];
@@ -446,6 +450,7 @@ export class NetMatch {
     private readonly view: NetView,
   ) {
     this.setRoster(start.roster);
+    link.startUdp();
     this.offs.push(
       link.onBinary((d) => this.onFrame(d)),
       link.on('ev', (m) => {
@@ -550,7 +555,12 @@ export class NetMatch {
     if (!this.outbox.length) return;
     const d = this.drive;
     const drive = d && !d.wrecked ? { vehicle: d.id, x: d.pos.x, y: d.pos.y, z: d.pos.z, qx: d.quat.x, qy: d.quat.y, qz: d.quat.z, qw: d.quat.w, vx: d.velocity.x, vy: d.velocity.y, vz: d.velocity.z, throttle: d.flight?.throttle ?? 0 } : null;
-    this.link.sendBinary(encodeInputFrame(this.outbox, drive, this.botFrame?.() ?? null));
+    const bots = this.botFrame?.() ?? null;
+    this.unacked.push(...this.outbox);
+    if (this.unacked.length > REDUNDANT * 4) this.unacked.splice(0, this.unacked.length - REDUNDANT * 4);
+    // What bots did must arrive (the WebSocket); the rest may go over UDP, with the last few inputs again.
+    const reliable = !this.link.udp || (bots?.events.length ?? 0) > 0;
+    this.link.sendBinary(encodeInputFrame(this.link.udp ? this.unacked.slice(-REDUNDANT) : this.outbox, drive, bots), reliable);
     this.outbox.length = 0;
   }
 
@@ -607,6 +617,12 @@ export class NetMatch {
     }
     this.takeVehicles(snap.tick, snap.vehicles);
     const mine = snap.soldiers.find((s) => s.id === this.myId);
+    if (snap.self) {
+      const ack = snap.self.ack;
+      let n = 0;
+      while (n < this.unacked.length && this.unacked[n]!.seq <= ack) n++;
+      if (n) this.unacked.splice(0, n);
+    }
     if (snap.self && mine) this.correct(snap.self, mine.flags);
     this.lastSelf = snap.self;
   }

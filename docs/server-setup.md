@@ -107,6 +107,7 @@ Cloudflare 무료 플랜은 한국 접속을 LAX(로스앤젤레스)로 보내 �
 - 중계 서버: Caddy(`/etc/caddy/Caddyfile`: `game.strikegy.xyz { reverse_proxy 127.0.0.1:18787 }`, 인증서 자동), iptables에 80/443 허용(`netfilter-persistent save`), 오라클 보안 목록 80/443
 - 노트북 → 중계: `server/strikegy-relay.service`(SSH 역방향 터널, 키 `~/.ssh/strikegy_relay`). 중계 서버의 `tunnel` 계정은 `127.0.0.1:18787` 전달만 허용(`/home/tunnel/.ssh/authorized_keys`의 `restrict,port-forwarding,permitlisten=...`)
 - 게임은 `public/servers.json`의 첫 주소 `wss://game.strikegy.xyz/play`, 안 되면 예전 터널 주소로
+- UDP(2026-10-05): 경기 데이터는 WebRTC 데이터 채널로도 오갑니다. 노트북 서버는 오라클의 TURN(coturn, `/etc/turnserver.conf`, 3478/udp, 중계 포트 50000-50199/udp)에만 로그인해 그 중계 주소만 알리므로 집 IP는 드러나지 않습니다. 브라우저는 같은 곳의 STUN으로 자기 주소를 찾습니다. TURN 계정 비밀번호는 오라클 `/etc/strikegy-turn.pass`와 노트북 `~/.strikegy-turn.json`(권한 600)에만 있습니다(git·채팅에 넣지 않음). 이 파일이 없으면 UDP 없이 WebSocket만 씁니다. 오라클 iptables에 3478, 50000:50199/udp 허용(`netfilter-persistent save`), 오라클 보안 목록에도 같은 UDP 포트가 열려 있어야 합니다. 확인: `node scripts/udpCheck.mjs wss://game.strikegy.xyz/play`
 
 ## 7. 업데이트
 

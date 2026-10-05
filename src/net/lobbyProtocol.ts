@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -209,7 +209,12 @@ export type ClientMsg =
   /** On the field at `key` ('base', 'zone:<id>', 'beacon:<id>', 'mate:<id>') with the kit picked on the deploy screen. */
   | { t: 'deploy'; key: string; kit: unknown }
   /** A squad leader calls `kind` in onto `point` (the rocket tank: no point). */
-  | { t: 'callin'; kind: string; point: [number, number, number] | null };
+  | { t: 'callin'; kind: string; point: [number, number, number] | null }
+  /**
+   * Match data over UDP (a WebRTC data channel; handled by the gateway): no
+   * fields asks for one, then the answer and candidates.
+   */
+  | { t: 'rtc'; sdp?: string; type?: 'answer'; cand?: string; mid?: string };
 
 export type ErrorCode =
   | 'version'
@@ -234,6 +239,8 @@ export type ServerMsg =
   | { t: 'match'; match: MatchStart }
   | { t: 'roster'; roster: MatchSoldierInfo[] }
   | { t: 'ev'; ev: MatchEvent[] }
+  /** The server's side of a UDP data channel: its offer (`stun`: where the browser finds its own address) and candidates. */
+  | { t: 'rtc'; sdp?: string; type?: 'offer'; stun?: string; cand?: string; mid?: string }
   /**
    * The zones and the mode's rules as the server has them, the score table,
    * build spots begun or built (`[id, work, built]`), stations not full

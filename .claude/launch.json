@@ -22,6 +22,18 @@
         "server"
       ],
       "port": 8787
+    },
+    {
+      "name": "strikegy-server-udp",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "server"
+      ],
+      "port": 8787,
+      "env": {
+        "STRIKEGY_RTC_LOCAL": "1"
+      }
     }
   ]
 }
