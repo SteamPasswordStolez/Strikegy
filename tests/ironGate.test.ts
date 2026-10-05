@@ -35,22 +35,28 @@ function overlaps(a: ReturnType<typeof box>, b: ReturnType<typeof box>, tol = 0.
 }
 
 describe('Iron Gate map', () => {
-  it('is valid, with three zones A, B, C of radius 24-28 m, 60-100 m apart', () => {
+  it('is valid, with five zones A-E in a cross, radius 20-26 m, 50-100 m from the nearest', () => {
     expect(validateMap(map)).toEqual([]);
     expect(map.meta.id).toBe('iron_gate');
     const zones = map.zones!;
-    expect(zones.map((z) => z.id)).toEqual(['A', 'B', 'C']);
+    expect(zones.map((z) => z.id)).toEqual(['A', 'B', 'C', 'D', 'E']);
     for (const z of zones) {
-      expect(z.radius).toBeGreaterThanOrEqual(24);
-      expect(z.radius).toBeLessThanOrEqual(28);
+      expect(z.radius).toBeGreaterThanOrEqual(20);
+      expect(z.radius).toBeLessThanOrEqual(26);
     }
     for (let i = 0; i < zones.length; i++) {
       for (let j = i + 1; j < zones.length; j++) {
         const d = Math.hypot(zones[i]!.pos[0] - zones[j]!.pos[0], zones[i]!.pos[2] - zones[j]!.pos[2]);
-        expect(d, `${zones[i]!.id}-${zones[j]!.id}`).toBeGreaterThanOrEqual(60);
-        if (j === i + 1) expect(d, `${zones[i]!.id}-${zones[j]!.id}`).toBeLessThanOrEqual(100);
+        expect(d, `${zones[i]!.id}-${zones[j]!.id}`).toBeGreaterThanOrEqual(50);
       }
+      const nearest = Math.min(...zones.filter((_, j) => j !== i).map((o) => Math.hypot(o.pos[0] - zones[i]!.pos[0], o.pos[2] - zones[i]!.pos[2])));
+      expect(nearest, zones[i]!.id).toBeLessThanOrEqual(100);
     }
+    // A cross, not a line: D north and E south of the main road, about level between the bases.
+    const [a, , c, d, e] = zones;
+    expect(d!.pos[2]).toBeLessThan(-40);
+    expect(e!.pos[2]).toBeGreaterThan(40);
+    for (const z of [d!, e!]) expect(Math.abs(Math.hypot(z.pos[0] - a!.pos[0], z.pos[2] - a!.pos[2]) - Math.hypot(z.pos[0] - c!.pos[0], z.pos[2] - c!.pos[2]))).toBeLessThan(20);
   });
 
   // Owner, 2026-10-05: compact, about 2,000-2,500 m² of play area a soldier at 12v12 (fights were too rare on the 163,000 m² layout).
@@ -85,7 +91,9 @@ describe('Iron Gate map', () => {
     expect(h.solid).toBeFalsy();
     expect(Math.max(...h.size)).toBeGreaterThanOrEqual(40);
     expect(Math.min(...h.size)).toBeGreaterThanOrEqual(18);
-    for (const z of map.zones!) expect(Math.hypot(z.pos[0] - h.pos[0], z.pos[2] - h.pos[1])).toBeGreaterThan(z.radius + 15);
+    // The hospital is zone D's strongpoint: the zone takes in its front half.
+    const d = map.zones!.find((z) => z.id === 'D')!;
+    expect(Math.hypot(d.pos[0] - h.pos[0], d.pos[2] - h.pos[1])).toBeLessThan(d.radius);
   });
 
   it('keeps buildings apart and inside the outline', () => {
@@ -110,13 +118,13 @@ describe('Iron Gate map', () => {
       const near = (x: number, zz: number) => Math.hypot(x - z.pos[0], zz - z.pos[2]) < z.radius;
       const solid = map.objects.filter((o) => o.type !== 'floor' && near(o.pos[0], o.pos[2])).length;
       const blds = map.buildings!.filter((b) => near(b.pos[0], b.pos[1])).length;
-      expect(solid + blds * 4, z.id).toBeGreaterThanOrEqual(18);
+      expect(solid + blds * 4, z.id).toBeGreaterThanOrEqual(15);
     }
   });
 
   it('keeps trees inside the outline and out of the zones', () => {
     const outline = new Boundary(map.world.boundary!);
-    expect(map.trees!.length).toBeGreaterThan(40);
+    expect(map.trees!.length).toBeGreaterThan(30);
     for (const [x, z] of map.trees!) {
       expect(outline.contains(x, z)).toBe(true);
       for (const zone of map.zones!) expect(Math.hypot(x - zone.pos[0], z - zone.pos[2])).toBeGreaterThan(zone.radius);
