@@ -185,6 +185,10 @@ export function setNextBotId(id: number): void {
 /** Half the view's height (deg) above / below where a bot looks: what it can notice without looking up. */
 const VIEW_UP = 50;
 
+/** How far along its route (m) a bot re-plans when it re-plans only the stretch ahead, and how many times in a row before a whole re-plan. */
+const RESPLICE_AHEAD = 30;
+const RESPLICE_MAX = 2;
+
 /** Height above a bot (m) past which a shot or a sound comes from an aircraft: no place to chase or shoot at. */
 const OVERHEAD = 25;
 
@@ -299,6 +303,9 @@ export class Bot implements Damageable, Combatant {
   /** Walking somewhere (false: standing at its spot). */
   hasGoal = false;
   private repathAt = 0;
+  /** Re-plans of only the stretch ahead since the last whole one (`resplice`), and its scratch. */
+  private splices = 0;
+  private readonly leg: THREE.Vector3[] = [];
   private cover: THREE.Vector3 | null = null;
   private coverUntil = 0;
   private strafe = 0;
@@ -1323,10 +1330,44 @@ export class Bot implements Damageable, Combatant {
 
   private setGoal(p: THREE.Vector3, s: BotServices): void {
     if (this.hasGoal && this.goal.distanceTo(p) < 1.5 && s.time < this.repathAt && this.path.length > 0) return;
+    if (this.hasGoal && this.goal.distanceTo(p) < 1.5 && this.splices < RESPLICE_MAX && this.resplice(p, s)) {
+      this.splices++;
+      this.repathAt = s.time + 1.2;
+      return;
+    }
+    this.splices = 0;
     this.goal.copy(p);
     this.hasGoal = s.route(this, p, this.path);
     this.pathIndex = this.path.length > 1 ? 1 : 0;
     this.repathAt = s.time + 1.2;
+  }
+
+  /**
+   * Same goal, partway along a whole route to it: plans only the next stretch
+   * (to a corner `RESPLICE_AHEAD` m on) and keeps the rest. A long search runs
+   * out of Detour's nodes and costs ~0.7 ms; the stretch ahead is where things
+   * change (sandbags built, people in the way). False: plan it all again.
+   */
+  private resplice(p: THREE.Vector3, s: BotServices): boolean {
+    const path = this.path;
+    const n = path.length;
+    // Only a route that reaches the goal (a partial one is re-planned from its end).
+    if (n < 3 || path[n - 1]!.distanceTo(p) > 2) return false;
+    let j = this.pathIndex;
+    let along = j < n ? this.feet.distanceTo(path[j]!) : 0;
+    while (j < n - 1 && along < RESPLICE_AHEAD) {
+      along += path[j]!.distanceTo(path[j + 1]!);
+      j++;
+    }
+    if (j >= n - 1) return false;
+    const leg = this.leg;
+    if (!s.route(this, path[j]!, leg) || leg.length === 0 || leg[leg.length - 1]!.distanceTo(path[j]!) > 0.5) return false;
+    const rest = path.slice(j + 1);
+    path.length = 0;
+    for (const q of leg) path.push(q);
+    for (const q of rest) path.push(q);
+    this.pathIndex = path.length > 1 ? 1 : 0;
+    return true;
   }
 
   private faceToward(p: THREE.Vector3, share: number): void {
@@ -1542,6 +1583,7 @@ export class Bot implements Damageable, Combatant {
   }
 
   private setGoalForce(p: THREE.Vector3, s: BotServices): void {
+    this.splices = 0;
     this.goal.copy(p);
     this.hasGoal = s.route(this, p, this.path);
     this.pathIndex = this.path.length > 1 ? 1 : 0;
