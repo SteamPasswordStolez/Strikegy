@@ -11,6 +11,7 @@ import { WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
 import { LobbyCore, type MatchHost } from './lobby.ts';
 import { Matches } from './matches.ts';
+import { WorkerMatches } from './workerMatches.ts';
 
 /** Open connections one address may have (a household's tabs), and the server in all. */
 const PER_ADDRESS = 12;
@@ -23,6 +24,8 @@ export interface GatewayOptions {
   serverMax?: number;
   /** Runs the matches; null: lobby only (tests). Default: matches in this process. */
   matches?: MatchHost | null;
+  /** Each room's match in its own worker thread (the built server; tests run them in-process). */
+  workers?: boolean;
   mapsDir?: string;
 }
 
@@ -35,7 +38,8 @@ export interface Gateway {
 export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> {
   const log = opts.log ?? ((line: string) => console.log(`[server] ${line}`));
   let lobby: LobbyCore | null = null;
-  const own = opts.matches === undefined ? new Matches({ log, mapsDir: opts.mapsDir, ended: (room) => lobby?.matchOver(room) }) : null;
+  const hostOpts = { log, mapsDir: opts.mapsDir, ended: (room: string) => lobby?.matchOver(room) };
+  const own = opts.matches === undefined ? (opts.workers ? new WorkerMatches(hostOpts) : new Matches(hostOpts)) : null;
   const matches = opts.matches === undefined ? own : opts.matches;
   lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches });
   const core = lobby;
@@ -54,6 +58,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
           max: opts.serverMax ?? SERVER_MAX,
           matches: own?.running ?? 0,
           stepMs: own ? Math.round(own.stepMs * 100) / 100 : 0,
+          cpu: own instanceof WorkerMatches ? Math.round(own.cpu * 100) / 100 : undefined,
         }),
       );
       return;

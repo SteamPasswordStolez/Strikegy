@@ -477,7 +477,8 @@ export class LobbyCore {
             r.state = 'lobby';
             this.broadcast(r);
           }
-          return this.fail(c, 'bad', 'start');
+          // The machine is busy with the matches already running: like a full server.
+          return this.fail(c, err instanceof Error && err.message === 'busy' ? 'serverFull' : 'bad', 'start');
         }
         // Someone may have left while it loaded, or everyone did.
         if (this.rooms.get(r.id) !== r) this.matches.stop(r.id);
