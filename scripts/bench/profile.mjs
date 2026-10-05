@@ -178,6 +178,27 @@ if (process.env.FOCUS) {
   for (const [k, v] of self) if (names.includes(k.split('  ')[0]) && /src\//.test(k)) us += v;
   console.log(`focus ${(us / 1000 / frames).toFixed(3)} ms/f`);
 }
+// CALLERS=regex: self time of the matching functions, by the first src/ function up the stack.
+if (process.env.CALLERS) {
+  const re = new RegExp(process.env.CALLERS);
+  const parent = new Map();
+  for (const n of profile.nodes) for (const c of n.children ?? []) parent.set(c, n.id);
+  const name = (n) => {
+    const f = n.callFrame;
+    return `${f.functionName || '(anon)'}  ${f.url.replace(/^.*\/src\//, 'src/').replace(/\?.*$/, '')}:${f.lineNumber + 1}`;
+  };
+  const by = new Map();
+  for (const [id, us] of counts) {
+    if (!re.test(name(byId.get(id)))) continue;
+    let p = parent.get(id);
+    while (p !== undefined && !/^[^ ]+ {2}src\//.test(name(byId.get(p)))) p = parent.get(p);
+    const k = p === undefined ? '(none)' : name(byId.get(p));
+    by.set(k, (by.get(k) ?? 0) + us);
+  }
+  console.log('callers:');
+  for (const [k, us] of [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15))
+    console.log(`${(us / 1000 / frames).toFixed(3).padStart(7)} ms/f  ${k}`);
+}
 // Inclusive time (the function and everything it calls), top INCL functions from src/.
 if (process.env.INCL) {
   const kids = new Map(profile.nodes.map((n) => [n.id, n.children ?? []]));
@@ -226,5 +247,8 @@ for (const [k, us] of rows)
   console.log(
     `${((100 * us) / totalUs).toFixed(1).padStart(5)}%  ${(us / 1000 / frames).toFixed(3)} ms/f  ${k}`,
   );
+// POST: JS run in the page after measuring; its return value is printed (with PATCH: counters).
+if (process.env.POST)
+  console.log('post:', JSON.stringify(await page.evaluate((code) => new Function('g', code)(window.__strikegy), process.env.POST)));
 if (errors.length) console.log('page errors:', errors.slice(0, 5));
 await browser.close();
