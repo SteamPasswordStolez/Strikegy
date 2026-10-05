@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { StaticBatch } from '@/render/staticBatch';
 import type { HitPart } from '@/core/events';
 import type { Damageable, DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
@@ -92,6 +93,9 @@ const UP = new THREE.Vector3(0, 1, 0);
  */
 export class GadgetWorld {
   readonly group = new THREE.Group();
+  /** Placed mines and beacons (static once down), merged per material; beacon lights apart so they can blink. */
+  private readonly placed = new StaticBatch('placed-gadgets');
+  private readonly lights = new StaticBatch('beacon-lights');
   readonly beacons: Beacon[] = [];
   readonly mines: Mine[] = [];
   private readonly shots: Shot[] = [];
@@ -105,6 +109,7 @@ export class GadgetWorld {
     private readonly hooks: GadgetHooks,
   ) {
     this.group.name = 'gadgets';
+    this.group.add(this.placed.group, this.lights.group);
   }
 
   /**
@@ -149,7 +154,15 @@ export class GadgetWorld {
     const mesh = this.models.beacon.clone();
     mesh.position.copy(pos);
     mesh.rotation.y = yaw;
-    this.group.add(mesh);
+    // Drawn merged with the other placed gadgets; its light in a batch of its own that blinks.
+    const light = mesh.getObjectByName('light')!;
+    const glow = new THREE.Group();
+    glow.position.copy(pos);
+    glow.rotation.y = yaw;
+    mesh.remove(light);
+    glow.add(light);
+    this.placed.add(this.nextId, mesh);
+    this.lights.add(this.nextId, glow);
     const collider = this.physics.addStaticBox({ x: pos.x, y: pos.y + 0.2, z: pos.z }, { x: 0.14, y: 0.2, z: 0.14 }, undefined, Layer.HITBOX);
     const beacon: Beacon = { id: this.nextId++, owner, pos: pos.clone(), uses: BEACON.uses, health: BEACON.health, mesh, collider };
     this.registry.register(collider.handle, this.damageable(beacon, 'beacon'), 'body');
@@ -164,7 +177,7 @@ export class GadgetWorld {
     const mesh = this.models.mine.clone();
     mesh.position.copy(pos);
     mesh.rotation.y = yaw;
-    this.group.add(mesh);
+    this.placed.add(this.nextId, mesh);
     const collider = this.physics.addStaticBox({ x: pos.x, y: pos.y + 0.04, z: pos.z }, { x: 0.12, y: 0.05, z: 0.12 }, undefined, Layer.HITBOX);
     const mine: Mine = { id: this.nextId++, owner, pos: pos.clone(), fuse: -1, mesh, collider, seenBy: new Set([owner.team]) };
     this.registry.register(collider.handle, this.damageable(mine, 'mine'), 'body');
@@ -264,11 +277,9 @@ export class GadgetWorld {
       }
     }
     // Beacon lights blink.
-    const on = Math.floor(performance.now() / 600) % 2 === 0;
-    for (const b of this.beacons) {
-      const light = b.mesh.getObjectByName('light');
-      if (light) light.visible = on;
-    }
+    this.lights.group.visible = Math.floor(performance.now() / 600) % 2 === 0;
+    this.placed.flush();
+    this.lights.flush();
   }
 
   /** Everything off the field (match restart). */
@@ -318,7 +329,8 @@ export class GadgetWorld {
     const i = this.beacons.indexOf(b);
     if (i < 0) return;
     this.beacons.splice(i, 1);
-    this.group.remove(b.mesh);
+    this.placed.remove(b.id);
+    this.lights.remove(b.id);
     this.registry.unregister(b.collider.handle);
     this.physics.world.removeCollider(b.collider, false);
   }
@@ -327,7 +339,7 @@ export class GadgetWorld {
     const i = this.mines.indexOf(m);
     if (i < 0) return;
     this.mines.splice(i, 1);
-    this.group.remove(m.mesh);
+    this.placed.remove(m.id);
     this.registry.unregister(m.collider.handle);
     this.physics.world.removeCollider(m.collider, false);
   }

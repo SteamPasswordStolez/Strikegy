@@ -1,3 +1,4 @@
+import { StaticBatch } from '@/render/staticBatch';
 import * as THREE from 'three';
 import type { Obstacle } from 'recast-navigation';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
@@ -482,6 +483,8 @@ export class Fortifications {
   readonly slots: FortSlot[] = [];
   readonly stations: Station[] = [];
   readonly group = new THREE.Group();
+  /** Stations and finished fortifications, merged per material (they don't move). */
+  private readonly batch = new StaticBatch('fort-static');
   /** Fired when something that casts shadows appears or goes. */
   onChange: (() => void) | null = null;
   /** Score for building / refilling (combatant id, points; fractions are fine). */
@@ -496,6 +499,7 @@ export class Fortifications {
     private readonly nav: NavWorld | null,
   ) {
     this.group.name = 'fortifications';
+    this.group.add(this.batch.group);
     this.icons = { ammo: stationIcon('ammo'), medical: stationIcon('medical') };
     let id = 1;
     for (const p of plan.slots) {
@@ -548,7 +552,7 @@ export class Fortifications {
       model.rotation.y = p.yaw;
       model.matrixAutoUpdate = false;
       model.updateMatrix();
-      this.group.add(model);
+      this.batch.add(id, model);
       const pos = new THREE.Vector3(...p.pos);
       // Stations block like the crates they are.
       const [w, h, d] = FORT_SIZE[p.kind];
@@ -575,6 +579,7 @@ export class Fortifications {
    * aimed at stands out (green, outline through walls).
    */
   render(camera: THREE.Vector3, building = false, target: FortSlot | null = null): void {
+    this.batch.flush();
     for (const s of this.stations) s.icon.visible = s.pos.distanceToSquared(camera) < 45 * 45;
     const m = this.models;
     const far = (building ? 60 : 28) ** 2;
@@ -679,6 +684,9 @@ export class Fortifications {
     slot.health = FORT[slot.kind].health;
     slot.ghost.visible = false;
     this.showProgress(slot);
+    // Finished: drawn with the other static ones.
+    this.batch.add(slot.id, slot.model);
+    slot.model.visible = false;
     const q = yawQuat(slot.yaw);
     const c = Math.cos(slot.yaw);
     const sn = Math.sin(slot.yaw);
@@ -732,6 +740,7 @@ export class Fortifications {
     slot.obstacles.length = 0;
 
     slot.ghost.visible = true;
+    this.batch.remove(slot.id);
     this.showProgress(slot);
     this.onChange?.();
   }
