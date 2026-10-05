@@ -44,7 +44,11 @@ The owner works both on their Windows PC and in cloud sessions (claude.ai/code) 
 npm run lint && npm test && npx tsc --noEmit
 ```
 
+After changing `wasm/core`, run `npm run wasm` first (needs Rust + `rustup target add wasm32-unknown-unknown`) and commit the new `src/wasm/core.wasm`.
+
 Run the game (`npm run dev`, then e.g. `?map=iron_gate&bots=12v12`) and check the console has no errors. In dev builds the game is on `window.__strikegy`.
+
+Profiler (CPU, headless): `node scripts/bench/profile.mjs "map=ardennes&bots=150v150" 2400 1800` with the dev server running (warm 1800 frames: before ~35 s the sides haven't met and the numbers flatter everything); env `INCL=30` inclusive times, `CALLERS=regex` who calls a hot function, `FOCUS=fn1,fn2` summed self time, `PATCH` / `POST` JS run in the page before / after measuring. `scripts/bench/draws.mjs` counts draw calls per pass and object group. Whole-frame times swing ±30 % between cloud runs: compare the code you changed, in A/B pairs. Server: `npm run server:bench -- ardennes 8 60 150`.
 
 Performance work: measure first. A reliable CPU benchmark in a hidden/automated browser is to stop the rAF loop and drive `g.frame(now)` manually (`cancelAnimationFrame(g.rafId); window.requestAnimationFrame = () => 0;` then call `g.frame(now += 16.67)` in a loop, wrapping methods with `performance.now()` timers). GPU timing in an automated browser is vsync-bound and unreliable; the F3 perf panel (GPU timer queries) is the in-game tool. In dev builds `?nocache` skips the IndexedDB navmesh cache (to time the build); `collectNavInput` in `NavWorld.ts` gives the exact navmesh input for offline benchmarks.
 
@@ -58,6 +62,7 @@ Performance work: measure first. A reliable CPU benchmark in a hidden/automated 
 - `scripts/maps/*.mjs` — generated maps (`npm run maps` → `public/maps/*.json`).
 - `src/audio/` — `AudioSystem` (samples + procedural fallbacks, world voice limits: 40 voices, HRTF for the nearest 10 within 30 m; keep these), `Ambience` / `ambienceDirector` (wind bed, birds, far-off fighting; levels from the visual profile or `world.ambience` in the map JSON). Samples come from `sounds.manifest.json` via `npm run sounds` (`-- --only id,...` builds just those; needs ffmpeg and 7z/unzip).
 - Physics layers in `src/physics/PhysicsWorld.ts` (WORLD, PLAYER, HITBOX, DEBRIS, BOT, BOUNDS).
+- `wasm/core` — Rust core (no_std, no allocator, `simd128`), built to the committed `src/wasm/core.wasm`; JS views on its static buffers in `src/wasm/core.ts` (`loadCore()` before the game / `MatchSim.create`, then `core()`; Node reads the file, the server build copies it next to the bundle). It holds: the crowd (`crowd.rs` / `src/ai/crowd.ts`: every combatant as arrays, slot per combatant handed out by `BotManager.slotFor` and freed when a bot is dropped or a person leaves — a freed slot's notice row and column are cleared; neighbour grid, separation, `spotTaken`, perception's first pass with the notice matrix, `knownEnemies`), sight lines against static WORLD boxes and vehicle hulls (`occluders.rs` / `src/physics/occluders.ts`; add / remove statics with `addStaticBox` / `PhysicsWorld.removeStatic`), and character hitboxes (`hitboxes.rs` / `src/physics/characterHits.ts`: no Rapier bodies; pass `CharacterHitboxes.slot` as `excludeChar` to `raycast` for one's own shots). Tests compare each against the TypeScript / Rapier it replaced (`crowd`, `occluders`, `charHitboxes`). Rapier's ray casts and Detour's path / move queries go through their raw wasm APIs on reused buffers (`PhysicsWorld.rapierRay`, `NavWorld.path` / `move`): **re-check them when upgrading Rapier or recast-navigation** (`physicsStep`, `ai` tests).
 
 ## Handoff (2026-10-03, end of the local session; everything is pushed, v2 = strikegy-v2 main = 01723a0)
 
