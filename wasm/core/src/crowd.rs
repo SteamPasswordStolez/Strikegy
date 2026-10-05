@@ -24,6 +24,8 @@ pub const RED: u32 = 4;
 pub const AIR: u32 = 8;
 pub const HAS_GOAL: u32 = 16;
 pub const BOT: u32 = 32;
+pub const FIRING: u32 = 64;
+pub const ARMOUR: u32 = 128;
 
 #[repr(C, align(16))]
 struct Lanes<T: Copy, const N: usize>([T; N]);
@@ -390,6 +392,90 @@ pub extern "C" fn crowd_spot_taken(slot: i32, x: f32, y: f32, z: f32) -> u32 {
 // ---------------------------------------------------------------------------
 // Perception, first pass (SIMD)
 
+/// The view test of one combatant, set up once per query (see `crowd_view`).
+struct View {
+    sx: v128,
+    sy: v128,
+    sz: v128,
+    fx: v128,
+    fz: v128,
+    cp: v128,
+    sp: v128,
+    half: v128,
+    up: v128,
+    sight2: v128,
+    air2: v128,
+    near2: v128,
+    side: v128,
+    want: v128,
+    air: v128,
+    free: v128,
+    /// RED for a blue viewer, 0 for a red one.
+    enemy: u32,
+}
+
+impl View {
+    #[allow(clippy::too_many_arguments)]
+    fn new(c: &Crowd, s: usize, sight: f32, air_sight: f32, cos_half: f32, cos_up: f32, free_up: u32, yaw: f32, pitch: f32) -> View {
+        // Facing (yaw 0 looks down -z): forward = (-sin yaw, -cos yaw).
+        let (sin_y, cos_y) = sincos(yaw);
+        let (sin_p, cos_p) = sincos(pitch);
+        let enemy = if c.flags.0[s] & RED != 0 { 0 } else { RED };
+        View {
+            sx: f32x4_splat(c.x.0[s]),
+            sy: f32x4_splat(c.y.0[s]),
+            sz: f32x4_splat(c.z.0[s]),
+            fx: f32x4_splat(-sin_y),
+            fz: f32x4_splat(-cos_y),
+            cp: f32x4_splat(cos_p),
+            sp: f32x4_splat(sin_p),
+            half: f32x4_splat(cos_half),
+            up: f32x4_splat(cos_up),
+            sight2: f32x4_splat(sight * sight),
+            air2: f32x4_splat(air_sight * air_sight),
+            near2: f32x4_splat(1.5 * 1.5),
+            side: u32x4_splat(RED | ALIVE),
+            want: u32x4_splat(enemy | ALIVE),
+            air: u32x4_splat(AIR),
+            free: if free_up != 0 { u32x4_splat(!0) } else { u32x4_splat(0) },
+            enemy,
+        }
+    }
+
+    /// Slots `i..i + 4`: which are living enemies in view, and their distances.
+    #[inline(always)]
+    fn group(&self, c: &Crowd, i: usize) -> (v128, v128) {
+        unsafe {
+            let flags = v128_load(c.flags.0.as_ptr().add(i) as *const v128);
+            let side = u32x4_eq(v128_and(flags, self.side), self.want);
+            if !v128_any_true(side) {
+                return (side, f32x4_splat(0.0));
+            }
+            let dx = f32x4_sub(v128_load(c.x.0.as_ptr().add(i) as *const v128), self.sx);
+            let dy = f32x4_sub(v128_load(c.y.0.as_ptr().add(i) as *const v128), self.sy);
+            let dz = f32x4_sub(v128_load(c.z.0.as_ptr().add(i) as *const v128), self.sz);
+            let flat2 = f32x4_add(f32x4_mul(dx, dx), f32x4_mul(dz, dz));
+            let d2 = f32x4_add(flat2, f32x4_mul(dy, dy));
+            let in_air = v128_and(flags, self.air);
+            let sight2 = if v128_any_true(in_air) { v128_bitselect(self.air2, self.sight2, u32x4_eq(in_air, self.air)) } else { self.sight2 };
+            let within = v128_and(side, f32x4_lt(d2, sight2));
+            if !v128_any_true(within) {
+                return (within, f32x4_splat(0.0));
+            }
+            let flat = f32x4_sqrt(flat2);
+            let dist = f32x4_sqrt(d2);
+            // In the cone: cos(off-axis) = (d · forward) / flat > cos(half).
+            let fdot = f32x4_add(f32x4_mul(dx, self.fx), f32x4_mul(dz, self.fz));
+            let cone = f32x4_gt(fdot, f32x4_mul(flat, self.half));
+            // Within the view's height: cos(elevation - pitch) · dist > cos(up) · dist.
+            let edot = f32x4_add(f32x4_mul(flat, self.cp), f32x4_mul(dy, self.sp));
+            let tall = v128_or(self.free, f32x4_gt(edot, f32x4_mul(dist, self.up)));
+            let near = f32x4_lt(d2, self.near2);
+            (v128_and(within, v128_or(v128_and(cone, tall), near)), dist)
+        }
+    }
+}
+
 /// Enemies of the bot in `slot` it has in view: alive, within sight
 /// (`air_sight` for anyone in an aircraft), inside the view cone (half angle
 /// with cosine `cos_half`) and, unless `free_up`, within the view's height
@@ -403,73 +489,234 @@ pub extern "C" fn crowd_spot_taken(slot: i32, x: f32, y: f32, z: f32) -> u32 {
 pub extern "C" fn crowd_view(slot: u32, sight: f32, air_sight: f32, cos_half: f32, cos_up: f32, free_up: u32, yaw: f32, pitch: f32) -> u32 {
     let c = crowd();
     let q = params();
-    let s = slot as usize;
-    let (sx, sy, sz) = (c.x.0[s], c.y.0[s], c.z.0[s]);
-    // Facing (yaw 0 looks down -z): forward = (-sin yaw, -cos yaw).
-    let (sin_y, cos_y) = sincos(yaw);
-    let (sin_p, cos_p) = sincos(pitch);
-    let enemy = if c.flags.0[s] & RED != 0 { 0 } else { RED };
-
-    let v_sx = f32x4_splat(sx);
-    let v_sy = f32x4_splat(sy);
-    let v_sz = f32x4_splat(sz);
-    let v_fx = f32x4_splat(-sin_y);
-    let v_fz = f32x4_splat(-cos_y);
-    let v_cp = f32x4_splat(cos_p);
-    let v_sp = f32x4_splat(sin_p);
-    let v_half = f32x4_splat(cos_half);
-    let v_up = f32x4_splat(cos_up);
-    let v_sight2 = f32x4_splat(sight * sight);
-    let v_air2 = f32x4_splat(air_sight * air_sight);
-    let v_near2 = f32x4_splat(1.5 * 1.5);
-    let v_side = u32x4_splat(RED | ALIVE);
-    let v_want = u32x4_splat(enemy | ALIVE);
-    let v_air = u32x4_splat(AIR);
-    let v_free = if free_up != 0 { u32x4_splat(!0) } else { u32x4_splat(0) };
-
+    let v = View::new(c, slot as usize, sight, air_sight, cos_half, cos_up, free_up, yaw, pitch);
     let mut n = 0usize;
-    let groups = q.count.div_ceil(4);
-    for g in 0..groups {
+    for g in 0..q.count.div_ceil(4) {
         let i = g * 4;
-        unsafe {
-            let flags = v128_load(c.flags.0.as_ptr().add(i) as *const v128);
-            let side = u32x4_eq(v128_and(flags, v_side), v_want);
-            if !v128_any_true(side) {
-                continue;
-            }
-            let dx = f32x4_sub(v128_load(c.x.0.as_ptr().add(i) as *const v128), v_sx);
-            let dy = f32x4_sub(v128_load(c.y.0.as_ptr().add(i) as *const v128), v_sy);
-            let dz = f32x4_sub(v128_load(c.z.0.as_ptr().add(i) as *const v128), v_sz);
-            let flat2 = f32x4_add(f32x4_mul(dx, dx), f32x4_mul(dz, dz));
-            let d2 = f32x4_add(flat2, f32x4_mul(dy, dy));
-            let air = v128_any_true(v128_and(flags, v_air));
-            let sight2 = if air { v128_bitselect(v_air2, v_sight2, u32x4_eq(v128_and(flags, v_air), v_air)) } else { v_sight2 };
-            let within = v128_and(side, f32x4_lt(d2, sight2));
-            if !v128_any_true(within) {
-                continue;
-            }
-            let flat = f32x4_sqrt(flat2);
-            let dist = f32x4_sqrt(d2);
-            // In the cone: cos(off-axis) = (d · forward) / flat > cos(half).
-            let fdot = f32x4_add(f32x4_mul(dx, v_fx), f32x4_mul(dz, v_fz));
-            let cone = f32x4_gt(fdot, f32x4_mul(flat, v_half));
-            // Within the view's height: cos(elevation - pitch) · dist > cos(up) · dist.
-            let edot = f32x4_add(f32x4_mul(flat, v_cp), f32x4_mul(dy, v_sp));
-            let tall = v128_or(v_free, f32x4_gt(edot, f32x4_mul(dist, v_up)));
-            let near = f32x4_lt(d2, v_near2);
-            let seen = v128_and(within, v128_or(v128_and(cone, tall), near));
-            let mut mask = i32x4_bitmask(seen) as u32;
-            while mask != 0 {
-                let lane = mask.trailing_zeros() as usize;
-                mask &= mask - 1;
-                let o = i + lane;
-                c.hits.0[n] = o as u32;
-                c.hit_dist.0[n] = dist_lane(dist, lane);
-                n += 1;
-            }
+        let (seen, dist) = v.group(c, i);
+        let mut mask = i32x4_bitmask(seen) as u32;
+        while mask != 0 {
+            let lane = mask.trailing_zeros() as usize;
+            mask &= mask - 1;
+            c.hits.0[n] = (i + lane) as u32;
+            c.hit_dist.0[n] = dist_lane(dist, lane);
+            n += 1;
         }
     }
     n as u32
+}
+
+// ---------------------------------------------------------------------------
+// Perception: the whole first pass (who is in view, notice bookkeeping, who
+// matters most), leaving only the line-of-sight checks to JS.
+
+/// How far each combatant (row) has noticed each other one (column): 0..1.5,
+/// 1 = noticed. Bots' rows; `src/ai/crowd.ts` reads and writes it directly.
+static mut NOTICE: Lanes<f32, { CAP * CAP }> = Lanes([0.0; CAP * CAP]);
+/// Off-axis angle (deg) of each pick, and scratch scores.
+static mut HIT_OFF: Lanes<f32, CAP> = Lanes([0.0; CAP]);
+static mut SCORE: Lanes<f32, CAP> = Lanes([0.0; CAP]);
+
+#[inline(always)]
+fn notice() -> &'static mut [f32; CAP * CAP] {
+    unsafe { &mut (*(&raw mut NOTICE)).0 }
+}
+
+#[inline(always)]
+fn hit_off() -> &'static mut [f32; CAP] {
+    unsafe { &mut (*(&raw mut HIT_OFF)).0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn crowd_notice() -> *mut f32 {
+    notice().as_mut_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn crowd_hit_off() -> *mut f32 {
+    hit_off().as_mut_ptr()
+}
+
+/// Forgets everything `row` had noticed (blinded, respawned).
+#[unsafe(no_mangle)]
+pub extern "C" fn crowd_notice_clear(row: u32) {
+    let r = row as usize;
+    if r < CAP {
+        notice()[r * CAP..(r + 1) * CAP].fill(0.0);
+    }
+}
+
+/// The first pass of `Bot.perceive` for the bot in `slot` (see `crowd_view`
+/// for the view arguments), as the TypeScript did it:
+/// - enemies gone (dead / down) drop out of its notice;
+/// - in view but not someone it can fight from here (`armour_ok` / `air_ok`
+///   say whether crews under armour / in aircraft are; everyone else is):
+///   notice back to 0;
+/// - in view: a candidate, scored by distance, × 0.3 for its `target` slot,
+///   × 0.3 for its last `attacker` slot, × 0.6 if being noticed, × 0.7 if
+///   firing; distant (> 25 m), quiet ones not yet noticed only every other
+///   time (`count` + id odd: skipped);
+/// - out of view: notice fades by `dt` / 2 (to 0 if it can't fight them).
+///
+/// The `max_look` lowest-scored candidates go to `hits` / `hit_dist` /
+/// `hit_off`, in score order; returns how many.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn crowd_perceive(
+    slot: u32,
+    sight: f32,
+    air_sight: f32,
+    cos_half: f32,
+    cos_up: f32,
+    free_up: u32,
+    yaw: f32,
+    pitch: f32,
+    dt: f32,
+    count: u32,
+    target: i32,
+    attacker: i32,
+    armour_ok: u32,
+    air_ok: u32,
+    max_look: u32,
+) -> u32 {
+    let c = crowd();
+    let q = params();
+    let s = slot as usize;
+    let v = View::new(c, s, sight, air_sight, cos_half, cos_up, free_up, yaw, pitch);
+    let row = &mut notice()[s * CAP..(s + 1) * CAP];
+    let scores = unsafe { &mut (*(&raw mut SCORE)).0 };
+    let fade = dt * 0.5;
+    let zero = f32x4_splat(0.0);
+    let mut n = 0usize;
+    for g in 0..q.count.div_ceil(4) {
+        let i = g * 4;
+        let noticed = unsafe { f32x4_gt(v128_load(row.as_ptr().add(i) as *const v128), zero) };
+        let (seen, dist) = v.group(c, i);
+        let seen_mask = i32x4_bitmask(seen) as u32;
+        let mut mask = seen_mask | i32x4_bitmask(noticed) as u32;
+        while mask != 0 {
+            let lane = mask.trailing_zeros() as usize;
+            mask &= mask - 1;
+            let o = i + lane;
+            if o >= q.count {
+                continue;
+            }
+            let f = c.flags.0[o];
+            if f & RED != v.enemy {
+                continue;
+            }
+            let p = row[o];
+            if f & ALIVE == 0 {
+                row[o] = 0.0;
+                continue;
+            }
+            let engage = if f & AIR != 0 {
+                air_ok != 0
+            } else if f & ARMOUR != 0 {
+                armour_ok != 0
+            } else {
+                true
+            };
+            if seen_mask & (1 << lane) == 0 {
+                // Noticed, out of view: fades.
+                if p > 0.0 {
+                    row[o] = if engage { (p - fade).max(0.0) } else { 0.0 };
+                }
+                continue;
+            }
+            if !engage {
+                if p > 0.0 {
+                    row[o] = 0.0;
+                }
+                continue;
+            }
+            let d = dist_lane(dist, lane);
+            let firing = f & FIRING != 0;
+            if p == 0.0 && !firing && d > 25.0 && (count.wrapping_add(c.ids.0[o] as u32)) & 1 == 1 {
+                continue;
+            }
+            let mut score = d;
+            if o as i32 == target {
+                score *= 0.3;
+            }
+            if o as i32 == attacker {
+                score *= 0.3;
+            }
+            if p > 0.0 {
+                score *= 0.6;
+            }
+            if firing {
+                score *= 0.7;
+            }
+            c.hits.0[n] = o as u32;
+            c.hit_dist.0[n] = d;
+            scores[n] = score;
+            n += 1;
+        }
+    }
+    // The few that matter most, in score order (selection sort, ties keep roster order).
+    let look = n.min(max_look as usize);
+    for a in 0..look {
+        let mut k = a;
+        for b in a + 1..n {
+            if scores[b] < scores[k] {
+                k = b;
+            }
+        }
+        if k != a {
+            c.hits.0.swap(a, k);
+            c.hit_dist.0.swap(a, k);
+            scores.swap(a, k);
+        }
+    }
+    let offs = hit_off();
+    let (sx, sz) = (c.x.0[s], c.z.0[s]);
+    for a in 0..look {
+        let o = c.hits.0[a] as usize;
+        offs[a] = off_axis_deg(yaw, c.x.0[o] - sx, c.z.0[o] - sz);
+    }
+    look as u32
+}
+
+/// |angle from facing `yaw` to the direction (dx, dz)| in degrees (`offAxisDeg` in aim.ts).
+fn off_axis_deg(yaw: f32, dx: f32, dz: f32) -> f32 {
+    const PI: f32 = core::f32::consts::PI;
+    const TAU: f32 = core::f32::consts::TAU;
+    let d = atan2(-dx, -dz) - yaw;
+    // Wrap to [-pi, pi].
+    let k = d / TAU + 0.5;
+    let k = { let t = k as i32; if (t as f32) > k { t - 1 } else { t } };
+    let w = d - k as f32 * TAU;
+    w.abs() * (180.0 / PI)
+}
+
+/// atan2 without libm (Abramowitz & Stegun 4.4.49 on [0, 1], error < 2e-8 rad).
+fn atan2(y: f32, x: f32) -> f32 {
+    const PI: f32 = core::f32::consts::PI;
+    const HALF_PI: f32 = core::f32::consts::FRAC_PI_2;
+    const C: [f32; 8] = [-0.333_331_45, 0.199_935_5, -0.142_088_99, 0.106_562_64, -0.075_289_64, 0.042_909_614, -0.016_165_737, 0.002_866_225_7];
+    let (ax, ay) = (x.abs(), y.abs());
+    let (hi, lo) = if ax > ay { (ax, ay) } else { (ay, ax) };
+    if hi == 0.0 {
+        return 0.0;
+    }
+    let a = lo / hi;
+    let s = a * a;
+    let mut p = 0.0f32;
+    for c in C.iter().rev() {
+        p = (p + c) * s;
+    }
+    let mut r = a * (1.0 + p);
+    if ay > ax {
+        r = HALF_PI - r;
+    }
+    if x < 0.0 {
+        r = PI - r;
+    }
+    if y < 0.0 {
+        r = -r;
+    }
+    r
 }
 
 #[inline(always)]
@@ -516,4 +763,37 @@ fn sincos(a: f32) -> (f32, f32) {
 #[inline(always)]
 fn sqrt(v: f32) -> f32 {
     f32x4_extract_lane::<0>(f32x4_sqrt(f32x4_splat(v)))
+}
+
+/// Living enemies of the bot in `slot` within `range` (m) it has noticed (notice ≥ 1).
+#[unsafe(no_mangle)]
+pub extern "C" fn crowd_known(slot: u32, range: f32) -> u32 {
+    let c = crowd();
+    let q = params();
+    let s = slot as usize;
+    let row = &notice()[s * CAP..(s + 1) * CAP];
+    let want = u32x4_splat((if c.flags.0[s] & RED != 0 { 0 } else { RED }) | ALIVE);
+    let side = u32x4_splat(RED | ALIVE);
+    let (sx, sy, sz) = (f32x4_splat(c.x.0[s]), f32x4_splat(c.y.0[s]), f32x4_splat(c.z.0[s]));
+    let r2 = f32x4_splat(range * range);
+    let one = f32x4_splat(1.0);
+    let mut n = 0u32;
+    for g in 0..q.count.div_ceil(4) {
+        let i = g * 4;
+        unsafe {
+            let known = f32x4_ge(v128_load(row.as_ptr().add(i) as *const v128), one);
+            if !v128_any_true(known) {
+                continue;
+            }
+            let flags = v128_load(c.flags.0.as_ptr().add(i) as *const v128);
+            let enemy = u32x4_eq(v128_and(flags, side), want);
+            let dx = f32x4_sub(v128_load(c.x.0.as_ptr().add(i) as *const v128), sx);
+            let dy = f32x4_sub(v128_load(c.y.0.as_ptr().add(i) as *const v128), sy);
+            let dz = f32x4_sub(v128_load(c.z.0.as_ptr().add(i) as *const v128), sz);
+            let d2 = f32x4_add(f32x4_add(f32x4_mul(dx, dx), f32x4_mul(dy, dy)), f32x4_mul(dz, dz));
+            let hit = v128_and(v128_and(known, enemy), f32x4_lt(d2, r2));
+            n += (i32x4_bitmask(hit) as u32).count_ones();
+        }
+    }
+    n
 }

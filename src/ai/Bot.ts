@@ -12,7 +12,7 @@ import type { WeaponDef } from '@/weapons/weaponData';
 import type { NavWorld } from './NavWorld';
 import type { BotSkill } from './difficulty';
 import { chooseAction, type BotAction } from './brain';
-import { aimErrorDeg, noticeTime, offAxisDeg, turnToward, wrapAngle, yawPitchOf } from './aim';
+import { aimErrorDeg, noticeTime, turnToward, wrapAngle, yawPitchOf } from './aim';
 import type { Combatant } from './types';
 import { rollPersonality, type Personality } from './personality';
 import { COMBAT_WINDOW } from '@/modes/squads';
@@ -105,15 +105,37 @@ export interface BotServices {
   /** Someone else already stands at `p` (a bot heading there stops beside them). */
   spotTaken(bot: Bot, p: THREE.Vector3): boolean;
   /**
-   * Living enemies `bot` has in view looking along (yaw, pitch): within sight
-   * (`airSight` for anyone in an aircraft), inside the half angle of the view
-   * cone and, unless `viewUpDeg` is null, within that much of `pitch` — or
-   * within 1.5 m. Returns how many; `viewHit(i)` / `viewDist(i)` give each.
+   * The first pass of perception (the wasm core, `crowd_perceive`): enemies in
+   * view looking along (yaw, pitch) — within sight (`airSight` for anyone in an
+   * aircraft), inside the half angle of the view cone and, unless `viewUpDeg`
+   * is null, within that much of `pitch`, or within 1.5 m — scored (target,
+   * last attacker, being noticed, firing), with the notice of everyone else
+   * fading. Returns how many of the best (up to `maxLook`) to look at;
+   * `viewHit(i)` / `viewDist(i)` / `viewOff(i)` give each, best first.
    */
-  inView(bot: Bot, sight: number, airSight: number, halfFovDeg: number, viewUpDeg: number | null, yaw: number, pitch: number): number;
+  perceiveFirst(
+    bot: Bot,
+    sight: number,
+    airSight: number,
+    halfFovDeg: number,
+    viewUpDeg: number | null,
+    yaw: number,
+    pitch: number,
+    dt: number,
+    count: number,
+    target: Combatant | null,
+    attackerId: number,
+    maxLook: number,
+  ): number;
   viewHit(i: number): Combatant;
   viewDist(i: number): number;
-  combatantById(id: number): Combatant | null;
+  viewOff(i: number): number;
+  /** How far `bot` has noticed `e` (0..1.5; 1 = noticed). */
+  noticeOf(bot: Bot, e: Combatant): number;
+  setNotice(bot: Bot, e: Combatant, v: number): void;
+  clearNotice(bot: Bot): void;
+  /** Living enemies within `range` of `bot` it has noticed. */
+  knownEnemies(bot: Bot, range: number): number;
   /** Class gadget: fire a rocket / rifle grenade at `at`, or put a beacon / mine down there. False if it can't. */
   useGadget(bot: Bot, kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3): boolean;
   /** Spots enemy mines in view nearby; true if one the team knows of is within a few steps. */
@@ -162,8 +184,6 @@ export function setNextBotId(id: number): void {
 
 /** Half the view's height (deg) above / below where a bot looks: what it can notice without looking up. */
 const VIEW_UP = 50;
-/** Scratch for `perceive`: ids of the enemies in view this time. */
-const SEEN = new Set<number>();
 
 /** Height above a bot (m) past which a shot or a sound comes from an aircraft: no place to chase or shoot at. */
 const OVERHEAD = 25;
@@ -252,7 +272,8 @@ export class Bot implements Damageable, Combatant {
   private perceiveTimer: number;
   private perceiveCount = 0;
   private thinkTimer: number;
-  private readonly notice = new Map<number, number>();
+  /** Respawned: what it had noticed is forgotten at the next perceive (kept in the core, `noticeOf`). */
+  private noticeStale = true;
   private readonly lastSeen = { pos: new THREE.Vector3(), time: -Infinity };
   /** Last sound worth checking: where (roughly) and the time the bot acts on it (a moment after hearing it). */
   private readonly heard = { pos: new THREE.Vector3(), time: -Infinity };
@@ -317,8 +338,6 @@ export class Bot implements Damageable, Combatant {
   far = false;
   /** Close to the viewer: its capsule (which only the player bumps into) is kept up to date. */
   nearViewer = true;
-  /** Enemies in view this look (reused between looks). */
-  private readonly cand: { e: Combatant; dist: number; off: number; firing: boolean; score: number }[] = [];
   /** Simulation time owed while skipped by the update level of detail (see BotManager.step). */
   lodDt = 0;
   private moveDt = 0;
@@ -394,7 +413,7 @@ export class Bot implements Damageable, Combatant {
     this.hitboxes.setEnabled(true);
     this.hitboxes.place(this.feet, yaw);
     this.target = null;
-    this.notice.clear();
+    this.noticeStale = true;
     this.lastSeen.time = this.heard.time = this.lastHurt = -Infinity;
     this.hurtTurnAt = Infinity;
     this.lastAttacker = -1;
@@ -709,74 +728,47 @@ export class Bot implements Damageable, Combatant {
 
   private perceive(s: BotServices, dt: number): void {
     const skill = s.skill;
+    if (s.time < this.blindUntil || this.noticeStale) {
+      s.clearNotice(this);
+      this.noticeStale = false;
+    }
     if (s.time < this.blindUntil) {
       this.target = null;
-      this.notice.clear();
       return;
     }
     const eye = this.eyePos(this.eye);
     this.perceiveCount++;
     let best: Combatant | null = null;
     let bestDist = Infinity;
-    // First pass: who is in view at all (the wasm core, no rays). Out of view,
-    // any notice fades; quiet ones nobody was noticing need no bookkeeping.
-    const cand = this.cand;
-    let n = 0;
-    // Vehicle gunners watch the sky for aircraft further out.
-    const inView = s.inView(this, skill.sight, this.riding ? skill.sight * 3 : skill.sight, skill.fov / 2, this.riding ? null : VIEW_UP, this.aimYaw, this.aimPitch);
-    const seen = SEEN;
-    seen.clear();
-    for (let h = 0; h < inView; h++) {
-      const e = s.viewHit(h);
-      if (!e.alive) continue;
-      const progress = this.notice.get(e.id) ?? 0;
-      // Pilots overhead, crews out of reach under armour: not someone to fight from here.
-      if (!s.canEngage(this, e)) {
-        if (progress > 0) this.notice.set(e.id, 0);
+    // First pass (the wasm core): who is in view, notice fading for the rest,
+    // and the few in view that matter most — a crowd in view can't all be
+    // tracked at once. Vehicle gunners watch the sky for aircraft further out.
+    const look = s.perceiveFirst(
+      this,
+      skill.sight,
+      this.riding ? skill.sight * 3 : skill.sight,
+      skill.fov / 2,
+      this.riding ? null : VIEW_UP,
+      this.aimYaw,
+      this.aimPitch,
+      dt,
+      this.perceiveCount,
+      this.target,
+      this.lastAttacker,
+      PERCEIVE_LOOKS,
+    );
+    // Second pass: line of sight for those; the rest keep where they were.
+    for (let i = 0; i < look; i++) {
+      const e = s.viewHit(i);
+      // Went down earlier this step (the core's copy is from its last step).
+      if (!e.alive) {
+        s.setNotice(this, e, 0);
         continue;
       }
-      seen.add(e.id);
-      const dist = s.viewDist(h);
+      const dist = s.viewDist(i);
+      const off = s.viewOff(i);
       const firing = e.firingUntil > s.time;
-      // Distant, quiet enemies not yet noticed at all are looked for every other time (halves the rays).
-      if (progress === 0 && !firing && dist > 25 && (this.perceiveCount + e.id) % 2 === 1) continue;
-      const off = offAxisDeg(this.aimYaw, e.feet.x - this.feet.x, e.feet.z - this.feet.z);
-      // Who matters most: whoever shoots at us, the current target, those being noticed, the closest.
-      let score = dist;
-      if (e === this.target) score *= 0.3;
-      if (e.id === this.lastAttacker) score *= 0.3;
-      if (progress > 0) score *= 0.6;
-      if (firing) score *= 0.7;
-      const c = (cand[n] ??= { e, dist: 0, off: 0, firing: false, score: 0 });
-      c.e = e;
-      c.dist = dist;
-      c.off = off;
-      c.firing = firing;
-      c.score = score;
-      n++;
-    }
-    // Noticed but out of view (or gone): the notice fades.
-    for (const [id, progress] of this.notice) {
-      if (seen.has(id)) continue;
-      const e = s.combatantById(id);
-      if (!e || !e.alive) {
-        this.notice.delete(id);
-        continue;
-      }
-      if (progress <= 0) continue;
-      this.notice.set(id, s.canEngage(this, e) ? Math.max(0, progress - dt * 0.5) : 0);
-    }
-    // Second pass: line of sight for the few that matter most (a crowd in view
-    // can't all be tracked at once); the rest keep where they were.
-    const look = Math.min(n, PERCEIVE_LOOKS);
-    for (let i = 0; i < look; i++) {
-      let k = i;
-      for (let j = i + 1; j < n; j++) if (cand[j]!.score < cand[k]!.score) k = j;
-      if (k !== i) [cand[i], cand[k]] = [cand[k]!, cand[i]!];
-    }
-    for (let i = 0; i < look; i++) {
-      const { e, dist, off, firing } = cand[i]!;
-      let progress = this.notice.get(e.id) ?? 0;
+      let progress = s.noticeOf(this, e);
       const head = this.tmp.copy(e.feet).setY(e.feet.y + e.eyeHeight);
       const chest = this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7);
       let visible = s.canSee(this, e, eye, head, chest);
@@ -809,7 +801,7 @@ export class Bot implements Damageable, Combatant {
       } else {
         progress = Math.max(0, progress - dt * 0.5);
       }
-      this.notice.set(e.id, progress);
+      s.setNotice(this, e, progress);
     }
     if (best !== this.target) this.tracked = 0;
     this.target = best;
@@ -1127,13 +1119,7 @@ export class Bot implements Damageable, Combatant {
 
   /** Enemies within `range` this bot has noticed. */
   private knownEnemies(s: BotServices, range: number): number {
-    let n = 0;
-    const r2 = range * range;
-    for (const e of s.enemiesOf(this.team)) {
-      if (!e.alive || (this.notice.get(e.id) ?? 0) < 1) continue;
-      if (e.feet.distanceToSquared(this.feet) < r2) n++;
-    }
-    return n;
+    return this.noticeStale ? 0 : s.knownEnemies(this, range);
   }
 
   private get blinded(): boolean {

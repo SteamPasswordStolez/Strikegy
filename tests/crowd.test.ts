@@ -2,7 +2,15 @@ import fs from 'node:fs';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadCore } from '@/wasm/core';
-import { CROWD_AIR, CROWD_BOT, CROWD_HAS_GOAL, Crowd, type CrowdTuning } from '@/ai/crowd';
+import {
+  CROWD_AIR,
+  CROWD_ARMOUR,
+  CROWD_BOT,
+  CROWD_FIRING,
+  CROWD_HAS_GOAL,
+  Crowd,
+  type CrowdTuning,
+} from '@/ai/crowd';
 import { offAxisDeg } from '@/ai/aim';
 import type { Combatant } from '@/ai/types';
 
@@ -261,5 +269,167 @@ describe('wasm crowd kernels', () => {
     }
     expect(hits).toBeGreaterThan(1000);
     expect(edge).toBeLessThan(3);
+  });
+
+  it('perceive matches the old first pass of Bot.perceive', () => {
+    let picked = 0;
+    let differ = 0;
+    for (let seed = 1; seed <= 6; seed++) {
+      const bodies = scene(seed, 301, 260);
+      const r = rng(seed * 31);
+      const armour = bodies.map(() => r() < 0.06);
+      const firing = bodies.map(() => r() < 0.2);
+      crowd.setCount(bodies.length);
+      crowd.setHumans([bodies.length - 1]);
+      bodies.forEach((b, i) =>
+        crowd.put(
+          i,
+          b,
+          (i < bodies.length - 1 ? CROWD_BOT : 0) |
+            (b.air ? CROWD_AIR : armour[i] ? CROWD_ARMOUR : 0) |
+            (firing[i] ? CROWD_FIRING : 0),
+        ),
+      );
+      crowd.buildGrid();
+      for (let self = 0; self < bodies.length - 1; self += 5) {
+        const me = bodies[self]!;
+        // Some notice already built up (any slot: dead ones and friends too).
+        crowd.clearNotice(self);
+        const before = new Map<number, number>();
+        bodies.forEach((_, o) => {
+          if (r() < 0.15) {
+            const v = r() < 0.3 ? 1.2 : r();
+            crowd.setNotice(self, o, v);
+            before.set(o, v);
+          }
+        });
+        const riding = r() < 0.15;
+        const yaw = (r() - 0.5) * 4 * Math.PI;
+        const pitch = (r() - 0.5) * 0.4;
+        const half = 50 + r() * 15;
+        const dt = 0.1;
+        const count = Math.floor(r() * 100);
+        const target = r() < 0.3 ? Math.floor(r() * bodies.length) : -1;
+        const attacker = r() < 0.3 ? Math.floor(r() * bodies.length) : -1;
+        const armourOk = r() < 0.5;
+        const airOk = r() < 0.3;
+        const n = crowd.perceive(
+          self,
+          120,
+          riding ? 360 : 120,
+          half,
+          riding ? null : 50,
+          yaw,
+          pitch,
+          dt,
+          count,
+          target,
+          attacker,
+          armourOk,
+          airOk,
+          8,
+        );
+
+        // The old TypeScript, with notice as a map by slot.
+        const notice = new Map(before);
+        const inView = new Set(refView(bodies, self, 120, riding, half, yaw, pitch));
+        const engage = (o: number): boolean =>
+          bodies[o]!.air ? airOk : armour[o] ? armourOk : true;
+        const cand: { o: number; dist: number; score: number }[] = [];
+        bodies.forEach((e, o) => {
+          if (e.team === me.team) return;
+          const p = notice.get(o) ?? 0;
+          if (!e.alive) {
+            notice.delete(o);
+            return;
+          }
+          if (!inView.has(o)) {
+            if (p > 0) notice.set(o, engage(o) ? Math.max(0, p - dt * 0.5) : 0);
+            return;
+          }
+          if (!engage(o)) {
+            if (p > 0) notice.set(o, 0);
+            return;
+          }
+          const dist = e.feet.distanceTo(me.feet);
+          if (p === 0 && !firing[o] && dist > 25 && (count + e.id) % 2 === 1) return;
+          let score = dist;
+          if (o === target) score *= 0.3;
+          if (o === attacker) score *= 0.3;
+          if (p > 0) score *= 0.6;
+          if (firing[o]) score *= 0.7;
+          cand.push({ o, dist, score });
+        });
+        const look = Math.min(cand.length, 8);
+        for (let i = 0; i < look; i++) {
+          let k = i;
+          for (let j = i + 1; j < cand.length; j++) if (cand[j]!.score < cand[k]!.score) k = j;
+          if (k !== i) [cand[i], cand[k]] = [cand[k]!, cand[i]!];
+        }
+        const want = cand.slice(0, look).map((c) => c.o);
+        const got = [...crowd.hits.subarray(0, n)];
+        if (got.join() !== want.join()) {
+          // A boundary case of the view test (float rounding) shifts the picks.
+          differ++;
+          continue;
+        }
+        picked += n;
+        for (let i = 0; i < n; i++) {
+          const o = got[i]!;
+          const e = bodies[o]!;
+          expect(crowd.hitDist[i]).toBeCloseTo(cand[i]!.dist, 3);
+          expect(crowd.hitOff[i]).toBeCloseTo(
+            offAxisDeg(yaw, e.feet.x - me.feet.x, e.feet.z - me.feet.z),
+            2,
+          );
+        }
+        // Notice for everyone not picked: the same (friends untouched).
+        bodies.forEach((e, o) => {
+          if (got.includes(o)) return;
+          expect(crowd.noticeOf(self, o)).toBeCloseTo(
+            notice.get(o) ?? (e.team === me.team ? (before.get(o) ?? 0) : 0),
+            5,
+          );
+        });
+      }
+    }
+    expect(picked).toBeGreaterThan(300);
+    expect(differ).toBeLessThanOrEqual(2);
+  });
+
+  it('counts the noticed enemies nearby like knownEnemies did', () => {
+    const bodies = scene(9, 301, 200);
+    load(crowd, bodies);
+    const r = rng(77);
+    let total = 0;
+    for (let self = 0; self < bodies.length - 1; self += 3) {
+      const me = bodies[self]!;
+      crowd.clearNotice(self);
+      bodies.forEach((_, o) => {
+        if (r() < 0.3) crowd.setNotice(self, o, r() * 1.5);
+      });
+      const range = 20 + r() * 80;
+      let want = 0;
+      bodies.forEach((e, o) => {
+        if (e.team === me.team || !e.alive || crowd.noticeOf(self, o) < 1) return;
+        if (e.feet.distanceToSquared(me.feet) < range * range) want++;
+      });
+      expect(crowd.known(self, range)).toBe(want);
+      total += want;
+    }
+    expect(total).toBeGreaterThan(50);
+  });
+
+  it('a freed slot keeps nothing for its next holder', () => {
+    load(crowd, scene(4, 40, 30));
+    crowd.setNotice(3, 7, 1.2);
+    crowd.setNotice(7, 3, 0.5);
+    crowd.setNotice(7, 9, 1);
+    crowd.setNotice(2, 9, 0.8);
+    crowd.clear(7);
+    expect(crowd.noticeOf(3, 7)).toBe(0);
+    expect(crowd.noticeOf(7, 3)).toBe(0);
+    expect(crowd.noticeOf(7, 9)).toBe(0);
+    expect(crowd.noticeOf(2, 9)).toBeCloseTo(0.8);
   });
 });

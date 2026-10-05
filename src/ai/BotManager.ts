@@ -28,7 +28,7 @@ import type { Danger } from '@/modes/supportWorld';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
 import { core } from '@/wasm/core';
-import { CROWD_AIR, CROWD_BOT, CROWD_HAS_GOAL, Crowd } from './crowd';
+import { CROWD_AIR, CROWD_ARMOUR, CROWD_BOT, CROWD_FIRING, CROWD_HAS_GOAL, Crowd } from './crowd';
 
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
@@ -1116,7 +1116,7 @@ export class BotManager implements BotServices {
     seen.length = 0;
     for (const h of this.humans()) {
       const slot = this.slotFor(h);
-      this.crowd.put(slot, h, this.seatCover.get(h.id) === 'air' ? CROWD_AIR : 0);
+      this.crowd.put(slot, h, this.extraFlags(h));
       seen.push(slot);
     }
     // People who left: their slots go.
@@ -1129,7 +1129,16 @@ export class BotManager implements BotServices {
   /** One bot's slot, again after it stepped (others' queries in the same step see where it went). */
   private putBot(e: BotEntry): void {
     const b = e.bot;
-    this.crowd.put(e.ci, b, CROWD_BOT | (b.hasGoal ? CROWD_HAS_GOAL : 0) | (this.seatCover.get(b.id) === 'air' ? CROWD_AIR : 0));
+    this.crowd.put(e.ci, b, CROWD_BOT | (b.hasGoal ? CROWD_HAS_GOAL : 0) | this.extraFlags(b));
+  }
+
+  private extraFlags(c: Combatant): number {
+    const cover = this.seatCover.get(c.id);
+    return (cover === 'air' ? CROWD_AIR : cover === 'armour' ? CROWD_ARMOUR : 0) | (c.firingUntil > this.time ? CROWD_FIRING : 0);
+  }
+
+  private slotOf(c: Combatant): number {
+    return this.slots.get(c) ?? -1;
   }
 
   /**
@@ -2138,8 +2147,36 @@ export class BotManager implements BotServices {
     return this.crowd.separation(this.entryOf(bot).ci, wx, wz, speed, out);
   }
 
-  inView(bot: Bot, sight: number, airSight: number, halfFovDeg: number, viewUpDeg: number | null, yaw: number, pitch: number): number {
-    return this.crowd.view(this.entryOf(bot).ci, sight, airSight, halfFovDeg, viewUpDeg, yaw, pitch);
+  perceiveFirst(
+    bot: Bot,
+    sight: number,
+    airSight: number,
+    halfFovDeg: number,
+    viewUpDeg: number | null,
+    yaw: number,
+    pitch: number,
+    dt: number,
+    count: number,
+    target: Combatant | null,
+    attackerId: number,
+    maxLook: number,
+  ): number {
+    // Who it can fight from where it is (as `canEngage`): crews under armour
+    // with a rocket or a cannon, aircraft with a hitscan mounted gun.
+    const r = bot.riding;
+    let armourOk = false;
+    let airOk = false;
+    if (!r) armourOk = bot.hasRocket;
+    else {
+      const gun = this.vehicles?.get(r.vehicle)?.mounts[r.seat]?.gun;
+      if (gun) {
+        airOk = !gun.shell;
+        armourOk = gun.blast > 0;
+      }
+    }
+    const t = target ? this.slotOf(target) : -1;
+    const a = this.slotById.get(attackerId) ?? -1;
+    return this.crowd.perceive(this.entryOf(bot).ci, sight, airSight, halfFovDeg, viewUpDeg, yaw, pitch, dt, count, t, a, armourOk, airOk, maxLook);
   }
 
   viewHit(i: number): Combatant {
@@ -2153,6 +2190,28 @@ export class BotManager implements BotServices {
   combatantById(id: number): Combatant | null {
     const slot = this.slotById.get(id);
     return slot === undefined ? null : this.owners[slot] ?? null;
+  }
+
+  viewOff(i: number): number {
+    return this.crowd.hitOff[i]!;
+  }
+
+  noticeOf(bot: Bot, e: Combatant): number {
+    const col = this.slotOf(e);
+    return col < 0 ? 0 : this.crowd.noticeOf(this.entryOf(bot).ci, col);
+  }
+
+  setNotice(bot: Bot, e: Combatant, v: number): void {
+    const col = this.slotOf(e);
+    if (col >= 0) this.crowd.setNotice(this.entryOf(bot).ci, col, v);
+  }
+
+  knownEnemies(bot: Bot, range: number): number {
+    return this.crowd.known(this.entryOf(bot).ci, range);
+  }
+
+  clearNotice(bot: Bot): void {
+    this.crowd.clearNotice(this.entryOf(bot).ci);
   }
 
   useGadget(bot: Bot, kind: 'rocket' | 'riflesmoke' | 'beacon' | 'mine', at: THREE.Vector3): boolean {

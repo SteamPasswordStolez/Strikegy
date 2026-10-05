@@ -47,6 +47,27 @@ export interface CoreExports {
     yaw: number,
     pitch: number,
   ): number;
+  crowd_notice(): number;
+  crowd_hit_off(): number;
+  crowd_notice_clear(row: number): void;
+  crowd_known(slot: number, range: number): number;
+  crowd_perceive(
+    slot: number,
+    sight: number,
+    airSight: number,
+    cosHalf: number,
+    cosUp: number,
+    freeUp: number,
+    yaw: number,
+    pitch: number,
+    dt: number,
+    count: number,
+    target: number,
+    attacker: number,
+    armourOk: number,
+    airOk: number,
+    maxLook: number,
+  ): number;
   occ_max_boxes(): number;
   occ_reset(): void;
   occ_set_box(slot: number, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, qx: number, qy: number, qz: number, qw: number): void;

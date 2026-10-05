@@ -9,6 +9,10 @@ export const CROWD_RED = 4;
 export const CROWD_AIR = 8;
 export const CROWD_HAS_GOAL = 16;
 export const CROWD_BOT = 32;
+/** Fired a moment ago (easier to spot). */
+export const CROWD_FIRING = 64;
+/** In a seat under armour. */
+export const CROWD_ARMOUR = 128;
 
 export interface CrowdTuning {
   cell: number;
@@ -42,6 +46,10 @@ export class Crowd {
   readonly hits: Uint32Array;
   readonly hitDist: Float32Array;
   private readonly humanSlots: Uint32Array;
+  /** Off-axis angle (deg) of each `perceive` pick. */
+  readonly hitOff: Float32Array;
+  /** How far row (a bot's slot) has noticed column (anyone's slot): 0..1.5, 1 = noticed. */
+  private readonly notice: Float32Array;
 
   constructor(
     private readonly k: CoreExports,
@@ -61,6 +69,9 @@ export class Crowd {
     this.hits = new Uint32Array(buf, k.crowd_hits(), this.cap);
     this.hitDist = f32(k.crowd_hit_dist());
     this.humanSlots = new Uint32Array(buf, k.crowd_humans(), 256);
+    this.hitOff = f32(k.crowd_hit_off());
+    this.notice = f32(k.crowd_notice(), this.cap * this.cap);
+    this.notice.fill(0);
     const t = tuning;
     k.crowd_config(
       t.cell,
@@ -80,9 +91,11 @@ export class Crowd {
     this.k.crowd_set_count(count);
   }
 
-  /** An unused slot: nobody, never matched. */
+  /** An unused slot: nobody, never matched, and nobody's notice of it (or its of anyone) carried over to the next holder. */
   clear(slot: number): void {
     this.flags[slot] = 0;
+    this.k.crowd_notice_clear(slot);
+    for (let r = slot; r < this.notice.length; r += this.cap) this.notice[r] = 0;
   }
 
   /** The people's slots (bots keep off them, 1.2x as wide). */
@@ -104,6 +117,64 @@ export class Crowd {
       (c.downed ? CROWD_DOWNED : 0) |
       (c.team === 'red' ? CROWD_RED : 0) |
       extra;
+  }
+
+  noticeOf(row: number, col: number): number {
+    return this.notice[row * this.cap + col]!;
+  }
+
+  setNotice(row: number, col: number, v: number): void {
+    this.notice[row * this.cap + col] = v;
+  }
+
+  /** Living enemies of `slot` within `range` it has noticed. */
+  known(slot: number, range: number): number {
+    return this.k.crowd_known(slot, range);
+  }
+
+  clearNotice(row: number): void {
+    this.k.crowd_notice_clear(row);
+  }
+
+  /**
+   * The first pass of perception for the bot in `slot` (see `crowd_perceive`):
+   * notice bookkeeping for everyone, then the `maxLook` enemies in view that
+   * matter most land in `hits` / `hitDist` / `hitOff`, best first; returns how many.
+   */
+  perceive(
+    slot: number,
+    sight: number,
+    airSight: number,
+    halfFovDeg: number,
+    viewUpDeg: number | null,
+    yaw: number,
+    pitch: number,
+    dt: number,
+    count: number,
+    target: number,
+    attacker: number,
+    armourOk: boolean,
+    airOk: boolean,
+    maxLook: number,
+  ): number {
+    const rad = Math.PI / 180;
+    return this.k.crowd_perceive(
+      slot,
+      sight,
+      airSight,
+      Math.cos(halfFovDeg * rad),
+      Math.cos((viewUpDeg ?? 0) * rad),
+      viewUpDeg === null ? 1 : 0,
+      yaw,
+      pitch,
+      dt,
+      count,
+      target,
+      attacker,
+      armourOk ? 1 : 0,
+      airOk ? 1 : 0,
+      maxLook,
+    );
   }
 
   /** Living bots into the neighbour grid (after the slots are written). */
