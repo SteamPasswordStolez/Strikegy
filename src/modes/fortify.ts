@@ -726,7 +726,7 @@ export class Fortifications {
     slot.built = false;
     slot.work = 0;
     slot.health = 0;
-    for (const c of slot.colliders) this.physics.world.removeCollider(c, false);
+    for (const c of slot.colliders) this.physics.removeStatic(c);
     slot.colliders.length = 0;
     for (const ob of slot.obstacles) this.nav?.remove(ob);
     slot.obstacles.length = 0;

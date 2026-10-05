@@ -8,6 +8,7 @@
 #![no_std]
 
 pub mod crowd;
+pub mod occluders;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {

@@ -1,4 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { coreIfLoaded } from '@/wasm/core';
+import { Occluders } from './occluders';
 
 export { RAPIER };
 
@@ -87,6 +89,11 @@ export class PhysicsWorld {
    * build doesn't look as expected (then the public API is used).
    */
   private readonly rays: RawRays | null;
+  /**
+   * Sight-line blockers mirrored in the wasm core (static WORLD boxes, vehicle
+   * hulls): `blocked` asks it rather than Rapier. Null without the core (tests).
+   */
+  private readonly occluders: Occluders | null;
 
   private constructor() {
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -106,6 +113,8 @@ export class PhysicsWorld {
             dir: RAPIER.VectorOps.intoRaw({ x: 0, y: 1, z: 0 }) as unknown as V3,
           }
         : null;
+    const k = coreIfLoaded();
+    this.occluders = k ? new Occluders(k) : null;
   }
 
   /** Loads origin and direction into the reused raw vectors. */
@@ -146,7 +155,24 @@ export class PhysicsWorld {
       .setTranslation(center.x, center.y, center.z)
       .setRotation(rotation)
       .setCollisionGroups(groups(membership, 0xffff));
-    return this.world.createCollider(desc);
+    const collider = this.world.createCollider(desc);
+    if (membership & Layer.WORLD) this.occluders?.addBox(collider, center, halfExtents, rotation);
+    return collider;
+  }
+
+  /** Removes a box made by `addStaticBox`. */
+  removeStatic(collider: RAPIER.Collider): void {
+    this.occluders?.remove(collider);
+    this.world.removeCollider(collider, false);
+  }
+
+  /** A moving WORLD cuboid (vehicle hull) that blocks sight lines. */
+  trackOccluder(collider: RAPIER.Collider): void {
+    this.occluders?.track(collider);
+  }
+
+  untrackOccluder(collider: RAPIER.Collider): void {
+    this.occluders?.untrack(collider);
   }
 
   /** Static collider attached to a fixed body so it can be repositioned (e.g. hitboxes). */
@@ -214,6 +240,8 @@ export class PhysicsWorld {
     if (dist < 0.06) return false;
     const g = this.ground;
     if (g && mask & Layer.WORLD && g.blocks(from, to)) return true;
+    const occ = this.occluders;
+    if (mask === Layer.WORLD && occ?.ready()) return occ.blocked(from, to);
     const raw = this.rays;
     if (raw) {
       this.aim(raw, from.x, from.y, from.z, dx / dist, dy / dist, dz / dist);
@@ -318,6 +346,8 @@ export class PhysicsWorld {
     // (the pipeline itself ~0.25 ms). Same call, without the walk.
     const w = this.world;
     w.physicsPipeline.step(w.gravity, w.integrationParameters, w.islands, w.broadPhase, w.narrowPhase, w.bodies, w.colliders, w.softBodies, w.impulseJoints, w.multibodyJoints, w.ccdSolver);
+    // Vehicle hulls moved: the sight-line copy follows.
+    this.occluders?.sync();
   }
 
   dispose(): void {

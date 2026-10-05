@@ -47,6 +47,14 @@ export interface CoreExports {
     yaw: number,
     pitch: number,
   ): number;
+  occ_max_boxes(): number;
+  occ_reset(): void;
+  occ_set_box(slot: number, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, qx: number, qy: number, qz: number, qw: number): void;
+  occ_remove_box(slot: number): void;
+  occ_set_dynamic(i: number, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, qx: number, qy: number, qz: number, qw: number): void;
+  occ_dynamic_count(count: number): void;
+  occ_ready(): number;
+  occ_blocked(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): number;
 }
 
 let instance: CoreExports | null = null;
@@ -73,6 +81,11 @@ export async function loadCore(bytes?: BufferSource): Promise<CoreExports> {
     }
   }
   instance = (await WebAssembly.instantiate(module, {})).exports as unknown as CoreExports;
+  return instance;
+}
+
+/** The loaded module, or null before `loadCore` has finished (tests that don't load it). */
+export function coreIfLoaded(): CoreExports | null {
   return instance;
 }
 
