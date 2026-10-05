@@ -132,6 +132,11 @@ export class GadgetWorld {
   }
 
   /** Everything in flight or placed, for the game server to send (ids shared by shots, beacons and mines). */
+  /** Rockets, rifle grenades and shells in the air. */
+  *shotsInFlight(): Generator<{ id: number; kind: ShotKind; pos: THREE.Vector3 }> {
+    for (const s of this.shots) yield { id: s.id, kind: s.kind, pos: s.pos };
+  }
+
   *things(): Generator<{ id: number; kind: ShotKind | 'beacon' | 'mine'; pos: THREE.Vector3 }> {
     for (const s of this.shots) yield { id: s.id, kind: s.kind, pos: s.pos };
     for (const b of this.beacons) yield { id: b.id, kind: 'beacon', pos: b.pos };

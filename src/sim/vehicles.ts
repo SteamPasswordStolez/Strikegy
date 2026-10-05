@@ -354,13 +354,16 @@ export class MatchVehicles {
     const to = this.tmp.set(d.x, d.y, d.z);
     const dist = to.distanceTo(v.pos);
     if (dist > top * DRIVE_SLACK.speed * since + DRIVE_SLACK.metres) return false;
-    if (v.flight && dist > 0.01) {
+    if (dist > 0.01) {
       const dir = this.tmp2.copy(to).sub(v.pos).divideScalar(dist);
-      if (this.physics.raycast(v.pos, dir, dist, Layer.WORLD)) {
+      const hit = this.physics.raycast(v.pos, dir, dist, Layer.WORLD, undefined, v.body);
+      // An aircraft flying into something crashes; a ground vehicle doesn't go through walls.
+      if (hit && v.flight) {
         v.health = 0;
         v.crashed = true;
         return true;
       }
+      if (hit) return false;
     }
     v.place(to, new THREE.Quaternion(d.qx, d.qy, d.qz, d.qw), new THREE.Vector3(d.vx, d.vy, d.vz));
     if (v.flight) v.flight.throttle = d.throttle;

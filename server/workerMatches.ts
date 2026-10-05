@@ -15,6 +15,14 @@ import type { FromRoom, RoomWorkerData, ToRoom } from './roomWorker.ts';
 const LINGER = 3000;
 /** New matches wait while the running ones' ticks add up to this share of all cores. */
 const CPU_SHARE = 0.7;
+/**
+ * Matches at once, and how many may be building their map at the same time:
+ * each takes ~0.5 GB and its build eats a core for 8-28 s on the server
+ * laptop (shared with other services), so a few people starting rooms can't
+ * starve it.
+ */
+const MATCHES_MAX = Number(process.env.STRIKEGY_MATCHES_MAX) || 6;
+const LOADING_MAX = 1;
 /** A room just starting counts as this busy (ms a tick) until it reports. */
 const STARTING_MS = 4;
 /** A server tick (ms). */
@@ -24,6 +32,8 @@ export interface WorkerMatchesOptions {
   log?: (line: string) => void;
   mapsDir?: string;
   ended?: (room: string) => void;
+  /** The anticheat put a player out of a room's match. */
+  kick?: (room: string, uid: string, reason: string) => void;
 }
 
 interface RoomThread {
@@ -62,7 +72,9 @@ export class WorkerMatches implements MatchHost {
 
   async start(room: string, settings: RoomSettings, members: { uid: string; name: string; line: MatchLine }[]): Promise<void> {
     this.stop(room);
-    if (this.cpu > CPU_SHARE) throw new Error('busy');
+    let loading = 0;
+    for (const r of this.rooms.values()) if (!r.ready) loading++;
+    if (this.cpu > CPU_SHARE || this.rooms.size >= MATCHES_MAX || loading >= LOADING_MAX) throw new Error('busy');
     const data: RoomWorkerData = {
       room,
       map: settings.map,
@@ -102,6 +114,8 @@ export class WorkerMatches implements MatchHost {
         case 'stats':
           t.stepMs = m.stepMs;
           return;
+        case 'kick':
+          return this.opts.kick?.(room, m.uid, m.reason);
       }
     });
     worker.on('error', (err: unknown) => {

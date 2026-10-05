@@ -63,6 +63,8 @@ interface Sample {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** Ticks without a snapshot after which someone counts as gone from view (allies come in every one). */
+const GAP = 12;
 /** Samples kept per soldier (a second and a half at 20 Hz). */
 const KEEP = 30;
 /** A corpse stays this long after the soldier left the field (s). */
@@ -214,6 +216,11 @@ class Remote {
   add(s: Sample): void {
     const list = this.samples;
     if (list.length && list[list.length - 1]!.tick >= s.tick) return;
+    // Back after a gap (an enemy out of sight is left out of the snapshots): start afresh here, no slide from where it was.
+    if (list.length && s.tick - list[list.length - 1]!.tick > GAP) {
+      list.length = 0;
+      this.shotsSeen = -1;
+    }
     list.push(s);
     if (list.length > KEEP) list.shift();
   }
@@ -230,6 +237,14 @@ class Remote {
         b = list[i + 1] ?? a;
         break;
       }
+    }
+    // No longer in the snapshots (out of sight): not drawn, not hittable here, not on the map.
+    if (tick - list[list.length - 1]!.tick > GAP) {
+      this.visible = this.alive = false;
+      this.boxes.setEnabled(false);
+      this.model?.root.removeFromParent();
+      this.tag?.removeFromParent();
+      return;
     }
     const span = b.tick - a.tick;
     const f = span > 0 ? Math.min(1, Math.max(0, (tick - a.tick) / span)) : 0;

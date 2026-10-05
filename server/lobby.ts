@@ -68,6 +68,8 @@ export interface MatchHost {
 
 export interface LobbyOptions {
   log?: (line: string) => void;
+  /** Rooms one address may hold at once (default `ROOMS_PER_ADDRESS`). */
+  roomsPerAddress?: number;
   /** Soldiers the whole server takes, bots included (tests lower it). */
   serverMax?: number;
   matches?: MatchHost | null;
@@ -91,7 +93,20 @@ interface Client {
   awayUntil: number | null;
   /** Messages refused (flooding, malformed): too many and the connection is dropped. */
   strikes: number;
+  /** The visitor's address (per-address limits, bans). */
+  addr: string;
+  /** Wrong room passwords lately (ms timestamps). */
+  passwordTries: number[];
 }
+
+/** Rooms one address may have open at once (each started one builds a whole map on the server). */
+const ROOMS_PER_ADDRESS = 2;
+/** Password tries a connection gets a minute, and a room gets a minute from everyone (no guessing). */
+const PASSWORD_TRIES = { client: 5, room: 20, windowMs: 60_000 } as const;
+/** A room may start its match again only this long after the last start (each start builds the map). */
+const START_COOLDOWN_MS = 20_000;
+/** Kicked by the anticheat: kept out of that room this long. */
+const BAN_MS = 30 * 60_000;
 
 /** Refused messages before a connection is dropped. */
 const STRIKES_MAX = 40;
@@ -105,6 +120,12 @@ interface RoomRec {
   owner: string;
   /** Member ids in join order. */
   members: string[];
+  /** Wrong passwords lately from anyone (ms timestamps). */
+  passwordTries: number[];
+  /** When its match last started (ms). */
+  startedAt: number;
+  /** Uids and addresses the anticheat put out of this room, until when (ms). */
+  banned: Map<string, number>;
 }
 
 const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -142,7 +163,7 @@ export class LobbyCore {
   private readonly matches: MatchHost | null;
   private readonly now: () => number;
 
-  constructor(opts: LobbyOptions = {}) {
+  constructor(private readonly opts: LobbyOptions = {}) {
     this.log = opts.log ?? (() => {});
     this.serverMax = opts.serverMax ?? SERVER_MAX;
     this.matches = opts.matches ?? null;
@@ -170,10 +191,43 @@ export class LobbyCore {
   // Connections
 
   /** A new connection; returns its client id. */
-  open(conn: Conn, id = randomHex(4)): string {
+  open(conn: Conn, id = randomHex(4), addr = ''): string {
     const now = this.now();
-    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0 });
+    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [] });
     return id;
+  }
+
+  /**
+   * The anticheat put a player out of a room's match: out of the room, and
+   * kept out of it (by uid and address) for a while.
+   */
+  kick(roomId: string, uid: string, reason: string): void {
+    const r = this.rooms.get(roomId);
+    if (!r) return;
+    const c = r.members.map((id) => this.clients.get(id)).find((x) => x?.uid === uid);
+    const until = this.now() + BAN_MS;
+    r.banned.set(`uid:${uid}`, until);
+    if (c?.addr) r.banned.set(`addr:${c.addr}`, until);
+    this.log(`anticheat: ${c?.name ?? '?'} (${uid.slice(0, 8)}) out of room ${roomId}: ${reason}`);
+    if (!c) return;
+    this.send(c, { t: 'error', code: 'banned', detail: reason });
+    this.leaveRoom(c, 'kicked');
+    this.pushList();
+  }
+
+  private isBanned(r: RoomRec, c: Client): boolean {
+    const now = this.now();
+    for (const [k, until] of r.banned) if (until <= now) r.banned.delete(k);
+    return r.banned.has(`uid:${c.uid}`) || (!!c.addr && r.banned.has(`addr:${c.addr}`));
+  }
+
+  /** A wrong password: counted for the connection and the room; true while either may still try. */
+  private passwordTry(c: Client, r: RoomRec): boolean {
+    const now = this.now();
+    const fresh = (list: number[]) => list.filter((t) => now - t < PASSWORD_TRIES.windowMs);
+    c.passwordTries = fresh(c.passwordTries);
+    r.passwordTries = fresh(r.passwordTries);
+    return c.passwordTries.length < PASSWORD_TRIES.client && r.passwordTries.length < PASSWORD_TRIES.room;
   }
 
   /**
@@ -417,6 +471,10 @@ export class LobbyCore {
         if (r) return this.fail(c, 'busy');
         const settings = cleanSettings(msg.settings);
         if (!settings) return this.fail(c, 'bad', 'settings');
+        // A few rooms per address: each one started builds a whole map on the server.
+        let mine = 0;
+        for (const x of this.rooms.values()) if (c.addr && this.clients.get(x.owner)?.addr === c.addr) mine++;
+        if (mine >= (this.opts.roomsPerAddress ?? ROOMS_PER_ADDRESS)) return this.fail(c, 'busy', 'rooms');
         if (!this.fits(roomLoad(settings, 1))) return this.fail(c, 'serverFull');
         let password: RoomRec['password'] = null;
         if (msg.password) {
@@ -424,7 +482,7 @@ export class LobbyCore {
           password = { salt, hash: await pbkdf2(msg.password, salt) };
           if (!this.still(c)) return;
         }
-        const rec: RoomRec = { id: randomHex(3), settings, password, state: 'lobby', owner: c.id, members: [] };
+        const rec: RoomRec = { id: randomHex(3), settings, password, state: 'lobby', owner: c.id, members: [], passwordTries: [], startedAt: -Infinity, banned: new Map() };
         this.rooms.set(rec.id, rec);
         this.log(`room ${rec.id} "${settings.name}" by ${c.name}`);
         return this.joinRoom(c, rec);
@@ -433,7 +491,17 @@ export class LobbyCore {
         if (r) return this.fail(c, 'busy');
         const rec = this.rooms.get(msg.room);
         if (!rec) return this.fail(c, 'noRoom');
-        if (rec.password && (msg.password === undefined || !sameHex(await pbkdf2(msg.password, rec.password.salt), rec.password.hash))) return this.fail(c, 'password');
+        if (this.isBanned(rec, c)) return this.fail(c, 'banned');
+        if (rec.password) {
+          // A handful of tries a minute (each costs a hash): no guessing passwords.
+          if (!this.passwordTry(c, rec)) return this.strike(c, 'rate');
+          if (msg.password === undefined || !sameHex(await pbkdf2(msg.password, rec.password.salt), rec.password.hash)) {
+            const now = this.now();
+            c.passwordTries.push(now);
+            rec.passwordTries.push(now);
+            return this.fail(c, 'password');
+          }
+        }
         if (!this.still(c)) return;
         if (!this.rooms.has(rec.id)) return this.fail(c, 'noRoom');
         if (rec.members.length >= humanCap(rec.settings)) return this.fail(c, 'full');
@@ -460,6 +528,8 @@ export class LobbyCore {
         if (!r) return this.fail(c, 'notInRoom');
         if (r.owner !== c.id) return this.fail(c, 'notOwner');
         if (r.state !== 'lobby') return this.fail(c, 'busy');
+        if (this.now() - r.startedAt < START_COOLDOWN_MS) return this.fail(c, 'rate');
+        r.startedAt = this.now();
         r.state = 'playing';
         this.log(`room ${r.id} starts`);
         this.broadcast(r);

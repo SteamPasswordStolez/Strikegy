@@ -39,7 +39,7 @@ export interface Gateway {
 export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> {
   const log = opts.log ?? ((line: string) => console.log(`[server] ${line}`));
   let lobby: LobbyCore | null = null;
-  const hostOpts = { log, mapsDir: opts.mapsDir, ended: (room: string) => lobby?.matchOver(room) };
+  const hostOpts = { log, mapsDir: opts.mapsDir, ended: (room: string) => lobby?.matchOver(room), kick: (room: string, uid: string, reason: string) => lobby?.kick(room, uid, reason) };
   const own = opts.matches === undefined ? (opts.workers ? new WorkerMatches(hostOpts) : new Matches(hostOpts)) : null;
   const matches = opts.matches === undefined ? own : opts.matches;
   lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches });
@@ -107,7 +107,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
         if (ws.readyState === ws.OPEN) ws.send(data, { binary: true });
       },
       close: () => ws.close(),
-    });
+    }, undefined, addr);
     ws.on('message', (data, isBinary) => {
       if (isBinary) {
         const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);

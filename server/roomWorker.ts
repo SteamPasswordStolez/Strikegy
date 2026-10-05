@@ -24,10 +24,12 @@ export type FromRoom =
   | { t: 'bin'; uid: string; data: Uint8Array }
   | { t: 'log'; line: string }
   | { t: 'ended' }
+  /** The anticheat puts a player out (the lobby takes them out of the room). */
+  | { t: 'kick'; uid: string; reason: string }
   /** Average step time over the last second (ms) and people in the room. */
   | { t: 'stats'; stepMs: number; players: number };
 
-export type RoomWorkerData = Omit<MatchRoomOptions, 'log' | 'ended'>;
+export type RoomWorkerData = Omit<MatchRoomOptions, 'log' | 'ended' | 'kick'>;
 
 const port = parentPort!;
 const send = (m: FromRoom, transfer?: ArrayBuffer[]): void => port.postMessage(m, transfer ?? []);
@@ -74,7 +76,7 @@ function handle(m: ToRoom): void {
 port.on('message', (m: ToRoom) => handle(m));
 
 try {
-  room = await MatchRoom.create({ ...opts, log: (line) => send({ t: 'log', line }), ended: () => send({ t: 'ended' }) });
+  room = await MatchRoom.create({ ...opts, log: (line) => send({ t: 'log', line }), ended: () => send({ t: 'ended' }), kick: (uid, reason) => send({ t: 'kick', uid, reason }) });
   room.start();
   send({ t: 'loaded' });
   for (const m of early.splice(0)) handle(m);

@@ -21,8 +21,12 @@ export const TICK_HZ = 60;
 export const SNAPSHOT_EVERY = 3;
 /** Remote soldiers are drawn this many ticks in the past (100 ms: two snapshots to blend between). */
 export const INTERP_TICKS = 6;
-/** Shots are judged against where targets were up to this long ago (s). */
-export const REWIND_MAX = 0.5;
+/**
+ * Shots are judged against where targets were up to this long ago (s): a
+ * round trip of ~200 ms plus the 100 ms others are drawn behind. Longer only
+ * helps someone faking how far behind they are (shooting where people were).
+ */
+export const REWIND_MAX = 0.3;
 
 const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
 const VEHICLE_KINDS = Object.keys(VEHICLES) as VehicleKind[];
@@ -367,8 +371,8 @@ export function decodeInputs(data: Uint8Array): NetInput[] | null {
       seq: v.getUint32(o),
       view: Number.isFinite(view) ? view : 0,
       buttons: v.getUint32(o + 8),
-      moveX: v.getInt8(o + 12) / 127,
-      moveY: v.getInt8(o + 13) / 127,
+      moveX: Math.max(-1, v.getInt8(o + 12) / 127),
+      moveY: Math.max(-1, v.getInt8(o + 13) / 127),
       weaponCycle: Math.max(-1, Math.min(1, v.getInt8(o + 14))),
       weaponSlot: Math.max(-1, Math.min(9, v.getInt8(o + 15))),
       yaw: v.getUint16(o + 16) / YAW_Q,

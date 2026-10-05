@@ -128,6 +128,8 @@ export class MatchSim {
   readonly bots: BotManager | null;
   /** Vehicles (zone matches). */
   readonly vehicles: MatchVehicles | null;
+  /** How well the bots play (rounds of bots run in browsers get this spread). */
+  private readonly botDifficulty: Difficulty;
   /** Squads of each side (four each; people take the places of bots; the first member leads). */
   readonly squads: Squad[] = [];
   /** Something went off where everyone should see it (grenades, rockets, mines, rifle smoke, shells). */
@@ -218,6 +220,7 @@ export class MatchSim {
     };
     this.bots = nav && opts.bots ? this.makeBots(nav, opts.bots) : null;
     if (this.bots) this.bots.vehicleNav = vehicleNav;
+    this.botDifficulty = opts.bots?.difficulty ?? 'normal';
     const size = (opts.teamSize?.blue ?? 12) + (opts.teamSize?.red ?? 12);
     this.vehicles = this.zoneMode ? new MatchVehicles(this, map, size) : null;
     if (this.vehicles) this.vehicles.onBoom = (kind, point) => this.onBoom(kind, point);
@@ -969,6 +972,10 @@ export class MatchSim {
   // ---------------------------------------------------------------------------
   // Bots run in people's browsers (`Bot.puppet`)
 
+  /** How far a bot's aim may turn in a second (rad), and the extra spread on its rounds (rad) by difficulty: a browser can't make them aimbots. */
+  private static readonly PUPPET_TURN = 9;
+  private static readonly PUPPET_SPREAD = { easy: 2.2 * DEG, normal: 1.4 * DEG, hard: 0.8 * DEG } as const;
+
   /** When each such bot was last moved, fired (and the rounds it may still fire), threw or patched up (sim time). */
   private readonly puppetClock = new Map<number, { moved: number; shot: number; rounds: number; threw: number; healed: number }>();
 
@@ -990,6 +997,13 @@ export class MatchSim {
     const flat = Math.hypot(to.x - bot.feet.x, to.z - bot.feet.z);
     const rise = to.y - bot.feet.y;
     if (flat > MOVE.sprintSpeed * 1.6 * dt + 1.5 || rise > 3 * dt + 1.5 || rise < -(30 * dt + 3)) return false;
+    // Not through walls: nothing solid between where it was and where it is, at the waist.
+    if (flat > 0.05 && this.physics.blocked(this.v1.copy(bot.feet).setY(bot.feet.y + 0.9), this.v2.copy(to).setY(to.y + 0.9), Layer.WORLD)) return false;
+    // The aim turns no faster than a person's (no snapping onto heads).
+    const maxTurn = MatchSim.PUPPET_TURN * dt;
+    const dy = Math.atan2(Math.sin(aimYaw - bot.aimYaw), Math.cos(aimYaw - bot.aimYaw));
+    aimYaw = bot.aimYaw + Math.max(-maxTurn, Math.min(maxTurn, dy));
+    aimPitch = bot.aimPitch + Math.max(-maxTurn, Math.min(maxTurn, aimPitch - bot.aimPitch));
     bot.puppetTo(to, yaw, aimYaw, aimPitch, crouch, dt);
     c.moved = this.time;
     return true;
@@ -1009,7 +1023,17 @@ export class MatchSim {
     c.shot = this.time;
     if (c.rounds < 1) return;
     c.rounds -= 1;
-    this.bots.fire(bot, dir.clone().normalize(), this.casterFor(bot.id, viewTick, maxRewind));
+    // Along its aim as the server has it (a round sent off elsewhere goes where the bot looks),
+    // with the spread a bot of the room's difficulty has.
+    const aim = bot.aimDir(new THREE.Vector3());
+    const d = dir.clone().normalize();
+    if (d.angleTo(aim) > 0.12) d.copy(aim);
+    const spread = MatchSim.PUPPET_SPREAD[this.botDifficulty] * Math.sqrt(Math.random());
+    const right = new THREE.Vector3(-d.z, 0, d.x).normalize();
+    const up = new THREE.Vector3().crossVectors(right, d);
+    const a = Math.random() * Math.PI * 2;
+    d.addScaledVector(right, Math.cos(a) * Math.tan(spread)).addScaledVector(up, Math.sin(a) * Math.tan(spread)).normalize();
+    this.bots.fire(bot, d, this.casterFor(bot.id, viewTick, maxRewind));
   }
 
   /** A grenade thrown by a bot a browser runs (from about its eye, not too hard, not too often). */

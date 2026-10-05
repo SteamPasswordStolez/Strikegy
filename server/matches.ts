@@ -16,6 +16,8 @@ export interface MatchesOptions {
   mapsDir?: string;
   /** A room's match has a winner (the lobby takes the room back to waiting). */
   ended?: (room: string) => void;
+  /** The anticheat put a player out of a room's match. */
+  kick?: (room: string, uid: string, reason: string) => void;
 }
 
 export class Matches implements MatchHost {
@@ -53,6 +55,7 @@ export class Matches implements MatchHost {
       log: this.opts.log,
       mapsDir: this.opts.mapsDir,
       ended: () => setTimeout(() => this.opts.ended?.(room), 0),
+      kick: (uid, reason) => setTimeout(() => this.opts.kick?.(room, uid, reason), 0),
     }).catch((err: unknown) => {
       this.opts.log?.(`room ${room}: ${String(err)}`);
       return null;

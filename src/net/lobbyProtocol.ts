@@ -227,6 +227,7 @@ export type ErrorCode =
   | 'notInRoom'
   | 'busy'
   | 'rate'
+  | 'banned'
   | 'bad';
 
 export type ServerMsg =
@@ -297,7 +298,8 @@ export function parseClientMsg(text: string): ClientMsg | null {
   if (!isObj(raw) || typeof raw.t !== 'string') return null;
   switch (raw.t) {
     case 'hello':
-      return typeof raw.v === 'number' && str(raw.name, 64) && str(raw.uid, 64) && (raw.device === 'desktop' || raw.device === 'mobile')
+      // The uid ends up in logs and as a key: letters, digits, '_' and '-' only (no forged log lines).
+      return typeof raw.v === 'number' && str(raw.name, 64) && str(raw.uid, 64) && /^[\w-]{1,64}$/.test(raw.uid) && (raw.device === 'desktop' || raw.device === 'mobile')
         ? (raw as ClientMsg)
         : null;
     case 'ready':

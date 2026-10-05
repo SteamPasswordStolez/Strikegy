@@ -42,6 +42,7 @@ import type { ModeKind } from '../src/modes/matchRules.ts';
 import { MatchSim, SIM_DT, seeded } from '../src/sim/MatchSim.ts';
 import type { Soldier } from '../src/sim/Soldier.ts';
 import type { Vehicle } from '../src/vehicles/Vehicle.ts';
+import { Sight, type Viewer } from './sight.ts';
 import type { WeaponId } from '../src/weapons/weaponData.ts';
 import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
@@ -117,7 +118,25 @@ interface Seat {
   botRefused: number;
   /** Sim time of the last input frame (a tab in the background sends none: its bots go back to the server). */
   lastFrameAt: number;
+  /** How far behind the server its inputs say this player sees others (ticks, smoothed; see `clampView`). */
+  lag: number;
+  /** Its aim the last few steps (yaw, pitch), newest last: how far it swung just before a hit. */
+  aims: [number, number][];
+  /** Headshots that came right after a big swing of the aim (an aimbot's snap). */
+  snapHeads: number;
+  /** Put out by the anticheat already (the lobby is on it). */
+  kicked: boolean;
 }
+
+/** Aim swing (rad) within `SNAP_STEPS` steps before a headshot that counts as a snap. */
+const SNAP = 0.5;
+const SNAP_STEPS = 6;
+/**
+ * Out of the room, past any doubt: nearly all hits headshots from afar with
+ * many of them right after a snap, or vehicle / bot moves refused over and
+ * over (teleporting). Lesser signs are only logged (`suspect`).
+ */
+const KICK = { hits: 40, farHeadShare: 0.85, snapHeads: 12, refused: 300 };
 
 /** No input frame for this long (s): the browser's bots go back to the server. */
 const HOST_STALE = 1;
@@ -139,6 +158,8 @@ export interface MatchRoomOptions {
   log?: (line: string) => void;
   /** Called once when the match has a winner. */
   ended?: (winner: Team) => void;
+  /** The anticheat puts a player out (the lobby takes them out of the room and keeps them out a while). */
+  kick?: (uid: string, reason: string) => void;
   /** Where map JSON files are (default: public/maps of the checkout). */
   mapsDir?: string;
   /** Bots run in people's browsers (squads with people in them; default on). */
@@ -157,12 +178,15 @@ export class MatchRoom {
   private over = false;
   /** Step time (ms), the last few hundred ticks: the load the gateway reads. */
   readonly stepMs: number[] = [];
+  /** Who may know about which enemy (anti-wallhack). */
+  private readonly sight: Sight;
 
   private constructor(
     sim: MatchSim,
     private readonly opts: MatchRoomOptions,
   ) {
     this.sim = sim;
+    this.sight = new Sight(sim);
     this.wire();
   }
 
@@ -199,7 +223,7 @@ export class MatchRoom {
       const team = this.smallerTeam();
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, botRefused: 0, lastFrameAt: -Infinity };
+      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, botRefused: 0, lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false };
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -292,6 +316,7 @@ export class MatchRoom {
     const list = decodeInputs(data);
     if (!list) return;
     seat.lastFrameAt = this.sim.time;
+    for (const inp of list) this.clampView(seat, inp);
     const tail = decodeTail(data);
     if (tail?.drive) seat.drive = tail.drive;
     if (tail?.bots) this.takeBots(seat, tail.bots);
@@ -357,6 +382,8 @@ export class MatchRoom {
         inp.swayYaw = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayYaw));
         inp.swayPitch = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayPitch));
         applyInput(inp, seat.input);
+        seat.aims.push([inp.yaw, inp.pitch]);
+        if (seat.aims.length > SNAP_STEPS + 1) seat.aims.shift();
         s.weapons.shotCaster = sim.casterFor(s.id, inp.view, maxRewind);
         sim.stepSoldier(s, { state: seat.input, yaw: inp.yaw, pitch: inp.pitch, swayYaw: inp.swayYaw, swayPitch: inp.swayPitch });
         seat.ack = inp.seq;
@@ -366,7 +393,10 @@ export class MatchRoom {
       this.applyBots(seat, maxRewind);
       // The vehicle this player drives: where their browser has it.
       if (seat.drive && sim.vehicles) {
-        if (!sim.vehicles.applyDrive(s, seat.drive) && ++seat.refused % 120 === 1) this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: vehicle moved too fast (${seat.refused})`);
+        if (!sim.vehicles.applyDrive(s, seat.drive)) {
+          if (++seat.refused % 120 === 1) this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: vehicle moved too fast or through a wall (${seat.refused})`);
+          if (seat.refused >= KICK.refused) this.kick(seat, 'vehicle teleport');
+        }
         seat.drive = null;
       }
     }
@@ -376,6 +406,29 @@ export class MatchRoom {
     if (sim.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
     if (sim.tick % STATE_EVERY === 0) for (const seat of this.seats.values()) this.sendState(seat);
     this.flushEvents();
+  }
+
+  /**
+   * How far back a shot may be judged is the player's real lag, not what the
+   * input says: honest browsers stay close to a steady value (round trip +
+   * the drawing delay), so a view tick much older than that (picking, shot
+   * by shot, where someone was a moment ago) is moved up to it.
+   */
+  private clampView(seat: Seat, inp: NetInput): void {
+    const behind = this.sim.tick - inp.view;
+    if (seat.lag < 0) seat.lag = Math.min(behind, REWIND_MAX * TICK_HZ);
+    // Follows a growing lag slowly, a shrinking one at once.
+    seat.lag = behind < seat.lag ? behind : seat.lag + Math.min(0.05, behind - seat.lag);
+    seat.lag = Math.max(0, Math.min(REWIND_MAX * TICK_HZ, seat.lag));
+    if (behind > seat.lag + 4) inp.view = this.sim.tick - (seat.lag + 4);
+  }
+
+  /** The anticheat: someone past any doubt goes (the lobby keeps them out of the room a while). */
+  private kick(seat: Seat, reason: string): void {
+    if (seat.kicked) return;
+    seat.kicked = true;
+    this.opts.log?.(`kick: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: ${reason}`);
+    this.opts.kick?.(seat.uid, reason);
   }
 
   // ---------------------------------------------------------------------------
@@ -397,8 +450,9 @@ export class MatchRoom {
     const byId = (id: number) => (this.owners.get(id) === seat ? bots.bots.find((b) => b.id === id) : undefined);
     for (const st of seat.botStates.values()) {
       const b = byId(st.id);
-      if (b && !this.sim.puppetMove(b, new THREE.Vector3(st.x, st.y, st.z), st.yaw, st.aimYaw, st.aimPitch, st.crouch) && ++seat.botRefused % 120 === 1) {
-        this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: bot moved too fast (${seat.botRefused})`);
+      if (b && !this.sim.puppetMove(b, new THREE.Vector3(st.x, st.y, st.z), st.yaw, st.aimYaw, st.aimPitch, st.crouch)) {
+        if (++seat.botRefused % 120 === 1) this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: bot moved too fast or through a wall (${seat.botRefused})`);
+        if (seat.botRefused >= KICK.refused) this.kick(seat, 'bot teleport');
       }
     }
     seat.botStates.clear();
@@ -508,17 +562,45 @@ export class MatchRoom {
   // Out
 
   private sendSnapshots(): void {
-    const list: NetSoldier[] = [];
-    for (const seat of this.seats.values()) list.push(netSoldier(seat));
-    for (const b of this.sim.bots?.bots ?? []) if (!b.benched) list.push(netBot(b));
-    const shared = encodeSoldiers(list);
-    const list2 = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
-    for (const g of this.sim.gadgets.things()) list2.push({ id: 0x8000 | (g.id & 0x3fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
-    const things = encodeThings(list2);
-    const vehicles = encodeVehicles((this.sim.vehicles?.world.vehicles ?? []).map(netVehicle));
+    const all: { n: NetSoldier; team: Team }[] = [];
+    for (const seat of this.seats.values()) all.push({ n: netSoldier(seat), team: seat.soldier.team });
+    for (const b of this.sim.bots?.bots ?? []) if (!b.benched) all.push({ n: netBot(b), team: b.team });
+    // What everyone may know of the enemy (anti-wallhack): see `Sight`.
+    const viewers: Viewer[] = [];
     for (const seat of this.seats.values()) {
       if (!seat.conn || !seat.ready) continue;
       const s = seat.soldier;
+      const p = s.player;
+      const eye = s.deployed && p.alive ? p.feet.clone().setY(p.feet.y + p.eyeHeight) : null;
+      const bots: THREE.Vector3[] = [];
+      for (const [id, owner] of this.owners) if (owner === seat) {
+        const b = this.sim.bots?.bots.find((x) => x.id === id);
+        if (b) bots.push(b.feet);
+      }
+      viewers.push({ id: s.id, team: s.team, eye, yaw: p.yaw, bots });
+    }
+    this.sight.step(viewers);
+    const flying = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
+    for (const g of this.sim.gadgets.shotsInFlight()) flying.push({ id: 0x8000 | (g.id & 0x3fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
+    const vehicles = encodeVehicles((this.sim.vehicles?.world.vehicles ?? []).map(netVehicle));
+    const ENEMY_HIDDEN = SF.needMedkit | SF.needAmmo;
+    for (const seat of this.seats.values()) {
+      if (!seat.conn || !seat.ready) continue;
+      const s = seat.soldier;
+      const team = s.team;
+      const mine: NetSoldier[] = [];
+      for (const x of all) {
+        if (x.team === team) mine.push(x.n);
+        // An enemy: only when known, and without its health or what it is short of.
+        else if (this.sight.knows(s.id, x.n.id)) mine.push({ ...x.n, health: 0, flags: x.n.flags & ~ENEMY_HIDDEN });
+      }
+      const shared = encodeSoldiers(mine);
+      // Placed gadgets: the side's own, and the enemy's only up close (a mine is small, a beacon not much bigger).
+      const eye = s.player.feet;
+      const placed = [...flying];
+      for (const b of this.sim.gadgets.beacons) if (b.owner.team === team || (s.deployed && b.pos.distanceTo(eye) < 60)) placed.push({ id: 0x8000 | (b.id & 0x3fff), kind: THING.beacon, x: b.pos.x, y: b.pos.y, z: b.pos.z });
+      for (const m of this.sim.gadgets.mines) if (m.owner.team === team || (s.deployed && m.pos.distanceTo(eye) < 20)) placed.push({ id: 0x8000 | (m.id & 0x3fff), kind: THING.mine, x: m.pos.x, y: m.pos.y, z: m.pos.z });
+      const things = encodeThings(placed);
       const p = s.player;
       const w = s.weapons;
       const st = w.state;
@@ -560,7 +642,8 @@ export class MatchRoom {
             stations: fort.stations.filter((s) => s.uses < STATION.uses).map((s) => [s.id, s.uses]),
           }
         : undefined,
-      beacons: this.sim.gadgets.beacons.map((b) => ({ id: b.id, team: b.owner.team, owner: b.owner.name, uses: b.uses, pos: [b.pos.x, b.pos.y, b.pos.z] })),
+      // The side's own beacons only (where the enemy spawns isn't news to give out).
+      beacons: this.sim.gadgets.beacons.filter((b) => b.owner.team === seat.soldier.team).map((b) => ({ id: b.id, team: b.owner.team, owner: b.owner.name, uses: b.uses, pos: [b.pos.x, b.pos.y, b.pos.z] })),
     });
   }
 
@@ -623,6 +706,7 @@ export class MatchRoom {
     this.sim.onCallIn = (kind, p, owner) => this.broadcastEvents.push({ k: 'callin', kind, pos: [p.x, p.y, p.z], owner: { id: owner.id, name: owner.name, team: owner.team, squad: owner.squad } });
     this.sim.onIncoming = (p) => this.broadcastEvents.push({ k: 'incoming', pos: [p.x, p.y, p.z] });
     this.sim.onSpotted = (team, ids) => {
+      this.sight.spot(team, ids, 2);
       for (const seat of this.seats.values()) if (seat.soldier.team === team) seat.events.push({ k: 'spotted', ids, sec: 2 });
     };
     bus.on('combat:kill', (e) => {
@@ -642,13 +726,19 @@ export class MatchRoom {
       const by = e.attackerId === undefined ? undefined : this.byId.get(e.attackerId);
       if (!by) return;
       by.events.push({ k: 'hit', head: e.part === 'head', killed: e.killed });
-      // A crude aimbot flag for the log: nearly every hit a headshot from afar.
+      // Aimbot signs: nearly every hit a headshot from afar, many right after a snap of the aim.
       by.hits++;
       if (e.part === 'head' && e.point.distanceTo(by.soldier.player.feet) > 30) by.farHeads++;
-      if (!by.flagged && by.hits >= 25 && by.farHeads / by.hits > 0.7) {
-        by.flagged = true;
-        this.opts.log?.(`suspect: ${by.name} (${by.uid.slice(0, 8)}) in room ${this.opts.room}: ${by.farHeads}/${by.hits} hits were headshots past 30 m`);
+      if (e.part === 'head' && by.aims.length > 1) {
+        const [y0, p0] = by.aims[0]!;
+        const [y1, p1] = by.aims[by.aims.length - 1]!;
+        const swing = Math.hypot(Math.atan2(Math.sin(y1 - y0), Math.cos(y1 - y0)), p1 - p0);
+        if (swing > SNAP) by.snapHeads++;
       }
+      if (by.hits >= 25 && by.farHeads / by.hits > 0.7 && by.hits % 25 === 0) {
+        this.opts.log?.(`suspect: ${by.name} (${by.uid.slice(0, 8)}) in room ${this.opts.room}: ${by.farHeads}/${by.hits} hits were headshots past 30 m, ${by.snapHeads} right after a snap`);
+      }
+      if (by.hits >= KICK.hits && by.farHeads / by.hits >= KICK.farHeadShare && by.snapHeads >= KICK.snapHeads) this.kick(by, 'aim');
     });
     bus.on('combat:kill', (e) => {
       if (e.attackerId !== undefined && this.byId.has(e.attackerId)) this.opts.log?.(`kill ${this.opts.room}: ${e.attacker} > ${e.victim} (${e.weapon}${e.headshot ? ', head' : ''})`);

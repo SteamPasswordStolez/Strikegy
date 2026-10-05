@@ -66,6 +66,41 @@ describe('lobby core', () => {
     expect(o.got.filter((m) => m.t === 'rooms')).toHaveLength(0);
   });
 
+  it('a few password tries a minute, a few rooms an address, and a kicked player stays out', async () => {
+    let now = 0;
+    const core = new LobbyCore({ now: () => now });
+    const o = fake();
+    const g = fake();
+    const ido = core.open(o.conn, undefined, '1.2.3.4');
+    const idg = core.open(g.conn, undefined, '5.6.7.8');
+    await core.message(ido, hello('owner'));
+    await core.message(idg, hello('guesser'));
+    await core.message(ido, JSON.stringify({ t: 'create', settings, password: 'right' }));
+    const room = o.last('room')!.room.id;
+    for (let i = 0; i < 5; i++) await core.message(idg, JSON.stringify({ t: 'join', room, password: `wrong${i}` }));
+    expect(g.got.filter((m) => m.t === 'error' && m.code === 'password')).toHaveLength(5);
+    // Out of tries: even the right one waits a minute.
+    await core.message(idg, JSON.stringify({ t: 'join', room, password: 'right' }));
+    expect(g.last('error')!.code).toBe('rate');
+    now += 61_000;
+    await core.message(idg, JSON.stringify({ t: 'join', room, password: 'right' }));
+    expect(g.last('room')!.room.id).toBe(room);
+    // The anticheat puts the guesser out: back in is refused.
+    core.kick(room, 'guesser', 'aim');
+    expect(g.last('error')!.code).toBe('banned');
+    await core.message(idg, JSON.stringify({ t: 'join', room, password: 'right' }));
+    expect(g.last('error')!.code).toBe('banned');
+    // Two rooms an address at most.
+    const more = [fake(), fake()];
+    for (const [i, f] of more.entries()) {
+      const id = core.open(f.conn, undefined, '1.2.3.4');
+      await core.message(id, hello(`same${i}`));
+      await core.message(id, JSON.stringify({ t: 'create', settings }));
+    }
+    expect(more[0]!.last('room')).toBeTruthy();
+    expect(more[1]!.last('error')).toMatchObject({ code: 'busy', detail: 'rooms' });
+  });
+
   it('caps the soldiers on the whole server: rooms with bots count at full size', async () => {
     const core = new LobbyCore({ serverMax: 50 });
     const a = fake();

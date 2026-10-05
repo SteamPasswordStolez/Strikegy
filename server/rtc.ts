@@ -44,15 +44,49 @@ export function edgeRtcSetup(publicIp: string, port: number): RtcSetup {
 
 /** Bytes waiting on a channel past which a snapshot goes by the WebSocket instead (a backed-up line). */
 const BACKLOG = 64 * 1024;
-/** Candidates a browser may send (more is somebody playing games). */
-const CANDIDATES_MAX = 40;
+/** Largest message a browser may send down the channel (an input frame is well under 1 KB). */
+const MAX_IN = 16 * 1024;
+
+/**
+ * A browser's answer, rebuilt from the few fields a data channel needs, each
+ * checked (ICE user and password, DTLS fingerprint, roles, SCTP port): the
+ * native SDP parser only ever sees text made here. Null when it doesn't fit.
+ */
+export function cleanAnswer(sdp: string): string | null {
+  const get = (re: RegExp): string | undefined => re.exec(sdp)?.[1];
+  const ufrag = get(/^a=ice-ufrag:([A-Za-z0-9+/]{4,256})\r?$/m);
+  const pwd = get(/^a=ice-pwd:([A-Za-z0-9+/]{22,256})\r?$/m);
+  const fp = /^a=fingerprint:(sha-256|sha-384|sha-512) ((?:[0-9A-Fa-f]{2}:){31,63}[0-9A-Fa-f]{2})\r?$/m.exec(sdp);
+  const setup = get(/^a=setup:(active|passive)\r?$/m) ?? 'active';
+  const mid = get(/^a=mid:([A-Za-z0-9_-]{1,16})\r?$/m) ?? '0';
+  const sctp = Number(get(/^a=sctp-port:(\d{1,5})\r?$/m) ?? 5000);
+  const maxMsg = Number(get(/^a=max-message-size:(\d{1,10})\r?$/m) ?? 262144);
+  if (!ufrag || !pwd || !fp || !(sctp > 0 && sctp < 65536)) return null;
+  return [
+    'v=0',
+    'o=- 0 0 IN IP4 127.0.0.1',
+    's=-',
+    't=0 0',
+    `a=group:BUNDLE ${mid}`,
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+    'c=IN IP4 0.0.0.0',
+    `a=mid:${mid}`,
+    `a=ice-ufrag:${ufrag}`,
+    `a=ice-pwd:${pwd}`,
+    'a=ice-options:trickle',
+    `a=fingerprint:${fp[1]} ${fp[2]}`,
+    `a=setup:${setup}`,
+    `a=sctp-port:${sctp}`,
+    `a=max-message-size:${Math.min(maxMsg, 262144)}`,
+    '',
+  ].join('\r\n');
+}
 
 /** One player's data channel. */
 export class ServerRtc {
   private readonly pc: PeerConnection;
   private readonly dc: DataChannel;
   private open = false;
-  private candidates = 0;
   private closed = false;
 
   constructor(
@@ -60,7 +94,7 @@ export class ServerRtc {
     send: (msg: ServerMsg) => void,
     onBinary: (data: Uint8Array) => void,
   ) {
-    this.pc = new PeerConnection('player', setup.config);
+    this.pc = new PeerConnection('player', { ...setup.config, maxMessageSize: MAX_IN });
     const fix = (s: string): string => (setup.rewrite ? s.split(setup.rewrite.from).join(setup.rewrite.to) : s);
     this.pc.onLocalDescription((sdp, type) => send({ t: 'rtc', sdp: fix(sdp), type: type as 'offer' }));
     this.pc.onLocalCandidate((cand, mid) => {
@@ -75,20 +109,26 @@ export class ServerRtc {
     this.dc.onOpen(() => (this.open = true));
     this.dc.onClosed(() => (this.open = false));
     this.dc.onMessage((msg) => {
-      if (typeof msg === 'string') return;
+      if (typeof msg === 'string' || msg.byteLength > MAX_IN) return;
       const u8 = msg instanceof ArrayBuffer ? new Uint8Array(msg) : new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
       onBinary(u8);
     });
   }
 
-  /** The browser's answer or one of its candidates. */
+  /**
+   * The browser's answer. Its candidates are not used at all: the browser
+   * reaches the server's public address itself and the server answers where
+   * that came from (so nobody can make the server send packets to an address
+   * of their choosing, inside the cloud or anyone else's).
+   */
   remote(msg: { sdp?: string; type?: string; cand?: string; mid?: string }): void {
-    if (this.closed) return;
+    if (this.closed || !msg.sdp || msg.type !== 'answer' || this.pc.remoteDescription()) return;
+    const sdp = cleanAnswer(msg.sdp);
+    if (!sdp) return;
     try {
-      if (msg.sdp && msg.type === 'answer' && !this.pc.remoteDescription()) this.pc.setRemoteDescription(msg.sdp, 'answer');
-      else if (msg.cand && this.candidates++ < CANDIDATES_MAX) this.pc.addRemoteCandidate(msg.cand, msg.mid ?? '0');
+      this.pc.setRemoteDescription(sdp, 'answer');
     } catch {
-      /* a bad description or candidate: this channel just never opens */
+      /* this channel just never opens */
     }
   }
 

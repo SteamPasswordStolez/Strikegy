@@ -95,8 +95,10 @@ describe('a match room on the game server', () => {
     let seqB = 0;
     const aim = createInputState();
     aim.ads = true;
+    // Alpha's browser draws the others 14 ticks behind (its lag), as browsers do.
+    const LAG = 14;
     for (let i = 0; i < 30; i++) {
-      room.binary('ua', encodeInputs([packInput(aim, ++seqA, sim.tick, yaw, pitch, 0, 0)]));
+      room.binary('ua', encodeInputs([packInput(aim, ++seqA, sim.tick - LAG, yaw, pitch, 0, 0)]));
       room.tick();
     }
     const seen = sim.tick;
@@ -104,7 +106,7 @@ describe('a match room on the game server', () => {
     walk.moveX = 1;
     for (let i = 0; i < 13; i++) {
       room.binary('ub', encodeInputs([packInput(walk, ++seqB, sim.tick, Math.PI, 0, 0, 0)]));
-      room.binary('ua', encodeInputs([packInput(aim, ++seqA, sim.tick, yaw, pitch, 0, 0)]));
+      room.binary('ua', encodeInputs([packInput(aim, ++seqA, sim.tick - LAG, yaw, pitch, 0, 0)]));
       room.tick();
     }
     expect(sb.player.feet.distanceTo(chest.clone().setY(sb.player.feet.y))).toBeGreaterThan(0.45);
@@ -126,6 +128,52 @@ describe('a match room on the game server', () => {
     expect(last.self!.ack).toBeLessThanOrEqual(seqA);
     room.dispose();
   });
+});
+
+describe('anti-wallhack', () => {
+  it('an enemy behind cover past 35 m is left out of the snapshot; in the open it is in', async () => {
+    const room = await MatchRoom.create({ room: 'rs', map: 'iron_gate', mode: 'zone' });
+    const sim = room.sim;
+    const a = line();
+    room.join('ua', 'alpha', a.line);
+    room.join('ub', 'bravo', line().line);
+    room.ready('ua');
+    room.ready('ub');
+    room.deploy('ua', 'base', { cls: 'assault' });
+    room.deploy('ub', 'base', { cls: 'assault' });
+    room.tick();
+    const sa = sim.soldiers.get(1000)!;
+    const sb = sim.soldiers.get(1001)!;
+    const ground = (x: number, z: number) => sim.world.terrain.heightAt(x, z);
+    const head = (x: number, z: number) => ({ x, y: ground(x, z) + 1.6, z });
+    // A spot for alpha and two for bravo, 50-150 m away: one in clear sight, one hidden.
+    let open: { x: number; z: number } | null = null;
+    let hidden: { x: number; z: number } | null = null;
+    const ax = sa.player.feet.x;
+    const az = sa.player.feet.z;
+    for (let i = 0; i < 400 && !(open && hidden); i++) {
+      const ang = i * 0.7;
+      const r = 50 + (i % 10) * 10;
+      const x = ax + Math.cos(ang) * r;
+      const z = az + Math.sin(ang) * r;
+      const blocked = sim.physics.blocked(head(ax, az), head(x, z), Layer.WORLD) && sim.physics.blocked(head(ax, az), { x, y: ground(x, z) + 1.1, z }, Layer.WORLD);
+      if (blocked) hidden ??= { x, z };
+      else open ??= { x, z };
+    }
+    expect(open && hidden).toBeTruthy();
+    const place = (p: { x: number; z: number }) => {
+      sb.player.teleport({ x: p.x, y: ground(p.x, p.z) + 0.05, z: p.z } as never, 0);
+      // Past the time a lost line is held (0.75 s).
+      for (let i = 0; i < 60; i++) room.tick();
+      return a.snaps.at(-1)!.soldiers.some((s) => s.id === 1001);
+    };
+    expect(place(open!)).toBe(true);
+    expect(place(hidden!)).toBe(false);
+    // Enemies come without their health.
+    place(open!);
+    expect(a.snaps.at(-1)!.soldiers.find((s) => s.id === 1001)!.health).toBe(0);
+    room.dispose();
+  }, 60_000);
 });
 
 describe('vehicles on the game server', () => {
@@ -273,9 +321,12 @@ describe('a room with bots', () => {
     const moved = sim.bots!.bots.filter((b) => !b.benched && b.feet.distanceTo(start.get(b.id)!) > 20);
     expect(moved.length).toBeGreaterThan(2);
     // (Kills come too, but when depends on the dice; checked by hand, not here.)
-    // Snapshots carry the bots (the benched one not).
+    // Snapshots carry the side's bots (the benched one not) and only the enemies it may know about.
     const snap = a.snaps.at(-1)!;
-    expect(snap.soldiers.length).toBe(8);
+    const blue = sim.bots!.bots.filter((b) => b.team === 'blue' && !b.benched).map((b) => b.id);
+    expect(blue.every((id) => snap.soldiers.some((s) => s.id === id))).toBe(true);
+    expect(snap.soldiers.length).toBeLessThanOrEqual(8);
+    expect(snap.soldiers.filter((s) => !blue.includes(s.id) && s.id !== 1000).every((s) => s.health === 0)).toBe(true);
 
     // The person leaves: the bot comes back.
     room.leave('ua');
