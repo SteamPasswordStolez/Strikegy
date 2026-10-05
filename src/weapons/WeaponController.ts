@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
+import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { t } from '@/i18n';
 import type { Team } from '@/world/mapTypes';
 import type { SurfaceRegistry } from '@/physics/surfaces';
@@ -120,7 +120,7 @@ export class WeaponController {
   private readonly up = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
   /** The shooter's own hitboxes, excluded from its rays. */
-  ignoreBody: RAPIER.RigidBody | undefined;
+  ignoreChar: number | undefined;
   /** Called for every round fired (pellets flagged): where it went and whom it hit (-1: nobody). */
   onRound: ((from: THREE.Vector3, to: THREE.Vector3, hitId: number, pellet: boolean) => void) | null = null;
   /**
@@ -421,7 +421,7 @@ export class WeaponController {
   /** A ray from the eye: the shot caster's judgement, or the physics world's (walls and hitboxes). */
   private cast(eye: THREE.Vector3, dir: THREE.Vector3, maxDist: number): ShotHit | null {
     if (this.shotCaster) return this.shotCaster(eye, dir, maxDist);
-    const hit = this.physics.raycast(eye, dir, maxDist, Layer.WORLD | Layer.HITBOX, undefined, this.ignoreBody);
+    const hit = this.physics.raycast(eye, dir, maxDist, Layer.WORLD | Layer.HITBOX, undefined, undefined, undefined, this.ignoreChar);
     if (!hit) return null;
     const target = this.registry.lookup(hit.collider.handle) ?? null;
     return { distance: hit.distance, point: hit.point, normal: hit.normal, handle: hit.collider.handle, target };

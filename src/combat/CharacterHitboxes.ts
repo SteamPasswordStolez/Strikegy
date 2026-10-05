@@ -1,4 +1,5 @@
-import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
+import type { PhysicsWorld } from '@/physics/PhysicsWorld';
+import { CHAR_PARTS, charHandle, type CharacterHits } from '@/physics/characterHits';
 import type { HitPart } from '@/core/events';
 import type { Damageable, HitboxRegistry } from './Hitboxes';
 
@@ -78,79 +79,51 @@ function slab(ox: number, oy: number, oz: number, dx: number, dy: number, dz: nu
 }
 
 /**
- * Head / torso / legs hitboxes on one kinematic body that follows a character
- * (player or bot). Shots from the owner exclude this body.
+ * Head / torso / legs hitboxes following a character (player or bot), kept
+ * in the wasm core (`hitboxes.rs`: the same layout as `STAND`) rather than as a kinematic
+ * Rapier body: HITBOX-layer rays (`PhysicsWorld.raycast`) test them there.
+ * Their stand-in collider handles are in the registry like any other
+ * hitbox's. Shots from the owner pass `slot` to skip them.
  */
 export class CharacterHitboxes {
-  readonly body: RAPIER.RigidBody;
-  private readonly legs: RAPIER.Collider;
-  private readonly torso: RAPIER.Collider;
-  private readonly head: RAPIER.Collider;
-  private lastHeight = -1;
-  /** Where it was last put (skips moving a body that hasn't moved). */
-  private readonly last = { x: NaN, y: NaN, z: NaN, yaw: NaN };
+  /** This character's slot in the core; pass it as `excludeChar` for the owner's own shots. */
+  readonly slot: number;
+  private readonly hits: CharacterHits;
+  private readonly handles: number[];
 
   constructor(
-    private readonly physics: PhysicsWorld,
+    physics: PhysicsWorld,
     private readonly registry: HitboxRegistry,
     owner: Damageable,
   ) {
-    const world = physics.world;
-    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
-    // Hit only by queries: a filter that matches no other collider keeps them out of broad-phase pairs.
-    const g = ((Layer.HITBOX & 0xffff) << 16) | Layer.HITBOX;
-    const make = (desc: RAPIER.ColliderDesc, part: HitPart) => {
-      const c = world.createCollider(desc.setCollisionGroups(g).setSensor(false), this.body);
-      registry.register(c.handle, owner, part);
-      return c;
-    };
-    this.legs = make(RAPIER.ColliderDesc.cuboid(...STAND.legs.he), 'limb');
-    this.torso = make(RAPIER.ColliderDesc.cuboid(...STAND.torso.he), 'body');
-    this.head = make(RAPIER.ColliderDesc.ball(STAND.head.r), 'head');
-    this.layout(1.8);
+    if (!physics.characters) throw new Error('character hitboxes need the wasm core');
+    this.hits = physics.characters;
+    this.slot = this.hits.alloc();
+    this.handles = CHAR_PARTS.map((part, i) => {
+      const handle = charHandle(this.slot, i);
+      registry.register(handle, owner, part);
+      return handle;
+    });
+    this.hits.set(this.slot, { x: 0, y: -1000, z: 0 }, 0, 1.8);
+    this.hits.setEnabled(this.slot, true);
   }
 
-  /** Scales the layout to the character's current height (crouching). */
-  private layout(height: number): void {
-    if (Math.abs(height - this.lastHeight) < 1e-3) return;
-    this.lastHeight = height;
-    const k = height / 1.8;
-    this.legs.setTranslationWrtParent({ x: 0, y: STAND.legs.y * k, z: 0 });
-    this.legs.setHalfExtents({ x: STAND.legs.he[0], y: STAND.legs.he[1] * k, z: STAND.legs.he[2] });
-    this.torso.setTranslationWrtParent({ x: 0, y: STAND.torso.y * k, z: 0 });
-    this.head.setTranslationWrtParent({ x: 0, y: STAND.head.y * k, z: 0 });
-  }
-
-  /** Moves the hitboxes to the character's feet, facing and height. */
+  /** Moves the hitboxes to the character's feet, facing and height (crouching scales them). */
   sync(feet: { x: number; y: number; z: number }, yaw: number, height: number): void {
-    this.layout(height);
-    const l = this.last;
-    if (l.x === feet.x && l.y === feet.y && l.z === feet.z && l.yaw === yaw) return;
-    l.x = feet.x;
-    l.y = feet.y;
-    l.z = feet.z;
-    l.yaw = yaw;
-    this.body.setNextKinematicTranslation(feet);
-    const h = yaw / 2;
-    this.body.setNextKinematicRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) });
+    this.hits.set(this.slot, feet, yaw, height);
   }
 
-  /** Teleport without interpolation (spawns). */
+  /** Teleport (spawns). */
   place(feet: { x: number; y: number; z: number }, yaw: number): void {
-    this.last.x = NaN;
-    this.body.setTranslation(feet, true);
-    const h = yaw / 2;
-    this.body.setRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) }, true);
+    this.hits.set(this.slot, feet, yaw, 1.8);
   }
 
   setEnabled(on: boolean): void {
-    this.legs.setEnabled(on);
-    this.torso.setEnabled(on);
-    this.head.setEnabled(on);
+    this.hits.setEnabled(this.slot, on);
   }
 
   dispose(): void {
-    for (const c of [this.legs, this.torso, this.head]) this.registry.unregister(c.handle);
-    this.physics.world.removeRigidBody(this.body);
+    for (const h of this.handles) this.registry.unregister(h);
+    this.hits.release(this.slot);
   }
 }

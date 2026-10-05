@@ -200,7 +200,7 @@ export class Soldier {
     };
     this.boxes = new CharacterHitboxes(o.physics, o.registry, this.target);
     this.boxes.place(this.player.feet, this.player.yaw);
-    this.weapons.ignoreBody = this.boxes.body;
+    this.weapons.ignoreChar = this.boxes.slot;
     this.player.onLanded = (speed) => {
       const dmg = fallDamage(speed);
       if (dmg > 0) this.damage(dmg, null, 'fall');

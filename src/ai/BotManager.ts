@@ -2079,7 +2079,7 @@ export class BotManager implements BotServices {
       const d = dir.clone().addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
       const max = def.range * 1.5;
       const judged = cast ? cast(eye, d, max) : null;
-      const hit = cast ? null : this.physics.raycast(eye, d, max, Layer.WORLD | Layer.HITBOX, undefined, bot.hitboxes.body);
+      const hit = cast ? null : this.physics.raycast(eye, d, max, Layer.WORLD | Layer.HITBOX, undefined, undefined, undefined, bot.hitboxes.slot);
       const point = judged ? judged.point : hit?.point;
       const to = point ? new THREE.Vector3(point.x, point.y, point.z) : eye.clone().addScaledVector(d, max);
       const target = judged ? (judged.target ?? undefined) : hit ? this.registry.lookup(hit.collider.handle) : undefined;

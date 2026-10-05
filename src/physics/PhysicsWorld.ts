@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { coreIfLoaded } from '@/wasm/core';
 import { Occluders } from './occluders';
+import { CharacterHits, charHandle } from './characterHits';
 
 export { RAPIER };
 
@@ -26,7 +27,8 @@ export function groups(membership: number, filter: number): number {
 }
 
 export interface RayHit {
-  collider: RAPIER.Collider;
+  /** What was hit: a Rapier collider, or a character hitbox part (`charHandle`, negative). */
+  collider: { readonly handle: number };
   distance: number;
   point: { x: number; y: number; z: number };
   normal: { x: number; y: number; z: number };
@@ -94,6 +96,8 @@ export class PhysicsWorld {
    * hulls): `blocked` asks it rather than Rapier. Null without the core (tests).
    */
   private readonly occluders: Occluders | null;
+  /** Bot and player hitboxes in the wasm core (HITBOX-layer rays test them too). Null without the core. */
+  readonly characters: CharacterHits | null;
 
   private constructor() {
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -115,6 +119,7 @@ export class PhysicsWorld {
         : null;
     const k = coreIfLoaded();
     this.occluders = k ? new Occluders(k) : null;
+    this.characters = k ? new CharacterHits(k) : null;
   }
 
   /** Loads origin and direction into the reused raw vectors. */
@@ -276,6 +281,10 @@ export class PhysicsWorld {
     );
   }
 
+  /**
+   * Nearest hit along `dir` (unit). With `Layer.HITBOX` in `mask`, character
+   * hitboxes in the core count too (`excludeChar`: the shooter's own slot).
+   */
   raycast(
     origin: V3,
     dir: V3,
@@ -283,7 +292,32 @@ export class PhysicsWorld {
     mask: number,
     exclude?: RAPIER.Collider,
     excludeBody?: RAPIER.RigidBody,
-    /** Only colliders this passes count. */
+    /** Only colliders this passes count (character hitboxes then don't). */
+    only?: (c: RAPIER.Collider) => boolean,
+    /** A character hitbox slot to skip (the shooter's own). */
+    excludeChar?: number,
+  ): RayHit | null {
+    // Character hitboxes live in the wasm core (a filter only knows Rapier's colliders).
+    const ch = mask & Layer.HITBOX && !only ? this.characters?.cast(origin, dir, maxDist, excludeChar) : null;
+    // Anything Rapier has must be nearer than the character to count.
+    const world = this.rapierRay(origin, dir, ch ? ch.distance : maxDist, mask, exclude, excludeBody, only);
+    if (world || !ch) return world;
+    const t = ch.distance;
+    return {
+      collider: { handle: charHandle(ch.slot, ch.part) },
+      distance: t,
+      point: { x: origin.x + dir.x * t, y: origin.y + dir.y * t, z: origin.z + dir.z * t },
+      normal: ch.normal,
+    };
+  }
+
+  private rapierRay(
+    origin: V3,
+    dir: V3,
+    maxDist: number,
+    mask: number,
+    exclude?: RAPIER.Collider,
+    excludeBody?: RAPIER.RigidBody,
     only?: (c: RAPIER.Collider) => boolean,
   ): RayHit | null {
     const raw = this.rays;

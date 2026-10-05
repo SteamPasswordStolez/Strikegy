@@ -55,6 +55,17 @@ export interface CoreExports {
   occ_dynamic_count(count: number): void;
   occ_ready(): number;
   occ_blocked(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): number;
+  hb_cap(): number;
+  hb_x(): number;
+  hb_y(): number;
+  hb_z(): number;
+  hb_s(): number;
+  hb_c(): number;
+  hb_k(): number;
+  hb_on(): number;
+  hb_out(): number;
+  hb_set_count(count: number): void;
+  hb_cast(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number, exclude: number): number;
 }
 
 let instance: CoreExports | null = null;

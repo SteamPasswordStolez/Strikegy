@@ -8,6 +8,7 @@
 #![no_std]
 
 pub mod crowd;
+pub mod hitboxes;
 pub mod occluders;
 
 #[panic_handler]
