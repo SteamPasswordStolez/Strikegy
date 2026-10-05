@@ -160,6 +160,9 @@ describe('fortifications at runtime', () => {
     expect(wire.colliders).toHaveLength(0);
     expect(fort.slowAt(wire.pos)).toBeLessThan(1);
     expect(fort.slowAt(wire.stand)).toBe(1);
+    // Knocked down: nothing to wade through.
+    fort.destroy(wire);
+    expect(fort.slowAt(wire.pos)).toBe(1);
     nav.dispose();
     physics.dispose();
   });

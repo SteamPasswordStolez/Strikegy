@@ -481,6 +481,8 @@ export type FortJob = { type: 'build'; slot: FortSlot } | { type: 'refill'; stat
 
 export class Fortifications {
   readonly slots: FortSlot[] = [];
+  /** Built barbed wire (`slowAt` runs for everyone every step). */
+  private readonly wires: FortSlot[] = [];
   readonly stations: Station[] = [];
   readonly group = new THREE.Group();
   /** Stations and finished fortifications, merged per material (they don't move). */
@@ -625,8 +627,13 @@ export class Fortifications {
 
   /** Speed factor at `p`: slow inside built barbed wire. */
   slowAt(p: THREE.Vector3): number {
-    for (const s of this.slots) {
-      if (s.kind !== 'wire' || !s.built) continue;
+    for (const s of this.wires) {
+      // Quick miss: farther than the wire's half diagonal.
+      const dx = p.x - s.pos.x;
+      const dz = p.z - s.pos.z;
+      const hx = s.size[0] / 2 + 0.1;
+      const hz = s.size[2] / 2 + 0.15;
+      if (dx * dx + dz * dz > hx * hx + hz * hz) continue;
       const [lx, lz] = this.toLocal(s, p);
       if (Math.abs(lx) < s.size[0] / 2 + 0.1 && Math.abs(lz) < s.size[2] / 2 + 0.15 && Math.abs(p.y - s.pos.y) < 1.2) return WIRE_SLOW;
     }
@@ -684,6 +691,7 @@ export class Fortifications {
     slot.health = FORT[slot.kind].health;
     slot.ghost.visible = false;
     this.showProgress(slot);
+    if (slot.kind === 'wire') this.wires.push(slot);
     // Finished: drawn with the other static ones.
     this.batch.add(slot.id, slot.model);
     slot.model.visible = false;
@@ -741,6 +749,8 @@ export class Fortifications {
 
     slot.ghost.visible = true;
     this.batch.remove(slot.id);
+    const w = this.wires.indexOf(slot);
+    if (w >= 0) this.wires.splice(w, 1);
     this.showProgress(slot);
     this.onChange?.();
   }
