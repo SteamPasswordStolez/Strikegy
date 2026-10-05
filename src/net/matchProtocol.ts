@@ -17,10 +17,10 @@ export const FRAME = { input: 1, snapshot: 2 } as const;
 
 /** Server steps per second (the browser's fixed step is the same). */
 export const TICK_HZ = 60;
-/** A snapshot every this many steps (20 Hz). */
-export const SNAPSHOT_EVERY = 3;
-/** Remote soldiers are drawn this many ticks in the past (100 ms: two snapshots to blend between). */
-export const INTERP_TICKS = 6;
+/** A snapshot every this many steps (30 Hz; was 20 until UDP made late ones rare, 2026-10-05). */
+export const SNAPSHOT_EVERY = 2;
+/** Remote soldiers are drawn this many ticks in the past (67 ms: two snapshots to blend between, one may be lost). */
+export const INTERP_TICKS = 4;
 /**
  * Shots are judged against where targets were up to this long ago (s): a
  * round trip of ~200 ms plus the 100 ms others are drawn behind. Longer only

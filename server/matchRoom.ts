@@ -1,6 +1,6 @@
 /**
  * One room's match on the game server: the sim (`MatchSim`) stepped at 60 Hz,
- * each player's inputs queued and stepped in order, snapshots out at 20 Hz,
+ * each player's inputs queued and stepped in order, snapshots out at 30 Hz,
  * the match's news (kills, spawns, captures) as JSON, and the zone / score
  * tables a few times a second.
  *

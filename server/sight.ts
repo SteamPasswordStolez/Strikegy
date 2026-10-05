@@ -23,9 +23,9 @@ const HEARD = 250;
 const VIEW_MAX = 700;
 /** Seconds an enemy stays known after the last clear line. */
 const HOLD = 0.75;
-/** Ticks between line checks (`step` runs with every snapshot, every 3rd tick), near pairs (under `CLOSE` m) and far. */
+/** Ticks between line checks (`step` runs with every snapshot, every 2nd tick), near pairs (under `CLOSE` m) and far. */
 const CLOSE = 100;
-const EVERY_CLOSE = 3;
+const EVERY_CLOSE = 4;
 const EVERY_FAR = 15;
 /** Rays a pass for all players together (beyond it, the rest wait for the next pass). */
 const RAYS_PER_PASS = 600;

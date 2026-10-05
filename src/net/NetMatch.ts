@@ -65,7 +65,7 @@ interface Sample {
 const UP = new THREE.Vector3(0, 1, 0);
 /** Ticks without a snapshot after which someone counts as gone from view (allies come in every one). */
 const GAP = 12;
-/** Samples kept per soldier (a second and a half at 20 Hz). */
+/** Samples kept per soldier (a second at 30 Hz). */
 const KEEP = 30;
 /** A corpse stays this long after the soldier left the field (s). */
 const CORPSE_SEC = 4;
