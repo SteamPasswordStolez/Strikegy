@@ -35,6 +35,41 @@ type Quat = { x: number; y: number; z: number; w: number };
 
 let initPromise: Promise<void> | null = null;
 
+/** Rapier's wasm-side ray queries (`World.broadPhase.raw`), called without the JS wrapper. */
+interface RawRayHit {
+  colliderHandle(): number;
+  timeOfImpact(): number;
+  free(): void;
+}
+interface RawRayIntersection {
+  colliderHandle(): number;
+  time_of_impact(): number;
+  normal(out: Float32Array): void;
+  free(): void;
+}
+type RawCast<T> = (
+  narrowPhase: unknown,
+  bodies: unknown,
+  colliders: unknown,
+  origin: unknown,
+  dir: unknown,
+  maxToi: number,
+  solid: boolean,
+  flags: number,
+  groups: number,
+  excludeCollider: number | undefined,
+  excludeBody: number | undefined,
+  predicate: undefined,
+) => T | undefined;
+interface RawRays {
+  broadPhase: { castRay: RawCast<RawRayHit>; castRayAndGetNormal: RawCast<RawRayIntersection> };
+  narrowPhase: unknown;
+  bodies: unknown;
+  colliders: unknown;
+  origin: V3;
+  dir: V3;
+}
+
 export class PhysicsWorld {
   readonly world: RAPIER.World;
   /**
@@ -44,9 +79,51 @@ export class PhysicsWorld {
    */
   private ground: { collider: RAPIER.Collider; blocks(from: V3, to: V3): boolean } | null = null;
   private readonly sightRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 });
+  /**
+   * Ray casts straight into Rapier's wasm side. The public `castRay` wraps
+   * every query in a JS filter closure that the wasm calls back for each
+   * candidate collider (even with no filter set), and allocates and frees two
+   * vectors per ray: ~3x the cost of the cast itself. Null if this Rapier
+   * build doesn't look as expected (then the public API is used).
+   */
+  private readonly rays: RawRays | null;
 
   private constructor() {
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const w = this.world as unknown as Record<
+      'broadPhase' | 'narrowPhase' | 'bodies' | 'colliders',
+      { raw?: unknown } | undefined
+    >;
+    const bp = w.broadPhase?.raw as RawRays['broadPhase'] | undefined;
+    this.rays =
+      typeof bp?.castRay === 'function' && typeof bp.castRayAndGetNormal === 'function'
+        ? {
+            broadPhase: bp,
+            narrowPhase: w.narrowPhase!.raw,
+            bodies: w.bodies!.raw,
+            colliders: w.colliders!.raw,
+            origin: RAPIER.VectorOps.intoRaw({ x: 0, y: 0, z: 0 }) as unknown as V3,
+            dir: RAPIER.VectorOps.intoRaw({ x: 0, y: 1, z: 0 }) as unknown as V3,
+          }
+        : null;
+  }
+
+  /** Loads origin and direction into the reused raw vectors. */
+  private aim(
+    r: RawRays,
+    ox: number,
+    oy: number,
+    oz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+  ): void {
+    r.origin.x = ox;
+    r.origin.y = oy;
+    r.origin.z = oz;
+    r.dir.x = dx;
+    r.dir.y = dy;
+    r.dir.z = dz;
   }
 
   static async create(): Promise<PhysicsWorld> {
@@ -103,6 +180,31 @@ export class PhysicsWorld {
     return hit;
   }
 
+  /** Distance along `dir` (unit) to the first collider in `mask` within `maxDist`, or Infinity: no hit details. */
+  rayDistance(origin: V3, dir: V3, maxDist: number, mask: number): number {
+    const raw = this.rays;
+    if (!raw) return this.raycast(origin, dir, maxDist, mask)?.distance ?? Infinity;
+    this.aim(raw, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z);
+    const hit = raw.broadPhase.castRay(
+      raw.narrowPhase,
+      raw.bodies,
+      raw.colliders,
+      raw.origin,
+      raw.dir,
+      maxDist,
+      true,
+      0,
+      groups(0xffff, mask),
+      undefined,
+      undefined,
+      undefined,
+    );
+    if (!hit) return Infinity;
+    const t = hit.timeOfImpact();
+    hit.free();
+    return t;
+  }
+
   /** True if something in `mask` lies between `from` and (just short of) `to`. No hit details. */
   blocked(from: V3, to: V3, mask: number): boolean {
     const dx = to.x - from.x;
@@ -112,6 +214,27 @@ export class PhysicsWorld {
     if (dist < 0.06) return false;
     const g = this.ground;
     if (g && mask & Layer.WORLD && g.blocks(from, to)) return true;
+    const raw = this.rays;
+    if (raw) {
+      this.aim(raw, from.x, from.y, from.z, dx / dist, dy / dist, dz / dist);
+      const hit = raw.broadPhase.castRay(
+        raw.narrowPhase,
+        raw.bodies,
+        raw.colliders,
+        raw.origin,
+        raw.dir,
+        dist - 0.05,
+        true,
+        0,
+        groups(0xffff, mask),
+        g?.collider.handle,
+        undefined,
+        undefined,
+      );
+      if (!hit) return false;
+      hit.free();
+      return true;
+    }
     const r = this.sightRay;
     r.origin.x = from.x;
     r.origin.y = from.y;
@@ -119,7 +242,10 @@ export class PhysicsWorld {
     r.dir.x = dx / dist;
     r.dir.y = dy / dist;
     r.dir.z = dz / dist;
-    return this.world.castRay(r, dist - 0.05, true, undefined, groups(0xffff, mask), g?.collider) !== null;
+    return (
+      this.world.castRay(r, dist - 0.05, true, undefined, groups(0xffff, mask), g?.collider) !==
+      null
+    );
   }
 
   raycast(
@@ -132,6 +258,37 @@ export class PhysicsWorld {
     /** Only colliders this passes count. */
     only?: (c: RAPIER.Collider) => boolean,
   ): RayHit | null {
+    const raw = this.rays;
+    // A filter needs Rapier's callback per candidate: the public API then.
+    if (raw && !only) {
+      this.aim(raw, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z);
+      const hit = raw.broadPhase.castRayAndGetNormal(
+        raw.narrowPhase,
+        raw.bodies,
+        raw.colliders,
+        raw.origin,
+        raw.dir,
+        maxDist,
+        true,
+        0,
+        groups(0xffff, mask),
+        exclude?.handle,
+        excludeBody?.handle,
+        undefined,
+      );
+      if (!hit) return null;
+      const n = RAPIER.scratchBuffer;
+      hit.normal(n);
+      const handle = hit.colliderHandle();
+      const t = hit.time_of_impact();
+      hit.free();
+      return {
+        collider: this.world.getCollider(handle),
+        distance: t,
+        point: { x: origin.x + dir.x * t, y: origin.y + dir.y * t, z: origin.z + dir.z * t },
+        normal: { x: n[0]!, y: n[1]!, z: n[2]! },
+      };
+    }
     const ray = new RAPIER.Ray(origin, dir);
     const hit = this.world.castRayAndGetNormal(
       ray,

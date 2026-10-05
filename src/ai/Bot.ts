@@ -1504,8 +1504,8 @@ export class Bot implements Damageable, Combatant {
     // ~0.5 m off on hills): take the exact ground below, looking from above
     // whichever is higher so a low mesh can't put the ray under the ground.
     const from = Math.max(this.feet.y, next.y) + 1.1;
-    const ground = s.physics.raycast(this.tmp3.set(next.x, from, next.z), DOWN, 2.6, Layer.WORLD);
-    if (ground && Math.abs(ground.point.y - next.y) < 1.4) next.y = ground.point.y;
+    const ground = from - s.physics.rayDistance(this.tmp3.set(next.x, from, next.z), DOWN, 2.6, Layer.WORLD);
+    if (Math.abs(ground - next.y) < 1.4) next.y = ground;
     const moved = next.sub(this.feet);
     this.velocity.set(moved.x / dt, 0, moved.z / dt);
     this.grounded = true;
