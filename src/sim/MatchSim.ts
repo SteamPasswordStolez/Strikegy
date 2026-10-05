@@ -3,6 +3,7 @@ import { Bot, setNextBotId } from '@/ai/Bot';
 import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT } from '@/ai/BotManager';
 import type { Difficulty } from '@/ai/difficulty';
 import { NavWorld, VehicleNav } from '@/ai/NavWorld';
+import { loadTactics } from '@/ai/tacticsLoad';
 import type { Combatant } from '@/ai/types';
 import type { AudioSystem } from '@/audio/AudioSystem';
 import { rayHitbox } from '@/combat/CharacterHitboxes';
@@ -243,7 +244,10 @@ export class MatchSim {
       // Bot drivers route on a mesh as wide as a tank.
       if ((map.zones?.length ?? 0) > 0) vehicleNav = await VehicleNav.build(physics, world.built.navExtra ?? undefined);
     }
-    return new MatchSim(physics, impacts, world, opts, nav, vehicleNav);
+    const sim = new MatchSim(physics, impacts, world, opts, nav, vehicleNav);
+    // Cover, peek spots and zone positions for the bots (baked with the navmesh).
+    if (sim.bots && nav) sim.bots.setTactics(await loadTactics(nav, physics), map.world.size);
+    return sim;
   }
 
   // ---------------------------------------------------------------------------

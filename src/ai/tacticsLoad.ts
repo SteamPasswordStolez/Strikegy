@@ -1,18 +1,19 @@
 import { getNavMeshPositionsAndIndices } from 'recast-navigation';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
-import { hashNavInput, loadNav, saveNav } from './navCache';
+import { bakedNav, hashNavInput, loadNav, saveNav } from './navCache';
 import { skipCache, type NavWorld } from './NavWorld';
 import { TACTICS, TacticalMap, buildTactical } from './tactics';
 
 /**
  * The map's tactical points (see `tactics.ts`): from the navmesh and the
  * static world, cached in IndexedDB under a hash of the navmesh and the
- * settings like the navmesh itself (a repeat load reads them back).
+ * settings like the navmesh itself (a repeat load reads them back), or baked
+ * ahead with the navmeshes (`npm run nav`).
  */
 export async function loadTactics(nav: NavWorld, physics: PhysicsWorld, pause?: () => Promise<void>): Promise<TacticalMap> {
   const [positions, indices] = getNavMeshPositionsAndIndices(nav.navMesh);
   const key = `tac1:${hashNavInput(positions, indices, JSON.stringify(TACTICS))}`;
-  const cached = skipCache() ? null : await loadNav(key);
+  const cached = skipCache() ? null : ((await loadNav(key)) ?? (await bakedNav(key)));
   const fromCache = cached ? TacticalMap.fromBytes(cached) : null;
   if (fromCache) return fromCache;
   const a = { x: 0, y: 0, z: 0 };

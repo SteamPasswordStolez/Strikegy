@@ -10,6 +10,8 @@
     "server:build": "node scripts/clean.mjs dist-server && vite build -c server/vite.config.ts",
     "server": "npm run server:build && node dist-server/main.js",
     "server:bench": "npm run server:build && node dist-server/bench.js",
+    "bots:ab": "npm run server:build && node dist-server/botAb.js",
+    "bots:pace": "npm run server:build && node dist-server/pace.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

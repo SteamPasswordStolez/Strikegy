@@ -141,7 +141,8 @@ const COVER_SAMPLES = 10;
  * side for the alternatives, at most `routes` alternatives a step); squads
  * gather `stageOut` m outside an enemy-held zone and go in together once
  * `stageShare` of them are there (or after `stageWait` s); in a fight a squad
- * moves in halves, swapping every `bound` s.
+ * moves in halves, swapping every `bound` s (contact within `boundFresh` s,
+ * `boundNear`-`boundFar` m off, not in the zone itself; see `Bot.coverMove`).
  */
 const TACTIC = {
   coverReach: 16,
@@ -156,6 +157,9 @@ const TACTIC = {
   stageShare: 0.6,
   stageWait: 18,
   bound: 3.5,
+  boundFresh: 3,
+  boundNear: 20,
+  boundFar: 70,
   melee: 2.1,
 };
 
@@ -174,6 +178,8 @@ const ARMOUR = { stand: { tank: 60, td: 85, lob: 170 }, hurt: 0.35, hurtStand: 1
 function armoured(v: Vehicle): boolean {
   return TANK_KINDS.includes(v.kind) || v.kind === 'rocket';
 }
+
+export type SmartPart = 'route' | 'zoneSpot' | 'staging' | 'cover' | 'scan' | 'overwatch' | 'armour';
 
 /** A squad gathering outside a zone before going in. */
 interface Staging {
@@ -427,6 +433,13 @@ export class BotManager implements BotServices {
   private dangerTick = 0;
   /** Sides playing the smarter behaviour (not easy bots; `plain` turns one side's off to compare). */
   readonly smart: Record<Team, boolean>;
+  /**
+   * Parts of the smarter behaviour, each switchable on its own (A/B runs: `npm run bots:ab`).
+   * Off by default: watching the danger side while walking, gathering outside a
+   * zone and moving in halves (none of them won anything in 16-run A/Bs; scan
+   * and staging lost).
+   */
+  readonly tactic: Record<SmartPart, boolean> = { route: true, zoneSpot: true, staging: false, cover: true, scan: false, overwatch: false, armour: true };
   private routeBudget = 0;
   /** Bot id -> tactical point it took as cover. */
   private readonly coverClaims = new Map<number, number>();
@@ -907,7 +920,7 @@ export class BotManager implements BotServices {
    */
   private saferWay(bot: Bot, to: THREE.Vector3, out: THREE.Vector3[]): void {
     const dm = this.danger?.[bot.team];
-    if (!dm || !this.smart[bot.team] || bot.target || this.routeBudget <= 0) return;
+    if (!dm || !this.uses(bot.team, 'route') || bot.target || this.routeBudget <= 0) return;
     if (bot.action !== 'advance' && bot.action !== 'investigate') return;
     const length = (p: readonly THREE.Vector3[]) => {
       let n = 0;
@@ -1007,6 +1020,11 @@ export class BotManager implements BotServices {
     this.tactics = map;
     const [w, d] = size;
     this.danger = { blue: new DangerMap(-w / 2, -d / 2, w / 2, d / 2), red: new DangerMap(-w / 2, -d / 2, w / 2, d / 2) };
+  }
+
+  /** Whether `team` plays this part of the smarter behaviour. */
+  uses(team: Team, part: SmartPart): boolean {
+    return this.smart[team] && this.tactic[part];
   }
 
   /** Danger at a point for `team` (0 without danger maps). */
@@ -1166,7 +1184,7 @@ export class BotManager implements BotServices {
           guards.set(g, list);
         } else {
           e.watch = null;
-          if (changed || (e.spot < 0 && this.smart[team])) {
+          if (changed || (e.spot < 0 && this.uses(team, 'zoneSpot'))) {
             const a = Math.random() * Math.PI * 2;
             const r = Math.sqrt(Math.random()) * g.radius * 0.7;
             e.offset.set(Math.cos(a) * r, 0, Math.sin(a) * r);
@@ -1177,7 +1195,7 @@ export class BotManager implements BotServices {
         this.assignPost(e);
       }
       // Squads going for a zone the enemy holds gather outside it first.
-      if (this.smart[team]) for (const q of squads) if (!byPlayer.has(q)) this.planStaging(team, q, pick.get(q) ?? null);
+      if (this.uses(team, 'staging')) for (const q of squads) if (!byPlayer.has(q)) this.planStaging(team, q, pick.get(q) ?? null);
       // Guard posts: spread along the side of the zone facing the enemy, each watching outward.
       for (const [g, list] of guards) {
         const front = g.front ?? new THREE.Vector3(0, 0, -1);
@@ -1227,7 +1245,7 @@ export class BotManager implements BotServices {
       return true;
     }
     this.releaseSpot(e);
-    if (!tm || !this.smart[e.bot.team] || !g.front) return false;
+    if (!tm || !this.uses(e.bot.team, 'zoneSpot') || !g.front) return false;
     const list = tm.near(g.pos.x, g.pos.z, g.radius * 0.95, this.near);
     const tx = g.pos.x + g.front.x * 60;
     const tz = g.pos.z + g.front.z * 60;
@@ -1503,7 +1521,7 @@ export class BotManager implements BotServices {
   findCover(bot: Bot, threat: THREE.Vector3): THREE.Vector3 | null | undefined {
     if (this.coverBudget <= 0) return undefined;
     this.coverBudget--;
-    if (this.tactics && this.smart[bot.team]) return this.tacticalCover(bot, threat, this.tactics);
+    if (this.tactics && this.uses(bot.team, 'cover')) return this.tacticalCover(bot, threat, this.tactics);
     const threatEye = new THREE.Vector3(threat.x, threat.y + 1.6, threat.z);
     let best: THREE.Vector3 | null = null;
     let bestScore = Infinity;
@@ -1591,7 +1609,7 @@ export class BotManager implements BotServices {
    * within 90° of the way the bot is heading (null: just look ahead).
    */
   scanYaw(bot: Bot, moveYaw: number): number | null {
-    if (!this.smart[bot.team]) return null;
+    if (!this.uses(bot.team, 'scan')) return null;
     return this.danger?.[bot.team].watchYaw(bot.feet.x, bot.feet.z, moveYaw, Math.PI / 2) ?? null;
   }
 
@@ -1601,11 +1619,16 @@ export class BotManager implements BotServices {
    * half shoots at (the squad's fight), or null when this bot may move.
    */
   overwatch(bot: Bot): THREE.Vector3 | null {
-    if (!this.smart[bot.team]) return null;
+    if (!this.uses(bot.team, 'overwatch')) return null;
     const e = this.entryOf(bot);
     if (e.leader || e.squad < 0) return null;
     const c = this.squadContact(bot);
-    if (!c || this.time - c.time > 6 || c.pos.distanceTo(bot.feet) > 80) return null;
+    if (!c || this.time - c.time > TACTIC.boundFresh) return null;
+    const d = c.pos.distanceTo(bot.feet);
+    if (d < TACTIC.boundNear || d > TACTIC.boundFar) return null;
+    // In the zone it is going for, a bot stays put to count for the capture anyway.
+    const g = e.objective;
+    if (g && g.pos.distanceTo(bot.feet) < g.radius + 4) return null;
     const phase = Math.floor(this.time / TACTIC.bound) % 2;
     return e.slot % 2 === phase ? c.pos : null;
   }
@@ -2334,7 +2357,7 @@ export class BotManager implements BotServices {
     if (!m) return;
     const muzzle = v.muzzleOf(seat, this.tmp2);
     const shell = m.gun.shell;
-    const smartGun = this.smart[bot.team] && !!shell;
+    const smartGun = this.uses(bot.team, 'armour') && !!shell;
     const e = this.entryOf(bot);
     // Armour main gun: enemy vehicles first.
     const prey = smartGun && !shell!.lob && seat === 0 ? this.armourPrey(e, v, muzzle) : null;

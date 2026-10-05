@@ -39,6 +39,8 @@ const ODDS_RANGE = 40;
 const MELEE_BOT = { reach: 2, close: 1.3, every: 0.9 };
 /** Hit this many times at one cover spot: find another (not within 3 m of it). */
 const COVER_HITS = 2;
+/** Overwatch: cover farther than this (m) isn't worth going to; the bot keeps moving instead. */
+const OVERWATCH_COVER = 8;
 
 /** Preferred fighting distance per weapon class (meters). */
 const PREFERRED_RANGE: Record<WeaponDef['class'], number> = { ar: 20, smg: 10, lmg: 24, sg: 6, dmr: 32, sr: 40, pistol: 10 };
@@ -345,6 +347,8 @@ export class Bot implements Damageable, Combatant {
   private jitterAt = 0;
   private burstLeft = 0;
   private pauseUntil = 0;
+  /** Holding in cover while the other half of the squad moves (overwatch). */
+  private holdUntil = 0;
   private triggerHeld = false;
 
   private readonly tmp = new THREE.Vector3();
@@ -985,6 +989,8 @@ export class Bot implements Damageable, Combatant {
         this.setGoal(this.heard.pos, s);
         break;
       case 'advance':
+        // Holding for the squad (see coverMove): no new way in meanwhile.
+        if (s.time < this.holdUntil) break;
         if (!this.hasGoal || this.feet.distanceTo(this.goal) < 3 || s.time > this.repathAt + 8 || s.squadGoalMoved(this, this.goal)) {
           this.setGoal(s.squadGoal(this), s);
         }
@@ -1034,17 +1040,25 @@ export class Bot implements Damageable, Combatant {
   private coverMove(at: THREE.Vector3, inCover: boolean, s: BotServices): void {
     if (inCover) {
       this.hasGoal = false;
-    } else if (this.cover && this.cover.distanceTo(this.feet) < 14) {
-      this.setGoal(this.cover, s);
+      this.holdUntil = s.time + 0.5;
     } else {
-      this.coverLow = true;
-      this.coverLean = null;
-      const c = s.findCover(this, at);
-      if (c) {
-        this.cover = c;
-        this.coverUntil = s.time + 3;
-        this.setGoal(c, s);
-      } else this.hasGoal = false;
+      // Cover close by and not back the way it came; none: keep going (the other half covers).
+      const ahead = this.hasGoal ? this.goal.clone() : null;
+      const near = (c: THREE.Vector3) => c.distanceTo(this.feet) < OVERWATCH_COVER && (!ahead || c.distanceTo(ahead) < this.feet.distanceTo(ahead) + 2);
+      let c = this.cover && near(this.cover) ? this.cover : null;
+      if (!c) {
+        this.coverLow = true;
+        this.coverLean = null;
+        const f = s.findCover(this, at);
+        if (f && near(f)) {
+          c = f;
+          this.cover = f;
+          this.coverUntil = s.time + 3;
+        }
+      }
+      if (!c) return;
+      if (!this.hasGoal || this.goal.distanceToSquared(c) > 0.25) this.setGoal(c, s);
+      this.holdUntil = s.time + 0.5;
     }
     // A few bursts at the fight (not a constant stream).
     const auto = this.def.fireMode === 'auto' || this.def.fireMode === 'burst';

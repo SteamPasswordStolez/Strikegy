@@ -3777,6 +3777,7 @@ export class Game {
       capacity: 12,
     });
     bots.setTactical(built.windows, built.footprints);
+    bots.setTactics(await loadTactics(this.nav, this.physics), map.world.size);
     if (map.trees) bots.setForest(map.trees, map.world.size);
     if (water) bots.setWater(water);
     bots.viewers = () => [this.player.feet];
