@@ -107,7 +107,7 @@ Cloudflare 무료 플랜은 한국 접속을 LAX(로스앤젤레스)로 보내 �
 - 중계 서버: Caddy(`/etc/caddy/Caddyfile`: `game.strikegy.xyz { reverse_proxy 127.0.0.1:18787 }`, 인증서 자동), iptables에 80/443 허용(`netfilter-persistent save`), 오라클 보안 목록 80/443
 - 노트북 → 중계: `server/strikegy-relay.service`(SSH 역방향 터널, 키 `~/.ssh/strikegy_relay`). 중계 서버의 `tunnel` 계정은 `127.0.0.1:18787` 전달만 허용(`/home/tunnel/.ssh/authorized_keys`의 `restrict,port-forwarding,permitlisten=...`)
 - 게임은 `public/servers.json`의 첫 주소 `wss://game.strikegy.xyz/play`, 안 되면 예전 터널 주소로
-- UDP(2026-10-05): 경기 데이터는 WebRTC 데이터 채널로도 오갑니다. 노트북 서버는 오라클의 TURN(coturn, `/etc/turnserver.conf`, 3478/udp, 중계 포트 50000-50199/udp)에만 로그인해 그 중계 주소만 알리므로 집 IP는 드러나지 않습니다. 브라우저는 같은 곳의 STUN으로 자기 주소를 찾습니다. TURN 계정 비밀번호는 오라클 `/etc/strikegy-turn.pass`와 노트북 `~/.strikegy-turn.json`(권한 600)에만 있습니다(git·채팅에 넣지 않음). 이 파일이 없으면 UDP 없이 WebSocket만 씁니다. 오라클 iptables에 3478, 50000:50199/udp 허용(`netfilter-persistent save`), 오라클 보안 목록에도 같은 UDP 포트가 열려 있어야 합니다. 확인: `node scripts/udpCheck.mjs wss://game.strikegy.xyz/play`
+- UDP(2026-10-05): 경기 데이터는 WebRTC 데이터 채널로도 오갑니다. 채널은 노트북이 아니라 **오라클 중계의 edge**(`server/edge.ts`, `/opt/strikegy-edge`, systemd `strikegy-edge`, Node 22는 `/opt/node22`)에서 끝납니다: Caddy가 `/play`를 edge(127.0.0.1:18788)로 보내고, edge는 WebSocket을 그대로 터널(18787)로 넘기면서 데이터 채널만 직접 받아 UDP 50000 하나로 씁니다(사설 주소를 공인 주소로 바꿔 알림). 노트북은 WebRTC를 하지 않아 집 IP가 드러날 일이 없습니다(처음엔 노트북이 TURN 중계만 쓰게 했지만 libdatachannel이 직접 연결해 버려 바로 걷어냄). 오라클 iptables에 50000/udp 허용, **오라클 보안 목록에도 UDP 50000 수신 규칙이 있어야** 채널이 열립니다(없으면 WebSocket만). edge 갱신: `npm run server:build` 후 `dist-server/edge.js`와 `dist-server/assets/rtc-*.js`를 `/opt/strikegy-edge`(와 `assets/`)에 복사하고 `sudo systemctl restart strikegy-edge`. 확인: `node scripts/udpCheck.mjs wss://game.strikegy.xyz/play`
 
 ## 7. 업데이트
 

@@ -3,42 +3,43 @@
  * WebSocket (unordered, no resends: a late snapshot or input is worth nothing,
  * and a lost one no longer holds up the ones after it as on TCP).
  *
- * The game server's home address must not show (the owner's wish), so it
- * only offers a relayed address on the TURN server on the Oracle relay
- * (coturn there, `docs/server-setup.md`), which it logs into with the
- * credentials in `~/.strikegy-turn.json` (never in git). Without that file
- * there is no UDP and everything stays on the WebSocket; `STRIKEGY_RTC_LOCAL=1`
- * allows direct connections instead (local testing).
+ * In production the channel ends on the Oracle relay (`edge.ts`), never on
+ * the server laptop: the owner's home address must not show, and a WebRTC
+ * peer's address always shows to the other end (asking it to use only a TURN
+ * relay did not stop libdatachannel from connecting directly, 2026-10-05).
+ * The laptop's gateway only runs channels itself for local testing
+ * (`STRIKEGY_RTC_LOCAL=1`).
  *
  * Signalling rides on the WebSocket as `rtc` messages (the browser asks, the
  * server offers, both trade candidates).
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import { PeerConnection, type DataChannel, type RtcConfig } from 'node-datachannel';
 import type { ServerMsg } from '../src/net/lobbyProtocol.ts';
 
-export interface TurnLogin {
-  host: string;
-  port: number;
-  user: string;
-  pass: string;
+/** How channels are made: the WebRTC set-up, and (behind a 1:1 NAT) the private address to swap for the public one in what goes out. */
+export interface RtcSetup {
+  config: RtcConfig;
+  rewrite?: { from: string; to: string };
 }
 
-/** How the server sets up UDP: through the TURN relay, directly (local testing), or not at all. */
-export type RtcSetup = { turn: TurnLogin } | { direct: true } | null;
+/** The laptop's gateway: channels only for local testing. */
+export function localRtcSetup(): RtcSetup | null {
+  return process.env.STRIKEGY_RTC_LOCAL === '1' ? { config: { iceServers: [] } } : null;
+}
 
-export function rtcSetup(): RtcSetup {
-  if (process.env.STRIKEGY_RTC_LOCAL === '1') return { direct: true };
-  const file = process.env.STRIKEGY_TURN_FILE ?? join(homedir(), '.strikegy-turn.json');
-  if (!existsSync(file)) return null;
-  try {
-    const t = JSON.parse(readFileSync(file, 'utf8')) as TurnLogin;
-    return t.host && t.port && t.user && t.pass ? { turn: t } : null;
-  } catch {
-    return null;
-  }
+/**
+ * The edge on the Oracle relay: one UDP port for every channel (`port`, open
+ * in the cloud's security list and the machine's firewall), its private
+ * address swapped for the public one (the cloud's 1:1 NAT keeps the port).
+ */
+export function edgeRtcSetup(publicIp: string, port: number): RtcSetup {
+  let priv = '';
+  for (const list of Object.values(networkInterfaces())) for (const a of list ?? []) if (a.family === 'IPv4' && !a.internal && !priv) priv = a.address;
+  return {
+    config: { iceServers: [], enableIceUdpMux: true, portRangeBegin: port, portRangeEnd: port },
+    rewrite: priv && publicIp ? { from: priv, to: publicIp } : undefined,
+  };
 }
 
 /** Bytes waiting on a channel past which a snapshot goes by the WebSocket instead (a backed-up line). */
@@ -55,19 +56,18 @@ export class ServerRtc {
   private closed = false;
 
   constructor(
-    setup: NonNullable<RtcSetup>,
+    setup: RtcSetup,
     send: (msg: ServerMsg) => void,
     onBinary: (data: Uint8Array) => void,
   ) {
-    const config: RtcConfig =
-      'turn' in setup
-        ? { iceServers: [{ hostname: setup.turn.host, port: setup.turn.port, username: setup.turn.user, password: setup.turn.pass, relayType: 'TurnUdp' }], iceTransportPolicy: 'relay' }
-        : { iceServers: [] };
-    this.pc = new PeerConnection('player', config);
-    // Browsers find their own public address with plain STUN on the same relay (so it lets their packets through).
-    const stun = 'turn' in setup ? `${setup.turn.host}:${setup.turn.port}` : undefined;
-    this.pc.onLocalDescription((sdp, type) => send({ t: 'rtc', sdp, type: type as 'offer', stun }));
-    this.pc.onLocalCandidate((cand, mid) => send({ t: 'rtc', cand, mid }));
+    this.pc = new PeerConnection('player', setup.config);
+    const fix = (s: string): string => (setup.rewrite ? s.split(setup.rewrite.from).join(setup.rewrite.to) : s);
+    this.pc.onLocalDescription((sdp, type) => send({ t: 'rtc', sdp: fix(sdp), type: type as 'offer' }));
+    this.pc.onLocalCandidate((cand, mid) => {
+      // Only IPv4 the browser can reach (no link-local or IPv6 leftovers).
+      if (/ (fe80|::1|[0-9a-f]+:[0-9a-f:]+) /i.test(cand)) return;
+      send({ t: 'rtc', cand: fix(cand), mid });
+    });
     this.pc.onStateChange((state) => {
       if (state === 'failed' || state === 'closed') this.open = false;
     });
@@ -114,4 +114,22 @@ export class ServerRtc {
       /* already gone */
     }
   }
+}
+
+/**
+ * A WebSocket text frame that is a channel's set-up (`rtc`): what the
+ * gateway or the edge handles itself. Returns the parsed fields, `ask` for a
+ * new channel, or null when it isn't one (or is malformed).
+ */
+export function parseRtc(text: string): { ask: true } | { sdp?: string; type?: string; cand?: string; mid?: string } | null {
+  if (!text.startsWith('{"t":"rtc"') || text.length > 20000) return null;
+  let m: { sdp?: unknown; type?: unknown; cand?: unknown; mid?: unknown };
+  try {
+    m = JSON.parse(text) as typeof m;
+  } catch {
+    return null;
+  }
+  const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
+  if (m.sdp === undefined && m.cand === undefined) return { ask: true };
+  return { sdp: str(m.sdp, 16000), type: str(m.type, 8), cand: str(m.cand, 512), mid: str(m.mid, 16) };
 }

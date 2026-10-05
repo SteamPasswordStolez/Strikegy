@@ -1,0 +1,20 @@
+# The UDP edge on the Oracle relay (server/edge.ts): players' WebSockets come
+# here from Caddy (/play) and go on to the laptop down the SSH tunnel; their
+# WebRTC data channels end here (UDP 50000), so the laptop's address never shows.
+# Install: copy dist-server/edge.js + rtc chunk to /opt/strikegy-edge with ws
+# and node-datachannel installed there (docs/server-setup.md).
+[Unit]
+Description=Strikegy UDP edge
+After=network-online.target
+
+[Service]
+User=strikegy-edge
+WorkingDirectory=/opt/strikegy-edge
+Environment=EDGE_PUBLIC_IP=129.225.175.80
+Environment=EDGE_UDP_PORT=50000
+ExecStart=/opt/node22/bin/node /opt/strikegy-edge/edge.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

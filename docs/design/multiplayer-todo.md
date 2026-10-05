@@ -71,7 +71,7 @@
 - [x] 도메인 + 터널: 게임 페이지 `https://strikegy.xyz`(GitHub Pages), 서버 `wss://play.strikegy.xyz/play`(오너 노트북, Cloudflare Tunnel; 2026-10-04, `docs/server-setup.md`)
 - [x] systemd 자동 재시작(`strikegy.service`, 노트북에 설치됨)
 - [ ] 버전 확인("새로고침" 안내)
-- [x] UDP(2026-10-05): 서버와 브라우저 사이 WebRTC 데이터 채널(순서 없음, 재전송 없음; 서버 `node-datachannel`, `server/rtc.ts`). 스냅샷과 입력이 UDP로, 입력은 프레임마다 최근 6개를 겹쳐 보내 잃어버려도 됨. 봇이 한 일이 담긴 프레임과 JSON 메시지는 WebSocket. 집 IP를 숨기려고 서버는 오라클 TURN 중계 주소만 씀(`docs/server-setup.md`). 채널이 안 열리면 전부 WebSocket
+- [x] UDP(2026-10-05): 서버와 브라우저 사이 WebRTC 데이터 채널(순서 없음, 재전송 없음; 서버 `node-datachannel`, `server/rtc.ts`). 스냅샷과 입력이 UDP로, 입력은 프레임마다 최근 6개를 겹쳐 보내 잃어버려도 됨. 봇이 한 일이 담긴 프레임과 JSON 메시지는 WebSocket. 채널은 오라클 중계의 edge(`server/edge.ts`)에서 끝나 노트북 주소는 드러나지 않음(`docs/server-setup.md`). 채널이 안 열리면 전부 WebSocket
 
 ## 보안·안티치트 첫 단계 (2026-10-04)
 - [x] 입력 예산: 준비 후 지난 틱 수 + 8개보다 많이 처리하지 않음(입력을 빨리 보내 2배속·연사 불가), 스코프 흔들림 값 ±0.03 rad로 제한

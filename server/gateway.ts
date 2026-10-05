@@ -12,7 +12,7 @@ import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
 import { LobbyCore, type MatchHost } from './lobby.ts';
 import { Matches } from './matches.ts';
 import { WorkerMatches } from './workerMatches.ts';
-import { ServerRtc, rtcSetup } from './rtc.ts';
+import { ServerRtc, localRtcSetup, parseRtc } from './rtc.ts';
 
 /** Open connections one address may have (a household's tabs), and the server in all. */
 const PER_ADDRESS = 12;
@@ -45,9 +45,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches });
   const core = lobby;
   const sweep = setInterval(() => core.sweep(), 5000);
-  // Match data over UDP when the TURN login is there (the server laptop); otherwise WebSocket only.
-  const rtc = opts.matches === null ? null : rtcSetup();
-  if (rtc) log(`udp: ${'turn' in rtc ? `through ${rtc.turn.host}:${rtc.turn.port}` : 'direct (local testing)'}`);
+  // UDP data channels end here only for local testing; in production on the Oracle relay (edge.ts).
+  const rtc = opts.matches === null ? null : localRtcSetup();
+  if (rtc) log('udp: direct (local testing)');
 
   const http: Server = createServer((req, res) => {
     if (req.url === '/health') {
@@ -116,16 +116,10 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       }
       const text = data.toString();
       // The data channel's set-up is the gateway's own business (a few messages a connection).
-      if (text.startsWith('{"t":"rtc"')) {
-        if (!rtc || ++rtcMsgs > 80 || text.length > 20000) return;
-        let m: { sdp?: unknown; type?: unknown; cand?: unknown; mid?: unknown };
-        try {
-          m = JSON.parse(text) as typeof m;
-        } catch {
-          return;
-        }
-        const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
-        if (m.sdp === undefined && m.cand === undefined) {
+      const set = parseRtc(text);
+      if (set || text.startsWith('{"t":"rtc"')) {
+        if (!rtc || !set || ++rtcMsgs > 80) return;
+        if ('ask' in set) {
           if (++channelAsks > 4) return;
           channel?.close();
           channel = new ServerRtc(
@@ -135,7 +129,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
           );
           return;
         }
-        channel?.remote({ sdp: str(m.sdp, 16000), type: str(m.type, 8), cand: str(m.cand, 512), mid: str(m.mid, 16) });
+        channel?.remote(set);
         return;
       }
       void core.message(id, text);

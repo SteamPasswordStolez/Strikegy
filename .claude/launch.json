@@ -34,6 +34,18 @@
       "env": {
         "STRIKEGY_RTC_LOCAL": "1"
       }
+    },
+    {
+      "name": "strikegy-edge",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "dist-server/edge.js"
+      ],
+      "port": 18788,
+      "env": {
+        "EDGE_UPSTREAM": "ws://127.0.0.1:8787/play",
+        "EDGE_UDP_PORT": "50000"
+      }
     }
   ]
 }
