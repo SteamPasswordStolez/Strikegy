@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GRENADES } from '@/combat/explosions';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import type { GameBus } from '@/core/events';
@@ -173,6 +174,9 @@ const TACTIC = {
  * (within `reach` m). Lobbing guns also fire at enemies their side has
  * spotted that they can't see themselves.
  */
+/** Bots cooking frags: burst about `after` s after landing, holding at most `max` s. */
+const FRAG_COOK = { after: 0.7, max: 2.2 };
+
 /**
  * Bot pilots under attack: an enemy fighter within `range` m behind with its
  * nose within `cone` rad of us makes them break `turn` rad off their heading
@@ -1866,7 +1870,15 @@ export class BotManager implements BotServices {
     const vel = lobVelocity(origin, aim, 38, 22) ?? lobVelocity(origin, aim, 58, 22);
     if (!vel) return false;
     this.grenadeAt[bot.team] = this.time + 1.5;
-    this.grenades.launch(type, origin, vel, { id: bot.id, name: bot.name, team: bot.team });
+    // Frags are cooked: held so they burst about `FRAG_COOK.after` s after landing, not 2-3 s
+    // later when whoever it was for has moved off (a little less exact the calmer the bot).
+    let cook = 0;
+    if (type === 'frag') {
+      const flat = Math.hypot(vel.x, vel.z);
+      const flight = flat > 0.1 ? Math.hypot(aim.x - origin.x, aim.z - origin.z) / flat : 1;
+      cook = Math.max(0, Math.min(FRAG_COOK.max, GRENADES.frag.fuse - flight - FRAG_COOK.after)) * (0.6 + Math.random() * 0.4);
+    }
+    this.grenades.launch(type, origin, vel, { id: bot.id, name: bot.name, team: bot.team }, cook);
     return true;
   }
 

@@ -1362,15 +1362,21 @@ export class Bot implements Damageable, Combatant {
       }
     }
     if (this.frags > 0 && Math.random() < p.grenades * 0.4) {
+      // Frags (cooked, see BotManager.throwGrenade) go where someone is holding, not where they
+      // ran past: a group; one dug in behind sandbags / in a building / standing still; or, before
+      // going in after them, the building an enemy ducked into (clearing the room).
       let at: THREE.Vector3 | null = null;
       const age = s.time - this.lastSeen.time;
-      if (!this.target && age > 0.8 && age < 5) {
+      const t = this.target;
+      if (t) {
+        const d = this.feet.distanceTo(t.feet);
+        const holding = s.fortifiedAt(t.feet) || s.insideBuilding(t.feet) || Math.hypot(t.velocity.x, t.velocity.z) < 0.4;
+        if (d > 10 && d < 32 && (s.enemiesNear(this.team, t.feet, 5) >= 2 || (holding && Math.random() < 0.5))) at = t.feet;
+      } else if (age > 0.8 && age < 6) {
         const d = this.feet.distanceTo(this.lastSeen.pos);
         const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1);
-        if (d > 9 && d < 32 && !s.lineOfSight(eye, spot)) at = this.lastSeen.pos;
-      } else if (this.target) {
-        const d = this.feet.distanceTo(this.target.feet);
-        if (d > 12 && d < 30 && s.enemiesNear(this.team, this.target.feet, 5) >= 2) at = this.target.feet;
+        const dug = s.insideBuilding(this.lastSeen.pos) || s.fortifiedAt(this.lastSeen.pos);
+        if (dug && d > 7 && d < 28 && !s.lineOfSight(eye, spot)) at = this.lastSeen.pos;
       }
       if (at && s.alliesNear(this.team, at, 8) === 0 && s.throwGrenade(this, 'frag', at)) {
         this.frags--;

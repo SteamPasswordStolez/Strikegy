@@ -70,7 +70,8 @@ export class Throwables {
   }
 
   /** Throw with an exact launch velocity (bots aim their lobs). */
-  launch(type: GrenadeType, origin: THREE.Vector3, vel: THREE.Vector3, owner: GrenadeOwner): void {
+  /** `cook`: seconds the pin was out before the throw (the fuse burns from the pull). */
+  launch(type: GrenadeType, origin: THREE.Vector3, vel: THREE.Vector3, owner: GrenadeOwner, cook = 0): void {
     const spec = GRENADES[type];
     const world = this.physics.world;
     const body = world.createRigidBody(
@@ -95,7 +96,7 @@ export class Throwables {
     mesh.castShadow = true;
     mesh.position.copy(origin);
     this.scene.add(mesh);
-    this.live.push({ id: this.nextId++ & 0xffff, type, owner, body, mesh, fuse: spec.fuse, lastVel: vel.clone(), bounceCooldown: 0 });
+    this.live.push({ id: this.nextId++ & 0xffff, type, owner, body, mesh, fuse: Math.max(0.6, spec.fuse - cook), lastVel: vel.clone(), bounceCooldown: 0 });
   }
 
   /** Every grenade in the air or on the ground (the game server sends them to the browsers). */
