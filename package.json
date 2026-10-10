@@ -22,7 +22,8 @@
     "sounds": "node scripts/build-sounds.mjs",
     "maps": "node scripts/maps/iron-gate.mjs && node scripts/maps/ardennes.mjs && node scripts/maps/lyon.mjs && node scripts/maps/persia.mjs && node scripts/maps/bilbao.mjs && npm run nav",
     "nav": "npm run server:build && node dist-server/bakeNav.js",
-    "props:bounds": "node scripts/prop-bounds.mjs"
+    "props:bounds": "node scripts/prop-bounds.mjs",
+    "wasm": "node scripts/build-wasm.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

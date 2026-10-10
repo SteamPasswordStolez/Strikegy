@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ModelLibrary } from '@/render/models';
 import type { WeaponDef } from './weaponData';
 import { gunMaterials, type P } from './gunKit';
@@ -323,8 +324,10 @@ export class ViewModel {
     const m = gunMaterials();
     // The trigger hand is fixed to the gun; the support hand's parts go into its own group.
     let into: THREE.Object3D = this.gun;
+    const armParts = new Set<THREE.Mesh>();
     const own = (mesh: THREE.Mesh) => {
       mesh.userData.owned = true;
+      armParts.add(mesh);
       into.add(mesh);
     };
     /** A rounded segment (finger bone) between two points. */
@@ -413,6 +416,9 @@ export class ViewModel {
       limb(V(-0.03, cy - 0.06, hz + 0.05), V(-0.04, cy - 0.075, hz + 0.09), 0.029, 0.031, m.glove);
       limb(V(-0.04, cy - 0.075, hz + 0.09), V(-0.2, -0.3, hz + 0.42), 0.04, 0.05, m.sleeve);
     }
+    // ~25 bones, palms and limbs: one mesh per material in each hand's group
+    // (each hand moves as a whole), instead of a draw call each.
+    for (const parent of [this.gun, this.supportInner]) mergeArmParts(parent, armParts);
   }
 
   /** Bolt or pump worked after a shot. */
@@ -785,5 +791,37 @@ export class ViewModel {
 
   dispose(): void {
     this.fpScene.remove(this.root);
+  }
+}
+
+/** Merges the arm parts among `parent`'s children into one mesh per material (in place, still owned). */
+function mergeArmParts(parent: THREE.Object3D, parts: Set<THREE.Mesh>): void {
+  const byMat = new Map<THREE.Material, THREE.Mesh[]>();
+  for (const c of parent.children) {
+    const mesh = c as THREE.Mesh;
+    if (!parts.has(mesh) || Array.isArray(mesh.material)) continue;
+    const list = byMat.get(mesh.material) ?? [];
+    list.push(mesh);
+    byMat.set(mesh.material, list);
+  }
+  for (const [material, list] of byMat) {
+    if (list.length < 2) continue;
+    const geos = list.map((mesh) => {
+      mesh.updateMatrix();
+      const g = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix);
+      for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') g.deleteAttribute(k);
+      return g;
+    });
+    const merged = mergeGeometries(geos);
+    for (const g of geos) g.dispose();
+    if (!merged) continue;
+    for (const mesh of list) {
+      parent.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    const one = new THREE.Mesh(merged, material);
+    one.userData.owned = true;
+    one.renderOrder = list[0]!.renderOrder;
+    parent.add(one);
   }
 }

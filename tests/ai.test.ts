@@ -76,7 +76,12 @@ describe('utility brain', () => {
     expect(chooseAction(fight, 'engage')).toBe('engage');
     expect(chooseAction({ ...fight, suppression: 0.9 }, 'engage')).toBe('cover');
     // In cover with the shooter out of sight: stay down rather than chase.
-    expect(chooseAction({ ...calm, inCover: true, lastSeenAge: 20, heardAge: 0.5, suppression: 0.8 }, null)).toBe('hold');
+    expect(
+      chooseAction(
+        { ...calm, inCover: true, lastSeenAge: 20, heardAge: 0.5, suppression: 0.8 },
+        null,
+      ),
+    ).toBe('hold');
   });
 
   it('stops chasing when outnumbered and presses on when ahead', () => {
@@ -96,7 +101,24 @@ describe('WaterMap', () => {
       [60, 60],
       [-60, 60],
     ]);
-    const t = new Terrain({ rivers: [{ pts: [[0, -80], [0, 80]], width: 10, depth: 2, bank: 4, water: 0.6 }] }, square, [160, 160]);
+    const t = new Terrain(
+      {
+        rivers: [
+          {
+            pts: [
+              [0, -80],
+              [0, 80],
+            ],
+            width: 10,
+            depth: 2,
+            bank: 4,
+            water: 0.6,
+          },
+        ],
+      },
+      square,
+      [160, 160],
+    );
     const w = new WaterMap(t);
     expect(w.any).toBe(true);
     expect(w.depthAt(0, -2, 0)).toBeCloseTo(0.6, 1);
@@ -106,6 +128,63 @@ describe('WaterMap', () => {
 });
 
 describe('NavWorld', () => {
+  it("paths and steps like recast-navigation's own wrappers (reused buffers)", async () => {
+    const physics = await PhysicsWorld.create();
+    physics.addStaticBox({ x: 0, y: -0.5, z: 0 }, { x: 40, y: 0.5, z: 40 });
+    let seed = 3;
+    const r = (): number => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 60; i++) {
+      const a = r() * Math.PI;
+      physics.addStaticBox(
+        { x: (r() - 0.5) * 70, y: 1, z: (r() - 0.5) * 70 },
+        { x: 0.5 + r() * 4, y: 1, z: 0.3 + r() },
+        { x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) },
+      );
+    }
+    physics.step();
+    const nav = (await NavWorld.build(physics))!;
+    const q = (nav as unknown as { query: import('recast-navigation').NavMeshQuery }).query;
+    const half = (nav as unknown as { halfExtents: { x: number; y: number; z: number } })
+      .halfExtents;
+    let paths = 0;
+    for (let i = 0; i < 150; i++) {
+      const from = { x: (r() - 0.5) * 76, y: 0, z: (r() - 0.5) * 76 };
+      const to = { x: (r() - 0.5) * 76, y: 0, z: (r() - 0.5) * 76 };
+      const want = q.computePath(from, to, { halfExtents: half, maxPathPolys: 1024 });
+      const got: THREE.Vector3[] = [];
+      const ok = nav.path(from, to, got);
+      expect(ok).toBe(want.success && want.path.length > 0);
+      if (!ok) continue;
+      paths++;
+      expect(got.length).toBe(want.path.length);
+      got.forEach((p, k) => {
+        expect(p.x).toBeCloseTo(want.path[k]!.x, 5);
+        expect(p.y).toBeCloseTo(want.path[k]!.y, 5);
+        expect(p.z).toBeCloseTo(want.path[k]!.z, 5);
+      });
+    }
+    expect(paths).toBeGreaterThan(100);
+    let moves = 0;
+    for (let i = 0; i < 300; i++) {
+      const from = { x: (r() - 0.5) * 76, y: 0, z: (r() - 0.5) * 76 };
+      const to = { x: from.x + (r() - 0.5) * 3, y: 0, z: from.z + (r() - 0.5) * 3 };
+      const c = q.findClosestPoint(from, { halfExtents: half });
+      if (!c.success || !c.polyRef) continue;
+      const res = q.moveAlongSurface(c.polyRef, c.point, to, { maxVisitedSize: 16 });
+      const out = new THREE.Vector3();
+      const ref = nav.move(c.polyRef, c.point, to, out);
+      expect(ref).toBe(res.visited[res.visited.length - 1] ?? c.polyRef);
+      const h = q.getPolyHeight(ref, res.resultPosition);
+      expect(out.x).toBeCloseTo(res.resultPosition.x, 5);
+      expect(out.z).toBeCloseTo(res.resultPosition.z, 5);
+      expect(out.y).toBeCloseTo(h.success ? h.height : res.resultPosition.y, 5);
+      moves++;
+    }
+    expect(moves).toBeGreaterThan(200);
+    nav.dispose();
+    physics.dispose();
+  });
+
   it('paths around a wall through its gap', async () => {
     const physics = await PhysicsWorld.create();
     // 40 x 40 floor, a wall across z = 0 with a 4 m gap at x = 14..18.
@@ -118,7 +197,9 @@ describe('NavWorld', () => {
     const path: THREE.Vector3[] = [];
     expect(nav!.path({ x: 0, y: 0, z: 10 }, { x: 0, y: 0, z: -10 }, path)).toBe(true);
     // The route must pass through the gap (x around 14-18 near z = 0).
-    const crossing = path.find((p, i) => i > 0 && Math.sign(p.z) !== Math.sign(path[i - 1]!.z)) ?? path.find((p) => Math.abs(p.z) < 1);
+    const crossing =
+      path.find((p, i) => i > 0 && Math.sign(p.z) !== Math.sign(path[i - 1]!.z)) ??
+      path.find((p) => Math.abs(p.z) < 1);
     expect(crossing).toBeDefined();
     const len = path.reduce((a, p, i) => (i ? a + p.distanceTo(path[i - 1]!) : 0), 0);
     expect(len).toBeGreaterThan(30);
@@ -145,7 +226,10 @@ describe('NavWorld', () => {
     const nav = (await NavWorld.build(physics))!;
     const check = (): void => {
       expect(nav.closest({ x: 8, y: 1.5, z: 8 })!.y).toBeLessThan(0.3);
-      for (const p of [{ x: -10, y: 0, z: -10 }, { x: -10, y: 0, z: -8 }]) {
+      for (const p of [
+        { x: -10, y: 0, z: -10 },
+        { x: -10, y: 0, z: -8 },
+      ]) {
         const at = nav.closest(p);
         if (at) expect(Math.max(Math.abs(at.x + 10), Math.abs(at.z + 10))).toBeGreaterThan(3);
       }

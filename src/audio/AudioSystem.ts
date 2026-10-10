@@ -112,7 +112,8 @@ interface Voice {
   /** Rough loudness at the listener, used to pick which voices to drop. */
   loud: number;
   hrtf: boolean;
-  gain: GainNode;
+  /** Set once the voice is admitted (nodes are only made for admitted sounds). */
+  gain: GainNode | null;
 }
 
 /**
@@ -350,9 +351,13 @@ export class AudioSystem {
    * skipped because enough louder sounds are already playing; a louder new sound
    * fades out the quietest one instead.
    */
-  private claimVoice(pos: THREE.Vector3, weight: number, seconds: number, gain: GainNode): Voice | null {
+  private claimVoice(pos: THREE.Vector3, weight: number, seconds: number): Voice | null {
     const now = this.ctx!.currentTime;
-    this.voices = this.voices.filter((v) => v.until > now);
+    // Drop finished voices in place.
+    const vs = this.voices;
+    let live = 0;
+    for (const v of vs) if (v.until > now) vs[live++] = v;
+    vs.length = live;
     const dist = this.distanceTo(pos);
     const loud = weight / Math.max(2.5, dist);
     if (this.voices.length >= MAX_SPATIAL) {
@@ -360,12 +365,12 @@ export class AudioSystem {
       for (const v of this.voices) if (v.loud < quietest.loud) quietest = v;
       this.culled++;
       if (quietest.loud >= loud) return null;
-      quietest.gain.gain.setTargetAtTime(0, now, 0.015);
+      quietest.gain?.gain.setTargetAtTime(0, now, 0.015);
       this.voices.splice(this.voices.indexOf(quietest), 1);
     }
     let hrtfCount = 0;
     for (const v of this.voices) if (v.hrtf) hrtfCount++;
-    const voice: Voice = { until: now + seconds, loud, hrtf: dist < HRTF_RANGE_M && hrtfCount < this.maxHrtf, gain };
+    const voice: Voice = { until: now + seconds, loud, hrtf: dist < HRTF_RANGE_M && hrtfCount < this.maxHrtf, gain: null };
     this.voices.push(voice);
     return voice;
   }
@@ -379,11 +384,13 @@ export class AudioSystem {
   private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number, ref?: number): AudioNode | null;
   private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1, ref = 2.5): AudioNode | null {
     const ctx = this.ctx!;
+    // A culled world sound (a big fight fills the voices) costs no nodes at all.
+    const voice = pos ? this.claimVoice(pos, weight, seconds) : null;
+    if (pos && !voice) return null;
     const input = ctx.createGain();
     let dry: AudioNode = input;
-    if (pos) {
-      const voice = this.claimVoice(pos, weight, seconds, input);
-      if (!voice) return null;
+    if (pos && voice) {
+      voice.gain = input;
       const p = ctx.createPanner();
       p.panningModel = voice.hrtf ? 'HRTF' : 'equalpower';
       p.distanceModel = 'inverse';

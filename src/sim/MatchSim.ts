@@ -1,3 +1,4 @@
+import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
 import { Bot, setNextBotId } from '@/ai/Bot';
 import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT } from '@/ai/BotManager';
@@ -232,6 +233,8 @@ export class MatchSim {
 
   /** Builds the world for `map` (a parsed map; it is changed: things move onto the terrain). */
   static async create(map: MapDef, opts: MatchOptions = {}): Promise<MatchSim> {
+    // Bots and sight lines run partly in the wasm core (here too, on the game server).
+    await loadCore();
     const physics = await PhysicsWorld.create();
     const impacts = new SurfaceRegistry();
     const world = buildWorld(map, physics, impacts);

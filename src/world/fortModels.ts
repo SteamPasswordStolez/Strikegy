@@ -68,6 +68,11 @@ export class FortModels {
   /** The model as meshes (one per material); `ghost` draws it all in the blueprint look. */
   build(kind: FortModelKind, size?: readonly [number, number, number], ghost = false): THREE.Group {
     const group = new THREE.Group();
+    if (ghost) {
+      // One material for every part: one mesh (one draw call).
+      group.add(new THREE.Mesh(this.ghostGeometry(kind, size), this.ghostMaterial));
+      return group;
+    }
     for (const part of this.parts(kind, size)) {
       const mesh = new THREE.Mesh(part.geo, ghost ? this.ghostMaterial : this.material(part.mat));
       mesh.castShadow = !ghost;
@@ -75,6 +80,24 @@ export class FortModels {
       group.add(mesh);
     }
     return group;
+  }
+
+  private readonly ghostCache = new Map<string, THREE.BufferGeometry>();
+
+  /** All of a model's parts in one geometry (ghosts draw them in one material). */
+  private ghostGeometry(kind: FortModelKind, size?: readonly [number, number, number]): THREE.BufferGeometry {
+    const key = `${kind}|${size ? size.map((v) => v.toFixed(2)).join(',') : ''}`;
+    let g = this.ghostCache.get(key);
+    if (!g) {
+      const parts = this.parts(kind, size).map((p) => {
+        const c = p.geo.clone();
+        for (const k of Object.keys(c.attributes)) if (k !== 'position' && k !== 'normal') c.deleteAttribute(k);
+        return c;
+      });
+      g = mergeGeometries(parts) ?? parts[0]!;
+      this.ghostCache.set(key, g);
+    }
+    return g;
   }
 
   /** Merged geometry per material, built once per model and size. */

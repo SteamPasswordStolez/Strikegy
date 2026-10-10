@@ -1,5 +1,20 @@
 import * as THREE from 'three';
-import { exportNavMesh, exportTileCache, importNavMesh, importTileCache, init, NavMeshQuery, type NavMesh, type Obstacle, type TileCache } from 'recast-navigation';
+import {
+  exportNavMesh,
+  exportTileCache,
+  FloatArray,
+  importNavMesh,
+  importTileCache,
+  init,
+  NavMeshQuery,
+  Raw,
+  statusSucceed,
+  UnsignedCharArray,
+  UnsignedIntArray,
+  type NavMesh,
+  type Obstacle,
+  type TileCache,
+} from 'recast-navigation';
 import { bakedNav, hashNavInput, loadNav, saveNav } from './navCache';
 import { createDefaultTileCacheMeshProcess, generateTileCache, generateTiledNavMesh } from 'recast-navigation/generators';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
@@ -39,6 +54,8 @@ const NULL_LINK = 0xffffffff;
 const PATH_POLYS = 1024;
 /** Search box (half extents, m) for putting a bot back on the mesh right where it stands. */
 const SNAP_NEAR = { x: 0.6, y: 1.2, z: 0.6 };
+/** Most corners in a straight path (recast-navigation's default). */
+const MAX_PATH = 256;
 
 /**
  * Navigation mesh for bots, built from the static world colliders (every map
@@ -56,12 +73,44 @@ export class NavWorld {
   /** Polygons cut off from the main walkable area (see `markIslands`). */
   private readonly islands = new Set<number>();
 
+  /**
+   * Detour's own query calls with reused buffers: the recast-navigation
+   * wrapper allocates and frees several Emscripten objects (vectors, refs,
+   * arrays) on every query, which was most of what a bot's step on the mesh
+   * and a path search cost.
+   */
+  private readonly raw = {
+    point: new Raw.Vec3(),
+    ref: new Raw.UnsignedIntRef(),
+    over: new Raw.BoolRef(),
+    height: new Raw.FloatRef(),
+    count: new Raw.IntRef(),
+    visited: new UnsignedIntArray(),
+    polys: new UnsignedIntArray(),
+    straight: new FloatArray(),
+    flags: new UnsignedCharArray(),
+    refs: new UnsignedIntArray(),
+    a: [0, 0, 0],
+    b: [0, 0, 0],
+    c: [0, 0, 0],
+  };
+
   private constructor(
     readonly navMesh: NavMesh,
     private readonly tileCache: TileCache,
   ) {
     this.query = new NavMeshQuery(navMesh);
+    this.raw.straight.resize(MAX_PATH * 3);
+    this.raw.flags.resize(MAX_PATH);
+    this.raw.refs.resize(MAX_PATH);
     this.markIslands();
+  }
+
+  private arr(out: number[], p: V3): number[] {
+    out[0] = p.x;
+    out[1] = p.y;
+    out[2] = p.z;
+    return out;
   }
 
   /**
@@ -288,12 +337,37 @@ export class NavWorld {
    * snapped to the mesh first). Returns false when no path exists.
    */
   path(from: V3, to: V3, out: THREE.Vector3[]): boolean {
+    // The same steps as recast-navigation's `computePath`, on reused buffers.
     out.length = 0;
+    const q = this.query.raw;
+    const r = this.raw;
+    const filter = this.query.defaultFilter.raw;
+    const half = this.arr(r.c, this.halfExtents);
+    const a = this.arr(r.a, from);
+    const b = this.arr(r.b, to);
+    if (!statusSucceed(q.findNearestPoly(a, half, filter, r.ref, r.point, r.over))) return false;
+    const startRef = r.ref.value;
+    if (!statusSucceed(q.findNearestPoly(b, half, filter, r.ref, r.point, r.over))) return false;
+    const endRef = r.ref.value;
     // Detour's default 256 polygons cut long routes short now that buildings have
     // rooms on every floor (each room and corridor is several polygons).
-    const res = this.query.computePath(from, to, { halfExtents: this.halfExtents, maxPathPolys: PATH_POLYS });
-    if (!res.success || res.path.length === 0) return false;
-    for (const p of res.path) out.push(new THREE.Vector3(p.x, p.y, p.z));
+    r.polys.resize(PATH_POLYS);
+    if (!statusSucceed(q.findPath(startRef, endRef, a, b, filter, r.polys.raw, PATH_POLYS))) return false;
+    const n = r.polys.size;
+    if (n <= 0) return false;
+    // Toward the closest point of the last polygon when the goal itself is out of reach.
+    const last = r.polys.get(n - 1);
+    if (last !== endRef) {
+      if (!statusSucceed(q.closestPointOnPoly(last, b, r.point, r.over))) return false;
+      b[0] = r.point.x;
+      b[1] = r.point.y;
+      b[2] = r.point.z;
+    }
+    if (!statusSucceed(q.findStraightPath(a, b, r.polys.raw, r.straight.raw, r.flags.raw, r.refs.raw, r.count, MAX_PATH, 0))) return false;
+    const count = r.count.value;
+    if (count <= 0) return false;
+    const pts = r.straight.getHeapView();
+    for (let i = 0; i < count; i++) out.push(new THREE.Vector3(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]));
     return true;
   }
 
@@ -348,16 +422,16 @@ export class NavWorld {
       ref = c.polyRef;
       start = c.point;
     }
-    const res = this.query.moveAlongSurface(ref, start, to, { maxVisitedSize: 16 });
-    if (!res.success) {
+    const q = this.query.raw;
+    const r = this.raw;
+    if (!statusSucceed(q.moveAlongSurface(ref, this.arr(r.a, start), this.arr(r.b, to), this.query.defaultFilter.raw, r.point, r.visited.raw, 16))) {
       out.set(from.x, from.y, from.z);
       return 0;
     }
-    const last = res.visited[res.visited.length - 1] ?? ref;
-    const p = res.resultPosition;
-    out.set(p.x, p.y, p.z);
-    const h = this.query.getPolyHeight(last, out);
-    if (h.success) out.y = h.height;
+    const n = r.visited.size;
+    const last = n > 0 ? r.visited.get(n - 1) : ref;
+    out.set(r.point.x, r.point.y, r.point.z);
+    if (statusSucceed(q.getPolyHeight(last, this.arr(r.a, out), r.height))) out.y = r.height.value;
     return last;
   }
 
@@ -373,6 +447,9 @@ export class NavWorld {
   }
 
   dispose(): void {
+    const r = this.raw;
+    for (const o of [r.point, r.ref, r.over, r.height, r.count]) Raw.destroy(o);
+    for (const a of [r.visited, r.polys, r.straight, r.flags, r.refs]) a.destroy();
     this.query.destroy();
     this.tileCache.destroy();
     this.navMesh.destroy();

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
+import { loadCore } from '@/wasm/core';
 import { HitboxRegistry } from '@/combat/Hitboxes';
 import { Bot, type BotServices } from '@/ai/Bot';
 import {
@@ -19,6 +21,11 @@ import {
 import { LoadoutStore } from '@/data/loadoutStore';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { POINTS, ScoreTracker } from '@/modes/scoreTracker';
+
+// Bots keep their hitboxes in the wasm core.
+beforeAll(async () => {
+  await loadCore(fs.readFileSync('src/wasm/core.wasm'));
+});
 
 describe('classes and loadouts', () => {
   it('limits primaries to the class and keeps the two slots different', () => {

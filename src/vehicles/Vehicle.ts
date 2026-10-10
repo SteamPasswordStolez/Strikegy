@@ -161,6 +161,8 @@ export class Vehicle implements Damageable {
         .setCollisionGroups(groups(Layer.WORLD | Layer.HITBOX, Layer.WORLD | Layer.BOUNDS)),
       this.body,
     );
+    // The hull blocks sight lines (bots' line-of-sight checks don't go through Rapier).
+    physics.trackOccluder(this.collider);
     const c = (this.controller = world.createVehicleController(this.body));
     c.indexUpAxis = 1;
     c.setIndexForwardAxis = 2;
@@ -549,6 +551,7 @@ export class Vehicle implements Damageable {
   dispose(): void {
     const world = this.physics.world;
     if (this.controller) world.removeVehicleController(this.controller);
+    this.physics.untrackOccluder(this.collider);
     world.removeRigidBody(this.body);
   }
 }

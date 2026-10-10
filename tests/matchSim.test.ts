@@ -104,9 +104,12 @@ describe('a match on the game server (no view)', () => {
     expect(blue.player.health.value).toBeLessThan(100);
     expect(blue.alive).toBe(true);
     const before = sim.physics.world.colliders.len();
+    const slot = blue.boxes.slot;
     sim.removeSoldier(1);
     sim.step(() => null);
-    expect(sim.physics.world.colliders.len()).toBe(before - 4);
+    // The capsule leaves Rapier; the hitboxes live in the wasm core and give their slot back.
+    expect(sim.physics.world.colliders.len()).toBe(before - 1);
+    expect(sim.physics.characters!.alloc()).toBe(slot);
     expect(sim.soldiers.size).toBe(0);
     sim.dispose();
   });
