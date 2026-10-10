@@ -38,6 +38,9 @@ import { CROWD_AIR, CROWD_ARMOUR, CROWD_BOT, CROWD_FIRING, CROWD_HAS_GOAL, Crowd
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
 const VEHICLE_DROP = 30;
+/** How far bots look for a free seat: at their base (within `VEHICLE_BASE` m of it) / elsewhere. */
+const VEHICLE_REACH = { base: 60, field: 30 };
+const VEHICLE_BASE = 45;
 const STEP = 1 / 60;
 const DOWN = new THREE.Vector3(0, -1, 0);
 
@@ -179,6 +182,9 @@ const TACTIC = {
  * `close`-`reach` m away; hops `near`-`far` m long gaining `gain` m on the goal.
  */
 const HOPS = { fresh: 10, reach: 110, close: 12, near: 5, far: 20, gain: 3 };
+
+/** Prep fire before a squad goes into an enemy zone: enemies seen within `radius` m of it in the last `fresh` s. */
+const PREP = { radius: 26, fresh: 12 };
 
 /** Bots cooking frags: burst about `after` s after landing, holding at most `max` s. */
 const FRAG_COOK = { after: 0.7, max: 2.2 };
@@ -1991,13 +1997,15 @@ export class BotManager implements BotServices {
       }
       if (b.inCombat(this.time) || b.downed || !e.objective) continue;
       if (e.objective.pos.distanceTo(b.feet) < VEHICLE_TRIP) continue;
-      // A vehicle close by with a seat nobody has claimed.
+      // A vehicle close by with a seat nobody has claimed (further afield at the base, where the
+      // motor pool is: bots spawning there walked past rides 30 m off and set out on foot).
+      const reach = b.feet.distanceTo(this.teams[b.team].base) < VEHICLE_BASE ? VEHICLE_REACH.base : VEHICLE_REACH.field;
       let best: { v: Vehicle; seat: number; d: number } | null = null;
       for (const v of vw.vehicles) {
         // Aircraft are only boarded on the deploy screen (one flying low past isn't a ride).
         if (v.flight || v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
         const d = v.pos.distanceTo(b.feet);
-        if (d > 30 || (best && d >= best.d)) continue;
+        if (d > reach || (best && d >= best.d)) continue;
         const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i) && (i > 0 || v.driverOnly === null || v.driverOnly === b.id));
         // Without a driver aboard or coming, only take the driver's seat.
         if (seat < 0 || (seat > 0 && !v.seats[0] && !this.claimed(v.id, 0))) continue;
@@ -2539,6 +2547,14 @@ export class BotManager implements BotServices {
    * a lone soldier on the move is left to the infantry (owner, 2026-10-10:
    * the howitzer was getting more kills than every rifle together).
    */
+  /** A target a lobbing gun may shell: a group, someone standing still, or anyone in a vehicle / behind fortifications. */
+  private lobWorth(team: Team, e: Combatant): boolean {
+    if (this.inVehicle(e) || this.fortifiedAt(e.feet)) return true;
+    let n = 1;
+    for (const o of this.enemies[team]) if (o !== e && o.alive && o.feet.distanceToSquared(e.feet) < 144) n++;
+    return n + (Math.hypot(e.velocity.x, e.velocity.z) < 0.4 ? LOB.still : 0) >= LOB.minScore;
+  }
+
   private lobTarget(bot: Bot, from: THREE.Vector3, range: number): Combatant | null {
     let best: Combatant | null = null;
     let bestScore = LOB.minScore;
@@ -2594,7 +2610,8 @@ export class BotManager implements BotServices {
     // Armour main gun: enemy vehicles first.
     const prey = smartGun && !shell!.lob && seat === 0 ? this.armourPrey(e, v, muzzle) : null;
     let t: Combatant | null = bot.target && bot.target.alive ? bot.target : null;
-    // Lobbing guns also fire at what the side has spotted.
+    // Lobbing guns: only at what is worth a shell, seen or spotted (see lobTarget).
+    if (shell?.lob && t && !this.lobWorth(bot.team, t)) t = null;
     if (smartGun && shell!.lob && !t) t = this.lobTarget(bot, v.pos, m.gun.range);
     if (!t && !prey) {
       v.pullTrigger(seat, false, this.time, STEP);
@@ -2686,6 +2703,15 @@ export class BotManager implements BotServices {
         this.squadCallAt.set(key, this.time + 20);
         return true;
       };
+      // Gathering outside an enemy zone to go in: prepare it with mortars / artillery first when
+      // enemies have been seen in it lately (and none of ours are there).
+      const st = this.staging.get(key);
+      if (st && !st.go) {
+        let seen = 0;
+        for (const o of this.enemies[team]) if (o.alive && o.feet.distanceTo(st.zone) < PREP.radius && this.time - (this.spottedAt.get(o.id) ?? -Infinity) < PREP.fresh) seen++;
+        if (seen >= 3 && can('artillery') && this.alliesNear(team, st.zone, 28) === 0 && call('artillery', st.zone)) return;
+        if (seen >= 2 && can('mortar') && this.alliesNear(team, st.zone, 18) === 0 && call('mortar', st.zone)) return;
+      }
       const c = this.contacts.get(key);
       if (c && this.time - c.last < 6) {
         const d = c.pos.distanceTo(bot.feet);
