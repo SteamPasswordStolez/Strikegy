@@ -52,7 +52,11 @@ describe('a match on the game server (no view)', () => {
     const [yaw, pitch] = yawPitchOf(chest.x - eye.x, chest.y - eye.y, chest.z - eye.z);
     const fire = createInputState();
     fire.fire = true;
-    for (let i = 0; i < 600 && !red.downed; i++) sim.step((id) => (id === 1 ? { state: fire, yaw, pitch } : null));
+    // Pull against the recoil like a person would: left alone it climbs ~0.5° a
+    // shot, over the head by the 4th or 5th, and whether red went down was up
+    // to the random spread (failed CI now and then).
+    const aim = () => ({ state: fire, yaw: yaw - blue.weapons.recoil.yaw, pitch: pitch - blue.weapons.recoil.pitch });
+    for (let i = 0; i < 600 && !red.downed; i++) sim.step((id) => (id === 1 ? aim() : null));
     expect(red.downed).toBe(true);
     expect(red.killedBy).toBe('alpha');
     expect(kills).toHaveLength(1);
