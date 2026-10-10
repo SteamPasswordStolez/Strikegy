@@ -14,6 +14,14 @@ interface SkyParams {
 
 interface VisualProfile {
   sky?: SkyParams;
+  /** Photographed sky (`public/assets/sky/<name>/`, made by `npm run assets`); the procedural `sky` stays the fallback. */
+  photo?: 'clear' | 'overcast' | 'winter';
+  /**
+   * Light on flat ground from the sky (sun excluded), in the scene's units; the
+   * photographed sky is scaled to give this much. Measured from the procedural
+   * sky each profile was tuned with (2026-10-10), so the lighting stays as it was.
+   */
+  skyLight?: number;
   /** Solid background when there is no sky (indoor). */
   background?: number;
   /** Sun elevation / azimuth in degrees. */
@@ -27,6 +35,8 @@ interface VisualProfile {
 const PROFILES: Record<VisualProfileId, VisualProfile> = {
   outdoor_day: {
     sky: { turbidity: 2.5, rayleigh: 1.1, mieCoefficient: 0.004, mieDirectionalG: 0.8, cloudCoverage: 0.3, cloudDensity: 0.35 },
+    photo: 'clear',
+    skyLight: 3.87,
     sun: { elevation: 38, azimuth: -35, color: 0xfff1de, intensity: 2.4 },
     fog: { color: 0xa9bccd, density: 0.0016 },
     hemi: { sky: 0xcfe0ff, ground: 0x6b5a45, intensity: 0.25 },
@@ -36,6 +46,8 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   overcast: {
     sky: { turbidity: 10, rayleigh: 2.5, mieCoefficient: 0.01, mieDirectionalG: 0.7, cloudCoverage: 0.85, cloudDensity: 0.7 },
     // Tuned with Bilbao (2026-10-02): the old values washed everything out.
+    photo: 'overcast',
+    skyLight: 18.5,
     sun: { elevation: 50, azimuth: 120, color: 0xe4e8ee, intensity: 1.5 },
     fog: { color: 0x9aa3ab, density: 0.004 },
     hemi: { sky: 0xc0c8d0, ground: 0x4a463e, intensity: 0.45 },
@@ -46,6 +58,8 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   winter: {
     // Hazy (high turbidity + rayleigh) so the sky reads pale and the cloud gaps stay light.
     sky: { turbidity: 20, rayleigh: 3, mieCoefficient: 0.02, mieDirectionalG: 0.6, cloudCoverage: 0.85, cloudDensity: 0.8 },
+    photo: 'winter',
+    skyLight: 16.7,
     sun: { elevation: 30, azimuth: -150, color: 0xfff2e6, intensity: 1.4 },
     fog: { color: 0xbfc7d0, density: 0.0042 },
     hemi: { sky: 0xdfe8f4, ground: 0xb8bcc2, intensity: 0.45 },
@@ -71,6 +85,90 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   },
 };
 
+/** A photographed sky as `scripts/hdri.mjs` writes it. */
+export interface PhotoSky {
+  texture: THREE.Texture;
+  /** Lowest elevation in the picture (degrees). */
+  bottom: number;
+  /** The sun in the picture; `peak` is its brightness over the horizon's (a hidden sun is a few times, a clear one thousands). */
+  sun: { elevation: number; azimuth: number; peak: number };
+  /** Light on flat ground from the picture as stored (horizon = 1), sun's glow capped. */
+  irradiance: number;
+}
+
+/** Loads the profile's photographed sky, or null (none for the profile, or it failed: the procedural sky stays). */
+export async function loadPhotoSky(id: VisualProfileId, base: string): Promise<PhotoSky | null> {
+  const name = PROFILES[id].photo;
+  if (!name) return null;
+  try {
+    const dir = `${base}sky/${name}/`;
+    const [texture, info] = await Promise.all([
+      new THREE.TextureLoader().loadAsync(`${dir}sky.webp`),
+      fetch(`${dir}sky.json`).then((r) => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.json() as Promise<Omit<PhotoSky, 'texture'>>;
+      }),
+    ]);
+    // Stored values, not colours: no colour-space decode, no mipmaps (the picture is
+    // magnified on screen, and mip selection would break at the seam where u wraps).
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.RepeatWrapping;
+    return { texture, bottom: info.bottom, sun: info.sun, irradiance: info.irradiance };
+  } catch (err) {
+    console.warn(`sky ${name}: ${String(err)}; using the procedural sky`);
+    return null;
+  }
+}
+
+/**
+ * The photographed sky on a box round the camera (drawn at the far plane like
+ * three's Sky). The picture holds sqrt(v / (1 + v)) with the horizon at v = 1;
+ * `scale` sets the horizon's brightness, `turn` (turns) swings the picture
+ * round so its sun sits where the map's sun is, `clampTo` caps the sun's glow.
+ */
+function photoSkyMaterial(photo: PhotoSky, scale: THREE.Color, turn: number, clampTo: number): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    name: 'PhotoSky',
+    uniforms: {
+      map: { value: photo.texture },
+      scale: { value: new THREE.Vector3(scale.r, scale.g, scale.b) },
+      turn: { value: turn },
+      bottom: { value: photo.bottom },
+      clampTo: { value: clampTo },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vDir = wp.xyz - cameraPosition;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        gl_Position.z = gl_Position.w;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D map;
+      uniform vec3 scale;
+      uniform float turn;
+      uniform float bottom;
+      uniform float clampTo;
+      varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float u = atan(d.z, d.x) * 0.15915494 + 0.5 - turn;
+        float el = degrees(asin(clamp(d.y, -1.0, 1.0)));
+        vec3 c = texture2D(map, vec2(u, clamp((el - bottom) / (90.0 - bottom), 0.0, 1.0))).rgb;
+        vec3 t = c * c;
+        gl_FragColor = vec4(min(t / max(1.0 - t, 1e-3), vec3(clampTo)) * scale, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+}
+
 export interface AtmosphereOptions {
   shadows: boolean;
   shadowMapSize: number;
@@ -85,6 +183,7 @@ export interface AtmosphereOptions {
 export class Atmosphere {
   readonly sun: THREE.DirectionalLight | null = null;
   private readonly sky: Sky | null = null;
+  private readonly photoSky: THREE.Mesh | null = null;
   private readonly sunDir = new THREE.Vector3();
   private texel: number;
   /** Shadow frustum fitted once to the whole map (see fitShadowsTo); no per-frame follow. */
@@ -96,6 +195,7 @@ export class Atmosphere {
     gl: THREE.WebGLRenderer,
     id: VisualProfileId,
     private readonly opts: AtmosphereOptions,
+    photo: PhotoSky | null = null,
   ) {
     const p = PROFILES[id];
     gl.toneMappingExposure = p.exposure;
@@ -103,7 +203,10 @@ export class Atmosphere {
     scene.add(new THREE.HemisphereLight(p.hemi.sky, p.hemi.ground, p.hemi.intensity));
 
     if (p.sun) {
-      const phi = THREE.MathUtils.degToRad(90 - p.sun.elevation);
+      // A sun you can see in the photographed sky sets the light's height; the
+      // map's own azimuth stays (the picture is turned to it).
+      const elevation = photo && photo.sun.peak > 100 ? photo.sun.elevation : p.sun.elevation;
+      const phi = THREE.MathUtils.degToRad(90 - elevation);
       const theta = THREE.MathUtils.degToRad(p.sun.azimuth);
       this.sunDir.setFromSphericalCoords(1, phi, theta);
     }
@@ -121,10 +224,10 @@ export class Atmosphere {
       u.cloudCoverage!.value = p.sky.cloudCoverage;
       u.cloudDensity!.value = p.sky.cloudDensity;
       u.sunPosition!.value.copy(this.sunDir);
-      scene.add(sky);
-      this.sky = sky;
 
-      // Environment is captured without the sun disc to avoid a hot spot in reflections.
+      // Lighting always comes from the procedural sky every profile was tuned with
+      // (its bright horizon is what lights the walls); captured once, without the
+      // sun disc to avoid a hot spot in reflections.
       const envScene = new THREE.Scene();
       const envSky = new Sky();
       envSky.material = sky.material.clone();
@@ -133,6 +236,25 @@ export class Atmosphere {
       envScene.add(envSky);
       env = pmrem.fromScene(envScene, 0.02).texture;
       envSky.material.dispose();
+
+      if (photo && p.sun) {
+        // What you see: the photographed sky (also cheaper to draw than the
+        // procedural one's per-pixel scattering and clouds), turned so its sun
+        // sits where the map's is.
+        sky.material.dispose();
+        sky.geometry.dispose();
+        const k = (p.skyLight ?? 4) / photo.irradiance;
+        const turn = (photo.sun.azimuth - p.sun.azimuth) / 360;
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), photoSkyMaterial(photo, new THREE.Color(k, k, k), turn, 1e4));
+        mesh.scale.setScalar(1000);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = -1;
+        scene.add(mesh);
+        this.photoSky = mesh;
+      } else {
+        scene.add(sky);
+        this.sky = sky;
+      }
     } else {
       scene.background = new THREE.Color(p.background ?? 0);
       env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;

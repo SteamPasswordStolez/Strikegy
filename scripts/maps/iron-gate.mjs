@@ -188,9 +188,9 @@ function road(pts, w, { y = 0.05, color = ASPHALT, smooth = 2, town = false, pai
   roads.push(r);
   if (paint) {
     const keep = (s) => inMap(s.pos[0], s.pos[2], -3) && !nearCanal(s.pos[0], s.pos[2], 0.3);
-    objects.push(...stripAlong(line, w, { color, y }).filter(keep));
+    objects.push(...stripAlong(line, w, { color, y, material: 'asphalt' }).filter(keep));
     // Town streets get pavements on both sides (a wider strip under the street).
-    if (town) objects.push(...stripAlong(line, w + 3.4, { color: PAVE, material: 'concrete_floor', y: 0.03 }).filter(keep));
+    if (town) objects.push(...stripAlong(line, w + 3.4, { color: PAVE, material: 'cobble', y: 0.03 }).filter(keep));
   }
   return r;
 }
@@ -550,7 +550,7 @@ function scatter(cx, cz, rMin, rMax, n, models = CRATES) {
 
 // --- B: old-town square ----------------------------------------------------------------------
 {
-  paint([0, 0], 50, 40, 0, 0.055, '#b9b2a3');
+  paint([0, 0], 50, 40, 0, 0.055, '#b9b2a3', 'cobble');
   addBuilding({ pos: [0, -27.5], size: [32, 14], style: 'townhall', floors: 2, doors: 'sn' });
   put(block(0, 0, 6, 1, 6, { material: 'concrete', color: '#c9c3b5', model: 'fountain' }));
   put(block(0, 0, 1, 3.6, 1, { material: 'concrete', color: '#8a8478', model: 'statue' }));

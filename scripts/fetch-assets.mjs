@@ -40,4 +40,11 @@ for (const [id, spec] of Object.entries(manifest.models)) {
   }
   console.log(`model ${id}`);
 }
+for (const [id, spec] of Object.entries(manifest.hdris ?? {})) {
+  const files = await (await fetch(`${API}/files/${id}`)).json();
+  const h = files.hdri?.[spec.res]?.hdr;
+  if (!h) throw new Error(`${id}: no hdr ${spec.res}`);
+  total += await download(h.url, path.join(OUT, 'hdris', `${id}.hdr`));
+  console.log(`hdri ${id}`);
+}
 console.log(`downloaded ${(total / 1048576).toFixed(1)} MB (existing files skipped)`);

@@ -1,0 +1,20 @@
+{
+  "source": "kloofendal_48d_partly_cloudy_puresky",
+  "bottom": -6,
+  "sun": {
+    "elevation": 47.9,
+    "azimuth": 55.8,
+    "peak": 149371
+  },
+  "irradiance": 2.771,
+  "horizon": [
+    0.9164,
+    1.0007,
+    1.2395
+  ],
+  "zenith": [
+    0.9606,
+    1.0581,
+    1.3899
+  ]
+}

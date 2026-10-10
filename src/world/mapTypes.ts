@@ -2,7 +2,27 @@ import type { ModelKind } from './modelKits';
 export type Vec3 = [number, number, number];
 export type Team = 'blue' | 'red';
 export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter' | 'desert';
-export type SurfaceMaterial = 'ground' | 'concrete' | 'concrete_floor' | 'metal' | 'wood' | 'brick' | 'snow' | 'grass' | 'sand';
+export type SurfaceMaterial =
+  | 'ground'
+  | 'concrete'
+  | 'concrete_floor'
+  | 'metal'
+  | 'wood'
+  | 'brick'
+  | 'snow'
+  | 'grass'
+  | 'sand'
+  /** Painted render on old walls. */
+  | 'plaster'
+  /** Worn red brick with plaster patches (old industrial). */
+  | 'brick_old'
+  /** Clay roof tiles (pitched roofs). */
+  | 'roof'
+  | 'asphalt'
+  /** Cobbles: old-town streets, pavements and squares. */
+  | 'cobble'
+  /** Bare rock (steep terrain). */
+  | 'rock';
 /** Kind of trees on a map and in its scenery (default conifer). */
 export type Flora = 'conifer' | 'broadleaf' | 'palm';
 export type ObjectType = 'wall' | 'cover' | 'floor' | 'ramp' | 'prop';

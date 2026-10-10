@@ -1,0 +1,20 @@
+{
+  "source": "overcast_soil_puresky",
+  "bottom": -6,
+  "sun": {
+    "elevation": 34.7,
+    "azimuth": 101.9,
+    "peak": 7.1
+  },
+  "irradiance": 6.275,
+  "horizon": [
+    1.0467,
+    0.9923,
+    0.9386
+  ],
+  "zenith": [
+    2.4426,
+    2.4232,
+    2.4438
+  ]
+}

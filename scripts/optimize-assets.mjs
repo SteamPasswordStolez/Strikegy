@@ -1,6 +1,8 @@
 // Converts downloaded source assets (assets-src/) into web-ready files in public/assets/:
 //  - texture sets -> WebP (albedo / normal / ARM = AO, roughness, metalness)
 //  - glTF models  -> single GLB with WebP textures and meshopt-compressed geometry
+//  - HDRIs        -> sky/<profile>/ (see hdri.mjs)
+// `node scripts/optimize-assets.mjs textures hdris` runs only those parts (default: all).
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -8,12 +10,15 @@ import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, meshopt, prune, simplify, textureCompress, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
+import { convertHdri } from './hdri.mjs';
 
 const manifest = JSON.parse(fs.readFileSync('assets.manifest.json', 'utf8'));
 const SRC = 'assets-src';
 const OUT = path.join('public', 'assets');
 const kb = (b) => `${Math.round(b / 1024)} KB`;
 const report = [];
+const parts = process.argv.slice(2);
+const want = (part) => !parts.length || parts.includes(part);
 
 const TEX_MAPS = [
   ['Diffuse', 'albedo', 82],
@@ -21,13 +26,16 @@ const TEX_MAPS = [
   ['arm', 'arm', 85],
 ];
 
-for (const [id, spec] of Object.entries(manifest.textures)) {
+for (const [id, spec] of want('textures') ? Object.entries(manifest.textures) : []) {
   const outDir = path.join(OUT, 'textures', spec.surface);
   fs.mkdirSync(outDir, { recursive: true });
   let size = 0;
   for (const [src, name, quality] of TEX_MAPS) {
     const dest = path.join(outDir, `${name}.webp`);
-    await sharp(path.join(SRC, 'textures', id, `${src}.jpg`)).webp({ quality }).toFile(dest);
+    let img = sharp(path.join(SRC, 'textures', id, `${src}.jpg`));
+    // `roughMin`: lift the roughness (ARM green) into [roughMin, 1] for sets that read wet in the game.
+    if (name === 'arm' && spec.roughMin) img = img.linear([1, 1 - spec.roughMin, 1], [0, 255 * spec.roughMin, 0]);
+    await img.webp({ quality }).toFile(dest);
     size += fs.statSync(dest).size;
   }
   report.push(`texture ${spec.surface.padEnd(16)} ${kb(size)}  (${id})`);
@@ -40,7 +48,7 @@ const io = new NodeIO()
   .registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
 
 fs.mkdirSync(path.join(OUT, 'models'), { recursive: true });
-for (const [id, spec] of Object.entries(manifest.models)) {
+for (const [id, spec] of want('models') ? Object.entries(manifest.models) : []) {
   const dir = path.join(SRC, 'models', id);
   const gltf = fs.readdirSync(dir).find((f) => f.endsWith('.gltf'));
   const doc = await io.read(path.join(dir, gltf));
@@ -56,6 +64,10 @@ for (const [id, spec] of Object.entries(manifest.models)) {
   const dest = path.join(OUT, 'models', `${id}.glb`);
   await io.write(dest, doc);
   report.push(`model   ${id.padEnd(24)} ${kb(fs.statSync(dest).size)}`);
+}
+
+for (const [id, spec] of want('hdris') ? Object.entries(manifest.hdris ?? {}) : []) {
+  report.push(await convertHdri(path.join(SRC, 'hdris', `${id}.hdr`), path.join(OUT, 'sky', spec.sky)));
 }
 
 console.log(report.join('\n'));

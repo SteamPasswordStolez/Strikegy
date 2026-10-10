@@ -1,5 +1,5 @@
 {
-  "source": "Poly Haven (https://polyhaven.com) \u2014 all assets CC0",
+  "source": "Poly Haven (https://polyhaven.com) — all assets CC0",
   "textures": {
     "rocky_trail": {
       "res": "1k",
@@ -24,6 +24,31 @@
     "snow_02": {
       "res": "1k",
       "surface": "snow"
+    },
+    "painted_plaster_wall": {
+      "res": "1k",
+      "surface": "plaster"
+    },
+    "red_brick_plaster_patch_02": {
+      "res": "1k",
+      "surface": "brick_old"
+    },
+    "clay_roof_tiles_02": {
+      "res": "1k",
+      "surface": "roof"
+    },
+    "asphalt_02": {
+      "res": "1k",
+      "surface": "asphalt"
+    },
+    "cobblestone_floor_08": {
+      "res": "1k",
+      "surface": "cobble",
+      "roughMin": 0.72
+    },
+    "rock_face_03": {
+      "res": "1k",
+      "surface": "rock"
     }
   },
   "models": {
@@ -103,6 +128,20 @@
       "simplify": 0.03,
       "error": 0.01,
       "texSize": 512
+    }
+  },
+  "hdris": {
+    "kloofendal_48d_partly_cloudy_puresky": {
+      "res": "2k",
+      "sky": "clear"
+    },
+    "overcast_soil_puresky": {
+      "res": "2k",
+      "sky": "overcast"
+    },
+    "snowy_field": {
+      "res": "2k",
+      "sky": "winter"
     }
   }
 }

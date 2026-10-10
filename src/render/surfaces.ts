@@ -211,12 +211,17 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
       return groundRecipe(n);
     case 'concrete':
     case 'concrete_floor':
+    case 'plaster':
+    case 'asphalt':
+    case 'cobble':
       return concreteRecipe(n);
     case 'metal':
       return metalRecipe(n, 0x4b5240);
     case 'wood':
       return woodRecipe(n);
     case 'brick':
+    case 'brick_old':
+    case 'roof':
       return brickRecipe(n);
     case 'snow':
       return snowRecipe(n);
@@ -224,6 +229,8 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
       return grassRecipe(n);
     case 'sand':
       return sandRecipe(n);
+    case 'rock':
+      return groundRecipe(n);
   }
 }
 

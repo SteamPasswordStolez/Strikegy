@@ -65,15 +65,15 @@ interface StyleSpec {
 }
 
 const STYLES: Record<BuildingStyle, StyleSpec> = {
-  house: { floors: 2, storey: 3, material: 'brick', colors: ['#b9a58f', '#c9b9a0', '#a8836a', '#d2c7b2'], windows: 0.55, door: [1.1, 2.2], window: [1.1, 1.2, 1], roof: 'pitched' },
-  shop: { floors: 2, storey: 3.3, material: 'concrete', colors: ['#c8c0b0', '#b7b1a3', '#d6ccb8'], windows: 0.7, door: [1.4, 2.3], window: [1.6, 1.5, 0.7], roof: 'parapet' },
-  apartment: { floors: 3, storey: 3, material: 'concrete', colors: ['#bdb6a8', '#a9a397', '#c7bfae'], windows: 0.65, door: [1.2, 2.2], window: [1.2, 1.2, 1], roof: 'parapet' },
-  townhall: { floors: 2, storey: 4, material: 'brick', colors: ['#b58e74', '#a67f67'], windows: 0.8, door: [2.2, 2.8], window: [1.3, 2, 0.9], roof: 'parapet', roomBays: [2, 3] },
+  house: { floors: 2, storey: 3, material: 'plaster', colors: ['#b9a58f', '#c9b9a0', '#a8836a', '#d2c7b2'], windows: 0.55, door: [1.1, 2.2], window: [1.1, 1.2, 1], roof: 'pitched' },
+  shop: { floors: 2, storey: 3.3, material: 'plaster', colors: ['#c8c0b0', '#b7b1a3', '#d6ccb8'], windows: 0.7, door: [1.4, 2.3], window: [1.6, 1.5, 0.7], roof: 'parapet' },
+  apartment: { floors: 3, storey: 3, material: 'plaster', colors: ['#bdb6a8', '#a9a397', '#c7bfae'], windows: 0.65, door: [1.2, 2.2], window: [1.2, 1.2, 1], roof: 'parapet' },
+  townhall: { floors: 2, storey: 4, material: 'brick_old', colors: ['#b58e74', '#a67f67'], windows: 0.8, door: [2.2, 2.8], window: [1.3, 2, 0.9], roof: 'parapet', roomBays: [2, 3] },
   warehouse: { floors: 1, storey: 6.5, material: 'metal', colors: ['#8e9296', '#7f8a7a', '#9b8f7a'], windows: 0.15, door: [4, 4], window: [2, 1, 3.8], roof: 'flat', interior: 'hall' },
   barracks: { floors: 1, storey: 3.4, material: 'wood', colors: ['#7a7a60', '#6f735a'], windows: 0.75, door: [1.2, 2.2], window: [1.1, 1.1, 1], roof: 'pitched', roomBays: [2, 3] },
   hangar: { floors: 1, storey: 9, material: 'metal', colors: ['#6d7266', '#767a70'], windows: 0.1, door: [11, 7], window: [2, 1, 5.5], roof: 'flat', interior: 'hall' },
   hq: { floors: 2, storey: 3.4, material: 'concrete', colors: ['#8d9078', '#9a9a86'], windows: 0.5, door: [1.6, 2.3], window: [1.2, 1, 1.1], roof: 'parapet' },
-  station: { floors: 1, storey: 4.5, material: 'brick', colors: ['#a4735a', '#b08268'], windows: 0.6, door: [1.8, 2.8], window: [1.3, 1.8, 1], roof: 'pitched', interior: 'hall' },
+  station: { floors: 1, storey: 4.5, material: 'brick_old', colors: ['#a4735a', '#b08268'], windows: 0.6, door: [1.8, 2.8], window: [1.3, 1.8, 1], roof: 'pitched', interior: 'hall' },
   shed: { floors: 1, storey: 3, material: 'wood', colors: ['#7b6246', '#6d5a44'], windows: 0.3, door: [1.4, 2.2], window: [0.9, 0.8, 1.2], roof: 'pitched', interior: 'hall' },
   // Tall timber barn: wide cart doors, a few high windows.
   barn: { floors: 1, storey: 6.5, material: 'wood', colors: ['#7a3b2e', '#6e3328', '#5f4a38'], windows: 0.25, door: [4, 4.4], window: [1, 1, 4.4], roof: 'pitched', interior: 'hall' },
@@ -82,21 +82,21 @@ const STYLES: Record<BuildingStyle, StyleSpec> = {
   // Five-storey block of flats: a window in nearly every bay, balconies, a lift house on the roof.
   tower: { floors: 5, storey: 3, material: 'concrete', colors: ['#b8b2a6', '#a7a59c', '#c4bcae', '#9fa3a0'], windows: 0.85, door: [1.4, 2.3], window: [1.3, 1.3, 0.95], roof: 'parapet', rooms: true, roomBays: [2, 2, 3], extras: towerExtras },
   // Industrial hall: one tall floor, wide doors, high round-topped windows, columns and an office mezzanine.
-  factory: { floors: 1, storey: 9, material: 'brick', colors: ['#9a6450', '#8b5a48', '#7f6f62'], windows: 0.7, door: [5, 5], window: [2.2, 2.4, 5.2], roof: 'flat', interior: 'hall', arch: true, extras: factoryExtras },
+  factory: { floors: 1, storey: 9, material: 'brick_old', colors: ['#9a6450', '#8b5a48', '#7f6f62'], windows: 0.7, door: [5, 5], window: [2.2, 2.4, 5.2], roof: 'flat', interior: 'hall', arch: true, extras: factoryExtras },
   // Office block: ribbon windows between dark spandrel bands.
   office: { floors: 3, storey: 3.4, material: 'concrete', colors: ['#c3c0b8', '#aeb2b0', '#cfc8ba'], windows: 0.95, door: [1.8, 2.4], window: [2.2, 1.6, 0.9], roof: 'parapet', rooms: true, roomBays: [2, 3], extras: officeExtras },
   // Gas-station kiosk: shop windows nearly all round, a deep fascia.
-  gasShop: { floors: 1, storey: 3.4, material: 'concrete', colors: ['#d8d4cc', '#c9c6be'], windows: 0.9, door: [1.6, 2.3], window: [2.2, 1.7, 0.6], roof: 'parapet', extras: gasShopExtras },
+  gasShop: { floors: 1, storey: 3.4, material: 'plaster', colors: ['#d8d4cc', '#c9c6be'], windows: 0.9, door: [1.6, 2.3], window: [2.2, 1.7, 0.6], roof: 'parapet', extras: gasShopExtras },
   // Iron Gate landmark: five floors of wards off a long corridor, an entrance canopy, a helipad.
-  hospital: { floors: 5, storey: 3.4, material: 'concrete', colors: ['#d6d2c6', '#cdc9bf', '#c8cbc6'], windows: 0.9, door: [2.4, 2.6], window: [1.7, 1.4, 0.9], roof: 'parapet', rooms: true, roomBays: [2, 2, 3], corridor: 2.6, extras: hospitalExtras },
+  hospital: { floors: 5, storey: 3.4, material: 'plaster', colors: ['#d6d2c6', '#cdc9bf', '#c8cbc6'], windows: 0.9, door: [2.4, 2.6], window: [1.7, 1.4, 0.9], roof: 'parapet', rooms: true, roomBays: [2, 2, 3], corridor: 2.6, extras: hospitalExtras },
   // Village inn: brick ground floor, timber-framed upper floor under a steep roof.
-  inn: { floors: 2, storey: 3.1, material: 'brick', colors: ['#b49a7c', '#a88a6c', '#c2ab8c'], windows: 0.65, door: [1.4, 2.3], window: [1.1, 1.3, 0.95], roof: 'pitched', pitch: 1.05, extras: innExtras },
+  inn: { floors: 2, storey: 3.1, material: 'plaster', colors: ['#b49a7c', '#a88a6c', '#c2ab8c'], windows: 0.65, door: [1.4, 2.3], window: [1.1, 1.3, 0.95], roof: 'pitched', pitch: 1.05, extras: innExtras },
   // Stone watermill house (the wheel is the millWheel kit beside it).
   mill: { floors: 2, storey: 3.3, material: 'brick', colors: ['#9b9286', '#8d877d', '#a69d90'], windows: 0.5, door: [1.6, 2.4], window: [1, 1.1, 1.1], roof: 'pitched', pitch: 0.85, arch: true, extras: millExtras },
   // Engine shed: one tall brick hall, big arched doors on the short ends for the tracks.
-  depot: { floors: 1, storey: 7.5, material: 'brick', colors: ['#94604c', '#a06a52', '#87594a'], windows: 0.75, door: [5, 6], window: [1.6, 2.6, 3.4], roof: 'pitched', pitch: 0.5, interior: 'hall', arch: true, extras: depotExtras },
+  depot: { floors: 1, storey: 7.5, material: 'brick_old', colors: ['#94604c', '#a06a52', '#87594a'], windows: 0.75, door: [5, 6], window: [1.6, 2.6, 3.4], roof: 'pitched', pitch: 0.5, interior: 'hall', arch: true, extras: depotExtras },
   // Ardennes landmark: four stone floors of rooms under a mansard roof with dormers.
-  hotel: { floors: 4, storey: 3.4, material: 'brick', colors: ['#b3ab9c', '#a8a091', '#bdb3a2'], windows: 0.9, door: [2.4, 2.8], window: [1.3, 1.8, 0.9], roof: 'mansard', rooms: true, roomBays: [1, 2, 2], extras: hotelExtras },
+  hotel: { floors: 4, storey: 3.4, material: 'plaster', colors: ['#b3ab9c', '#a8a091', '#bdb3a2'], windows: 0.9, door: [2.4, 2.8], window: [1.3, 1.8, 0.9], roof: 'mansard', rooms: true, roomBays: [1, 2, 2], extras: hotelExtras },
 };
 
 /** A map naming a style this build doesn't know (newer map JSON): warn once, build a house. */
@@ -650,7 +650,8 @@ function layRooms(c: Ctx, L: RoomLayout, spec: StyleSpec): void {
   }
 }
 
-const ROOF_TILES = '#6b4a3a';
+/** Under the clay tile set (already terracotta): a neutral shade. */
+const ROOF_TILES = '#68605a';
 const SLATE = '#4a4f55';
 
 function mansardRise(W: number, D: number): number {
@@ -690,11 +691,11 @@ function roof(spec: StyleSpec, c: Ctx): void {
     const len = (alongX ? W : D) + 0.4;
     // Each half slopes down toward its eave.
     if (alongX) {
-      box(0, H + rise / 2, -span / 2, len, 0.2, slant, 'floor', ROOF_TILES, 'wood', -pitch);
-      box(0, H + rise / 2, span / 2, len, 0.2, slant, 'floor', ROOF_TILES, 'wood', pitch);
+      box(0, H + rise / 2, -span / 2, len, 0.2, slant, 'floor', ROOF_TILES, 'roof', -pitch);
+      box(0, H + rise / 2, span / 2, len, 0.2, slant, 'floor', ROOF_TILES, 'roof', pitch);
     } else {
-      box(-span / 2, H + rise / 2, 0, slant, 0.2, len, 'floor', ROOF_TILES, 'wood', 0, pitch);
-      box(span / 2, H + rise / 2, 0, slant, 0.2, len, 'floor', ROOF_TILES, 'wood', 0, -pitch);
+      box(-span / 2, H + rise / 2, 0, slant, 0.2, len, 'floor', ROOF_TILES, 'roof', 0, pitch);
+      box(span / 2, H + rise / 2, 0, slant, 0.2, len, 'floor', ROOF_TILES, 'roof', 0, -pitch);
     }
     // Gable triangles in the wall's own surface under the roof ends, a ridge board on top.
     const g = span - 0.3;
@@ -712,7 +713,7 @@ function roof(spec: StyleSpec, c: Ctx): void {
       geo.translate(alongX ? s * (W / 2 - WALL / 2) : 0, H + SLAB - 0.06, alongX ? 0 : s * (D / 2 - WALL / 2));
       c.shape(geo, c.material, c.color);
     }
-    deco(0, H + rise + 0.02, 0, alongX ? len : 0.22, 0.14, alongX ? 0.22 : len, 'prop', shade(ROOF_TILES, 0.7), 'wood');
+    deco(0, H + rise + 0.02, 0, alongX ? len : 0.22, 0.14, alongX ? 0.22 : len, 'prop', shade(ROOF_TILES, 0.7), 'roof');
     if (snow) {
       // A blanket on each half, just above the tiles, stopping short of the eaves.
       const up = 0.15 / Math.cos(pitch);

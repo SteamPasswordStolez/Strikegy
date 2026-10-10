@@ -107,7 +107,7 @@ const streets = [
   { pts: smoothOpen([P(1000, 705), P(1150, 790), P(1220, 815)]), w: 5, c: ASPHALT },
 ];
 for (const s of streets) {
-  const strips = stripAlong(s.pts, s.w, { color: s.c, material: 'concrete_floor', y: 0.05 });
+  const strips = stripAlong(s.pts, s.w, { color: s.c, material: s.c === COBBLE ? 'cobble' : 'asphalt', y: 0.05 });
   objects.push(...strips.filter((o) => !nearRiver(o.pos[0], o.pos[2], 0.5) && inMap(o.pos[0], o.pos[2], -4)));
 }
 const nearStreet = (x, z, pad) => streets.some((s) => lineDist(x, z, s.pts) < s.w / 2 + pad);

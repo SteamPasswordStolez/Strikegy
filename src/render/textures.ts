@@ -81,6 +81,12 @@ const MACRO_STRENGTH: Record<SurfaceMaterial, number> = {
   snow: 0.08,
   grass: 0.22,
   sand: 0.16,
+  plaster: 0.2,
+  brick_old: 0.12,
+  roof: 0.14,
+  asphalt: 0.16,
+  cobble: 0.12,
+  rock: 0.18,
 };
 
 interface ScannedSet {
@@ -101,6 +107,12 @@ const SCANNED_TILE_METERS: Record<SurfaceMaterial, number> = {
   snow: 3,
   grass: 3,
   sand: 3,
+  plaster: 3,
+  brick_old: 2.5,
+  roof: 3,
+  asphalt: 4,
+  cobble: 2.5,
+  rock: 4,
 };
 
 /** Surfaces that reuse another surface's scanned set (with their own tiling/tint). */
@@ -119,22 +131,41 @@ const SCANNED_TINT: Record<SurfaceMaterial, number> = {
   snow: 0.92,
   grass: 1,
   sand: 1,
+  plaster: 1,
+  brick_old: 1,
+  roof: 1,
+  asphalt: 1,
+  cobble: 1,
+  rock: 1,
 };
 
-/** Kinds with a scanned texture set in public/assets/textures (grass and sand are procedural only). */
+/**
+ * Albedo scale under a box's own colour (vertex-tinted / tinted materials), for
+ * the sets added after the maps' colours were tuned: a map colour on the new set
+ * comes out about as bright as it did on the set it replaced (plaster: brick and
+ * concrete walls, brick_old: brick, cobble / asphalt: concrete_floor).
+ */
+const COLOUR_GAIN: Partial<Record<SurfaceMaterial, number>> = {
+  plaster: 0.27,
+  brick_old: 0.72,
+  cobble: 0.34,
+  asphalt: 0.85,
+};
+
 /** Terrain blends per ground: [surface, tint, amount] for the patches, [surface, tint] on steep slopes. */
 const TERRAIN_LAYERS: Partial<Record<SurfaceMaterial, { patch: [SurfaceMaterial, string, number]; steep: [SurfaceMaterial, string] }>> = {
   // Meadows: bare earth worn through the grass, rock on the slopes.
-  grass: { patch: ['ground', '#b8a487', 0.6], steep: ['ground', '#a39c92'] },
+  grass: { patch: ['ground', '#b8a487', 0.6], steep: ['rock', '#c4bcb2'] },
   // Snow: thin patches where the ground shows, dark rock on steep banks.
-  snow: { patch: ['ground', '#d8d4cc', 0.45], steep: ['ground', '#8e8a84'] },
+  snow: { patch: ['ground', '#d8d4cc', 0.45], steep: ['rock', '#a8a49e'] },
   // Desert: darker gravel flats, red-brown rock on the slopes.
-  sand: { patch: ['ground', '#d9c0a0', 0.6], steep: ['ground', '#b08a6a'] },
+  sand: { patch: ['ground', '#d9c0a0', 0.6], steep: ['rock', '#d8ae88'] },
   // Bare ground: grass coming through.
-  ground: { patch: ['grass', '#c8cca8', 0.55], steep: ['ground', '#9a948a'] },
+  ground: { patch: ['grass', '#c8cca8', 0.55], steep: ['rock', '#bab4aa'] },
 };
 
-export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow'];
+/** Kinds with a scanned texture set in public/assets/textures (grass and sand are procedural only: the scanned grass tried read as brown earth). */
+export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow', 'plaster', 'brick_old', 'roof', 'asphalt', 'cobble', 'rock'];
 
 /** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */
 export class SurfaceLibrary {
@@ -221,7 +252,7 @@ export class SurfaceLibrary {
     let mat = this.tints.get(key);
     if (!mat) {
       mat = this.get(kind).clone();
-      mat.color = new THREE.Color(color);
+      mat.color = new THREE.Color(color).multiplyScalar(COLOUR_GAIN[kind] ?? 1);
       addMacroVariation(mat, MACRO_STRENGTH[kind]);
       this.tints.set(key, mat);
     }
@@ -238,7 +269,7 @@ export class SurfaceLibrary {
     if (!mat) {
       mat = this.get(kind).clone();
       mat.vertexColors = true;
-      mat.color.setScalar(1);
+      mat.color.setScalar(COLOUR_GAIN[kind] ?? 1);
       addMacroVariation(mat, MACRO_STRENGTH[kind]);
       this.tints.set(key, mat);
     }
@@ -320,7 +351,7 @@ export class SurfaceLibrary {
 
   /** Albedo multiplier of the untinted surface (the vertex colour of boxes without a colour of their own). */
   baseTint(kind: SurfaceMaterial): THREE.Color {
-    return this.get(kind).color.clone();
+    return this.get(kind).color.clone().multiplyScalar(1 / (COLOUR_GAIN[kind] ?? 1));
   }
 
   private tints = new Map<string, THREE.MeshStandardMaterial>();

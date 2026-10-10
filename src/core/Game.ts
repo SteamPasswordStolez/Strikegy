@@ -8,7 +8,7 @@ import { QUALITY_ORDER, gpuName, isTouchDevice, loadSettings, resolveQuality, sa
 import { setLocale, t, type MessageKey } from '@/i18n';
 import { playerName } from '@/net/identity';
 import { Renderer } from '@/render/Renderer';
-import { Atmosphere } from '@/render/visualProfiles';
+import { Atmosphere, loadPhotoSky } from '@/render/visualProfiles';
 import { SURFACE_KINDS, SurfaceLibrary } from '@/render/textures';
 import { ModelLibrary } from '@/render/models';
 import { Effects } from '@/render/Effects';
@@ -476,7 +476,13 @@ export class Game {
       throw err;
     }
     const outdoor = map.world.visualProfile !== 'indoor';
-    await Promise.all([art, this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])])]);
+    // `?procsky` (dev): the procedural sky instead of the photographed one, for comparing.
+    const procSky = import.meta.env.DEV && new URLSearchParams(location.search).has('procsky');
+    const [photoSky] = await Promise.all([
+      procSky ? null : loadPhotoSky(map.world.visualProfile, ASSET_BASE),
+      art,
+      this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])]),
+    ]);
     await this.loadStep(0.3, 'load.terrain');
     this.physics.timestep = 1 / SIM_HZ;
     this.audio.setAmbience(ambienceFor(map.world.visualProfile, (map.zones?.length ?? 0) > 0, map.world.ambience));
@@ -484,7 +490,7 @@ export class Game {
       shadows: q.shadows,
       shadowMapSize: q.shadowMapSize,
       shadowExtent: q.shadowExtent,
-    });
+    }, photoSky);
     const t0 = performance.now();
     // Load-time breakdown (dev console): where the seconds go on big maps.
     const steps: string[] = [];

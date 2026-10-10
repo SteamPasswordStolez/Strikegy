@@ -19,5 +19,5 @@ export const CREDITS: readonly Credit[] = [
   { work: 'The Free Firearm Sound Library', author: 'Jaszczak, Nelson, Heras, Nanney', license: 'CC0', url: 'https://opengameart.org' },
   { work: 'Basic Sound Effects, gun reload sounds, equipment clicks, forest birds', author: 'OpenGameArt contributors', license: 'CC0', url: 'https://opengameart.org' },
   { work: 'Impact Sounds', author: 'Kenney', license: 'CC0', url: 'https://kenney.nl' },
-  { work: 'Textures and models', author: 'Poly Haven', license: 'CC0', url: 'https://polyhaven.com' },
+  { work: 'Textures, skies (HDRIs) and models', author: 'Poly Haven', license: 'CC0', url: 'https://polyhaven.com' },
 ];
