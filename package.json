@@ -11,6 +11,7 @@
     "server": "npm run server:build && node dist-server/main.js",
     "server:bench": "npm run server:build && node dist-server/bench.js",
     "bots:ab": "npm run server:build && node dist-server/botAb.js",
+    "bots:audit": "npm run server:build && node dist-server/botAudit.js",
     "bots:pace": "npm run server:build && node dist-server/pace.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

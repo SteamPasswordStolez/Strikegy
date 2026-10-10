@@ -38,6 +38,7 @@ export default defineConfig({
         roomWorker: here('./roomWorker.ts'),
         edge: here('./edge.ts'),
         bench: here('./bench.ts'),
+        botAudit: here('./botAudit.ts'),
         botAb: here('./botAb.ts'),
         pace: here('./pace.ts'),
         bakeNav: here('./bakeNav.ts'),

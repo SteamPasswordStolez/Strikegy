@@ -307,6 +307,9 @@ export class MatchSim {
         this.squads.push(new Squad(index, team, squadName(index), list.slice(i, i + SQUAD_SIZE)));
       }
     }
+    // The bots learn their squads now (later joins and leaves sync again): without them no
+    // squad shared contacts, flanked or called in support until a person joined.
+    bots.setSquads(this.squads.map((q) => ({ index: q.index, botIds: q.members.filter((m) => m instanceof Bot).map((m) => m.id), leader: null })));
     // One sector open: start on what each side holds nearest the fight.
     if (zm && zm.kind !== 'zone') queueMicrotask(() => bots.redeployAll());
     return bots;
