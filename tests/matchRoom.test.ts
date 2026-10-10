@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { yawPitchOf } from '@/ai/aim';
 import { rayHitbox } from '@/combat/CharacterHitboxes';
@@ -290,6 +291,16 @@ describe("bots run in a person's browser", () => {
     frame({ view: sim.tick, states: [state(from.x + 40)], events: [] });
     room.tick();
     expect(bot.feet.x).toBeCloseTo(from.x + 0.1, 3);
+    // Half inside a vehicle's hull (bots walking up to get in end up so):
+    // it can still step out (every move used to be refused as through a wall).
+    const hull = sim.vehicles!.world.vehicles.find((v) => !v.flight && v.seats.every((s) => !s))!;
+    hull.setRemote(true);
+    hull.snap(bot.feet.clone().add(new THREE.Vector3(hull.spec.half[0] - 0.15, 0.9, 0)), new THREE.Quaternion());
+    frame();
+    room.tick();
+    frame({ view: sim.tick, states: [state(from.x - 0.2)], events: [] });
+    room.tick();
+    expect(bot.feet.x).toBeCloseTo(from.x - 0.2, 3);
     // A trigger pull: the server fires it (the round counter goes up).
     const shots = bot.shots;
     frame({ view: sim.tick, states: [], events: [{ k: 'shot', id: bot.id, dir: [0, 0, -1] }] });

@@ -985,6 +985,7 @@ export class MatchSim {
   /** How far a bot's aim may turn in a second (rad), and the extra spread on its rounds (rad) by difficulty: a browser can't make them aimbots. */
   private static readonly PUPPET_TURN = 9;
   private static readonly PUPPET_SPREAD = { easy: 2.2 * DEG, normal: 1.4 * DEG, hard: 0.8 * DEG } as const;
+  private static readonly POINT = new THREE.Vector3(0.02, 0.02, 0.02);
 
   /** When each such bot was last moved, fired (and the rounds it may still fire), threw or patched up (sim time). */
   private readonly puppetClock = new Map<number, { moved: number; shot: number; rounds: number; threw: number; healed: number }>();
@@ -1008,7 +1009,11 @@ export class MatchSim {
     const rise = to.y - bot.feet.y;
     if (flat > MOVE.sprintSpeed * 1.6 * dt + 1.5 || rise > 3 * dt + 1.5 || rise < -(30 * dt + 3)) return false;
     // Not through walls: nothing solid between where it was and where it is, at the waist.
-    if (flat > 0.05 && this.physics.blocked(this.v1.copy(bot.feet).setY(bot.feet.y + 0.9), this.v2.copy(to).setY(to.y + 0.9), Layer.WORLD)) return false;
+    // A bot that walked into a vehicle's hull (going to get in, it can end up
+    // half inside) would have every move refused from there, and its browser
+    // kicked for it; short steps out of the hull are let through.
+    const waist = this.v1.copy(bot.feet).setY(bot.feet.y + 0.9);
+    if (flat > 0.05 && this.physics.blocked(waist, this.v2.copy(to).setY(to.y + 0.9), Layer.WORLD) && !(flat < 0.6 && this.physics.overlapsBox(waist, MatchSim.POINT, 0, Layer.HITBOX))) return false;
     // The aim turns no faster than a person's (no snapping onto heads).
     const maxTurn = MatchSim.PUPPET_TURN * dt;
     const dy = Math.atan2(Math.sin(aimYaw - bot.aimYaw), Math.cos(aimYaw - bot.aimYaw));
