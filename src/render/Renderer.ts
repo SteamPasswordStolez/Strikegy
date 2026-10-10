@@ -16,6 +16,11 @@ export interface QualityConfig {
   /** Re-render the shadow map every N frames (static-heavy scenes don't need 60 Hz). */
   shadowInterval: number;
   textureSize: number;
+  /**
+   * Anisotropic filtering of the surface textures: 8x cost ~1.4 ms a frame over 4x on an
+   * integrated GPU (Ardennes, 1152x648, 2026-10-10), mostly on the terrain.
+   */
+  anisotropy: number;
   postfx: boolean;
   /** Hardware MSAA on the canvas (direct rendering only; the post chain uses FXAA). */
   msaa: boolean;
@@ -37,6 +42,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     shadowExtent: 30,
     shadowInterval: 2,
     textureSize: 256,
+    anisotropy: 2,
     postfx: false,
     msaa: false,
     pixelBudget: 0.9,
@@ -52,6 +58,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     shadowExtent: 35,
     shadowInterval: 2,
     textureSize: 512,
+    anisotropy: 4,
     // Without AO/bloom the post chain only added full-screen passes (~10 ms at
     // 1080p on integrated GPUs); direct rendering with MSAA looks the same.
     postfx: false,
@@ -69,6 +76,7 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     shadowExtent: 40,
     shadowInterval: 2,
     textureSize: 512,
+    anisotropy: 8,
     postfx: true,
     msaa: false,
     pixelBudget: Infinity,

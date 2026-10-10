@@ -456,7 +456,7 @@ export class Game {
     let map: MapDef;
     const r = this.renderer;
     const q = r.quality;
-    this.surfaces = new SurfaceLibrary(q.textureSize, r.maxAnisotropy);
+    this.surfaces = new SurfaceLibrary(q.textureSize, Math.min(r.maxAnisotropy, q.anisotropy));
     // Art loads in parallel with physics/map; any asset that fails falls back gracefully.
     const art = Promise.all([
       this.surfaces.preload(SURFACE_KINDS, ASSET_BASE),

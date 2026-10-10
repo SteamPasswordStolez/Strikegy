@@ -306,10 +306,11 @@ export class SurfaceLibrary {
           // Patches: soft-edged blobs from two noise octaves, a ragged rim from a third.
           float pn = texture2D(uMacro, wuv * 0.009 + 0.37).g + (texture2D(uMacro, wuv * 0.07).r - 0.5) * 0.3;
           float pw = smoothstep(0.6, 0.7, pn) * uPatchAmount;
-          diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPatch, wuv * uPatchRepeat).rgb * uPatchTint, pw);
+          // Only where there is some (the branch is coherent over whole patches: no fetch elsewhere).
+          if (pw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPatch, wuv * uPatchRepeat).rgb * uPatchTint, pw);
           // Steep ground shows its rock.
           float sw = smoothstep(0.2, 0.34, 1.0 - vGroundNormal.y + (m2 - 0.5) * 0.12);
-          diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uSteep, wuv * uSteepRepeat).rgb * uSteepTint, sw);`,
+          if (sw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uSteep, wuv * uSteepRepeat).rgb * uSteepTint, sw);`,
         );
     };
     mat.customProgramCacheKey = () => `terrain-${kind}`;
