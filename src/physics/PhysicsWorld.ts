@@ -74,8 +74,23 @@ interface RawRays {
   dir: V3;
 }
 
+/**
+ * A climbable ladder: its foot (x, z at `bottom`), how high it goes, and the
+ * way off it on the climber's side (unit x / z; the climber faces the other way).
+ */
+export interface Ladder {
+  x: number;
+  z: number;
+  bottom: number;
+  top: number;
+  nx: number;
+  nz: number;
+}
+
 export class PhysicsWorld {
   readonly world: RAPIER.World;
+  /** Ladders (watchtowers'); the character controller climbs them. */
+  readonly ladders: Ladder[] = [];
   /**
    * Heightfield ground, if any. Sight tests skip its collider and check its
    * height grid instead: Rapier walks the heightfield cell by cell, which

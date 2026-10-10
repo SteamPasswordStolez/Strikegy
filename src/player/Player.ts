@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
+import { Layer, RAPIER, groups, type Ladder, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { GameBus } from '@/core/events';
 import type { InputState } from '@/input/InputState';
 import type { ImpactSurface, SurfaceRegistry } from '@/physics/surfaces';
@@ -15,6 +15,12 @@ import {
 import { WADE_DEPTH, WADE_SPEED, type WaterMap } from '@/world/water';
 
 const MAX_PITCH = (89 * Math.PI) / 180;
+/**
+ * Ladders: climbed at `speed` m/s, standing `off` m out from the rungs; taken
+ * from `reach` m away (horizontally) by walking at them, facing them within
+ * `face` (cosine); at the top the climber steps `onto` m onto the deck.
+ */
+const CLIMB = { speed: 2.6, off: 0.55, reach: 0.85, face: 0.35, onto: 0.95 };
 /** Meters travelled per footstep sound. */
 const STRIDE = { walk: 1.9, sprint: 2.5, crouch: 1.5 };
 
@@ -56,6 +62,10 @@ export class Player {
   private readonly body: RAPIER.RigidBody;
   private readonly controller: RAPIER.KinematicCharacterController;
   private height: number = MOVE.standHeight;
+  /** The ladder being climbed (null: on foot). */
+  private ladder: Ladder | null = null;
+  /** -1 while forward is still held from stepping onto the ladder at its top (it climbs down until let go). */
+  private climbSign = 1;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -100,6 +110,7 @@ export class Player {
     this.velocity.set(0, 0, 0);
     this.crouchLatched = false;
     this.slideLeft = 0;
+    this.ladder = null;
     this.yaw = yaw;
     this.pitch = 0;
     this.body.setTranslation(this.centerFromFeet(), true);
@@ -144,8 +155,19 @@ export class Player {
     this.pitch = THREE.MathUtils.clamp(this.pitch + dPitch, -MAX_PITCH, MAX_PITCH);
   }
 
+  /** On a ladder. */
+  get climbing(): boolean {
+    return this.ladder !== null;
+  }
+
   step(dt: number, input: InputState, ads: boolean, firing: boolean): void {
     this.prevFeet.copy(this.feet);
+    if (this.ladder || this.takeLadder(input)) {
+      this.stepLadder(dt, input);
+      this.body.setNextKinematicTranslation(this.centerFromFeet());
+      this.health.step(dt);
+      return;
+    }
     const wasSprinting = this.sprinting;
     if (input.crouchToggle) this.crouchLatched = !this.crouchLatched;
     let jump = input.jump;
@@ -232,6 +254,76 @@ export class Player {
     this.body.setNextKinematicTranslation(this.centerFromFeet());
     this.health.step(dt);
     this.stepFootsteps(Math.hypot(moved.x, moved.z));
+  }
+
+  /**
+   * Walking at a ladder takes it: from below (facing it, at its foot or part
+   * way up), or from the deck at its top (facing out over the gap).
+   */
+  private takeLadder(input: InputState): boolean {
+    if (input.moveY <= 0.2 || !this.collider.isEnabled()) return false;
+    const fx = -Math.sin(this.yaw);
+    const fz = -Math.cos(this.yaw);
+    for (const l of this.physics.ladders) {
+      const cx = l.x + l.nx * CLIMB.off;
+      const cz = l.z + l.nz * CLIMB.off;
+      const facing = -(fx * l.nx + fz * l.nz);
+      // From below / on the way up: at the climbing spot, facing the rungs.
+      if (this.feet.y > l.bottom - 0.4 && this.feet.y < l.top - 0.3 && Math.hypot(this.feet.x - cx, this.feet.z - cz) < CLIMB.reach && facing > CLIMB.face) {
+        this.ladder = l;
+        this.climbSign = 1;
+        return true;
+      }
+      // From the top: on the deck by the gap, walking out over it.
+      const tx = l.x - l.nx * 0.5;
+      const tz = l.z - l.nz * 0.5;
+      if (Math.abs(this.feet.y - l.top) < 0.5 && Math.hypot(this.feet.x - tx, this.feet.z - tz) < 0.9 && facing < -CLIMB.face) {
+        this.ladder = l;
+        this.feet.set(cx, l.top - 0.9, cz);
+        // Turn round to face the rungs; forward, still held, climbs down until let go.
+        this.yaw = Math.atan2(l.nx, l.nz);
+        this.climbSign = -1;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** On a ladder: forward climbs, back climbs down, jump lets go; off at the top onto the deck, at the foot onto the ground. */
+  private stepLadder(dt: number, input: InputState): void {
+    const l = this.ladder!;
+    this.updateCrouch(false);
+    this.sprinting = false;
+    this.slideLeft = 0;
+    if (input.jump) {
+      // Push off backwards.
+      this.ladder = null;
+      this.velocity.set(l.nx * 2.5, 2, l.nz * 2.5);
+      this.grounded = false;
+      return;
+    }
+    if (input.moveY <= 0.2) this.climbSign = 1;
+    const vy = input.moveY * CLIMB.speed * this.climbSign;
+    // Held to the climbing line.
+    const cx = l.x + l.nx * CLIMB.off;
+    const cz = l.z + l.nz * CLIMB.off;
+    this.feet.x += (cx - this.feet.x) * Math.min(1, dt * 12);
+    this.feet.z += (cz - this.feet.z) * Math.min(1, dt * 12);
+    this.feet.y = Math.min(l.top, this.feet.y + vy * dt);
+    this.velocity.set(0, vy, 0);
+    this.grounded = false;
+    if (vy > 0 && this.feet.y >= l.top - 0.3) {
+      // Over the top: step onto the deck through the gap.
+      this.feet.set(l.x - l.nx * CLIMB.onto, l.top + 0.12, l.z - l.nz * CLIMB.onto);
+      this.prevFeet.copy(this.feet);
+      this.velocity.set(0, 0, 0);
+      this.ladder = null;
+      this.grounded = true;
+    } else if (vy < 0 && this.feet.y <= l.bottom + 0.02) {
+      this.feet.y = l.bottom + 0.02;
+      this.ladder = null;
+      this.grounded = true;
+    }
   }
 
   /** In a slide (sprint, then crouch). */

@@ -7,7 +7,7 @@ import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
 import { buildBuilding, type BuildingDoor, type WindowSpot } from './buildings';
 import { WALL } from './buildingParts';
-import { buildKit, kitMaterials, MODEL_KINDS, type KitMaterial } from './modelKits';
+import { buildKit, kitMaterials, MODEL_KINDS, watchtowerLadder, type KitMaterial } from './modelKits';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
@@ -365,6 +365,12 @@ function addModel(
     .multiply(new THREE.Matrix4().makeTranslation(0, -h / 2 + base, 0));
 
   if (surfaces && shared) addKitPieces(kit.pieces, toWorld, kind, obj.color, batches, surfaces, shared);
+  if (obj.model === 'watchtower') {
+    const l = watchtowerLadder(w, h - base, d);
+    const foot = new THREE.Vector3(l.x, 0, l.z).applyMatrix4(toWorld);
+    const out = new THREE.Vector3(0, 0, 1).applyQuaternion(tmpQuat);
+    physics.ladders.push({ x: foot.x, z: foot.z, bottom: foot.y, top: foot.y + l.top, nx: out.x, nz: out.z });
+  }
 
   const surface = SURFACE_FROM_MATERIAL[kind];
   if (!kit.colliders) {

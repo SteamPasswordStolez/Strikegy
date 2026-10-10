@@ -39,6 +39,8 @@ const ODDS_RANGE = 40;
 const MELEE_BOT = { reach: 2, close: 1.3, every: 0.9 };
 /** Hit this many times at one cover spot: find another (not within 3 m of it). */
 const COVER_HITS = 2;
+/** Cover-to-cover advance: look for the next spot every `check` s, pause `wait` s at each, drop a spot not reached in `giveUp` s. */
+const HOP = { check: 0.8, wait: [0.6, 2.2], giveUp: 7 } as const;
 /** Overwatch: cover farther than this (m) isn't worth going to; the bot keeps moving instead. */
 const OVERWATCH_COVER = 8;
 
@@ -101,6 +103,8 @@ export interface BotServices {
   footstep(bot: Bot, sprinting: boolean): void;
   /** The squad goal moved enough that a bot heading to the old one should re-path (following a leader). */
   squadGoalMoved(bot: Bot, current: THREE.Vector3): boolean;
+  /** Advancing with the enemy about: the next covered spot on the way (see BotManager.coverHop), or null to walk on. */
+  coverHop(bot: Bot): THREE.Vector3 | null;
   /** Far from the squad leader: prefer catching up. */
   mustRegroup(bot: Bot): boolean;
   /**
@@ -339,6 +343,11 @@ export class Bot implements Damageable, Combatant {
   private meleeAt = 0;
   /** Panzerfaust at infantry: next time the bot weighs it. */
   private rocketCheckAt = 0;
+  /** Cover-to-cover advance: the spot running to, until when to give up on it, the pause there, the next look. */
+  private hop: THREE.Vector3 | null = null;
+  private hopGiveUp = 0;
+  private hopWait = 0;
+  private hopCheckAt = 0;
   private strafe = 0;
   private strafeUntil = 0;
   /** Fighting from cover: standing up to shoot (peek) or crouched behind it, until the given time. */
@@ -1003,6 +1012,27 @@ export class Bot implements Damageable, Combatant {
       case 'advance':
         // Holding for the squad (see coverMove): no new way in meanwhile.
         if (s.time < this.holdUntil) break;
+        // With the enemy about: from one covered spot to the next on the way, a short look
+        // round at each (crouched), instead of walking the open street to the objective.
+        if (this.hop) {
+          if (this.feet.distanceTo(this.hop) < 1.3) {
+            this.hop = null;
+            this.hopWait = s.time + HOP.wait[0] + Math.random() * (HOP.wait[1] - HOP.wait[0]);
+            this.hasGoal = false;
+          } else if (s.time < this.hopGiveUp) break;
+          else this.hop = null;
+        }
+        if (s.time < this.hopWait) break;
+        if (s.time >= this.hopCheckAt) {
+          this.hopCheckAt = s.time + HOP.check;
+          const h = s.coverHop(this);
+          if (h) {
+            this.hop = h.clone();
+            this.hopGiveUp = s.time + HOP.giveUp;
+            this.setGoal(this.hop, s);
+            break;
+          }
+        }
         if (!this.hasGoal || this.feet.distanceTo(this.goal) < 3 || s.time > this.repathAt + 8 || s.squadGoalMoved(this, this.goal)) {
           this.setGoal(s.squadGoal(this), s);
         }
@@ -1693,6 +1723,7 @@ export class Bot implements Damageable, Combatant {
       this.reviving ||
       s.time < this.creepUntil ||
       (this.atWork && this.job?.type === 'build' && this.job.slot.kind !== 'barricade') ||
+      (speed === 0 && s.time < this.hopWait) ||
       speed === 0 &&
       (inCover && (this.action === 'engage' || this.action === 'hold' || this.weapon.reloading)
         ? !this.peeking

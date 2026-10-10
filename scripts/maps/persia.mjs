@@ -217,7 +217,8 @@ const mudWall = (pts, gaps = [], height = 1.4, thick = 0.5) => {
     const x = ax + Math.cos(a) * r;
     const z = az + Math.sin(a) * r;
     if (!inMap(x, z, 5) || nearRoad(x, z, 3) || nearRiver(x, z, 4) || !free(x, z, 4.5)) continue;
-    house(x, z, 6 + R() * 2, 5 + R() * 2, R() * 360, 1, 'ns', R() < 0.4);
+    // Every house can be entered (owner, 2026-10-10); the roll stays so the rest of the layout doesn't move.
+    house(x, z, 6 + R() * 2, 5 + R() * 2, R() * 360, 1, 'ns', R() < 0.4 && false);
   }
   // Market: rows of stalls in the lane west of the square, a few more in the square.
   for (let i = 0; i < 6; i++) {

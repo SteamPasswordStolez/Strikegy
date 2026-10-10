@@ -428,16 +428,16 @@ function scatter(cx, cz, rMin, rMax, n, models = CRATES) {
   hesco([fE(-16, -20), fE(-16, -9)]);
   hesco([fE(-10, 9), fE(-10, 18)]);
   // The main road through the compound stays clear for vehicles (local z -6..6).
-  hesco([fE(2, -8), fE(2, -12)]);
+  hesco([fE(-6, -10), fE(-6, -14)]);
   nest(...fE(-23, -16), fE.deg - 90);
   nest(...fE(-23, 16), fE.deg - 90);
   nest(...fE(24, -10), fE.deg + 90);
   nest(...fE(-6, 20), fE.deg);
-  container(fE, 0, -18, 90, 2);
+  container(fE, -9, -18, 90, 2);
   container(fE, 8, 8, 90);
   container(fE, 22, 15, 0);
   truck(...fE(-4, 10), fE.deg + 90);
-  truck(...fE(20, -9), fE.deg - 90, '#4d5a3c');
+  truck(...fE(20, 6.5), fE.deg - 90, '#4d5a3c');
   scatter(...Z.E, 6, 22, 6);
 }
 
@@ -644,8 +644,14 @@ function frontage(pts, halfW, side, kind) {
     let done = false;
     // A few tries at this spot (smaller each time) before moving on.
     for (let tries = 0; tries < 4 && !done; tries++) {
-      const lot = tries < 3 ? lotStyle(p0.x, p0.z, kind) : { style: 'house', w: 7.5, d: 8, floors: 2 };
+      const lot = tries < 3 ? lotStyle(p0.x, p0.z, kind) : { style: 'house', w: 7.5, d: 8, floors: 1 };
       if (tries === 2) lot.d = Math.min(lot.d, 9);
+      // Upper floors need a short side of ~8.6 m or the stairs don't link them up for bots
+      // (navmesh tiles): two-storey lots grow to that rather than lose their upper floor.
+      if ((lot.floors ?? 1) > 1) {
+        lot.w = Math.max(lot.w, 8.6);
+        lot.d = Math.max(lot.d, 8.6);
+      }
       if (s + lot.w > total + 1) continue;
       const mid = along(pts, s + lot.w / 2);
       const nx = -mid.tz * side;

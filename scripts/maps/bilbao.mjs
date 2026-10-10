@@ -365,6 +365,11 @@ for (const [[x, z], yaw] of [[BLUE, 135], [RED, -90]]) {
 // --- City blocks -------------------------------------------------------------------
 // Houses along every street, set back to the pavement and turned to face it.
 // Close to the zones they are enterable; further off most are closed blocks.
+/** A turn within 12° of a right angle snapped onto it. */
+const squareish = (deg) => {
+  const k = Math.round(deg / 90) * 90;
+  return Math.abs(deg - k) < 12 ? k : deg;
+};
 const STYLES = ['apartment', 'apartment', 'shop', 'house', 'townhall'];
 const keepClear = (x, z, r, w, d, yaw) =>
   nearStreet(x, z, Math.min(w, d) / 2 - 0.3) || nearRiver(x, z, r * 0.5) || nearRail(x, z, r * 0.6) || !inMap(x, z, r * 0.6 + 1) || !free(x, z, Math.min(w, d) / 2, false) || !roomFor(x, z, w, d, yaw) ||
@@ -399,9 +404,11 @@ for (const s of streets) {
           size: [round(w), round(d)],
           style,
           floors: style === 'house' ? 2 : 2 + Math.floor(R() * 2),
-          rot: round(yaw + (R() - 0.5) * 3, 1),
+          // Within 12° of the axes: square to them (turned a little, the navmesh doesn't link their stairs).
+          rot: squareish(round(yaw + (R() - 0.5) * 3, 1)),
           doors: ['sn', 'se', 'sw'][Math.floor(R() * 3)],
-          solid: nearZone ? R() < 0.25 : R() < 0.7,
+          // Every block can be entered (owner, 2026-10-10); the roll stays so the rest of the layout doesn't move.
+          solid: (nearZone ? R() < 0.25 : R() < 0.7) && false,
         });
       }
     }
@@ -416,7 +423,7 @@ for (let i = 0; i < 4000; i++) {
   const r = Math.hypot(w, d) / 2;
   const yaw = round((R() < 0.5 ? 0 : 90) + (R() - 0.5) * 8, 1);
   if (keepClear(x, z, r, w, d, yaw)) continue;
-  addBuilding({ pos: [round(x), round(z)], size: [round(w), round(d)], style: R() < 0.5 ? 'house' : 'apartment', floors: 2, rot: yaw, doors: 'ns', solid: R() < 0.5 });
+  addBuilding({ pos: [round(x), round(z)], size: [round(w), round(d)], style: R() < 0.5 ? 'house' : 'apartment', floors: 2, rot: yaw, doors: 'ns', solid: R() < 0.5 && false });
 }
 
 // Wrecked cars and debris on the streets.

@@ -174,6 +174,12 @@ const TACTIC = {
  * (within `reach` m). Lobbing guns also fire at enemies their side has
  * spotted that they can't see themselves.
  */
+/**
+ * Cover-to-cover advance (`BotManager.coverHop`): contact within `fresh` s and
+ * `close`-`reach` m away; hops `near`-`far` m long gaining `gain` m on the goal.
+ */
+const HOPS = { fresh: 10, reach: 110, close: 12, near: 5, far: 20, gain: 3 };
+
 /** Bots cooking frags: burst about `after` s after landing, holding at most `max` s. */
 const FRAG_COOK = { after: 0.7, max: 2.2 };
 
@@ -199,7 +205,7 @@ function armoured(v: Vehicle): boolean {
   return TANK_KINDS.includes(v.kind) || v.kind === 'rocket';
 }
 
-export type SmartPart = 'route' | 'zoneSpot' | 'staging' | 'cover' | 'scan' | 'overwatch' | 'armour';
+export type SmartPart = 'route' | 'zoneSpot' | 'staging' | 'cover' | 'scan' | 'overwatch' | 'armour' | 'hop';
 
 /** A squad gathering outside a zone before going in. */
 interface Staging {
@@ -465,11 +471,11 @@ export class BotManager implements BotServices {
   readonly smart: Record<Team, boolean>;
   /**
    * Parts of the smarter behaviour, each switchable on its own (A/B runs: `npm run bots:ab`).
-   * Off by default: watching the danger side while walking, gathering outside a
-   * zone and moving in halves (none of them won anything in 16-run A/Bs; scan
-   * and staging lost).
+   * 24-run A/Bs with squads (2026-10-10): staging pays (points 1.15, K/D 1.56 vs 1.00);
+   * watching the danger side while walking and moving in halves don't (off); cover-to-cover
+   * advance (`hop`) is off until measured.
    */
-  readonly tactic: Record<SmartPart, boolean> = { route: true, zoneSpot: true, staging: false, cover: true, scan: false, overwatch: false, armour: true };
+  readonly tactic: Record<SmartPart, boolean> = { route: true, zoneSpot: true, staging: true, cover: true, scan: false, overwatch: false, armour: true, hop: false };
   private routeBudget = 0;
   /** Bot id -> tactical point it took as cover. */
   private readonly coverClaims = new Map<number, number>();
@@ -1720,6 +1726,51 @@ export class BotManager implements BotServices {
     if (g && g.pos.distanceTo(bot.feet) < g.radius + 4) return null;
     const phase = Math.floor(this.time / TACTIC.bound) % 2;
     return e.slot % 2 === phase ? c.pos : null;
+  }
+
+  /**
+   * Cover-to-cover advance: while the squad (or the side) has had contact
+   * near the bot lately, the next tactical point on the way to its goal that
+   * hides it from where the enemy was — `HOPS.near`-`HOPS.far` m off, at least
+   * `HOPS.gain` m nearer the goal, not held by another bot, not deep into the
+   * fight. Null: no threat about (walk on, quicker), or nothing fits.
+   */
+  coverHop(bot: Bot): THREE.Vector3 | null {
+    const tm = this.tactics;
+    if (!tm || !this.uses(bot.team, 'hop') || bot.riding) return null;
+    const c = this.squadContact(bot) ?? (this.teams[bot.team].sighting && this.time - this.teams[bot.team].sighting!.time < 8 ? { pos: this.teams[bot.team].sighting!.pos, time: this.teams[bot.team].sighting!.time } : null);
+    if (!c || this.time - c.time > HOPS.fresh) return null;
+    const threatD = c.pos.distanceTo(bot.feet);
+    if (threatD > HOPS.reach || threatD < HOPS.close) return null;
+    const goal = this.squadGoal(bot);
+    const toGoal = goal.distanceTo(bot.feet);
+    if (toGoal < HOPS.near + 2) return null;
+    let best = -1;
+    let bestScore = -Infinity;
+    for (const i of tm.near(bot.feet.x, bot.feet.z, HOPS.far, this.near)) {
+      const held = tm.claim[i]!;
+      if (held !== 0 && held !== bot.id && held !== -bot.id) continue;
+      const x = tm.x[i]!;
+      const z = tm.z[i]!;
+      if (Math.abs(tm.y[i]! - bot.feet.y) > 2.5) continue;
+      const d = Math.hypot(x - bot.feet.x, z - bot.feet.z);
+      if (d < HOPS.near) continue;
+      const gain = toGoal - Math.hypot(x - goal.x, z - goal.z);
+      if (gain < HOPS.gain) continue;
+      // Not right up to them: the hop ends short of where the fight is.
+      if (Math.hypot(x - c.pos.x, z - c.pos.z) < HOPS.close) continue;
+      if (!tm.cover(i, c.pos.x, c.pos.z)) continue;
+      const score = gain - d * 0.35 + Math.random() * 2;
+      if (score > bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    }
+    if (best < 0) return null;
+    this.releaseCover(bot);
+    tm.claim[best] = bot.id;
+    this.coverClaims.set(bot.id, best);
+    return new THREE.Vector3(tm.x[best]!, tm.y[best]!, tm.z[best]!);
   }
 
   /** A swing with the rifle butt at `target` in reach: one hit, the melee damage. */

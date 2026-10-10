@@ -162,6 +162,15 @@ class Builder {
 }
 
 /** Builds a kit to fill a w x h x d box; `h` counts from the ground up. */
+/** Watchtowers: the gap in the deck's half-wall over the ladder (m). */
+const LADDER_GAP = 0.95;
+
+/** A watchtower's ladder in kit space: its foot (on the +z side), its top (the deck) and the way off it (+z). */
+export function watchtowerLadder(w: number, h: number, d: number): { x: number; z: number; top: number } {
+  void w;
+  return { x: 0, z: d / 2 + 0.35, top: h - 2.3 };
+}
+
 export function buildKit(kind: ModelKind, w: number, h: number, d: number, rand: () => number = Math.random): KitModel {
   const b = new Builder();
   const colliders = KITS[kind](b, w, h, d, rand);
@@ -422,8 +431,11 @@ const KITS: Record<ModelKind, Kit> = {
     // Deck, plank half-walls with a firing gap, roof on the legs.
     b.box('wood', [w + 0.2, 0.16, d + 0.2], [0, deck, 0]);
     const wallH = 1.05;
+    // The ladder side (+z) opens in the middle where the ladder comes up.
+    const side = (w + 0.2 - LADDER_GAP) / 2;
     for (const s of [-1, 1]) {
-      b.box('wood', [w + 0.2, wallH, 0.08], [0, deck + wallH / 2, s * (d / 2 + 0.06)]);
+      if (s > 0) for (const k of [-1, 1]) b.box('wood', [side, wallH, 0.08], [k * (LADDER_GAP / 2 + side / 2), deck + wallH / 2, d / 2 + 0.06]);
+      else b.box('wood', [w + 0.2, wallH, 0.08], [0, deck + wallH / 2, s * (d / 2 + 0.06)]);
       b.box('wood', [0.08, wallH, d + 0.2], [s * (w / 2 + 0.06), deck + wallH / 2, 0]);
     }
     b.box('trim', [w + 0.9, 0.12, d + 0.9], [0, h - 0.1, 0]);
@@ -435,7 +447,8 @@ const KITS: Record<ModelKind, Kit> = {
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) cols.push({ center: [sx * lx, h / 2, sz * lz], size: [leg, h, leg] });
     cols.push({ center: [0, deck, 0], size: [w + 0.2, 0.2, d + 0.2] });
     for (const s of [-1, 1]) {
-      cols.push({ center: [0, deck + wallH / 2, s * (d / 2 + 0.06)], size: [w + 0.2, wallH, 0.1] });
+      if (s > 0) for (const k of [-1, 1]) cols.push({ center: [k * (LADDER_GAP / 2 + side / 2), deck + wallH / 2, d / 2 + 0.06], size: [side, wallH, 0.1] });
+      else cols.push({ center: [0, deck + wallH / 2, s * (d / 2 + 0.06)], size: [w + 0.2, wallH, 0.1] });
       cols.push({ center: [s * (w / 2 + 0.06), deck + wallH / 2, 0], size: [0.1, wallH, d + 0.2] });
     }
     cols.push({ center: [0, h - 0.1, 0], size: [w + 0.9, 0.15, d + 0.9] });

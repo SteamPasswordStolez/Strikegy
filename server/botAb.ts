@@ -6,7 +6,8 @@
  * toward one side cancels out. Prints per run and in total what the smart
  * side got against the plain one: zone points, kills, deaths and how long it
  * held how many zones. A sixth argument turns parts of the smarter
- * behaviour off for the run (`staging,overwatch`; see `SmartPart`).
+ * behaviour off for the run (`staging,overwatch`; see `SmartPart`), a seventh
+ * turns parts on that are off by default.
  */
 import { readFileSync } from 'node:fs';
 import type { SmartPart } from '../src/ai/BotManager.ts';
@@ -14,8 +15,9 @@ import { MatchSim, SIM_DT } from '../src/sim/MatchSim.ts';
 import type { Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
 
-const [mapId = 'iron_gate', sideArg = '12', secondsArg = '300', runsArg = '4', difficultyArg = 'normal', offArg = ''] = process.argv.slice(2);
+const [mapId = 'iron_gate', sideArg = '12', secondsArg = '300', runsArg = '4', difficultyArg = 'normal', offArg = '', onArg = ''] = process.argv.slice(2);
 const off = offArg.split(',').filter(Boolean) as SmartPart[];
+const on = onArg.split(',').filter(Boolean) as SmartPart[];
 const side = Math.max(2, Number(sideArg) || 12);
 const seconds = Math.max(30, Number(secondsArg) || 300);
 const runs = Math.max(1, Number(runsArg) || 4);
@@ -41,6 +43,7 @@ for (let run = 0; run < runs; run++) {
   const bots = sim.bots!;
   bots.smart[plainSide] = false;
   for (const p of off) bots.tactic[p] = false;
+  for (const p of on) bots.tactic[p] = true;
   const buildMs = performance.now() - t0;
 
   const held: Record<Team, number> = { blue: 0, red: 0 };
@@ -71,6 +74,6 @@ for (let run = 0; run < runs; run++) {
   console.log(`  plain: ${fmt(pl)}`);
 }
 const ratio = (x: number, y: number) => (y ? (x / y).toFixed(2) : '-');
-console.log(`${mapId} ${side}v${side} ${difficulty}${off.length ? ` (smart without ${off.join(', ')})` : ''}, ${runs} runs of ${seconds} s: wins smart ${total.wins.smart} / plain ${total.wins.plain} / none ${total.wins.none}`);
+console.log(`${mapId} ${side}v${side} ${difficulty}${off.length ? ` (smart without ${off.join(', ')})` : ''}${on.length ? ` (smart with ${on.join(', ')})` : ''}, ${runs} runs of ${seconds} s: wins smart ${total.wins.smart} / plain ${total.wins.plain} / none ${total.wins.none}`);
 console.log(`  smart / plain: points ${ratio(total.smart.points, total.plain.points)}, kills ${ratio(total.smart.kills, total.plain.kills)}, zone-s ${ratio(total.smart.held, total.plain.held)}; K/D smart ${ratio(total.smart.kills, total.smart.deaths)}, plain ${ratio(total.plain.kills, total.plain.deaths)}`);
 process.exit(0);

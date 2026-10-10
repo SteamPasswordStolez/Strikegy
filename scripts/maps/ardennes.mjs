@@ -288,7 +288,8 @@ function street(r, { cx, cz, maxR, minR = 0, skip = 0.3, near = 45, solidNear = 
         if (Object.entries(Z).some(([id, [zx, zz]]) => id !== 'D' && Math.hypot(x - zx, z - zz) < RADIUS[id] + 4)) continue;
         const yaw = deg(Math.atan2(-nx, -nz));
         const close = Math.hypot(x - cx, z - cz) < near;
-        addBuilding({ pos: [x, z], size: [round(w), round(d)], style: R() < shop ? 'shop' : 'house', rot: yaw + (R() - 0.5) * 4, doors: ['sn', 'se', 'sw'][Math.floor(R() * 3)], solid: close ? R() < solidNear : R() < solidFar });
+        addBuilding({ pos: [x, z], size: [round(w), round(d)], style: R() < shop ? 'shop' : 'house', rot: yaw + (R() - 0.5) * 4, doors: ['sn', 'se', 'sw'][Math.floor(R() * 3)], // Every house can be entered (owner, 2026-10-10); the roll stays so the rest of the layout doesn't move.
+          solid: (close ? R() < solidNear : R() < solidFar) && false });
       }
     }
   }
