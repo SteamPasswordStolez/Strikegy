@@ -138,10 +138,6 @@
     "overcast_soil_puresky": {
       "res": "2k",
       "sky": "overcast"
-    },
-    "snowy_field": {
-      "res": "2k",
-      "sky": "winter"
     }
   }
 }

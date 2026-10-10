@@ -10,6 +10,31 @@ const TRACER_LIFE = 0.06;
 const MAX_TRACERS = 32;
 const MAX_DECALS = 160;
 const DECAL_SIZE = 0.09;
+
+/** Alpha (green) for the round decals: opaque to ~45 % of the radius, then a noisy fade. */
+function decalFalloff(): THREE.DataTexture {
+  const n = 64;
+  const data = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const dx = (x + 0.5) / n - 0.5;
+      const dy = (y + 0.5) / n - 0.5;
+      const r = Math.hypot(dx, dy) * 2;
+      const a = Math.atan2(dy, dx);
+      const rim = 0.08 * Math.sin(a * 7 + 1.3) + 0.05 * Math.sin(a * 13 + 0.4);
+      const v = 1 - THREE.MathUtils.smoothstep(r, 0.45 + rim, 0.98 + rim * 0.5);
+      const o = (y * n + x) * 4;
+      data[o] = data[o + 1] = data[o + 2] = Math.round(255 * v);
+      data[o + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, n, n);
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
 const MAX_CASINGS = 48;
 const CASING_LIFE = 4;
 /** Beyond these distances from the camera, cosmetic detail is skipped (big bot fights). */
@@ -126,6 +151,8 @@ export class Effects {
     const decalMat = new THREE.MeshBasicMaterial({
       transparent: true,
       opacity: 0.88,
+      // Solid core, ragged soft rim: a 2.7 m scorch mark was a hard-edged black disc.
+      alphaMap: decalFalloff(),
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -4,

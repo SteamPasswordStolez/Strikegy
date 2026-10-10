@@ -39,6 +39,8 @@ interface Batch {
  * Gate's square, mostly hidden (Iris Xe, 2026-10-10).
  */
 const INSIDE_TAG = 'in';
+/** Interiors are not drawn past this distance (m) from their cell's edge. */
+const INSIDE_FAR = 110;
 
 /** Walls darken by up to `dark` toward the ground over their lowest `height` metres (baked into vertex colours). */
 const GRIME = { dark: 0.3, height: 2.6, minHeight: 1.2 };
@@ -212,7 +214,7 @@ export function buildBlockout(
         g.setAttribute('color', new THREE.BufferAttribute(col, 3));
       });
     }
-    for (const part of splitByCell(b.geometries)) {
+    for (const part of splitByCell(b.geometries, b.inside ? 0 : CELL.minVertices)) {
       const merged = mergeGeometries(part);
       for (const g of part) g.dispose();
       if (!merged) continue;
@@ -221,9 +223,21 @@ export function buildBlockout(
       mesh.castShadow = b.castShadow;
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
-      // Before the terrain (1), after everything else.
-      if (b.inside) mesh.renderOrder = 0.5;
-      root.add(mesh);
+      if (!b.inside) {
+        root.add(mesh);
+        continue;
+      }
+      // Before the terrain (1), after everything else; nothing beyond INSIDE_FAR
+      // (past it a window is a few pixels): a LOD at the cell's centre.
+      mesh.renderOrder = 0.5;
+      const centre = merged.boundingSphere!.center.clone();
+      merged.translate(-centre.x, -centre.y, -centre.z);
+      const lod = new THREE.LOD();
+      lod.position.copy(centre);
+      lod.updateMatrix();
+      lod.addLevel(mesh, 0);
+      lod.addLevel(new THREE.Object3D(), INSIDE_FAR + merged.boundingSphere!.radius);
+      root.add(lod);
     }
   }
 
@@ -240,9 +254,9 @@ export function buildBlockout(
  */
 const CELL = { size: 96, minVertices: 20000 };
 
-function splitByCell(geos: THREE.BufferGeometry[]): THREE.BufferGeometry[][] {
+function splitByCell(geos: THREE.BufferGeometry[], minVertices: number): THREE.BufferGeometry[][] {
   const total = geos.reduce((n, g) => n + g.getAttribute('position').count, 0);
-  if (total < CELL.minVertices) return [geos];
+  if (total < minVertices) return [geos];
   const cells = new Map<string, THREE.BufferGeometry[]>();
   const c = new THREE.Vector3();
   for (const g of geos) {
@@ -365,6 +379,30 @@ function addDraped(obj: MapObject, terrain: Terrain, batches: Map<string, Batch>
     pushTinted(batches, surfaces, kind, obj.color, geo, 'drape', false);
     return;
   }
+  // Only the edges need the dithered alpha: the solid middle goes with the plain
+  // paint (alpha hash discards, so the GPU can't reject hidden pixels early;
+  // whole tracks cost ~0.9 ms on Ardennes, Iris Xe 2026-10-10).
+  const index = geo.getIndex()!;
+  const solid: number[] = [];
+  const edge: number[] = [];
+  for (let t = 0; t < index.count; t += 3) {
+    const a = index.getX(t);
+    const b = index.getX(t + 1);
+    const c = index.getX(t + 2);
+    const opaque = [a, b, c].every((v) => (geo.getAttribute('color') as THREE.BufferAttribute).getW(v) >= 1);
+    (opaque ? solid : edge).push(a, b, c);
+  }
+  if (solid.length) {
+    const mid = geo.clone();
+    mid.deleteAttribute('color');
+    mid.setIndex(solid);
+    pushTinted(batches, surfaces, kind, obj.color, mid, 'drape', false);
+  }
+  if (!edge.length) {
+    geo.dispose();
+    return;
+  }
+  geo.setIndex(edge);
   const material = faded(obj.color ? surfaces.tinted(kind, obj.color) : surfaces.get(kind));
   const key = `${material.uuid}drape`;
   let batch = batches.get(key);

@@ -6,7 +6,7 @@
 //    mapping applies as for everything else
 //  - sky.json: the sun (the game's elevation / azimuth in degrees, from the brightest
 //    pixel), the horizon and zenith colours in the same linear units
-// The image-based lighting is rendered in the game from the same sky.
+// The game keeps lighting the scene from its procedural sky; the picture is only what you see.
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -112,9 +112,8 @@ export async function convertHdri(srcFile, outDir) {
   };
   const horizon = horizonRaw.map((v) => v * scale);
   const zenith = band(60, 90).map((v) => v * scale);
-  // Light on flat ground from the sky with the sun's glow capped at 4 (as the game's
-  // image-based lighting sees it), in the same units: the game scales the picture
-  // so this matches the light its procedural sky gave.
+  // Light on flat ground from the sky with the sun's glow capped at 4, in the same
+  // units (for reference: the game lights the scene from its procedural sky).
   let irradiance = 0;
   const dTheta = (2 * Math.PI) / src.w;
   const dPhi = Math.PI / src.h;

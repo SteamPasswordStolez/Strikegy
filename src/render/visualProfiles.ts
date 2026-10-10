@@ -15,13 +15,12 @@ interface SkyParams {
 interface VisualProfile {
   sky?: SkyParams;
   /** Photographed sky (`public/assets/sky/<name>/`, made by `npm run assets`); the procedural `sky` stays the fallback. */
-  photo?: 'clear' | 'overcast' | 'winter';
+  photo?: 'clear' | 'overcast';
   /**
-   * Light on flat ground from the sky (sun excluded), in the scene's units; the
-   * photographed sky is scaled to give this much. Measured from the procedural
-   * sky each profile was tuned with (2026-10-10), so the lighting stays as it was.
+   * How bright the photographed sky's horizon is drawn (before exposure / tone
+   * mapping). Only its looks: the lighting stays the procedural sky's.
    */
-  skyLight?: number;
+  photoHorizon?: number;
   /** Solid background when there is no sky (indoor). */
   background?: number;
   /** Sun elevation / azimuth in degrees. */
@@ -36,7 +35,7 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   outdoor_day: {
     sky: { turbidity: 2.5, rayleigh: 1.1, mieCoefficient: 0.004, mieDirectionalG: 0.8, cloudCoverage: 0.3, cloudDensity: 0.35 },
     photo: 'clear',
-    skyLight: 3.87,
+    photoHorizon: 1.4,
     sun: { elevation: 38, azimuth: -35, color: 0xfff1de, intensity: 2.4 },
     fog: { color: 0xa9bccd, density: 0.0016 },
     hemi: { sky: 0xcfe0ff, ground: 0x6b5a45, intensity: 0.25 },
@@ -47,7 +46,7 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     sky: { turbidity: 10, rayleigh: 2.5, mieCoefficient: 0.01, mieDirectionalG: 0.7, cloudCoverage: 0.85, cloudDensity: 0.7 },
     // Tuned with Bilbao (2026-10-02): the old values washed everything out.
     photo: 'overcast',
-    skyLight: 18.5,
+    photoHorizon: 2.9,
     sun: { elevation: 50, azimuth: 120, color: 0xe4e8ee, intensity: 1.5 },
     fog: { color: 0x9aa3ab, density: 0.004 },
     hemi: { sky: 0xc0c8d0, ground: 0x4a463e, intensity: 0.45 },
@@ -58,8 +57,7 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
   winter: {
     // Hazy (high turbidity + rayleigh) so the sky reads pale and the cloud gaps stay light.
     sky: { turbidity: 20, rayleigh: 3, mieCoefficient: 0.02, mieDirectionalG: 0.6, cloudCoverage: 0.85, cloudDensity: 0.8 },
-    photo: 'winter',
-    skyLight: 16.7,
+    // No photo: the winter HDRI tried (snowy_field) had park trees and a tower ~30° up its sky.
     sun: { elevation: 30, azimuth: -150, color: 0xfff2e6, intensity: 1.4 },
     fog: { color: 0xbfc7d0, density: 0.0042 },
     hemi: { sky: 0xdfe8f4, ground: 0xb8bcc2, intensity: 0.45 },
@@ -92,8 +90,6 @@ export interface PhotoSky {
   bottom: number;
   /** The sun in the picture; `peak` is its brightness over the horizon's (a hidden sun is a few times, a clear one thousands). */
   sun: { elevation: number; azimuth: number; peak: number };
-  /** Light on flat ground from the picture as stored (horizon = 1), sun's glow capped. */
-  irradiance: number;
 }
 
 /** Loads the profile's photographed sky, or null (none for the profile, or it failed: the procedural sky stays). */
@@ -115,7 +111,7 @@ export async function loadPhotoSky(id: VisualProfileId, base: string): Promise<P
     texture.generateMipmaps = false;
     texture.minFilter = THREE.LinearFilter;
     texture.wrapS = THREE.RepeatWrapping;
-    return { texture, bottom: info.bottom, sun: info.sun, irradiance: info.irradiance };
+    return { texture, bottom: info.bottom, sun: info.sun };
   } catch (err) {
     console.warn(`sky ${name}: ${String(err)}; using the procedural sky`);
     return null;
@@ -250,7 +246,7 @@ export class Atmosphere {
         // sits where the map's is.
         sky.material.dispose();
         sky.geometry.dispose();
-        const k = (p.skyLight ?? 4) / photo.irradiance;
+        const k = p.photoHorizon ?? 1.5;
         const turn = (photo.sun.azimuth - p.sun.azimuth) / 360;
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), photoSkyMaterial(photo, new THREE.Color(k, k, k), turn, 1e4));
         mesh.scale.setScalar(1000);
