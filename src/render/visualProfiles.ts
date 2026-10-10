@@ -169,6 +169,13 @@ function photoSkyMaterial(photo: PhotoSky, scale: THREE.Color, turn: number, cla
   });
 }
 
+/**
+ * The sky draws after the opaque world (terrain is 1): at the far plane with the
+ * depth test on, it then shades only the pixels where sky shows instead of the
+ * whole screen under everything else.
+ */
+const SKY_ORDER = 2;
+
 export interface AtmosphereOptions {
   shadows: boolean;
   shadowMapSize: number;
@@ -248,10 +255,11 @@ export class Atmosphere {
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), photoSkyMaterial(photo, new THREE.Color(k, k, k), turn, 1e4));
         mesh.scale.setScalar(1000);
         mesh.frustumCulled = false;
-        mesh.renderOrder = -1;
+        mesh.renderOrder = SKY_ORDER;
         scene.add(mesh);
         this.photoSky = mesh;
       } else {
+        sky.renderOrder = SKY_ORDER;
         scene.add(sky);
         this.sky = sky;
       }

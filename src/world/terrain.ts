@@ -391,6 +391,10 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
         const mesh = new THREE.Mesh(geo, material);
         mesh.receiveShadow = true;
         mesh.matrixAutoUpdate = false;
+        // After the other opaque things: the ground behind walls, cars and props is then
+        // rejected by the depth test before its (costly, layered) shading. -2.2 ms of 13
+        // on Iron Gate at the square (Iris Xe, 2026-10-10).
+        mesh.renderOrder = 1;
         lod.addLevel(mesh, d);
       });
       group.add(lod);

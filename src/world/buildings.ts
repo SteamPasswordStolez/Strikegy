@@ -266,7 +266,14 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
       rot[1] = THREE.MathUtils.radToDeg(e.y);
       rot[2] = THREE.MathUtils.radToDeg(e.z);
     }
-    out.push({ type, pos: [x, baseY + ly, z], size: [sx, sy, sz], rot, material: mat, color: col });
+    // Wholly inside the outer walls and under the roof line (a pitched piece by its
+    // larger extent): seen only through doors and windows.
+    const reach = Math.max(sx, sz) / 2;
+    const inside =
+      Math.abs(lx) + (pitch || roll ? reach : sx / 2) <= W / 2 - WALL + 0.05 &&
+      Math.abs(lz) + (pitch || roll ? reach : sz / 2) <= D / 2 - WALL + 0.05 &&
+      ly + sy / 2 <= H + 0.05;
+    out.push({ type, pos: [x, baseY + ly, z], size: [sx, sy, sz], rot, material: mat, color: col, ...(inside ? { inside } : {}) });
   };
   // Visual-only boxes (no colliders): facades of closed blocks, trim, snow on roofs.
   const decor: MapObject[] = [];

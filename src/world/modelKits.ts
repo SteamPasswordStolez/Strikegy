@@ -378,14 +378,11 @@ const KITS: Record<ModelKind, Kit> = {
           const cx = Math.max(-L / 2 + bagL / 2, Math.min(L / 2 - bagL / 2, x));
           const jitter = (rand() - 0.5) * 0.04;
           const at: V3 = alongX ? [cx, bagH * (r + 0.5), tz + jitter] : [tz + jitter, bagH * (r + 0.5), cx];
-          const g = new THREE.CapsuleGeometry(bagH * 0.55, bagL - bagH * 1.1, 2, 6);
-          g.rotateZ(Math.PI / 2);
           // Slightly taller than a course so the rows sit on each other with no gaps.
-          g.scale(1, 0.95, (layers === 2 ? T / 2 : T) / (bagH * 1.1));
+          const g = bagGeometry(bagL - 0.02, bagH * 1.05, layers === 2 ? T / 2 : T);
           if (!alongX) g.rotateY(Math.PI / 2);
           g.translate(...at);
-          b.pieces.push({ geo: g.toNonIndexed(), mat: 'body' });
-          g.dispose();
+          b.pieces.push({ geo: g, mat: 'body' });
         }
       }
     }
@@ -1125,6 +1122,56 @@ const KITS: Record<ModelKind, Kit> = {
     return cols;
   },
 };
+
+/**
+ * One sandbag lying along x: a prism with an octagonal cross-section (chamfered
+ * long edges), no faces underneath. 24 triangles, non-indexed with flat normals;
+ * a wall has hundreds of them (the capsules they replaced had 72 each and made
+ * Iron Gate's sandbag walls 540k vertices, 2026-10-10).
+ */
+function bagGeometry(length: number, height: number, thick: number): THREE.BufferGeometry {
+  const a = height / 2;
+  const t = thick / 2;
+  const c = Math.min(a, t) * 0.55;
+  // Octagon in (y, z), counter-clockwise seen from +x.
+  const ring: [number, number][] = [
+    [-a, -t + c],
+    [-a, t - c],
+    [-a + c, t],
+    [a - c, t],
+    [a, t - c],
+    [a, -t + c],
+    [a - c, -t],
+    [-a + c, -t],
+  ];
+  const x0 = -length / 2;
+  const x1 = length / 2;
+  const pos: number[] = [];
+  const tri = (p: number[], q: number[], r: number[]) => pos.push(...p, ...q, ...r);
+  for (let i = 0; i < 8; i++) {
+    if (i === 0) continue; // the bottom side
+    const [ya, za] = ring[i]!;
+    const [yb, zb] = ring[(i + 1) % 8]!;
+    tri([x0, ya, za], [x1, ya, za], [x1, yb, zb]);
+    tri([x0, ya, za], [x1, yb, zb], [x0, yb, zb]);
+  }
+  // End caps: a fan from the first corner.
+  for (let i = 1; i < 7; i++) {
+    const [y0, z0] = ring[0]!;
+    const [ya, za] = ring[i]!;
+    const [yb, zb] = ring[i + 1]!;
+    tri([x1, y0, z0], [x1, yb, zb], [x1, ya, za]);
+    tri([x0, y0, z0], [x0, ya, za], [x0, yb, zb]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  // World-meter UVs like the other kit pieces' boxes: u along the bag, v round it.
+  const uv: number[] = [];
+  for (let i = 0; i < pos.length; i += 3) uv.push(pos[i]!, pos[i + 1]! + pos[i + 2]!);
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return g;
+}
 
 /** Shared looks for kit pieces that don't use the object's own surface. */
 export function kitMaterials(): Record<Exclude<KitMaterial, 'body' | 'trim' | 'metal' | 'wood' | 'concrete' | 'dirt'>, THREE.Material> {

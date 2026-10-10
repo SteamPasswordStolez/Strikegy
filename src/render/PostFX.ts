@@ -2,10 +2,9 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { Pass } from 'three/addons/postprocessing/Pass.js';
+import { BloomPass, FinalPass } from './bloom';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { LAYER_BACKDROP, LAYER_FX, LAYER_WORLD } from './layers';
 
@@ -27,10 +26,29 @@ class LayerRenderPass extends RenderPass {
   }
 }
 
-/** GTAO computed at half resolution; the blend back onto the frame stays full-res. */
+/**
+ * GTAO computed at half resolution; the blend onto the frame stays full-res and
+ * goes straight onto the frame (three's pass first copies the whole frame to
+ * the other buffer, then blends there: ~0.7 ms at 1152x648 on an Iris Xe).
+ */
 class HalfResGTAOPass extends GTAOPass {
+  constructor(...args: ConstructorParameters<typeof GTAOPass>) {
+    super(...args);
+    this.needsSwap = false;
+  }
+
   override setSize(width: number, height: number): void {
     super.setSize(Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2)));
+  }
+
+  override render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget, deltaTime: number, maskActive: boolean): void {
+    const output = this.output;
+    this.output = GTAOPass.OUTPUT.Off;
+    super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+    this.output = output;
+    this.blendMaterial.uniforms.intensity!.value = this.blendIntensity;
+    this.blendMaterial.uniforms.tDiffuse!.value = this.pdRenderTarget.texture;
+    (this as unknown as { _renderPass(r: THREE.WebGLRenderer, m: THREE.Material, t: THREE.WebGLRenderTarget | null): void })._renderPass(renderer, this.blendMaterial, readBuffer);
   }
 }
 
@@ -93,8 +111,10 @@ export class PostFX {
     fp.clearDepth = true;
     this.add('viewmodel', fp);
 
-    if (opts.bloom) this.add('bloom', new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.1, 0.4, 1.6));
-    this.add('tonemap', new OutputPass());
+    // Glow over 1.6 (sun, flashes, fire), added while tone mapping.
+    const bloom = opts.bloom ? new BloomPass(1.6) : null;
+    if (bloom) this.add('bloom', bloom);
+    this.add('tonemap', new FinalPass(bloom, 0.075));
     this.fxaa = new ShaderPass(FXAAShader);
     this.add('fxaa', this.fxaa);
   }

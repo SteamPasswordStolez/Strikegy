@@ -584,7 +584,9 @@ export class Fortifications {
     this.batch.flush();
     for (const s of this.stations) s.icon.visible = s.pos.distanceToSquared(camera) < 45 * 45;
     const m = this.models;
-    const far = (building ? 60 : 28) ** 2;
+    // Outside build mode only the near ones: each is a see-through draw (41 within 28 m at
+    // Iron Gate's square cost ~0.9 ms of GPU, 2026-10-10).
+    const far = (building ? 60 : 16) ** 2;
     for (const s of this.slots) {
       const show = !s.built && s.pos.distanceToSquared(camera) < far;
       s.ghost.visible = show;

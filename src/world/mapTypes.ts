@@ -43,6 +43,8 @@ export interface MapObject {
   model?: ModelKind;
   /** Height of the model's ground above the box bottom (boxes sink a little into the terrain). */
   base?: number;
+  /** A building piece wholly inside its outer walls (floors, rooms, stairs): drawn after the shells (generated, not in map files). */
+  inside?: boolean;
 }
 
 export interface SpawnPoint {

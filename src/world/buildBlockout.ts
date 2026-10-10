@@ -28,7 +28,17 @@ interface Batch {
   tints?: THREE.Color[];
   /** Darken tall pieces toward the ground (grime / contact shade, see GRIME). */
   grime?: boolean;
+  /** Building interiors (see INSIDE_TAG). */
+  inside?: boolean;
 }
+
+/**
+ * Batch tag of building pieces inside the outer walls. They draw after the
+ * shells (render order), so where a wall hides them the depth test rejects
+ * them before shading: interiors were ~1/3 of the map's GPU time at Iron
+ * Gate's square, mostly hidden (Iris Xe, 2026-10-10).
+ */
+const INSIDE_TAG = 'in';
 
 /** Walls darken by up to `dark` toward the ground over their lowest `height` metres (baked into vertex colours). */
 const GRIME = { dark: 0.3, height: 2.6, minHeight: 1.2 };
@@ -42,7 +52,7 @@ function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind:
   const key = `${kind}:${tag}:${castShadow ? 1 : 0}:v`;
   let batch = batches.get(key);
   if (!batch) {
-    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [], grime: tag === '' };
+    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [], grime: tag === '' || tag === INSIDE_TAG, inside: tag === INSIDE_TAG };
     batches.set(key, batch);
   }
   batch.geometries.push(geo);
@@ -160,7 +170,7 @@ export function buildBlockout(
   for (const b of map.buildings ?? []) {
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
     const built = buildBuilding(b, base, { snow: map.world.visualProfile === 'winter' });
-    for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts);
+    for (const obj of built.objects) addBox(obj, batches, physics, surfaces, impacts, obj.inside ? INSIDE_TAG : '');
     if (surfaces) for (const obj of built.decor) addBox(obj, batches, physics, surfaces, impacts, '', false);
     if (surfaces) for (const sh of built.shapes) {
       // A plain 0..n-1 index lets gables and roofs merge into the boxes of their
@@ -202,18 +212,48 @@ export function buildBlockout(
         g.setAttribute('color', new THREE.BufferAttribute(col, 3));
       });
     }
-    const merged = mergeGeometries(b.geometries);
-    for (const g of b.geometries) g.dispose();
-    if (!merged) continue;
-    const mesh = new THREE.Mesh(merged, b.material);
-    mesh.castShadow = b.castShadow;
-    mesh.receiveShadow = true;
-    mesh.matrixAutoUpdate = false;
-    root.add(mesh);
+    for (const part of splitByCell(b.geometries)) {
+      const merged = mergeGeometries(part);
+      for (const g of part) g.dispose();
+      if (!merged) continue;
+      merged.computeBoundingSphere();
+      const mesh = new THREE.Mesh(merged, b.material);
+      mesh.castShadow = b.castShadow;
+      mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      // Before the terrain (1), after everything else.
+      if (b.inside) mesh.renderOrder = 0.5;
+      root.add(mesh);
+    }
   }
 
   scene?.add(root);
   return { root, navExtra, windows, footprints, groundHandle };
+}
+
+/**
+ * Big batches are cut into square cells of the map, merged per cell: a batch
+ * spanning the whole map was never culled (all its vertices every frame, in
+ * every pass) and couldn't be drawn front to back. Small ones stay whole to
+ * keep the draw calls down. Iron Gate (2026-10-10): ~2.4 ms of vertex work a
+ * frame on an Iris Xe went to batches mostly out of view.
+ */
+const CELL = { size: 96, minVertices: 20000 };
+
+function splitByCell(geos: THREE.BufferGeometry[]): THREE.BufferGeometry[][] {
+  const total = geos.reduce((n, g) => n + g.getAttribute('position').count, 0);
+  if (total < CELL.minVertices) return [geos];
+  const cells = new Map<string, THREE.BufferGeometry[]>();
+  const c = new THREE.Vector3();
+  for (const g of geos) {
+    if (!g.boundingBox) g.computeBoundingBox();
+    g.boundingBox!.getCenter(c);
+    const key = `${Math.floor(c.x / CELL.size)},${Math.floor(c.z / CELL.size)}`;
+    let list = cells.get(key);
+    if (!list) cells.set(key, (list = []));
+    list.push(g);
+  }
+  return [...cells.values()];
 }
 
 /** Top of a thin snapped floor within this height of the terrain = paint on the ground (roads, pavements). */
