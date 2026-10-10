@@ -1737,7 +1737,8 @@ export class Game {
   private botJetSlot(team: Team): boolean {
     const free = this.jetFreeSince[team];
     if (free < 0) return false;
-    return team !== this.myTeam || this.simTime - free > BOT_JETS.playerFirst;
+    const wait = this.simTime > BOT_JETS.first + 1 ? BOT_JETS.cooldown : 0;
+    return this.simTime - free > (team === this.myTeam ? Math.max(BOT_JETS.playerFirst, wait) : wait);
   }
 
   /** Bots that deployed into a vehicle seat this step (bot id -> vehicle id). */
@@ -4115,7 +4116,8 @@ export class Game {
  * respawning bot takes the slot with chance `respawn`. On the player's side
  * bots leave a freed slot alone for `playerFirst` s.
  */
-const BOT_JETS = { first: 12, every: 4, nearBase: 90, respawn: 0.6, playerFirst: 15 };
+/** `cooldown`: a lost jet's slot waits this long before a bot takes it (two jets duelling were shot down and back up every few seconds). */
+const BOT_JETS = { first: 12, every: 4, nearBase: 90, respawn: 0.6, playerFirst: 15, cooldown: 40 };
 /** Copies plain data into an object of the same shape (the mode's rules as the server sent them). */
 function assignDeep(into: Record<string, unknown>, from: Record<string, unknown>): void {
   for (const [k, v] of Object.entries(from)) {

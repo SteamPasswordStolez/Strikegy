@@ -38,7 +38,9 @@ const byId = new Map(bots.bots.map((b) => [b.id, b]));
 sim.bus.on('combat:kill', (e) => {
   const killer = e.attackerId !== undefined ? byId.get(e.attackerId) : undefined;
   const v = killer?.riding ? sim.vehicles?.world.vehicles.find((x) => x.id === killer.riding!.vehicle) : undefined;
-  count(kills, v ? `vehicle:${v.kind}` : String(e.weapon));
+  const victim = e.victimId !== undefined ? byId.get(e.victimId) : undefined;
+  const vv = victim?.riding ? sim.vehicles?.world.vehicles.find((x) => x.id === victim.riding!.vehicle) : undefined;
+  count(kills, (v ? `vehicle:${v.kind}` : String(e.weapon)) + (vv ? ` > ${vv.kind}` : ''));
 });
 sim.bus.on('combatant:revived', () => revives++);
 const wrap = (o: Any, name: string, after: (args: unknown[], out: unknown) => void) => {
@@ -69,6 +71,7 @@ interface VStat { crewed: number; moving: number; km: number; tries: number; wre
 const vstat = new Map<string, VStat>();
 const lastPos = new Map<number, { x: number; z: number }>();
 const lastTries = new Map<object, number>();
+const vstuck = new Map<string, number>();
 const wrecked = new Set<number>();
 const zones = map.zones ?? [];
 const every = Math.round(0.5 / SIM_DT);
@@ -131,7 +134,10 @@ for (let i = 0; i < steps; i++) {
     const prev = lastTries.get(d) ?? 0;
     if (d.tries > prev) {
       const v = sim.vehicles?.world.vehicles.find((x) => x.id === e.bot.riding?.vehicle);
-      if (v) vstat.get(v.kind)!.tries += d.tries - prev;
+      if (v) {
+        vstat.get(v.kind)!.tries += d.tries - prev;
+        count(vstuck, `${v.kind} ${Math.round(v.pos.x / 10) * 10},${Math.round(v.pos.z / 10) * 10}`);
+      }
     }
     lastTries.set(d, d.tries);
   }
@@ -147,6 +153,7 @@ console.log(`  stuck spots (10 m cells): ${[...hotspots].sort((a, b) => b[1] - a
 for (const [kind, s] of [...vstat].sort()) {
   console.log(`${kind}: crewed ${Math.round(s.crewed)} s, moving ${pct(s.moving, s.crewed)}, ${s.km.toFixed(2)} km, stuck tries ${s.tries}, wrecks ${s.wrecks} (crashed ${s.crashed})${s.air ? `, in the air ${pct(s.air, s.crewed)}` : ''}`);
 }
+console.log(`vehicle stuck spots: ${[...vstuck].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => `${k} x${n}`).join(', ') || '-'}`);
 console.log(`kills: ${list(kills)}`);
 console.log(`grenades: ${list(grenades)}; gadgets by class: ${list(gadgets)}; medkits ${medkits}; revives ${revives}`);
 console.log(`call-ins: ${list(calls)}`);

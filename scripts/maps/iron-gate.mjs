@@ -374,11 +374,13 @@ function scatter(cx, cz, rMin, rMax, n, models = CRATES) {
 {
   // Hesco ring; gates: front (main road), the north and south streets' side, a footpath back.
   const ring = [fF(18, -22), fF(18, 22), fF(-18, 22), fF(-18, -22), fF(18, -22)];
-  hesco(ring, [[17, 27], [58, 64], [100, 106], [130, 136]]);
-  for (const [lx, lz] of [[10, -17], [1, -17]]) thing(fF, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
-  for (const [lx, lz] of [[10, 17], [1, 17]]) thing(fF, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
-  container(fF, -8, 18, 90);
-  container(fF, -14, -18, 90, 2);
+  // The front gate is wide enough for a tank to turn out of the motor pool (16 m).
+  hesco(ring, [[14, 30], [58, 64], [100, 106], [130, 136]]);
+  // Tents and stores along the side walls, clear of the lane from the motor pool to the gate.
+  for (const [lx, lz] of [[10, -19], [1, -19]]) thing(fF, lx, lz, 5, 3, 3, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
+  for (const [lx, lz] of [[10, 19], [1, 19]]) thing(fF, lx, lz, 5, 3, 3, { type: 'wall', material: 'wood', color: '#6f6e4e', model: 'tent' });
+  container(fF, -12, 20, 90);
+  container(fF, -12, -20, 90, 2);
   for (const [lx, lz] of [[17, -21], [17, 21], [-17, 21], [-17, -21]]) tower(...fF(lx, lz), fF.deg);
   // Gravel motor pool in the back half (paint only).
   paint(fF(-9, 0), 16, 30, fF.deg, 0.04, '#8a8070', 'ground');
@@ -393,8 +395,8 @@ function scatter(cx, cz, rMin, rMax, n, models = CRATES) {
   for (const [x, z] of WALL.slice(0, -1)) tower(x, z);
   addBuilding({ pos: [137, -35], size: [18, 8], style: 'hq', floors: 2, doors: 's' });
   addBuilding({ pos: [137, 6], size: [16, 7], style: 'barracks', doors: 'n' });
-  truck(148, -22, 0);
-  truck(148, -4, 180, '#4d5a3c');
+  truck(150, -38, 75);
+  truck(147, 8, 100, '#4d5a3c');
   paint([138, -12], 16, 22, 0, 0.04, '#8e8c86');
   scatter(124, -30, 3, 8, 3);
 }
@@ -425,16 +427,17 @@ function scatter(cx, cz, rMin, rMax, n, models = CRATES) {
   thing(fE, -22, 10, 2.4, 2.8, 2.4, { type: 'wall', material: 'wood', color: '#6d6450', model: 'booth' });
   hesco([fE(-16, -20), fE(-16, -9)]);
   hesco([fE(-10, 9), fE(-10, 18)]);
-  hesco([fE(2, -3.5), fE(2, -8)]);
+  // The main road through the compound stays clear for vehicles (local z -6..6).
+  hesco([fE(2, -8), fE(2, -12)]);
   nest(...fE(-23, -16), fE.deg - 90);
   nest(...fE(-23, 16), fE.deg - 90);
   nest(...fE(24, -10), fE.deg + 90);
   nest(...fE(-6, 20), fE.deg);
   container(fE, 0, -18, 90, 2);
-  container(fE, 8, 4.5, 90);
+  container(fE, 8, 8, 90);
   container(fE, 22, 15, 0);
   truck(...fE(-4, 10), fE.deg + 90);
-  truck(...fE(20, -3.5), fE.deg - 90, '#4d5a3c');
+  truck(...fE(20, -9), fE.deg - 90, '#4d5a3c');
   scatter(...Z.E, 6, 22, 6);
 }
 

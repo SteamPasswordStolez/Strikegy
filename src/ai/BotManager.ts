@@ -173,6 +173,21 @@ const TACTIC = {
  * (within `reach` m). Lobbing guns also fire at enemies their side has
  * spotted that they can't see themselves.
  */
+/**
+ * Bot pilots under attack: an enemy fighter within `range` m behind with its
+ * nose within `cone` rad of us makes them break `turn` rad off their heading
+ * for `time` s (+ up to 1.5 s).
+ */
+const JET_BREAK = { range: 900, cone: 0.35, turn: 1.3, time: 2.5 };
+
+/**
+ * Lobbing guns (bots): a target is worth a shell from this score (enemies
+ * within 12 m of it, +`still` if it isn't moving); scatter is `spread` of
+ * the range (at least `min` m), times `bracket` for the 1st / 2nd / later
+ * shells on a spot (`same` m), times `unseen` when the crew can't see it.
+ */
+const LOB = { minScore: 2, still: 0.5, spread: 0.08, min: 8, bracket: [1, 0.7, 0.5], same: 15, unseen: 1.35 };
+
 const ARMOUR = { stand: { tank: 60, td: 85, lob: 170 }, hurt: 0.35, hurtStand: 1.7, rethink: 25, pick: 0.6, reach: 450, holdAt: 9 };
 
 /** Gun armour (tanks, the rocket truck): crews stay aboard and hold a position. */
@@ -333,7 +348,7 @@ interface BotEntry {
   /** Riding without a driver since (gunners hold on a little). */
   alone?: number;
   /** Bot pilots: what they're going after, and a pull-up after an attack run. */
-  flightPlan?: { target: Vehicle | Combatant | null; kind: 'air' | 'ground' | 'none'; until: number; pullUntil: number };
+  flightPlan?: { target: Vehicle | Combatant | null; kind: 'air' | 'ground' | 'none'; until: number; pullUntil: number; breakUntil?: number; breakSide?: number; threatAt?: number };
   /** Direction to watch when idle at a guard post or around the leader. */
   watch: THREE.Vector3 | null;
   /** Window this bot holds (marksmen and anchors near their objective). */
@@ -2080,6 +2095,19 @@ export class BotManager implements BotServices {
             p.kind = 'air';
           }
         }
+        // No aircraft up: strafe enemy vehicles (the cannon only; missiles are for planes).
+        if (!p.target) {
+          let bestG = 1100;
+          for (const o of this.vehicles?.vehicles ?? []) {
+            if (o.flight || o.wrecked || !o.team || o.team === bot.team) continue;
+            const d = o.pos.distanceTo(v.pos);
+            if (d < bestG) {
+              bestG = d;
+              p.target = o;
+              p.kind = 'ground';
+            }
+          }
+        }
       } else {
         // Ground: enemy vehicles first, else enemies the side knows about.
         let best = 1300;
@@ -2119,7 +2147,27 @@ export class BotManager implements BotServices {
       const nose = v.velocity.clone().normalize();
       return { yaw, pitch, angle: nose.angleTo(d.normalize()), dist };
     };
-    if (t && tpos && p.kind === 'air') {
+    // An enemy fighter on our tail (behind us, close, pointing at us): break hard to one side,
+    // climbing or diving, full throttle, for a few seconds; then look again. Without this a
+    // plane with someone behind it flew straight on until it was shot down.
+    const threat = this.time >= (p.threatAt ?? 0) ? this.tailThreat(v, bot.team) : null;
+    if (threat) {
+      p.threatAt = this.time + 0.5;
+      if (this.time >= (p.breakUntil ?? 0)) {
+        p.breakUntil = this.time + JET_BREAK.time + Math.random() * 1.5;
+        p.breakSide = Math.random() < 0.5 ? -1 : 1;
+      }
+    }
+    if (this.time < (p.breakUntil ?? 0) && height > 70) {
+      out.aimYaw = f.yaw + (p.breakSide ?? 1) * JET_BREAK.turn;
+      out.aimPitch = height > 220 && Math.random() < 0.5 ? -0.35 : 0.4;
+      wantThrottle = 1;
+      // A fighter breaking turns into the attacker's path: a snap shot if it lines up.
+      if (t && tpos && p.kind === 'air') {
+        const d = tpos.clone().sub(v.pos);
+        fire = v.velocity.clone().normalize().angleTo(d.normalize()) < 0.06 && tpos.distanceTo(v.pos) < 700;
+      }
+    } else if (t && tpos && p.kind === 'air') {
       // The cannon is hitscan (and missiles home): point the nose at the plane itself, not ahead of it.
       const a = lookAt(tpos);
       out.aimYaw = a.yaw;
@@ -2141,7 +2189,7 @@ export class BotManager implements BotServices {
         out.aimYaw = a.yaw;
         out.aimPitch = a.pitch;
         fire = a.angle < 0.06 && a.dist < 750;
-        alt = a.angle < 0.05 && a.dist < 850 && a.dist > 250;
+        alt = v.kind !== 'fighter' && a.angle < 0.05 && a.dist < 850 && a.dist > 250;
         if (a.dist < 180 || height < 90) p.pullUntil = this.time + 3;
         wantThrottle = 0.55;
       }
@@ -2162,6 +2210,27 @@ export class BotManager implements BotServices {
     if (v.pullTrigger(0, fire, this.time, STEP)) this.fireMount?.(v, 0, { id: bot.id, name: bot.name, team: bot.team }, null);
     if (v.altMounts[0] && v.pullTrigger(0, alt, this.time, STEP, true)) this.fireMount?.(v, 0, { id: bot.id, name: bot.name, team: bot.team }, null, true);
     if (fire || alt) bot.firingUntil = this.time + 0.5;
+  }
+
+  private readonly jetA = new THREE.Vector3();
+  private readonly jetB = new THREE.Vector3();
+  private readonly jetC = new THREE.Vector3();
+
+  /** An enemy fighter behind `v` within `JET_BREAK.range` with its nose on it, or null. */
+  private tailThreat(v: Vehicle, team: Team): Vehicle | null {
+    const fwd = this.jetA.copy(v.velocity).normalize();
+    for (const o of this.vehicles?.vehicles ?? []) {
+      if (o.kind !== 'fighter' || o.wrecked || o.home === team || !o.seats[0]) continue;
+      const rel = this.jetB.subVectors(v.pos, o.pos);
+      const d = rel.length();
+      if (d > JET_BREAK.range || d < 1) continue;
+      rel.divideScalar(d);
+      // Behind us (we fly away from it) and its nose points at us.
+      if (rel.dot(fwd) < 0.3) continue;
+      const nose = this.jetC.copy(o.velocity).normalize();
+      if (nose.dot(rel) > Math.cos(JET_BREAK.cone)) return o;
+    }
+    return null;
   }
 
   /**
@@ -2400,22 +2469,52 @@ export class BotManager implements BotServices {
    * Lobbing guns: an enemy the side has spotted (not necessarily seen from
    * here) within the gun's range, the one with most others round it.
    */
+  /**
+   * What a lobbing gun (the self-propelled howitzer) fires at when its crew
+   * sees nothing: enemies the side spotted just now, worth a shell — a group
+   * (2+ within 12 m), or one who has stayed put (dug in, camping a window);
+   * a lone soldier on the move is left to the infantry (owner, 2026-10-10:
+   * the howitzer was getting more kills than every rifle together).
+   */
   private lobTarget(bot: Bot, from: THREE.Vector3, range: number): Combatant | null {
     let best: Combatant | null = null;
-    let bestN = 0;
+    let bestScore = LOB.minScore;
     for (const e of this.enemies[bot.team]) {
-      if (!e.alive || this.time - (this.spottedAt.get(e.id) ?? -Infinity) > SPOT_SEC * 2) continue;
+      if (!e.alive || this.time - (this.spottedAt.get(e.id) ?? -Infinity) > SPOT_SEC) continue;
       const d = e.feet.distanceTo(from);
       if (d < 60 || d > range) continue;
       let n = 1;
       for (const o of this.enemies[bot.team]) if (o !== e && o.alive && o.feet.distanceToSquared(e.feet) < 144) n++;
-      if (n > bestN) {
-        bestN = n;
+      const still = Math.hypot(e.velocity.x, e.velocity.z) < 0.4;
+      const score = n + (still ? LOB.still : 0);
+      if (score > bestScore) {
+        bestScore = score;
         best = e;
       }
     }
     return best;
   }
+
+  /**
+   * Where a lobbed shell is aimed: artillery doesn't land on the spot. The
+   * first round falls wide (`LOB.spread` of the range, at least `LOB.min` m;
+   * wider again without a direct view), later ones on the same spot close in
+   * (bracketing), a new spot starts over.
+   */
+  private lobScatter(v: Vehicle, aim: THREE.Vector3, dist: number, seen: boolean): void {
+    let r = this.lobRanging.get(v.id);
+    if (!r || r.at.distanceTo(aim) > LOB.same) {
+      r = { at: aim.clone(), shots: 0 };
+      this.lobRanging.set(v.id, r);
+    } else r.at.copy(aim);
+    const spread = Math.max(LOB.min, dist * LOB.spread) * (LOB.bracket[Math.min(r.shots, LOB.bracket.length - 1)] ?? 1) * (seen ? 1 : LOB.unseen);
+    r.shots++;
+    const a = Math.random() * Math.PI * 2;
+    const k = Math.sqrt(Math.random()) * spread;
+    aim.x += Math.cos(a) * k;
+    aim.z += Math.sin(a) * k;
+  }
+  private readonly lobRanging = new Map<number, { at: THREE.Vector3; shots: number }>();
 
   /**
    * A bot on a gun seat (a gunner, or a tank driver on the main gun) swings
@@ -2457,11 +2556,14 @@ export class BotManager implements BotServices {
     }
     const shellOk = !m.gun.shell || (m.gun.shell.lob ? dist > 60 : dist > 8);
     if (dist > m.gun.range || !shellOk || !v.pullTrigger(seat, true, this.time, STEP)) return;
-    // Bots' aim error, a bit wider than with a rifle (the plainer bots' much wider).
-    const err = this.skill.aimErrorMin * (smartGun ? 0.022 : 0.04) * dist;
-    aim.x += (Math.random() - 0.5) * err;
-    aim.y += (Math.random() - 0.5) * err * 0.5;
-    aim.z += (Math.random() - 0.5) * err;
+    if (shell?.lob) this.lobScatter(v, aim, dist, !!bot.target);
+    else {
+      // Bots' aim error, a bit wider than with a rifle (the plainer bots' much wider).
+      const err = this.skill.aimErrorMin * (smartGun ? 0.022 : 0.04) * dist;
+      aim.x += (Math.random() - 0.5) * err;
+      aim.y += (Math.random() - 0.5) * err * 0.5;
+      aim.z += (Math.random() - 0.5) * err;
+    }
     this.fireMount?.(v, seat, { id: bot.id, name: bot.name, team: bot.team }, aim);
     bot.firingUntil = this.time + 0.4;
   }

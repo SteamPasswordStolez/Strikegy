@@ -337,6 +337,8 @@ export class Bot implements Damageable, Combatant {
   /** The target's velocity when it was lost from view (where to look for it). */
   private readonly lostVel = new THREE.Vector3();
   private meleeAt = 0;
+  /** Panzerfaust at infantry: next time the bot weighs it. */
+  private rocketCheckAt = 0;
   private strafe = 0;
   private strafeUntil = 0;
   /** Fighting from cover: standing up to shoot (peek) or crouched behind it, until the given time. */
@@ -1228,8 +1230,17 @@ export class Bot implements Damageable, Combatant {
         if (!t) return;
         const d = this.feet.distanceTo(t.feet);
         if (d < 10 || d > 70 || s.alliesNear(this.team, t.feet, 5) > 0) return;
-        const dug = s.insideBuilding(t.feet) || s.fortifiedAt(t.feet) || s.inVehicle(t);
-        if (!dug && Math.random() > 0.06 * (0.5 + p.aggression)) return;
+        // Vehicles and fortifications: that is what it is for. Someone in a building: now and
+        // then, from 15 m on, checked about once a second (with every building enterable it had
+        // become the bots' main anti-infantry weapon); anyone else very rarely.
+        const hard = s.fortifiedAt(t.feet) || s.inVehicle(t);
+        const indoors = !hard && s.insideBuilding(t.feet);
+        if (!hard) {
+          if (s.time < this.rocketCheckAt) return;
+          this.rocketCheckAt = s.time + 1.2;
+          if (indoors ? d < 15 || Math.random() > 0.25 * (0.6 + p.aggression) : Math.random() > 0.06 * (0.5 + p.aggression)) return;
+        }
+        const dug = hard || indoors;
         use('rocket', this.tmp2.copy(t.feet).setY(t.feet.y + (dug ? 0.9 : 0.6)), 7 + Math.random() * 5);
         return;
       }

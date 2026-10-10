@@ -30,7 +30,8 @@ import type { Soldier } from './Soldier';
 const DEG = Math.PI / 180;
 const DOWN = new THREE.Vector3(0, -1, 0);
 /** Bots and jets (see Game): first try, how often, how near the base the bot must be, the people's head start on a free slot. */
-const BOT_JETS = { first: 12, every: 4, nearBase: 90, peopleFirst: 15 };
+/** `cooldown`: a lost jet's slot waits this long before a bot takes it (two jets duelling were shot down and back up every few seconds). */
+const BOT_JETS = { first: 12, every: 4, nearBase: 90, peopleFirst: 15, cooldown: 40 };
 /** Missiles can't lock a jet this long after it came in off the edge (s). */
 export const JET_LOCK_GRACE = 10;
 /** Jet cannon: fires at the crosshair within `cone` of the nose, onto an enemy aircraft within `assist` of it (rad). */
@@ -568,6 +569,7 @@ export class MatchVehicles {
       if (free < 0) continue;
       const people = [...this.sim.soldiers.values()].some((s) => s.team === team);
       if (people && this.sim.time - free < BOT_JETS.peopleFirst) continue;
+      if (this.sim.time - free < BOT_JETS.cooldown && this.sim.time > BOT_JETS.first + 1) continue;
       const base = this.sim.baseCenter(team);
       const bot = bots.bots.find((b) => b.team === team && b.alive && !b.riding && !b.benched && !b.puppet && b.feet.distanceTo(base) < BOT_JETS.nearBase && !b.inCombat(bots.time));
       if (!bot) continue;
