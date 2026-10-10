@@ -25,6 +25,14 @@ const DOWN = { x: 0, y: -1, z: 0 };
 const PERCEIVE_EVERY = 0.1;
 /** Enemies in view a bot checks line of sight to per look (the ones that matter most). */
 const PERCEIVE_LOOKS = 8;
+/**
+ * Tree crowns: past this share of the body hidden (1 - e^-depth, foliage.ts)
+ * nobody is seen, a shooter's flashes past the second; aim error grows by up
+ * to LEAF_AIM x with the share hidden.
+ */
+const LEAF_HIDE = 0.7;
+const LEAF_HIDE_FIRING = 0.9;
+const LEAF_AIM = 4;
 const THINK_EVERY = 0.25;
 const CROUCH_HEIGHT = MOVE.crouchHeight;
 /** Teammates' enemy sightings farther than this (m) don't send a bot hunting. */
@@ -311,6 +319,8 @@ export class Bot implements Damageable, Combatant {
   /** Flashbanged: blind until this sim time. */
   private blindUntil = -Infinity;
   private tracked = 0;
+  /** Share of the target the tree crowns hide (0..1, from the last look). */
+  private leafCover = 0;
 
   // Movement
   private readonly path: THREE.Vector3[] = [];
@@ -796,6 +806,7 @@ export class Bot implements Damageable, Combatant {
     this.perceiveCount++;
     let best: Combatant | null = null;
     let bestDist = Infinity;
+    let bestCover = 0;
     // First pass (the wasm core): who is in view, notice fading for the rest,
     // and the few in view that matter most — a crowd in view can't all be
     // tracked at once. Vehicle gunners watch the sky for aircraft further out.
@@ -828,14 +839,18 @@ export class Bot implements Damageable, Combatant {
       const head = this.tmp.copy(e.feet).setY(e.feet.y + e.eyeHeight);
       const chest = this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7);
       let visible = s.canSee(this, e, eye, head, chest);
-      // Tree crowns in between hide people at range (thick woods completely).
-      let leaves = 0;
-      if (visible && dist > 12) {
-        leaves = s.foliage(eye, this.tmp2.copy(e.feet).setY(e.feet.y + e.eyeHeight * 0.7));
-        if (leaves > (firing ? 2.4 : 1.4) && progress < 1) visible = false;
+      // Tree crowns in between: the share of the body they hide (the better of
+      // chest and head shows). Mostly hidden is unseen, also for someone already
+      // spotted; muzzle flashes show through more.
+      let cover = 0;
+      if (visible && dist > 2) {
+        let tau = s.foliage(eye, chest);
+        if (tau > 0.1) tau = Math.min(tau, s.foliage(eye, head));
+        cover = 1 - Math.exp(-tau);
+        if (cover > (firing ? LEAF_HIDE_FIRING : LEAF_HIDE)) visible = false;
       }
       if (visible) {
-        const hidden = 1 + leaves * (firing ? 0.8 : 2);
+        const hidden = 1 + cover * (firing ? 2 : 5);
         // Someone crouched and still is harder to pick out; running draws the eye.
         const moving = Math.hypot(e.velocity.x, e.velocity.z);
         const posture = firing ? 1 : (e.eyeHeight < 1.3 ? 1.35 : 1) * (moving > 4.5 ? 0.85 : moving < 0.5 ? 1.15 : 1);
@@ -852,6 +867,7 @@ export class Bot implements Damageable, Combatant {
           if (d < bestDist) {
             best = e;
             bestDist = d;
+            bestCover = cover;
           }
         }
       } else {
@@ -870,6 +886,7 @@ export class Bot implements Damageable, Combatant {
       this.aimHead = false;
     }
     this.target = best;
+    this.leafCover = bestCover;
     // Over cover often only the head shows: aim at what can be seen.
     if (best && s.time >= this.headCheckAt) {
       this.headCheckAt = s.time + 0.3;
@@ -1609,7 +1626,8 @@ export class Bot implements Damageable, Combatant {
       // Error drifts smoothly between re-sampled offsets, shrinking as the bot settles.
       if (s.time > this.jitterAt) {
         const p = this.personality;
-        const shaken = 1 + this.suppression * 1.2;
+        // Through leaves the aim is a guess at a shape.
+        const shaken = (1 + this.suppression * 1.2) * (1 + this.leafCover * LEAF_AIM);
         const err = aimErrorDeg(skill.aimError * p.aim, skill.aimErrorMin * p.aim, skill.settleTime, this.tracked) * DEG * shaken;
         const a = Math.random() * Math.PI * 2;
         const r = err * Math.sqrt(Math.random());

@@ -270,7 +270,7 @@ export class MatchSim {
     bots.gadgets = this.gadgets;
     bots.squadKey = (b) => this.squadKey(b.id);
     bots.setTactical(this.world.built.windows, this.world.built.footprints);
-    if (map.trees) bots.setForest(map.trees, map.world.size);
+    if (map.trees) bots.setForest(map.trees, map.world.size, (x, z) => this.world.terrain.heightAt(x, z), map.world.flora);
     if (this.world.water) bots.setWater(this.world.water);
     bots.fort = this.fort;
     bots.fortBlocked = (slot) => this.kit.inTheWay(slot);

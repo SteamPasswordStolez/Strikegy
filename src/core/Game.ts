@@ -633,7 +633,7 @@ export class Game {
         const tactics = await loadTactics(this.nav, this.physics, () => this.loadStep(0.76, 'load.tactics'));
         this.bots.setTactics(tactics, map.world.size);
         if (import.meta.env.DEV) console.info(`[strikegy] tactical points: ${tactics.count} in ${Math.round(performance.now() - tTac)} ms`);
-        if (map.trees) this.bots.setForest(map.trees, map.world.size);
+        if (map.trees) this.bots.setForest(map.trees, map.world.size, (x, z) => terrain.heightAt(x, z), map.world.flora);
         if (water) this.bots.setWater(water);
         const bots = this.bots;
         this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, this.myTeam, hitId, pellet ? 0.35 : 1);
@@ -3795,7 +3795,7 @@ export class Game {
         { label: t('lobby.back'), onClick: () => this.quit() },
       ]);
     };
-    await this.setupNetBots(net, map, built, water);
+    await this.setupNetBots(net, map, terrain, built, water);
     for (const s of opts.start.roster) this.scores.add(s.id, s.name, s.team);
     this.deployFlow = true;
     this.deployed = false;
@@ -3824,7 +3824,7 @@ export class Game {
    * browser draws, and their place, rounds, throws, revives and medkits go to
    * the server, which judges them (`MatchRoom.applyBots`).
    */
-  private async setupNetBots(net: NetMatch, map: MapDef, built: Parameters<Game['setupNet']>[2], water: WaterMap | null): Promise<void> {
+  private async setupNetBots(net: NetMatch, map: MapDef, terrain: Terrain, built: Parameters<Game['setupNet']>[2], water: WaterMap | null): Promise<void> {
     const start = net.start;
     if (!this.nav) return;
     const bots = new BotManager(this.renderer.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, () => this.netHumans(net), map.spawns, {
@@ -3835,7 +3835,7 @@ export class Game {
     });
     bots.setTactical(built.windows, built.footprints);
     bots.setTactics(await loadTactics(this.nav, this.physics), map.world.size);
-    if (map.trees) bots.setForest(map.trees, map.world.size);
+    if (map.trees) bots.setForest(map.trees, map.world.size, (x, z) => terrain.heightAt(x, z), map.world.flora);
     if (water) bots.setWater(water);
     bots.viewers = () => [this.player.feet];
     bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;

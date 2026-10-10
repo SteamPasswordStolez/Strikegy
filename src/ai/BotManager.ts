@@ -7,7 +7,7 @@ import { computeDamage, type DamageSource, type HitboxRegistry } from '@/combat/
 import type { AudioSystem } from '@/audio/AudioSystem';
 import type { Effects } from '@/render/Effects';
 import { LAYER_FX } from '@/render/layers';
-import type { SpawnPoint, Team } from '@/world/mapTypes';
+import type { Flora, SpawnPoint, Team } from '@/world/mapTypes';
 import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
 import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
@@ -32,6 +32,7 @@ import { TANK_KINDS } from '@/vehicles/vehicleData';
 import { t as tr } from '@/i18n';
 import type { TacticalMap } from './tactics';
 import { DangerMap } from './danger';
+import { Crowns } from './foliage';
 import { core } from '@/wasm/core';
 import { CROWD_AIR, CROWD_ARMOUR, CROWD_BOT, CROWD_FIRING, CROWD_HAS_GOAL, Crowd } from './crowd';
 
@@ -131,11 +132,6 @@ const BRIDGE_DETOUR = 90;
 /** A bot on a bridge (within this many metres of its middle) makes it this much "longer" for route picking. */
 const BRIDGE_CROWD_RADIUS = 25;
 const BRIDGE_CROWD = 12;
-/** Foliage grid cell (m) and sampling step along a sight line (m). */
-const LEAF_CELL = 3;
-const LEAF_STEP = 2;
-/** Foliage per unit of tree scale in a cell, per sample. */
-const LEAF_WEIGHT = 0.25;
 const COVER_SAMPLES = 10;
 /**
  * Smarter behaviour (normal / hard bots): cover from the map's tactical
@@ -418,7 +414,7 @@ export class BotManager implements BotServices {
   /** Scratch: the people's slots this step. */
   private readonly humanSlots: number[] = [];
   private readonly contacts = new Map<string, SquadContact>();
-  private leaves: { data: Float32Array; cols: number; rows: number; x0: number; z0: number } | null = null;
+  private crowns: Crowns | null = null;
   private water: WaterMap | null = null;
   private posts: Post[] = [];
   private footprints: Footprint[] = [];
@@ -884,20 +880,9 @@ export class BotManager implements BotServices {
     }
   }
 
-  /** Trees in the playable area ([x, z, scale]): tree crowns hide people at range. */
-  setForest(trees: readonly (readonly [number, number, number])[], size: readonly [number, number]): void {
-    if (!trees.length) return;
-    const cols = Math.ceil(size[0] / LEAF_CELL);
-    const rows = Math.ceil(size[1] / LEAF_CELL);
-    const x0 = -size[0] / 2;
-    const z0 = -size[1] / 2;
-    const data = new Float32Array(cols * rows);
-    for (const [x, z, s] of trees) {
-      const c = Math.floor((x - x0) / LEAF_CELL);
-      const r = Math.floor((z - z0) / LEAF_CELL);
-      if (c >= 0 && r >= 0 && c < cols && r < rows) data[r * cols + c]! += s;
-    }
-    this.leaves = { data, cols, rows, x0, z0 };
+  /** Trees in the playable area ([x, z, scale]): their crowns hide people (see foliage.ts). */
+  setForest(trees: readonly (readonly [number, number, number])[], size: readonly [number, number], heightAt: (x: number, z: number) => number, flora: Flora = 'conifer'): void {
+    this.crowns = trees.length ? new Crowns(trees, size, heightAt, flora) : null;
   }
 
   setWater(water: WaterMap): void {
@@ -905,21 +890,7 @@ export class BotManager implements BotServices {
   }
 
   foliage(from: THREE.Vector3, to: THREE.Vector3): number {
-    const g = this.leaves;
-    if (!g) return 0;
-    const dx = to.x - from.x;
-    const dz = to.z - from.z;
-    const len = Math.hypot(dx, dz);
-    // The trees right next to either end don't hide anything (you look past them).
-    const n = Math.floor((len - 6) / LEAF_STEP);
-    let sum = 0;
-    for (let i = 0; i <= n; i++) {
-      const t = (3 + i * LEAF_STEP) / len;
-      const c = Math.floor((from.x + dx * t - g.x0) / LEAF_CELL);
-      const r = Math.floor((from.z + dz * t - g.z0) / LEAF_CELL);
-      if (c >= 0 && r >= 0 && c < g.cols && r < g.rows) sum += g.data[r * g.cols + c]!;
-    }
-    return sum * LEAF_WEIGHT;
+    return this.crowns ? this.crowns.depth(from.x, from.y, from.z, to.x, to.y, to.z) : 0;
   }
 
   waterDepth(p: THREE.Vector3): number {
