@@ -83,6 +83,51 @@ export interface KitPiece {
   mat: KitMaterial;
   /** Own colour for surface pieces (paint, canvas...), instead of the object's. */
   tint?: string;
+  /** Chamfer depth of a chamfered box (its first 12 triangles are the faces; see unchamfer). */
+  bevel?: number;
+  /** Thin bar (rope, hose, rail): left out of the far look. */
+  thin?: boolean;
+  /** Its own far look (null: none), placed like `geo` (keep the two in step when moving a piece). */
+  far?: THREE.BufferGeometry | null;
+}
+
+/**
+ * The far look of a chamfered box: its six faces pushed back out to the
+ * box's edges, the bevel strips and corners dropped (12 triangles instead of
+ * 44). Works on the piece as placed (any rotation / uniform scale since).
+ */
+export function unchamfer(geo: THREE.BufferGeometry, c: number): THREE.BufferGeometry {
+  const src = geo.getAttribute('position');
+  const pos = new Float32Array(36 * 3);
+  const v = (i: number) => new THREE.Vector3(src.getX(i), src.getY(i), src.getZ(i));
+  for (let q = 0; q < 6; q++) {
+    const verts = Array.from({ length: 6 }, (_, k) => v(q * 6 + k));
+    const corners: THREE.Vector3[] = [];
+    for (const p of verts) if (!corners.some((o) => o.distanceToSquared(p) < 1e-10)) corners.push(p);
+    const fc = corners.reduce((s, p) => s.add(p), new THREE.Vector3()).multiplyScalar(1 / corners.length);
+    const q0 = corners[0]!;
+    const others = corners.slice(1).sort((a, b) => a.distanceToSquared(q0) - b.distanceToSquared(q0));
+    const u = others[0]!.clone().sub(q0);
+    const w = others[1]!.clone().sub(q0);
+    const lu = u.length() / 2;
+    const lw = w.length() / 2;
+    u.normalize();
+    w.normalize();
+    for (let k = 0; k < 6; k++) {
+      const d = verts[k]!.clone().sub(fc);
+      const du = d.dot(u);
+      const dw = d.dot(w);
+      const out = fc.clone().addScaledVector(u, du * ((lu + c) / Math.max(lu, 1e-6))).addScaledVector(w, dw * ((lw + c) / Math.max(lw, 1e-6)));
+      pos.set([out.x, out.y, out.z], (q * 6 + k) * 3);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  for (const name of ['normal', 'uv'] as const) {
+    const a = geo.getAttribute(name);
+    g.setAttribute(name, new THREE.BufferAttribute((a.array as Float32Array).slice(0, 36 * a.itemSize), a.itemSize));
+  }
+  return g;
 }
 
 export interface KitBox {
@@ -101,8 +146,15 @@ export interface KitModel {
 
 type V3 = [number, number, number];
 
-/** Chamfered kit boxes: boxes with no side under `minSize` (m) get bevels of `share` of their thinnest side, at most `max`. */
-const BEVEL = { minSize: 0.08, share: 0.12, max: 0.035 };
+/** Bars thinner than this (radius, m) are left out of far looks. */
+const THIN = 0.03;
+
+/**
+ * Chamfered kit boxes: boxes with no side under `minSize` (m) get bevels of
+ * `share` of their thinnest side, at most `max`. Thinner members (planks, posts)
+ * would get a bevel of a cm or two, gone a few metres away, for 3.7x the triangles.
+ */
+const BEVEL = { minSize: 0.15, share: 0.12, max: 0.035 };
 
 /**
  * A w x h x d box centred on the origin with its 12 edges cut at 45° (`c` deep):
@@ -254,6 +306,7 @@ export class KitBuilder {
     const len = curve.getLength();
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len, uv.getY(i) * Math.PI * 2 * r);
     this.add(mat, g);
+    if (r < THIN) this.pieces[this.pieces.length - 1]!.thin = true;
   }
 
   /**
@@ -297,6 +350,7 @@ export class KitBuilder {
     const mid = va.add(vb).multiplyScalar(0.5);
     g.translate(mid.x, mid.y, mid.z);
     this.add(mat, g);
+    if (r < THIN) this.pieces[this.pieces.length - 1]!.thin = true;
   }
 
   /**
@@ -310,7 +364,9 @@ export class KitBuilder {
     if (w <= 0 || h <= 0 || d <= 0) return;
     const min = Math.min(w, h, d);
     if (min >= BEVEL.minSize && mat !== 'glass' && mat !== 'water') {
-      this.add(mat, chamferedBox(w, h, d, Math.min(BEVEL.max, min * BEVEL.share)), at, rot);
+      const c = Math.min(BEVEL.max, min * BEVEL.share);
+      this.add(mat, chamferedBox(w, h, d, c), at, rot);
+      this.pieces[this.pieces.length - 1]!.bevel = c;
       return;
     }
     const g = new THREE.BoxGeometry(w, h, d);
@@ -548,23 +604,30 @@ const KITS: Record<ModelKind, Kit> = {
     // door leaves at +z with locking bars, corner posts with castings, rails.
     // Painted steel in the object's colour (chips, rust runs).
     const post = 0.15;
+    // Trapezoid corrugation: flat crest, slope, flat trough, slope. Sampled at
+    // four points a period (the corners), u running 0..1 over n periods.
     const corr = (u: number, n: number) => {
-      // Trapezoid corrugation: flat crest, slopes, flat trough.
-      const t = (u * n) % 1;
-      return t < 0.3 ? 1 : t < 0.5 ? 1 - (t - 0.3) / 0.2 : t < 0.8 ? 0 : (t - 0.8) / 0.2;
+      const t = Math.round(((u * n) % 1) * 4) % 4;
+      return t === 0 || t === 1 ? 1 : 0;
+    };
+    // Positions along a panel: the corners at 0, 0.3, 0.5, 0.8 of each period.
+    const at = (u: number, n: number) => {
+      const k = Math.floor(u * n + 1e-6);
+      const t = Math.round((u * n - k) * 4) % 4;
+      return (k + [0, 0.3, 0.5, 0.8][t]!) / n;
     };
     const len = d - 2 * post;
     const hi = h - 0.32;
     const nLong = Math.round(len / 0.28);
     for (const s of [-1, 1]) {
-      b.grid('paint', nLong * 5, 1, (u, v) => {
-        const z = s * (-len / 2 + u * len);
+      b.grid('paint', nLong * 4, 1, (u, v) => {
+        const z = s * (-len / 2 + at(u, nLong) * len);
         return [s * (w / 2 - 0.05 + 0.04 * corr(u, nLong)), 0.16 + v * hi, z];
       });
     }
     // Back end (-z) corrugated across x.
     const nEnd = Math.round((w - 2 * post) / 0.28);
-    b.grid('paint', nEnd * 5, 1, (u, v) => [-(w / 2 - post) + u * (w - 2 * post), 0.16 + v * hi, -d / 2 + 0.05 - 0.035 * corr(u, nEnd)]);
+    b.grid('paint', nEnd * 4, 1, (u, v) => [-(w / 2 - post) + at(u, nEnd) * (w - 2 * post), 0.16 + v * hi, -d / 2 + 0.05 - 0.035 * corr(u, nEnd)]);
     // Roof: shallow cross corrugation, a dent here and there.
     b.grid('paint', 8, Math.round(d / 0.5), (u, v) => {
       const x = -w / 2 + post * 0.6 + u * (w - post * 1.2);
@@ -577,7 +640,7 @@ const KITS: Record<ModelKind, Kit> = {
     for (const s of [-1, 1]) {
       const cx = s * leaf * 0.5;
       const n = Math.round(leaf / 0.2);
-      b.grid('paint', n * 5, 1, (u, v) => [cx + leaf / 2 - 0.01 - u * (leaf - 0.02), 0.16 + v * hi, d / 2 - 0.04 + 0.02 * corr(u, n)]);
+      b.grid('paint', n * 4, 1, (u, v) => [cx + leaf / 2 - 0.01 - at(u, n) * (leaf - 0.02), 0.16 + v * hi, d / 2 - 0.04 + 0.02 * corr(u, n)]);
       for (const bx of [-0.3, 0.3]) {
         const x = cx + bx * leaf;
         b.rod('metal', [x, 0.2, d / 2 + 0.02], [x, h - 0.2, d / 2 + 0.02], 0.022, 6);
@@ -772,6 +835,11 @@ const KITS: Record<ModelKind, Kit> = {
       const layers = T > 0.7 && r < rows - 1 ? 2 : 1;
       for (let k = 0; k < layers; k++) {
         const tz = layers === 2 ? (k - 0.5) * (T / 2) : 0;
+        // Far look: the whole course as one long bag (the joints are under a pixel there).
+        const course = bagGeometry(L, bagH * 1.05, layers === 2 ? T / 2 : T);
+        if (!alongX) course.rotateY(Math.PI / 2);
+        course.translate(...(alongX ? [0, bagH * (r + 0.5), tz] : [tz, bagH * (r + 0.5), 0]) as V3);
+        let first = true;
         for (let x = -L / 2 + bagL / 2 - shift; x < L / 2 - bagL * 0.3; x += bagL) {
           const cx = Math.max(-L / 2 + bagL / 2, Math.min(L / 2 - bagL / 2, x));
           const jitter = (rand() - 0.5) * 0.04;
@@ -780,7 +848,8 @@ const KITS: Record<ModelKind, Kit> = {
           const g = bagGeometry(bagL - 0.02, bagH * 1.05, layers === 2 ? T / 2 : T);
           if (!alongX) g.rotateY(Math.PI / 2);
           g.translate(...at);
-          b.pieces.push({ geo: g, mat: 'body' });
+          b.pieces.push({ geo: g, mat: 'body', far: first ? course : null });
+          first = false;
         }
       }
     }
@@ -1142,6 +1211,7 @@ const KITS: Record<ModelKind, Kit> = {
       KITS.sandbags(bags, w - 0.8, 0.4, 0.5, () => 0.5);
       for (const p of bags.pieces) {
         p.geo.translate(0, inner + roof, -d / 2 + 0.15);
+        p.far?.translate(0, inner + roof, -d / 2 + 0.15);
         b.pieces.push(p);
       }
     }
