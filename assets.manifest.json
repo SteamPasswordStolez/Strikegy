@@ -139,5 +139,24 @@
       "res": "2k",
       "sky": "overcast"
     }
+  },
+  "characters_trial": {
+    "_note": "Cutscene character trial (owner approved 2026-10-11). Raw files in assets-src/rocketbox (git-ignored); nothing shipped yet. MIT: if shipped, the copyright notice goes in the credits.",
+    "source": "Microsoft Rocketbox, https://github.com/microsoft/Microsoft-Rocketbox (MIT, Copyright (c) 2020 Microsoft)",
+    "avatars": [
+      "Professions/Business_Male_02",
+      "Adults/Male_Adult_10",
+      "Professions/Military_Male_02"
+    ],
+    "animations": [
+      "m_gestic_talk_excited_01",
+      "m_gestic_talk_nervous_01",
+      "m_gestic_listen_angry_01",
+      "m_drink_idle",
+      "m_drink_drinking",
+      "m_idle_breathe_01",
+      "m_idle_angry_01"
+    ],
+    "previews": "all Adults / Professions preview PNGs (for picking faces)"
   }
 }
