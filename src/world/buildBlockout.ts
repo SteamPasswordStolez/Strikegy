@@ -7,7 +7,7 @@ import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
 import { buildBuilding, type BuildingDoor, type WindowSpot } from './buildings';
 import { WALL } from './buildingParts';
-import { buildKit, kitMaterials, MODEL_KINDS, watchtowerLadder, type KitMaterial } from './modelKits';
+import { buildKit, kitMaterials, MODEL_KINDS, unchamfer, watchtowerLadder, type KitMaterial } from './modelKits';
 
 const DEFAULT_MATERIAL: Record<MapObject['type'], SurfaceMaterial> = {
   wall: 'concrete',
@@ -30,6 +30,8 @@ interface Batch {
   grime?: boolean;
   /** Building interiors (see INSIDE_TAG). */
   inside?: boolean;
+  /** Map kits: each geometry's far look (null: left out far away), drawn past KIT_FAR (see addKitPieces). */
+  far?: (THREE.BufferGeometry | null)[];
 }
 
 /**
@@ -52,6 +54,13 @@ const GRIME = { dark: 0.3, height: 2.6, minHeight: 1.2 };
  */
 const KIT_SHADE = { contact: 0.38, height: 0.8, under: 0.55 };
 
+/**
+ * Map kits' far look: parts under `drop` m (bounding radius) are left out
+ * and chamfered boxes drawn plain once the camera is `distance` m beyond
+ * their cell's bounding sphere.
+ */
+const KIT_FAR = { distance: 60, drop: 0.1 };
+
 /** The kits' shared looks, taking the shade from vertex colours. */
 function kitLooks(): ReturnType<typeof kitMaterials> {
   const looks = kitMaterials();
@@ -64,7 +73,7 @@ function kitLooks(): ReturnType<typeof kitMaterials> {
  * colours: one draw call per surface instead of one per surface and colour
  * (Ardennes had ~140 map batches, mostly tints of the same few surfaces).
  */
-function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind: SurfaceMaterial, color: string | undefined, geo: THREE.BufferGeometry, tag: string, castShadow: boolean): void {
+function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind: SurfaceMaterial, color: string | undefined, geo: THREE.BufferGeometry, tag: string, castShadow: boolean, far?: THREE.BufferGeometry | null): void {
   const key = `${kind}:${tag}:${castShadow ? 1 : 0}:v`;
   let batch = batches.get(key);
   if (!batch) {
@@ -73,6 +82,7 @@ function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind:
   }
   batch.geometries.push(geo);
   batch.tints!.push(color ? new THREE.Color(color) : surfaces.baseTint(kind));
+  if (far !== undefined) (batch.far ??= []).push(far);
 }
 
 /** True if the map shapes its ground (terrain / irregular boundary) instead of a flat box. */
@@ -205,11 +215,11 @@ export function buildBlockout(
 
   for (const b of batches.values()) {
     if (b.tints) {
-      b.geometries.forEach((g, i) => {
+      const colour = (g: THREE.BufferGeometry, tint: THREE.Color) => {
         const pos = g.getAttribute('position');
         const n = pos.count;
         const col = new Float32Array(n * 3);
-        const { r, g: gr, b: bl } = b.tints![i]!;
+        const { r, g: gr, b: bl } = tint;
         const shade = g.getAttribute('shade');
         let grime = false;
         if (b.grime) {
@@ -228,17 +238,49 @@ export function buildBlockout(
         }
         g.setAttribute('color', new THREE.BufferAttribute(col, 3));
         if (shade) g.deleteAttribute('shade');
-      });
+      };
+      b.geometries.forEach((g, i) => colour(g, b.tints![i]!));
+      b.far?.forEach((g, i) => g && colour(g, b.tints![i]!));
     }
-    for (const part of splitByCell(b.geometries, b.inside ? 0 : CELL.minVertices)) {
+    const cells = splitByCell(b.geometries, b.inside ? 0 : CELL.minVertices);
+    for (const idx of cells) {
+      const part = idx.map((i) => b.geometries[i]!);
       const merged = mergeGeometries(part);
       for (const g of part) g.dispose();
+      // Kits' far look, only where the batch was cut into cells (a cell's distance means something).
+      const farParts = b.far && cells.length > 1 ? idx.map((i) => b.far![i]).filter((g): g is THREE.BufferGeometry => !!g) : [];
+      const farMerged = farParts.length ? mergeGeometries(farParts) : null;
+      if (b.far) for (const i of idx) b.far[i]?.dispose();
       if (!merged) continue;
       merged.computeBoundingSphere();
       const mesh = new THREE.Mesh(merged, b.material);
       mesh.castShadow = b.castShadow;
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
+      if (b.far && cells.length > 1) {
+        // Kits: the detailed look near, the far look (plain boxes, no small
+        // parts) once the cell is KIT_FAR beyond its edge: chamfers and bolts
+        // are under a pixel there, and they were ~8 % of the frame's drawing.
+        const centre = merged.boundingSphere!.center.clone();
+        merged.translate(-centre.x, -centre.y, -centre.z);
+        const lod = new THREE.LOD();
+        lod.position.copy(centre);
+        lod.updateMatrix();
+        lod.addLevel(mesh, 0);
+        let far: THREE.Object3D = new THREE.Object3D();
+        if (farMerged) {
+          farMerged.translate(-centre.x, -centre.y, -centre.z);
+          const fm = new THREE.Mesh(farMerged, b.material);
+          fm.castShadow = b.castShadow;
+          fm.receiveShadow = true;
+          fm.matrixAutoUpdate = false;
+          far = fm;
+        }
+        lod.addLevel(far, KIT_FAR.distance + merged.boundingSphere!.radius);
+        root.add(lod);
+        continue;
+      }
+      farMerged?.dispose();
       if (!b.inside) {
         root.add(mesh);
         continue;
@@ -270,19 +312,19 @@ export function buildBlockout(
  */
 const CELL = { size: 96, minVertices: 20000 };
 
-function splitByCell(geos: THREE.BufferGeometry[], minVertices: number): THREE.BufferGeometry[][] {
+function splitByCell(geos: THREE.BufferGeometry[], minVertices: number): number[][] {
   const total = geos.reduce((n, g) => n + g.getAttribute('position').count, 0);
-  if (total < minVertices) return [geos];
-  const cells = new Map<string, THREE.BufferGeometry[]>();
+  if (total < minVertices) return [geos.map((_, i) => i)];
+  const cells = new Map<string, number[]>();
   const c = new THREE.Vector3();
-  for (const g of geos) {
+  geos.forEach((g, i) => {
     if (!g.boundingBox) g.computeBoundingBox();
     g.boundingBox!.getCenter(c);
     const key = `${Math.floor(c.x / CELL.size)},${Math.floor(c.z / CELL.size)}`;
     let list = cells.get(key);
     if (!list) cells.set(key, (list = []));
-    list.push(g);
-  }
+    list.push(i);
+  });
   return [...cells.values()];
 }
 
@@ -551,34 +593,49 @@ function addKitPieces(
         return shared[m];
     }
   };
-  for (const p of pieces) {
-    // Contact shade and darker undersides, in kit space (y = 0 on the ground).
-    const pos = p.geo.getAttribute('position');
-    const nrm = p.geo.getAttribute('normal');
+  // Contact shade and darker undersides, in kit space (y = 0 on the ground).
+  const shadeOf = (g: THREE.BufferGeometry) => {
+    const pos = g.getAttribute('position');
+    const nrm = g.getAttribute('normal');
     const shade = new Float32Array(pos.count);
     for (let k = 0; k < pos.count; k++) {
       const up = Math.min(1, Math.max(0, pos.getY(k) / KIT_SHADE.height));
       shade[k] = (1 - KIT_SHADE.contact * (1 - up * up * (3 - 2 * up))) * (nrm && nrm.getY(k) < -0.3 ? KIT_SHADE.under : 1);
     }
+    return shade;
+  };
+  const grey = (shade: Float32Array) => {
+    const col = new Float32Array(shade.length * 3);
+    for (let k = 0; k < shade.length; k++) col[k * 3] = col[k * 3 + 1] = col[k * 3 + 2] = shade[k]!;
+    return new THREE.BufferAttribute(col, 3);
+  };
+  for (const p of pieces) {
+    // Far look: chamfered boxes plain, small parts and thin bars left out.
+    p.geo.computeBoundingSphere();
+    const far = p.thin || p.geo.boundingSphere!.radius < KIT_FAR.drop ? null : p.bevel ? unchamfer(p.geo, p.bevel) : p.geo.clone();
+    const shade = shadeOf(p.geo);
+    const farShade = far && shadeOf(far);
     p.geo.applyMatrix4(toWorld);
+    far?.applyMatrix4(toWorld);
     // Surface pieces share per-surface batches (tint in vertex colours); the kit's own looks keep theirs.
     const surface = kitSurface(p.mat, p.tint, kind, color, trim);
     if (surface) {
       p.geo.setAttribute('shade', new THREE.BufferAttribute(shade, 1));
-      pushTinted(batches, surfaces, surface[0], surface[1], p.geo, 'kit', true);
+      if (far) far.setAttribute('shade', new THREE.BufferAttribute(farShade!, 1));
+      pushTinted(batches, surfaces, surface[0], surface[1], p.geo, 'kit', true, far);
       continue;
     }
-    const col = new Float32Array(pos.count * 3);
-    for (let k = 0; k < pos.count; k++) col[k * 3] = col[k * 3 + 1] = col[k * 3 + 2] = shade[k]!;
-    p.geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    p.geo.setAttribute('color', grey(shade));
+    if (far) far.setAttribute('color', grey(farShade!));
     const material = materialFor(p.mat);
     const key = `${material.uuid}kit`;
     let batch = batches.get(key);
     if (!batch) {
-      batch = { material, geometries: [], castShadow: true };
+      batch = { material, geometries: [], castShadow: true, far: [] };
       batches.set(key, batch);
     }
     batch.geometries.push(p.geo);
+    batch.far!.push(far);
   }
 }
 

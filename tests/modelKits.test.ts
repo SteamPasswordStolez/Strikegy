@@ -58,3 +58,23 @@ describe('model kits', () => {
     }
   });
 });
+
+describe('kit far looks', () => {
+  it('a chamfered box comes back to its full size with the bevels left out', async () => {
+    const { KitBuilder, unchamfer } = await import('@/world/modelKits');
+    const b = new KitBuilder();
+    b.box('paint', [2, 1, 0.6], [1, 2, 3], [0.3, 0.7, 0]);
+    const p = b.pieces[0]!;
+    expect(p.bevel).toBeGreaterThan(0);
+    expect(p.geo.getAttribute('position').count).toBe(44 * 3);
+    // Moved after building (as kits do), then flattened.
+    p.geo.rotateY(1.1);
+    const far = unchamfer(p.geo, p.bevel!);
+    expect(far.getAttribute('position').count).toBe(36);
+    const ref = new THREE.BoxGeometry(2, 1, 0.6);
+    ref.rotateY(0.7).rotateX(0.3).translate(1, 2, 3).rotateY(1.1);
+    ref.computeBoundingBox();
+    far.computeBoundingBox();
+    for (const k of ['min', 'max'] as const) for (const a of ['x', 'y', 'z'] as const) expect(far.boundingBox![k][a]).toBeCloseTo(ref.boundingBox![k][a], 4);
+  });
+});
