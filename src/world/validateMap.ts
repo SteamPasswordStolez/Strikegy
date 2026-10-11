@@ -2,7 +2,7 @@ import type { MapDef } from './mapTypes';
 
 const OBJECT_TYPES = new Set(['wall', 'cover', 'floor', 'ramp', 'prop']);
 const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor', 'winter', 'desert']);
-const MATERIALS = new Set(['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow', 'grass', 'sand', 'plaster', 'brick_old', 'roof', 'asphalt', 'cobble', 'rock']);
+const MATERIALS = new Set(['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow', 'grass', 'sand', 'plaster', 'brick_old', 'roof', 'asphalt', 'cobble', 'rock', 'canvas', 'paint', 'rubber']);
 
 function isNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);

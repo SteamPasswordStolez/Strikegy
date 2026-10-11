@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { SurfaceMaterial } from '@/world/mapTypes';
 import { TileNoise } from './noise';
-import { createRecipe, rasterize } from './surfaces';
+import { createRecipe, rasterize, type SurfaceImages } from './surfaces';
 
 function dataTexture(data: Uint8Array, size: number, srgb: boolean, maxAniso: number): THREE.DataTexture {
   const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
@@ -87,6 +87,9 @@ const MACRO_STRENGTH: Record<SurfaceMaterial, number> = {
   asphalt: 0.16,
   cobble: 0.12,
   rock: 0.18,
+  canvas: 0.1,
+  paint: 0.08,
+  rubber: 0.05,
 };
 
 interface ScannedSet {
@@ -113,6 +116,9 @@ const SCANNED_TILE_METERS: Record<SurfaceMaterial, number> = {
   asphalt: 4,
   cobble: 2.5,
   rock: 4,
+  canvas: 1.5,
+  paint: 2,
+  rubber: 1,
 };
 
 /** Surfaces that reuse another surface's scanned set (with their own tiling/tint). */
@@ -137,6 +143,9 @@ const SCANNED_TINT: Record<SurfaceMaterial, number> = {
   asphalt: 1,
   cobble: 1,
   rock: 1,
+  canvas: 1,
+  paint: 1,
+  rubber: 1,
 };
 
 /**
@@ -166,11 +175,15 @@ const TERRAIN_LAYERS: Partial<Record<SurfaceMaterial, { patch: [SurfaceMaterial,
 
 /** Kinds with a scanned texture set in public/assets/textures (grass and sand are procedural only: the scanned grass tried read as brown earth). */
 export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow', 'plaster', 'brick_old', 'roof', 'asphalt', 'cobble', 'rock'];
+/** Kinds drawn from procedural recipes only (rasterized in workers while the map loads). */
+export const PROCEDURAL_KINDS: SurfaceMaterial[] = ['grass', 'sand', 'paint', 'canvas', 'rubber'];
 
 /** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */
 export class SurfaceLibrary {
   private cache = new Map<SurfaceMaterial, THREE.MeshStandardMaterial>();
   private scanned = new Map<SurfaceMaterial, ScannedSet>();
+  /** Procedural surfaces rasterized ahead (see rasterizeAhead). */
+  private baked = new Map<SurfaceMaterial, SurfaceImages>();
 
   constructor(
     private readonly resolution: number,
@@ -204,6 +217,40 @@ export class SurfaceLibrary {
     );
   }
 
+  /**
+   * Rasterizes procedural surfaces in workers, all at once, so `get` finds
+   * them ready instead of drawing them on the main thread one after another
+   * (~0.1-0.3 s each at 512 px). Without workers (or on failure) `get` still
+   * rasterizes them itself.
+   */
+  async rasterizeAhead(kinds: SurfaceMaterial[]): Promise<void> {
+    if (typeof Worker === 'undefined') return;
+    await Promise.all(
+      kinds.map(
+        (kind) =>
+          new Promise<void>((resolve) => {
+            let worker: Worker;
+            try {
+              worker = new Worker(new URL('./surfaceWorker.ts', import.meta.url), { type: 'module' });
+            } catch {
+              resolve();
+              return;
+            }
+            const done = () => {
+              worker.terminate();
+              resolve();
+            };
+            worker.onmessage = (e: MessageEvent<{ kind: SurfaceMaterial; img: SurfaceImages }>) => {
+              this.baked.set(e.data.kind, e.data.img);
+              done();
+            };
+            worker.onerror = done;
+            worker.postMessage({ kind, size: this.resolution });
+          }),
+      ),
+    );
+  }
+
   get(kind: SurfaceMaterial): THREE.MeshStandardMaterial {
     const hit = this.cache.get(kind);
     if (hit) return hit;
@@ -219,7 +266,8 @@ export class SurfaceLibrary {
       tint = SCANNED_TINT[kind];
     } else {
       const recipe = createRecipe(kind);
-      const img = rasterize(recipe, this.resolution);
+      const img = this.baked.get(kind) ?? rasterize(recipe, this.resolution);
+      this.baked.delete(kind);
       const aniso = Math.min(8, this.maxAnisotropy);
       map = dataTexture(img.albedo, img.size, true, aniso);
       normalMap = dataTexture(img.normal, img.size, false, aniso);

@@ -9,3 +9,6 @@ dist-server/
 assets-src/
 .snapshots/
 public/nav/
+
+# Model screenshot lab (scripts/bench/kitlab.mjs)
+public/maps/kitlab*.json

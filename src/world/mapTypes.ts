@@ -22,7 +22,13 @@ export type SurfaceMaterial =
   /** Cobbles: old-town streets, pavements and squares. */
   | 'cobble'
   /** Bare rock (steep terrain). */
-  | 'rock';
+  | 'rock'
+  /** Cotton duck: tents, tarps, covers (procedural; tinted). */
+  | 'canvas'
+  /** Painted steel with chips and rust (procedural; the colour is the paint). */
+  | 'paint'
+  /** Tyres and rubber parts (procedural). */
+  | 'rubber';
 /** Kind of trees on a map and in its scenery (default conifer). */
 export type Flora = 'conifer' | 'broadleaf' | 'palm';
 export type ObjectType = 'wall' | 'cover' | 'floor' | 'ramp' | 'prop';

@@ -76,11 +76,13 @@ export const MODEL_KINDS: readonly ModelKind[] = [
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
-export type KitMaterial = 'body' | 'trim' | 'metal' | 'dark' | 'glass' | 'rubber' | 'wood' | 'canvas' | 'concrete' | 'light' | 'redLight' | 'water' | 'dirt' | 'mesh' | 'snow';
+export type KitMaterial = 'body' | 'trim' | 'metal' | 'dark' | 'glass' | 'rubber' | 'wood' | 'canvas' | 'concrete' | 'light' | 'redLight' | 'water' | 'dirt' | 'mesh' | 'snow' | 'paint' | 'bronze';
 
 export interface KitPiece {
   geo: THREE.BufferGeometry;
   mat: KitMaterial;
+  /** Own colour for surface pieces (paint, canvas...), instead of the object's. */
+  tint?: string;
 }
 
 export interface KitBox {
@@ -99,13 +101,190 @@ export interface KitModel {
 
 type V3 = [number, number, number];
 
+/** Chamfered kit boxes: boxes with no side under `minSize` (m) get bevels of `share` of their thinnest side, at most `max`. */
+const BEVEL = { minSize: 0.08, share: 0.12, max: 0.035 };
+
+/**
+ * A w x h x d box centred on the origin with its 12 edges cut at 45° (`c` deep):
+ * 6 faces, 12 edge strips and 8 corner triangles (44 triangles), flat normals,
+ * non-indexed. UVs in meters, projected along each face's main axis like the
+ * plain boxes'.
+ */
+function chamferedBox(w: number, h: number, d: number, c: number): THREE.BufferGeometry {
+  const hx = w / 2;
+  const hy = h / 2;
+  const hz = d / 2;
+  const pos: number[] = [];
+  // A point on the chamfered box: s = signs of the corner, i = which axes are inset.
+  const p = (sx: number, sy: number, sz: number, ix: boolean, iy: boolean, iz: boolean): V3 => [sx * (hx - (ix ? c : 0)), sy * (hy - (iy ? c : 0)), sz * (hz - (iz ? c : 0))];
+  const tri = (a: V3, b: V3, e: V3) => pos.push(...a, ...b, ...e);
+  // Quads are given in any winding; each triangle is turned to face away from the centre.
+  const quad = (a: V3, b: V3, e: V3, f: V3) => {
+    tri(a, b, e);
+    tri(a, e, f);
+  };
+  for (const s of [-1, 1]) {
+    // Faces (inset on the two other axes).
+    quad(p(s, -1, -1, false, true, true), p(s, 1, -1, false, true, true), p(s, 1, 1, false, true, true), p(s, -1, 1, false, true, true));
+    quad(p(-1, s, -1, true, false, true), p(1, s, -1, true, false, true), p(1, s, 1, true, false, true), p(-1, s, 1, true, false, true));
+    quad(p(-1, -1, s, true, true, false), p(1, -1, s, true, true, false), p(1, 1, s, true, true, false), p(-1, 1, s, true, true, false));
+  }
+  // Edge strips between two faces.
+  for (const a of [-1, 1])
+    for (const b of [-1, 1]) {
+      // Along x (y = a, z = b side).
+      quad(p(-1, a, b, true, false, true), p(1, a, b, true, false, true), p(1, a, b, true, true, false), p(-1, a, b, true, true, false));
+      // Along y (x = a, z = b).
+      quad(p(a, -1, b, false, true, true), p(a, 1, b, false, true, true), p(a, 1, b, true, true, false), p(a, -1, b, true, true, false));
+      // Along z (x = a, y = b).
+      quad(p(a, b, -1, false, true, true), p(a, b, 1, false, true, true), p(a, b, 1, true, false, true), p(a, b, -1, true, false, true));
+    }
+  // Corner triangles.
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) tri(p(sx, sy, sz, false, true, true), p(sx, sy, sz, true, false, true), p(sx, sy, sz, true, true, false));
+  // Outward winding: flip any triangle whose normal points toward the centre.
+  const nrm: number[] = [];
+  const uv: number[] = [];
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  for (let i = 0; i < pos.length; i += 9) {
+    e1.set(pos[i + 3]! - pos[i]!, pos[i + 4]! - pos[i + 1]!, pos[i + 5]! - pos[i + 2]!);
+    e2.set(pos[i + 6]! - pos[i]!, pos[i + 7]! - pos[i + 1]!, pos[i + 8]! - pos[i + 2]!);
+    n.crossVectors(e1, e2).normalize();
+    const cx = (pos[i]! + pos[i + 3]! + pos[i + 6]!) / 3;
+    const cy = (pos[i + 1]! + pos[i + 4]! + pos[i + 7]!) / 3;
+    const cz = (pos[i + 2]! + pos[i + 5]! + pos[i + 8]!) / 3;
+    if (n.x * cx + n.y * cy + n.z * cz < 0) {
+      for (let k = 0; k < 3; k++) [pos[i + 3 + k], pos[i + 6 + k]] = [pos[i + 6 + k]!, pos[i + 3 + k]!];
+      n.negate();
+    }
+    const ax = Math.abs(n.x);
+    const ay = Math.abs(n.y);
+    const az = Math.abs(n.z);
+    for (let v = 0; v < 3; v++) {
+      nrm.push(n.x, n.y, n.z);
+      const x = pos[i + v * 3]!;
+      const y = pos[i + v * 3 + 1]!;
+      const z = pos[i + v * 3 + 2]!;
+      if (ax >= ay && ax >= az) uv.push(z + hz, y + hy);
+      else if (ay >= az) uv.push(x + hx, z + hz);
+      else uv.push(x + hx, y + hy);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return g;
+}
+
 class Builder {
   readonly pieces: KitPiece[] = [];
+  /** Colour given to the pieces added while set (painted / cloth parts of their own colour). */
+  tint: string | undefined;
 
-  /** Box with world-scale UVs (texture meters match the map boxes). */
+  /** Runs `fn` with pieces tinted `color`. */
+  tinted(color: string, fn: () => void): void {
+    const was = this.tint;
+    this.tint = color;
+    fn();
+    this.tint = was;
+  }
+
+  /** Surface of revolution about +Y: profile points (radius, y) from the bottom up. UVs in meters. */
+  lathe(mat: KitMaterial, pts: [number, number][], at: V3 = [0, 0, 0], seg = 24): void {
+    const g = new THREE.LatheGeometry(
+      pts.map(([r, y]) => new THREE.Vector2(r, y)),
+      seg,
+    );
+    const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i]![0] - pts[i - 1]![0], pts[i]![1] - pts[i - 1]![1]);
+    const around = Math.PI * 2 * Math.max(...pts.map(([r]) => r));
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * around, uv.getY(i) * len);
+    this.add(mat, g, at);
+  }
+
+  /**
+   * A surface over a grid: `f(u, v)` (u, v in 0..1) gives each point; smooth
+   * normals, UVs in meters along the grid lines. One-sided (seen from the side
+   * v x u points to) unless `double` (cloth seen from both sides).
+   */
+  grid(mat: KitMaterial, nu: number, nv: number, f: (u: number, v: number) => V3, double = false): void {
+    const pos: number[] = [];
+    const uv: number[] = [];
+    const pts: V3[] = [];
+    for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) pts.push(f(i / nu, j / nv));
+    const at = (i: number, j: number) => pts[j * (nu + 1) + i]!;
+    // Meters along u (per row) and v (per column) for the UVs.
+    for (let j = 0; j <= nv; j++) {
+      let su = 0;
+      for (let i = 0; i <= nu; i++) {
+        if (i > 0) su += dist3(at(i, j), at(i - 1, j));
+        let sv = 0;
+        for (let k = 1; k <= j; k++) sv += dist3(at(i, k), at(i, k - 1));
+        const p = at(i, j);
+        pos.push(p[0], p[1], p[2]);
+        uv.push(su, sv);
+      }
+    }
+    const index: number[] = [];
+    for (let j = 0; j < nv; j++)
+      for (let i = 0; i < nu; i++) {
+        const a = j * (nu + 1) + i;
+        index.push(a, a + nu + 1, a + 1, a + 1, a + nu + 1, a + nu + 2);
+      }
+    const sides = double ? [index, index.map((_, i) => index[i - (i % 3) + 2 - (i % 3)]!)] : [index];
+    for (const idx of sides) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      this.add(mat, g);
+    }
+  }
+
+  /** A round bar along a smooth path through `pts` (hoses, ropes, bent pipes). */
+  tube(mat: KitMaterial, pts: V3[], r: number, seg = 12, sides = 6): void {
+    const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)));
+    const g = new THREE.TubeGeometry(curve, seg, r, sides, false);
+    const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+    const len = curve.getLength();
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len, uv.getY(i) * Math.PI * 2 * r);
+    this.add(mat, g);
+  }
+
+  /** A straight round bar from `a` to `b`. */
+  rod(mat: KitMaterial, a: V3, b: V3, r: number, sides = 6): void {
+    const va = new THREE.Vector3(...a);
+    const vb = new THREE.Vector3(...b);
+    const len = va.distanceTo(vb);
+    if (len < 1e-4) return;
+    const g = new THREE.CylinderGeometry(r, r, len, sides, 1, true);
+    const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * Math.PI * 2 * r, uv.getY(i) * len);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
+    g.applyQuaternion(q);
+    const mid = va.add(vb).multiplyScalar(0.5);
+    g.translate(mid.x, mid.y, mid.z);
+    this.add(mat, g);
+  }
+
+  /**
+   * Box with world-scale UVs (texture meters match the map boxes). Boxes thick
+   * enough get chamfered edges: a sharp 90° edge never catches the light, so
+   * plain boxes read as flat cut-outs; a thin bevel draws the highlight line
+   * real objects have along their edges.
+   */
   box(mat: KitMaterial, size: V3, at: V3, rot: V3 = [0, 0, 0]): void {
     const [w, h, d] = size;
     if (w <= 0 || h <= 0 || d <= 0) return;
+    const min = Math.min(w, h, d);
+    if (min >= BEVEL.minSize && mat !== 'glass' && mat !== 'water') {
+      this.add(mat, chamferedBox(w, h, d, Math.min(BEVEL.max, min * BEVEL.share)), at, rot);
+      return;
+    }
     const g = new THREE.BoxGeometry(w, h, d);
     const uv = g.getAttribute('uv') as THREE.BufferAttribute;
     const dims: [number, number][] = [
@@ -151,14 +330,18 @@ class Builder {
     this.cyl('metal', r * 0.55, r * 0.55, width + 0.02, [x, y, z], [0, 0, Math.PI / 2], 10);
   }
 
-  private add(mat: KitMaterial, g: THREE.BufferGeometry, at: V3, rot: V3 = [0, 0, 0]): void {
+  private add(mat: KitMaterial, g: THREE.BufferGeometry, at: V3 = [0, 0, 0], rot: V3 = [0, 0, 0]): void {
     const m = new THREE.Matrix4().compose(new THREE.Vector3(...at), new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot)), new THREE.Vector3(1, 1, 1));
     g.applyMatrix4(m);
     // Merged batches need the same attribute set everywhere.
     const ng = g.index ? g.toNonIndexed() : g;
     if (ng !== g) g.dispose();
-    this.pieces.push({ geo: ng, mat });
+    this.pieces.push(this.tint ? { geo: ng, mat, tint: this.tint } : { geo: ng, mat });
   }
+}
+
+function dist3(a: V3, b: V3): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
 /** Builds a kit to fill a w x h x d box; `h` counts from the ground up. */
@@ -333,26 +516,80 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   tent(b, w, h, d) {
-    // Ridge tent: ridge along the long side, low walls, sloping roof.
+    // Ridge tent: poles every ~2.4 m, the canvas sagging between them and
+    // between eave and ridge, walls flaring out to the pegs, a rolled-up door
+    // flap at the front end, guy ropes out to pegs. Ridge along the long side.
     const alongX = w >= d;
     const L = alongX ? w : d;
     const S = alongX ? d : w;
     const wall = 0.9;
-    const pts: [number, number][] = [
-      [-S / 2, 0],
-      [S / 2, 0],
-      [S / 2, wall],
-      [0, h - 0.05],
-      [-S / 2, wall],
-    ];
-    const tent = new Builder();
-    tent.profile('canvas', pts, L);
-    // Door flap (darker) and guy ropes' stakes.
-    tent.box('dark', [0.04, h * 0.6, S * 0.35], [L / 2 + 0.01, h * 0.3, 0]);
-    for (const s of [-1, 1]) for (const e of [-1, 1]) tent.box('wood', [0.05, 0.3, 0.05], [e * (L / 2 - 0.3), 0.1, s * (S / 2 + 0.6)]);
-    tent.box('wood', [L + 0.2, 0.08, 0.08], [0, h - 0.02, 0]);
-    for (const p of tent.pieces) {
-      // The profile runs across local z; turn it when the tent is longer along z.
+    const ridge = h - 0.05;
+    const eave = S / 2 + 0.22;
+    const bays = Math.max(1, Math.round(L / 2.4));
+    const t = new Builder();
+    // Sag between poles along the length (0 at each pole) and across the panel.
+    const sagAlong = (x: number) => Math.abs(Math.sin(((x + L / 2) / L) * bays * Math.PI));
+    const wrinkle = (x: number, y: number) => 0.012 * Math.sin(x * 7.3 + y * 3.1) * Math.sin(x * 2.1 - y * 5.7);
+    for (const s of [-1, 1]) {
+      // Roof panel from the eave (u = 0) up to the ridge (u = 1).
+      t.grid('canvas', 6, bays * 8, (u, v) => {
+        const x = -L / 2 - 0.12 + v * (L + 0.24);
+        const z = s * (eave - u * eave);
+        const y = wall - 0.04 + u * (ridge - wall + 0.04);
+        const sag = 0.07 * sagAlong(x) * Math.sin(u * Math.PI) + 0.03 * Math.sin(u * Math.PI);
+        return s > 0 ? [x, y - sag + wrinkle(x, y), z] : [-x, y - sag + wrinkle(x, y), z];
+      });
+      // Side wall: hangs from the eave line, flares out at the foot, bellies in between poles.
+      t.grid('canvas', bays * 8, 3, (u, v) => {
+        const x = (s > 0 ? 1 : -1) * (-L / 2 + u * L);
+        const y = wall - 0.02 - v * (wall - 0.02);
+        const z = s * (S / 2 + 0.02 + v * v * 0.1 - 0.03 * sagAlong(x) * Math.sin(v * Math.PI));
+        return [x, y + wrinkle(x, y) * 0.5, z];
+      });
+      // Eave seam strip (doubled cloth) along each side.
+      t.box('canvas', [L + 0.24, 0.05, 0.08], [0, wall - 0.06, s * (eave - 0.02)], [s * 0.6, 0, 0]);
+    }
+    // Ends: gable panels (back closed, front with a door opening).
+    for (const e of [-1, 1]) {
+      const x = e * (L / 2 + 0.01);
+      const pts: [number, number][] = [
+        [-S / 2, 0],
+        [S / 2, 0],
+        [S / 2, wall],
+        [0, ridge],
+        [-S / 2, wall],
+      ];
+      const end = new Builder();
+      if (e < 0) end.profile('canvas', pts, 0.02);
+      else {
+        // Around a doorway 1.1 m wide, 1.9 m high: two side pieces and the gable above.
+        const dw = 0.55;
+        const dh = Math.min(1.9, ridge - 0.5);
+        end.profile('canvas', [[-S / 2, 0], [-dw, 0], [-dw, dh], [0, dh], [0, ridge], [-S / 2, wall]], 0.02);
+        end.profile('canvas', [[dw, 0], [S / 2, 0], [S / 2, wall], [0, ridge], [0, dh], [dw, dh]], 0.02);
+        // Dark inside, the rolled flap above the door, tie tapes.
+        end.box('dark', [0.02, dh, 2 * dw], [-0.25, dh / 2, 0]);
+        end.cyl('canvas', 0.11, 0.11, 2 * dw + 0.2, [0.12, dh + 0.08, 0], [Math.PI / 2, 0, 0], 10);
+        for (const sz of [-1, 1]) end.box('canvas', [0.02, 0.35, 0.03], [0.16, dh - 0.1, sz * (dw - 0.05)]);
+      }
+      for (const p of end.pieces) {
+        // Profiles run across z already, thin along x.
+        p.geo.translate(e < 0 ? x - 0.01 : x, 0, 0);
+        t.pieces.push(p);
+      }
+      // Pole tip through the ridge.
+      t.cyl('wood', 0.025, 0.025, 0.25, [x, ridge + 0.1, 0], [0, 0, 0], 6);
+    }
+    // Guy ropes from the eave at each pole out to a peg, both sides.
+    for (let i = 0; i <= bays; i++) {
+      const x = -L / 2 + (i * L) / bays;
+      for (const s of [-1, 1]) {
+        const peg: V3 = [x, 0.08, s * (eave + 1.1)];
+        t.tube('canvas', [[x, wall - 0.04, s * eave], [x, (wall - 0.04) * 0.45, s * (eave + 0.6)], peg], 0.008, 6, 4);
+        t.box('wood', [0.04, 0.22, 0.04], [peg[0], 0.07, peg[2]], [s * 0.3, 0, 0]);
+      }
+    }
+    for (const p of t.pieces) {
       if (!alongX) p.geo.rotateY(Math.PI / 2);
       b.pieces.push(p);
     }
@@ -453,37 +690,126 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   booth(b, w, h, d) {
+    // Checkpoint guard booth: plinth, panelled lower walls, a framed window band
+    // on all sides (two panes a side, door on +z), a dark room inside, flat roof
+    // with an overhang and a lamp; striped barrier arm beside it.
     const sill = 1;
     const top = h - 0.35;
-    b.box('body', [w, sill, d], [0, sill / 2, 0]);
-    // Window band on all sides, corner posts, door on one side.
-    b.box('glass', [w - 0.1, top - sill, d - 0.1], [0, (sill + top) / 2, 0]);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('body', [0.14, top - sill, 0.14], [sx * (w / 2 - 0.07), (sill + top) / 2, sz * (d / 2 - 0.07)]);
-    b.box('trim', [0.9, top - 0.05, 0.06], [0.3, top / 2, d / 2 + 0.01]);
-    b.box('body', [w, 0.12, d], [0, top + 0.06, 0]);
-    b.box('trim', [w + 0.5, 0.12, d + 0.5], [0, h - 0.1, 0]);
-    // Barrier arm beside it.
-    b.box('dark', [0.25, 1, 0.25], [w / 2 + 0.4, 0.5, 0]);
-    b.box('redLight', [0.1, 0.1, 3.2], [w / 2 + 0.4, 0.95, -1.6]);
+    b.box('concrete', [w + 0.2, 0.15, d + 0.2], [0, 0.075, 0]);
+    b.box('body', [w, sill - 0.15, d], [0, 0.15 + (sill - 0.15) / 2, 0]);
+    b.box('trim', [w + 0.04, 0.08, d + 0.04], [0, sill, 0]);
+    // The room inside (seen through the glass).
+    b.box('dark', [w - 0.3, top - sill, d - 0.3], [0, (sill + top) / 2, 0]);
+    // Window band: frames and glass inset a little on each side.
+    const band = top - sill;
+    for (const side of [0, 1, 2, 3]) {
+      const across = side < 2 ? w : d;
+      const f = new Builder();
+      const door = side === 0;
+      // In local space: the face at +z, running along x.
+      f.box('glass', [across - 0.14, band - 0.1, 0.02], [0, sill + band / 2, -0.05]);
+      f.box('paint', [across, 0.07, 0.07], [0, top - 0.035, 0]);
+      for (const x of [-across / 2 + 0.05, 0, across / 2 - 0.05]) if (!(door && x === 0)) f.box('paint', [0.07, band, 0.07], [x, sill + band / 2, 0]);
+      if (door) {
+        // Door leaf down to the ground on the right half: glazed top, panel below, handle.
+        f.box('glass', [across / 2 - 0.12, band - 0.1, 0.02], [across / 4, sill + band / 2, 0.02]);
+        f.box('paint', [across / 2 - 0.08, sill - 0.15, 0.05], [across / 4, 0.15 + (sill - 0.15) / 2, 0.03]);
+        f.box('paint', [0.06, top - 0.15, 0.06], [0.03, 0.15 + (top - 0.15) / 2, 0.03]);
+        f.box('metal', [0.12, 0.03, 0.04], [0.15, sill - 0.05, 0.08]);
+      }
+      const turn = side === 0 ? 0 : side === 1 ? Math.PI : side === 2 ? Math.PI / 2 : -Math.PI / 2;
+      const off = side < 2 ? d / 2 : w / 2;
+      for (const p of f.pieces) {
+        p.geo.translate(0, 0, off);
+        p.geo.rotateY(turn);
+        b.pieces.push(p);
+      }
+    }
+    // Roof: slab, overhang with a fascia, lamp and a short mast.
+    b.box('body', [w + 0.1, 0.12, d + 0.1], [0, top + 0.06, 0]);
+    b.box('trim', [w + 0.55, 0.14, d + 0.55], [0, h - 0.12, 0]);
+    b.box('paint', [w + 0.6, 0.06, d + 0.6], [0, h - 0.02, 0]);
+    b.cyl('light', 0.09, 0.12, 0.14, [w / 2 - 0.1, top + 0.08, d / 2 + 0.2], [0, 0, 0], 10);
+    b.cyl('metal', 0.015, 0.015, 0.8, [-w / 2 + 0.2, h + 0.4, -d / 2 + 0.2], [0, 0, 0], 4);
+    // Barrier: post with the motor box, counterweight, arm striped red / white.
+    const bx = w / 2 + 0.4;
+    b.tinted('#d8d4c8', () => {
+      b.box('paint', [0.3, 0.9, 0.3], [bx, 0.45, 0]);
+      b.box('paint', [0.36, 0.08, 0.36], [bx, 0.92, 0]);
+    });
+    b.box('dark', [0.22, 0.2, 0.5], [bx, 0.95, 0.35]);
+    const arm = 3.2;
+    const n = 8;
+    for (let i = 0; i < n; i++) b.tinted(i % 2 ? '#e8e4da' : '#b02a22', () => b.box('paint', [0.09, 0.1, arm / n], [bx, 0.95, -0.1 - (i + 0.5) * (arm / n)]));
+    b.cyl('rubber', 0.06, 0.06, 0.12, [bx, 0.95, -0.1 - arm], [Math.PI / 2, 0, 0], 8);
+    b.box('dark', [0.06, 0.6, 0.06], [bx, 0.3, -arm + 0.2]);
   },
 
   pump(b, w, h, d) {
-    b.box('concrete', [w + 0.3, 0.15, d + 0.5], [0, 0.075, 0]);
-    b.box('body', [w, h * 0.6, d], [0, 0.15 + (h * 0.6) / 2, 0]);
-    b.box('trim', [w * 0.9, h * 0.25, d * 0.8], [0, 0.15 + h * 0.6 + (h * 0.25) / 2, 0]);
-    for (const s of [-1, 1]) {
-      b.box('dark', [w * 0.6, h * 0.14, 0.02], [0, 0.15 + h * 0.72, s * (d / 2 + 0.01)]);
-      b.box('dark', [0.1, 0.25, 0.12], [s * (w / 2 + 0.05), 0.15 + h * 0.45, 0]);
-      b.cyl('rubber', 0.025, 0.025, h * 0.5, [s * (w / 2 + 0.1), 0.15 + h * 0.25, 0.1], [0.3, 0, 0], 6);
+    if (w < 1.2) {
+      // Fuel dispenser on a kerbed island: cabinet with a rounded head, lit
+      // display windows front and back, nozzles in holsters both sides with
+      // hoses hanging in loops, a price sign on top.
+      const isl = 0.15;
+      b.box('concrete', [w + 0.5, isl, d + 0.9], [0, isl / 2, 0]);
+      b.tinted('#d2c64a', () => b.box('paint', [w + 0.56, 0.05, d + 0.96], [0, isl + 0.01, 0]));
+      const body = h * 0.66;
+      b.box('body', [w, body, d], [0, isl + body / 2, 0]);
+      b.box('dark', [w + 0.02, 0.12, d + 0.02], [0, isl + 0.06, 0]);
+      // Head: rounded top profile across x, wider than the cabinet.
+      const hh = h - isl - body - 0.12;
+      b.profile('trim', [[-d / 2 - 0.03, 0], [d / 2 + 0.03, 0], [d / 2 + 0.03, hh * 0.7], [d / 2 - 0.08, hh], [-d / 2 + 0.08, hh], [-d / 2 - 0.03, hh * 0.7]], w + 0.04, [0, isl + body, 0]);
+      for (const s of [-1, 1]) {
+        // Display windows (front / back faces = +-z).
+        b.box('light', [w * 0.7, hh * 0.45, 0.02], [0, isl + body + hh * 0.42, s * (d / 2 + 0.035)]);
+        b.box('dark', [w * 0.8, 0.22, 0.02], [0, isl + body * 0.78, s * (d / 2 + 0.01)]);
+        // Holster and nozzle on each end (+-x), hose from the cabinet's foot up to it.
+        const x = s * (w / 2 + 0.04);
+        b.box('dark', [0.08, 0.2, 0.14], [x, isl + body * 0.62, 0]);
+        b.rod('dark', [x + s * 0.03, isl + body * 0.72, 0.02], [x + s * 0.08, isl + body * 0.55, 0.16], 0.025, 6);
+        b.tube('rubber', [[s * (w / 2 - 0.05), isl + body * 0.7, -d / 2 + 0.1], [x + s * 0.12, isl + 0.25, -0.1], [x + s * 0.18, isl + 0.12, 0.2], [x + s * 0.06, isl + body * 0.6, 0.05]], 0.022, 16, 6);
+      }
+      // Price sign on a post above the head.
+      b.box('metal', [0.05, 0.4, 0.05], [0, h - 0.1, 0]);
+      b.box('light', [w * 0.9, 0.3, 0.05], [0, h + 0.2, 0]);
+      return;
     }
-    b.box('light', [w * 0.95, 0.12, d * 0.85], [0, h - 0.06, 0]);
+    // Village hand pump over a stone trough on a pad: cast-iron column with a
+    // cap, curved handle, spout over the trough, a bucket.
+    b.box('concrete', [w, 0.15, d], [0, 0.075, 0]);
+    const tr = [w * 0.85, 0.45, d * 0.45] as V3;
+    const tz = d * 0.2;
+    // Trough: walls round a water surface.
+    b.box('trim', [tr[0], tr[1], 0.12], [0, 0.15 + tr[1] / 2, tz - tr[2] / 2 + 0.06]);
+    b.box('trim', [tr[0], tr[1], 0.12], [0, 0.15 + tr[1] / 2, tz + tr[2] / 2 - 0.06]);
+    for (const s of [-1, 1]) b.box('trim', [0.12, tr[1], tr[2] - 0.24], [s * (tr[0] / 2 - 0.06), 0.15 + tr[1] / 2, tz]);
+    b.box('trim', [tr[0] - 0.24, 0.1, tr[2] - 0.24], [0, 0.2, tz]);
+    b.box('water', [tr[0] - 0.24, 0.02, tr[2] - 0.24], [0, 0.15 + tr[1] - 0.1, tz]);
+    // Column behind the trough.
+    const cz = -d * 0.22;
+    const ch = Math.min(1.45, h - 0.2);
+    b.tinted('#2e3430', () => {
+      b.lathe('paint', [[0.16, 0], [0.16, 0.08], [0.1, 0.14], [0.09, ch - 0.25], [0.12, ch - 0.2], [0.12, ch - 0.05], [0.05, ch]], [0, 0.15, cz], 14);
+      b.sphere('paint', 0.06, [0, 0.15 + ch + 0.02, cz]);
+      // Spout out over the trough and the handle swept back.
+      b.tube('paint', [[0, 0.15 + ch * 0.62, cz + 0.08], [0, 0.15 + ch * 0.66, cz + 0.3], [0, 0.15 + ch * 0.55, cz + 0.42]], 0.035, 8, 8);
+      b.tube('paint', [[0, 0.15 + ch - 0.1, cz - 0.08], [0, 0.15 + ch + 0.05, cz - 0.4], [0, 0.15 + ch - 0.15, cz - 0.75]], 0.02, 10, 6);
+    });
+    b.lathe('metal', [[0.11, 0], [0.13, 0.26], [0.135, 0.27]], [w * 0.3, 0.15, cz + 0.05], 12);
   },
 
   fountain(b, w, h, d) {
+    // Town fountain: a round basin with a moulded rim, water in it, and a
+    // baluster column in the middle with an upper bowl and a finial.
     const r = Math.min(w, d) / 2;
-    b.cyl('concrete', r, r + 0.05, h, [0, h / 2, 0], [0, 0, 0], 8);
-    b.cyl('water', r - 0.22, r - 0.22, 0.05, [0, h - 0.12, 0], [0, 0, 0], 8);
-    b.cyl('trim', r + 0.08, r + 0.08, 0.12, [0, h + 0.02, 0], [0, 0, 0], 8, true);
+    b.lathe('concrete', [[r + 0.06, 0], [r + 0.08, 0.08], [r, 0.16], [r - 0.02, h - 0.2], [r + 0.1, h - 0.12], [r + 0.12, h - 0.04], [r + 0.06, h + 0.02], [r - 0.2, h + 0.02], [r - 0.22, h - 0.06], [r - 0.22, 0.2], [0, 0.2]], [0, 0, 0], 40);
+    b.cyl('water', r - 0.22, r - 0.22, 0.04, [0, h - 0.2, 0], [0, 0, 0], 40);
+    const col = Math.min(1.2, r * 0.45);
+    b.lathe('trim', [[0.32, 0], [0.32, 0.12], [0.2, 0.2], [0.14, h * 0.6], [0.22, h * 0.8], [0.13, h], [0.12, h + col * 0.5], [0.18, h + col * 0.62], [0.1, h + col * 0.7], [0, h + col * 0.7]], [0, h - 0.24, 0], 20);
+    const by = h - 0.24 + h + col * 0.62;
+    b.lathe('trim', [[0.1, 0], [0.6, 0.12], [0.75, 0.24], [0.72, 0.28], [0.55, 0.22], [0, 0.18]], [0, by - 0.2, 0], 28);
+    b.cyl('water', 0.6, 0.6, 0.02, [0, by + 0.0, 0], [0, 0, 0], 24);
+    b.lathe('trim', [[0.08, 0], [0.08, 0.2], [0.14, 0.32], [0.05, 0.5], [0, 0.55]], [0, by, 0], 12);
     const side = 2 * r * 0.93;
     return [
       { center: [0, h / 2, 0], size: [side, h, side] },
@@ -492,31 +818,72 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   statue(b, w, h, d) {
-    // Pedestal and a soldier with a raised arm.
+    // War memorial: stepped base, a die with mouldings and a bronze plaque,
+    // and a bronze soldier in a greatcoat, rifle at his side, the left arm
+    // raised forward (+z).
     const ped = h * 0.45;
-    b.box('trim', [w + 0.2, 0.2, d + 0.2], [0, 0.1, 0]);
-    b.box('concrete', [w, ped, d], [0, ped / 2 + 0.1, 0]);
-    const s = (h - ped) / 1.9;
-    const y0 = ped + 0.2;
-    for (const x of [-0.11, 0.11]) b.cyl('dark', 0.07 * s, 0.08 * s, 0.85 * s, [x * s, y0 + 0.42 * s, 0], [0, 0, 0], 8);
-    b.cyl('dark', 0.16 * s, 0.13 * s, 0.65 * s, [0, y0 + 1.15 * s, 0], [0, 0, 0], 10);
-    b.sphere('dark', 0.11 * s, [0, y0 + 1.6 * s, 0]);
-    b.cyl('dark', 0.05 * s, 0.05 * s, 0.6 * s, [0.2 * s, y0 + 1.1 * s, 0], [0, 0, 0.15], 6);
-    b.cyl('dark', 0.05 * s, 0.05 * s, 0.65 * s, [-0.28 * s, y0 + 1.62 * s, 0], [0, 0, 0.55], 6);
+    b.box('trim', [w + 0.5, 0.15, d + 0.5], [0, 0.075, 0]);
+    b.box('trim', [w + 0.25, 0.15, d + 0.25], [0, 0.225, 0]);
+    b.box('concrete', [w + 0.08, 0.12, d + 0.08], [0, 0.36, 0]);
+    b.box('concrete', [w, ped - 0.42, d], [0, 0.42 + (ped - 0.42) / 2, 0]);
+    b.box('concrete', [w + 0.12, 0.1, d + 0.12], [0, ped - 0.05, 0]);
+    b.box('concrete', [w + 0.04, 0.08, d + 0.04], [0, ped + 0.04, 0]);
+    b.box('bronze', [w * 0.62, ped * 0.28, 0.03], [0, ped * 0.55, d / 2 + 0.015]);
+    // Figure, scaled to what is left above the base (1.9 m man at s = 1).
+    const s = (h - ped - 0.1) / 1.9;
+    const y0 = ped + 0.08;
+    b.box('bronze', [0.62 * s, 0.06, 0.48 * s], [0, y0 - 0.02, 0]);
+    const B = new Builder();
+    for (const x of [-1, 1]) {
+      // Legs and boots, a step apart.
+      const lz = x * 0.07;
+      B.cyl('bronze', 0.075, 0.065, 0.5, [x * 0.11, 0.38, lz], [0, 0, 0], 10);
+      B.box('bronze', [0.13, 0.12, 0.28], [x * 0.11, 0.06, lz + 0.05]);
+    }
+    // Greatcoat skirt, torso, belt, shoulders.
+    B.lathe('bronze', [[0.26, 0.48], [0.24, 0.7], [0.2, 0.95], [0.2, 1.0]], [0, 0, 0], 16);
+    B.lathe('bronze', [[0.2, 0.95], [0.22, 1.15], [0.24, 1.38], [0.2, 1.48], [0.08, 1.53]], [0, 0, 0], 16);
+    B.cyl('bronze', 0.215, 0.215, 0.06, [0, 1.0, 0], [0, 0, 0], 16);
+    B.sphere('bronze', 0.07, [0, 1.56, 0], [1, 1.2, 1]);
+    // Head and helmet.
+    B.sphere('bronze', 0.1, [0, 1.68, 0.01], [0.9, 1.1, 1]);
+    B.lathe('bronze', [[0.15, 0], [0.135, 0.02], [0.12, 0.06], [0.08, 0.11], [0, 0.13]], [0, 1.71, 0], 16);
+    // Right arm down holding a rifle by the barrel, butt on the ground.
+    B.tube('bronze', [[-0.25, 1.4, 0], [-0.28, 1.15, 0.03], [-0.26, 0.92, 0.08]], 0.055, 8, 8);
+    B.rod('bronze', [-0.32, 0.02, 0.1], [-0.28, 1.05, 0.12], 0.025, 6);
+    B.box('bronze', [0.05, 0.28, 0.12], [-0.32, 0.16, 0.1]);
+    // Left arm raised forward.
+    B.tube('bronze', [[0.25, 1.42, 0], [0.32, 1.52, 0.25], [0.34, 1.62, 0.52]], 0.05, 8, 8);
+    B.sphere('bronze', 0.05, [0.34, 1.63, 0.56]);
+    for (const p of B.pieces) {
+      p.geo.scale(s, s, s);
+      p.geo.translate(0, y0, 0);
+      b.pieces.push(p);
+    }
   },
 
   bench(b, w, h, d) {
+    // Park bench: cast-iron S-shaped ends, slatted seat and back with gaps.
     const alongX = w >= d;
     const L = alongX ? w : d;
     const T = alongX ? d : w;
-    const seat = h * 0.55;
+    const seat = h * 0.42;
     const pieces = new Builder();
-    for (let i = 0; i < 3; i++) pieces.box('wood', [L, 0.04, T * 0.26], [0, seat, -T / 2 + T * 0.16 + i * T * 0.3]);
-    for (let i = 0; i < 2; i++) pieces.box('wood', [L, T * 0.2, 0.04], [0, seat + 0.18 + i * 0.16, -T / 2 + 0.02], [-0.2, 0, 0]);
-    for (const s of [-1, 1]) {
-      pieces.box('dark', [0.06, seat, T * 0.8], [s * (L / 2 - 0.15), seat / 2, 0]);
-      pieces.box('dark', [0.06, h - seat, 0.06], [s * (L / 2 - 0.15), seat + (h - seat) / 2, -T / 2 + 0.03]);
-    }
+    for (let i = 0; i < 4; i++) pieces.box('wood', [L, 0.035, T * 0.15], [0, seat, -T / 2 + T * 0.18 + i * T * 0.19]);
+    for (let i = 0; i < 3; i++) pieces.box('wood', [L, T * 0.14, 0.035], [0, seat + 0.16 + i * 0.13, -T / 2 + 0.06 - i * 0.03], [-0.22, 0, 0]);
+    pieces.tinted('#232624', () => {
+      for (const s of [-1, 1]) {
+        const x = s * (L / 2 - 0.18);
+        // End frame as a profile across z: front leg, seat rail, back leg up into the back.
+        pieces.profile(
+          'paint',
+          [[T / 2 - 0.02, 0], [T / 2 - 0.1, 0], [T / 2 - 0.16, seat - 0.05], [-T / 2 + 0.12, seat - 0.05], [-T / 2 + 0.06, 0], [-T / 2 - 0.02, 0], [-T / 2 + 0.06, seat - 0.02], [-T / 2 - 0.06, h], [-T / 2 - 0.02, h + 0.02], [-T / 2 + 0.14, seat + 0.02], [T / 2 - 0.06, seat + 0.02], [T / 2 - 0.04, seat - 0.08]],
+          0.05,
+          [x, 0, 0],
+        );
+        pieces.cyl('paint', 0.035, 0.035, 0.12, [x, seat + 0.06, T / 2 - 0.04], [Math.PI / 2, 0, 0], 8);
+      }
+    });
     for (const p of pieces.pieces) {
       if (!alongX) p.geo.rotateY(Math.PI / 2);
       b.pieces.push(p);
@@ -1086,16 +1453,52 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   stall(b, w, h, d, rand) {
-    // Market stall: four poles, sagging cloth awning, a counter with goods.
+    // Market stall: four poles, a striped cloth awning sagging between them
+    // with a scalloped valance at the front (+z), a plank counter with crates
+    // of produce and sacks.
     const ph = h - 0.25;
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('wood', [0.1, ph, 0.1], [sx * (w / 2 - 0.1), ph / 2, sz * (d / 2 - 0.1)]);
-    b.box('body', [w + 0.3, 0.05, d * 0.55], [0, ph + 0.05, -d * 0.22], [0.18, 0, 0]);
-    b.box('body', [w + 0.3, 0.05, d * 0.55], [0, ph + 0.05, d * 0.22], [-0.18, 0, 0]);
-    b.box('wood', [w - 0.3, 0.9, d * 0.45], [0, 0.45, d * 0.15]);
-    for (let i = 0; i < 5; i++) {
-      const x = -w / 2 + 0.5 + (i * (w - 1)) / 4;
-      b.box(rand() < 0.5 ? 'canvas' : 'dirt', [0.45, 0.25 + rand() * 0.2, 0.35], [x, 1.02, d * 0.15]);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('wood', [0.08, ph + (sz > 0 ? 0 : 0.25), 0.08], [sx * (w / 2 - 0.1), (ph + (sz > 0 ? 0 : 0.25)) / 2, sz * (d / 2 - 0.1)]);
+    const stripes = 6;
+    const other = rand() < 0.5 ? '#e7e0cf' : '#2f3a40';
+    for (let i = 0; i < stripes; i++) {
+      const x0 = -w / 2 - 0.15 + (i * (w + 0.3)) / stripes;
+      const x1 = x0 + (w + 0.3) / stripes;
+      const cloth = () => {
+        // Awning slopes from the back (higher) to the front, sagging in the middle.
+        b.grid('canvas', 2, 6, (u, v) => {
+          const x = x0 + u * (x1 - x0);
+          const z = d / 2 + 0.15 - v * (d + 0.3);
+          const y = ph + 0.05 + v * 0.3 - 0.12 * Math.sin(v * Math.PI) - 0.04 * Math.sin(((x + w / 2) / w) * Math.PI * 2);
+          return [x, y, z];
+        }, true);
+        // Valance: scallops hanging off the front edge.
+        b.grid('canvas', 2, 1, (u, v) => {
+          const x = x0 + u * (x1 - x0);
+          return [x, ph + 0.05 - v * (0.18 + 0.06 * Math.sin(u * Math.PI)), d / 2 + 0.16];
+        }, true);
+      };
+      // Every other stripe in the stall's own colour.
+      if (i % 2) b.tinted(other, cloth);
+      else cloth();
     }
+    // Counter: planks on trestles, crates tipped toward the front.
+    b.box('wood', [w - 0.3, 0.05, d * 0.45], [0, 0.88, d * 0.15]);
+    for (const sx of [-1, 1]) b.box('wood', [0.06, 0.86, d * 0.4], [sx * (w / 2 - 0.35), 0.43, d * 0.15]);
+    b.box('wood', [w - 0.4, 0.5, 0.03], [0, 0.6, d * 0.15 + d * 0.22]);
+    const goods = ['#b8402c', '#d08a2a', '#7c9a3a', '#c9b04a', '#8a3a5a'];
+    for (let i = 0; i < 4; i++) {
+      const x = -w / 2 + 0.55 + (i * (w - 1.1)) / 3;
+      const cz = d * 0.15;
+      b.box('wood', [0.5, 0.18, 0.36], [x, 1.0, cz], [0.25, 0, 0]);
+      const col = goods[Math.floor(rand() * goods.length)]!;
+      b.tinted(col, () => {
+        for (let k = 0; k < 6; k++) b.sphere('paint', 0.06, [x - 0.15 + (k % 3) * 0.15, 1.1 + (k < 3 ? 0.02 : 0.06), cz + (k < 3 ? 0.07 : -0.05)]);
+      });
+    }
+    // Sacks at the side.
+    b.tinted('#a28c66', () => {
+      for (let i = 0; i < 2; i++) b.sphere('canvas', 0.28, [w / 2 - 0.3, 0.26, -d * 0.2 + i * 0.5], [0.9, 0.95, 0.8]);
+    });
     return [{ center: [0, 0.45, d * 0.15], size: [w - 0.3, 0.9, d * 0.45] }];
   },
 
@@ -1176,8 +1579,13 @@ function bagGeometry(length: number, height: number, thick: number): THREE.Buffe
 /** Shared looks for kit pieces that don't use the object's own surface. */
 export function kitMaterials(): Record<Exclude<KitMaterial, 'body' | 'trim' | 'metal' | 'wood' | 'concrete' | 'dirt'>, THREE.Material> {
   return {
+    paint: new THREE.MeshStandardMaterial({ color: 0x5d6152, roughness: 0.6, metalness: 0.3 }),
     dark: new THREE.MeshStandardMaterial({ color: 0x1d1f1f, roughness: 0.7, metalness: 0.3 }),
-    glass: new THREE.MeshStandardMaterial({ color: 0x1b2429, roughness: 0.12, metalness: 0.6 }),
+    // Real glass: a dark dielectric that mirrors only at grazing angles (it was a
+    // half-metal that showed the sky as a bright blue panel from every side).
+    glass: new THREE.MeshStandardMaterial({ color: 0x0c1114, roughness: 0.1, metalness: 0.1, envMapIntensity: 0.3 }),
+    // Weathered bronze: dark brown with a little green, a dull sheen.
+    bronze: new THREE.MeshStandardMaterial({ color: 0x3b3626, roughness: 0.55, metalness: 0.6, envMapIntensity: 0.6 }),
     rubber: new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.95 }),
     canvas: new THREE.MeshStandardMaterial({ color: 0x5f6146, roughness: 0.95 }),
     light: new THREE.MeshStandardMaterial({ color: 0xe8e4d0, emissive: 0x3a382c, roughness: 0.3 }),

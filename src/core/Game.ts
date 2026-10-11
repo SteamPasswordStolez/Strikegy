@@ -9,7 +9,7 @@ import { setLocale, t, type MessageKey } from '@/i18n';
 import { playerName } from '@/net/identity';
 import { Renderer } from '@/render/Renderer';
 import { Atmosphere, loadPhotoSky } from '@/render/visualProfiles';
-import { SURFACE_KINDS, SurfaceLibrary } from '@/render/textures';
+import { PROCEDURAL_KINDS, SURFACE_KINDS, SurfaceLibrary } from '@/render/textures';
 import { ModelLibrary } from '@/render/models';
 import { Effects } from '@/render/Effects';
 import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
@@ -460,6 +460,7 @@ export class Game {
     // Art loads in parallel with physics/map; any asset that fails falls back gracefully.
     const art = Promise.all([
       this.surfaces.preload(SURFACE_KINDS, ASSET_BASE),
+      this.surfaces.rasterizeAhead(PROCEDURAL_KINDS),
       this.audio.preload(`${ASSET_BASE}sounds/`),
       this.models.load(this.options.viewModels ?? []),
     ]);

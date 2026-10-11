@@ -44,6 +44,20 @@ const INSIDE_FAR = 110;
 
 /** Walls darken by up to `dark` toward the ground over their lowest `height` metres (baked into vertex colours). */
 const GRIME = { dark: 0.3, height: 2.6, minHeight: 1.2 };
+/**
+ * Map kits (cars, tents, tanks...): darker toward the ground (`contact` at the
+ * foot, gone by `height` m) and on faces turned down (x `under`), baked into
+ * vertex colours. Without it they looked pasted on the ground, lit the same
+ * all over (no ambient occlusion reaches small objects at this scale).
+ */
+const KIT_SHADE = { contact: 0.38, height: 0.8, under: 0.55 };
+
+/** The kits' shared looks, taking the shade from vertex colours. */
+function kitLooks(): ReturnType<typeof kitMaterials> {
+  const looks = kitMaterials();
+  for (const m of Object.values(looks)) m.vertexColors = true;
+  return looks;
+}
 
 /**
  * Adds `geo` to the batch of its surface kind, its colour going into vertex
@@ -157,7 +171,7 @@ export function buildBlockout(
       continue;
     }
     if (obj.model) {
-      addModel(obj, batches, physics, surfaces, impacts, surfaces ? (kitMats ??= kitMaterials()) : null);
+      addModel(obj, batches, physics, surfaces, impacts, surfaces ? (kitMats ??= kitLooks()) : null);
       continue;
     }
     if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
@@ -196,22 +210,24 @@ export function buildBlockout(
         const n = pos.count;
         const col = new Float32Array(n * 3);
         const { r, g: gr, b: bl } = b.tints![i]!;
+        const shade = g.getAttribute('shade');
         let grime = false;
         if (b.grime) {
           g.computeBoundingBox();
           grime = g.boundingBox!.max.y - g.boundingBox!.min.y > GRIME.minHeight;
         }
         for (let k = 0; k < n; k++) {
-          let f = 1;
+          let f = shade ? shade.getX(k) : 1;
           if (grime) {
             const above = pos.getY(k) - (terrain ? terrain.heightAt(pos.getX(k), pos.getZ(k)) : 0);
-            f = 1 - GRIME.dark * (1 - Math.min(1, Math.max(0, above / GRIME.height)));
+            f *= 1 - GRIME.dark * (1 - Math.min(1, Math.max(0, above / GRIME.height)));
           }
           col[k * 3] = r * f;
           col[k * 3 + 1] = gr * f;
           col[k * 3 + 2] = bl * f;
         }
         g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        if (shade) g.deleteAttribute('shade');
       });
     }
     for (const part of splitByCell(b.geometries, b.inside ? 0 : CELL.minVertices)) {
@@ -471,6 +487,37 @@ function addModel(
   }
 }
 
+/**
+ * The textured surface a kit piece is drawn with (tint in vertex colours), or
+ * null for the shared looks (glass, lights, water...). Pieces with their own
+ * tint keep it on any surface.
+ */
+function kitSurface(mat: KitMaterial, tint: string | undefined, kind: SurfaceMaterial, color: string | undefined, trim: string | undefined): [SurfaceMaterial, string | undefined] | null {
+  switch (mat) {
+    case 'body':
+      return [kind, tint ?? color];
+    case 'trim':
+      return [kind, tint ?? trim];
+    case 'metal':
+    case 'wood':
+    case 'concrete':
+      return [mat, tint];
+    case 'dirt':
+      return ['ground', tint ?? color ?? '#9c8a64'];
+    case 'paint':
+      return ['paint', tint ?? color ?? '#5d6152'];
+    // Dark fittings (bumpers, frames, undersides): dark paint, worn.
+    case 'dark':
+      return ['paint', tint ?? '#2b2d2c'];
+    case 'canvas':
+      return ['canvas', tint ?? color ?? '#6f6c50'];
+    case 'rubber':
+      return ['rubber', tint];
+    default:
+      return null;
+  }
+}
+
 /** A kit's render pieces into the map's batches. */
 function addKitPieces(
   pieces: ReturnType<typeof buildKit>['pieces'],
@@ -501,14 +548,25 @@ function addKitPieces(
     }
   };
   for (const p of pieces) {
+    // Contact shade and darker undersides, in kit space (y = 0 on the ground).
+    const pos = p.geo.getAttribute('position');
+    const nrm = p.geo.getAttribute('normal');
+    const shade = new Float32Array(pos.count);
+    for (let k = 0; k < pos.count; k++) {
+      const up = Math.min(1, Math.max(0, pos.getY(k) / KIT_SHADE.height));
+      shade[k] = (1 - KIT_SHADE.contact * (1 - up * up * (3 - 2 * up))) * (nrm && nrm.getY(k) < -0.3 ? KIT_SHADE.under : 1);
+    }
     p.geo.applyMatrix4(toWorld);
     // Surface pieces share per-surface batches (tint in vertex colours); the kit's own looks keep theirs.
-    const surface: [SurfaceMaterial, string | undefined] | null =
-      p.mat === 'body' ? [kind, color] : p.mat === 'trim' ? [kind, trim] : p.mat === 'metal' || p.mat === 'wood' || p.mat === 'concrete' ? [p.mat, undefined] : p.mat === 'dirt' ? ['ground', color ?? '#9c8a64'] : null;
+    const surface = kitSurface(p.mat, p.tint, kind, color, trim);
     if (surface) {
+      p.geo.setAttribute('shade', new THREE.BufferAttribute(shade, 1));
       pushTinted(batches, surfaces, surface[0], surface[1], p.geo, 'kit', true);
       continue;
     }
+    const col = new Float32Array(pos.count * 3);
+    for (let k = 0; k < pos.count; k++) col[k * 3] = col[k * 3 + 1] = col[k * 3 + 2] = shade[k]!;
+    p.geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const material = materialFor(p.mat);
     const key = `${material.uuid}kit`;
     let batch = batches.get(key);

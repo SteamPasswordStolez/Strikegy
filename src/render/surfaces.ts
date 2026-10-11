@@ -140,6 +140,98 @@ function metalRecipe(n: TileNoise, paintHex: number): SurfaceRecipe {
   };
 }
 
+/**
+ * Cotton duck (tents, tarps, truck covers, awnings): a plain weave of thick
+ * threads, slubs, water marks and dust. Near white: the object's colour tints it.
+ */
+function canvasRecipe(n: TileNoise): SurfaceRecipe {
+  const cloth = hexToRgb(0xd8d4c6);
+  const stain = hexToRgb(0x7b715c);
+  return {
+    tileMeters: 1.5,
+    normalStrength: 3,
+    paint(u, v, o) {
+      // Plain weave: warp and weft alternate over / under (a checker of thread crossings).
+      const T = 240;
+      const wu = u * T;
+      const wv = v * T;
+      const over = (Math.floor(wu) + Math.floor(wv)) % 2 === 0;
+      const fu = wu - Math.floor(wu);
+      const fv = wv - Math.floor(wv);
+      const thread = over ? Math.sin(fu * Math.PI) : Math.sin(fv * Math.PI);
+      const slub = n.sampleXY(u, v, 8, 128);
+      const marks = smoothstep(0.58, 0.8, n.fbm(u + 0.4, v + 0.1, 3, 4));
+      const dust = n.fbm(u, v, 6, 3);
+      const k = 0.84 + 0.12 * thread + 0.06 * (slub - 0.5) - 0.08 * dust;
+      let c: RGB = [cloth[0] * k, cloth[1] * k, cloth[2] * k];
+      c = mixRgb(c, stain, marks * 0.14);
+      o.color = c;
+      o.height = 0.45 + 0.35 * thread + 0.1 * slub;
+      o.rough = 0.96;
+      o.metal = 0;
+      o.ao = 0.78 + 0.22 * thread;
+    },
+  };
+}
+
+/**
+ * Painted steel (vehicles, booths, pumps, rails): orange-peel paint, chips
+ * down to primer and bare metal, rust runs below them and dust. Near white:
+ * the object's colour is the paint.
+ */
+function paintRecipe(n: TileNoise): SurfaceRecipe {
+  const paint = hexToRgb(0xcfcfcb);
+  const primer = hexToRgb(0x6e4a36);
+  const bare = hexToRgb(0x85878a);
+  const rust = hexToRgb(0x6a3f22);
+  const dustCol = hexToRgb(0x8a7c66);
+  return {
+    tileMeters: 2,
+    normalStrength: 2.5,
+    paint(u, v, o) {
+      const peel = n.sample(u, v, 256);
+      // Chips: small and sparse (a few cm), with a ring of primer round each.
+      const wear = n.fbm(u, v, 48, 4) * 0.7 + n.fbm(u + 0.3, v, 6, 3) * 0.3;
+      const chip = smoothstep(0.75, 0.765, wear);
+      const edge = smoothstep(0.72, 0.75, wear) - chip;
+      // Rust runs down (v) from the chips: noise stretched along v.
+      const run = smoothstep(0.62, 0.8, n.sampleXY(u, v, 64, 3)) * smoothstep(0.55, 0.68, n.fbm(u, v + 0.03, 16, 4));
+      const dust = smoothstep(0.35, 0.85, n.fbm(u + 0.6, v + 0.2, 3, 4));
+      const pk = 0.94 + 0.06 * n.fbm(u, v, 8, 3) + 0.02 * (peel - 0.5);
+      let c: RGB = [paint[0] * pk, paint[1] * pk, paint[2] * pk];
+      c = mixRgb(c, dustCol, dust * 0.18);
+      c = mixRgb(c, rust, run * 0.3);
+      c = mixRgb(c, primer, clamp01(edge * 1.2));
+      c = mixRgb(c, bare, chip);
+      o.color = c;
+      o.height = 0.6 + 0.04 * peel - 0.25 * chip - 0.1 * edge;
+      o.rough = lerp(lerp(0.52 + 0.08 * peel, 0.9, dust * 0.5 + run * 0.6), 0.45, chip);
+      o.metal = chip * 0.8;
+      o.ao = 1 - 0.15 * chip - 0.1 * run;
+    },
+  };
+}
+
+/** Tyres and rubber parts: near black, fine grain, grey dust in patches. */
+function rubberRecipe(n: TileNoise): SurfaceRecipe {
+  const black = hexToRgb(0x1c1c1b);
+  const dustCol = hexToRgb(0x5f584c);
+  return {
+    tileMeters: 1,
+    normalStrength: 2,
+    paint(u, v, o) {
+      const grain = n.sample(u, v, 256);
+      const dust = smoothstep(0.45, 0.85, n.fbm(u, v, 4, 4));
+      const k = 0.9 + 0.2 * grain;
+      o.color = mixRgb([black[0] * k, black[1] * k, black[2] * k], dustCol, dust * 0.35);
+      o.height = 0.5 + 0.1 * grain;
+      o.rough = 0.88 + 0.08 * dust;
+      o.metal = 0;
+      o.ao = 1;
+    },
+  };
+}
+
 function woodRecipe(n: TileNoise): SurfaceRecipe {
   const dark = hexToRgb(0x5b3f26);
   const light = hexToRgb(0xa47a4f);
@@ -231,6 +323,12 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
       return sandRecipe(n);
     case 'rock':
       return groundRecipe(n);
+    case 'canvas':
+      return canvasRecipe(n);
+    case 'paint':
+      return paintRecipe(n);
+    case 'rubber':
+      return rubberRecipe(n);
   }
 }
 

@@ -51,7 +51,8 @@ describe('model kits', () => {
       }
       // Sits on the ground and stays near its footprint (small overhangs allowed).
       expect(bb.min.y, kind).toBeGreaterThan(-0.1); // tent stakes go into the ground
-      expect(bb.max.y, kind).toBeLessThan(h + 1);
+      // The fountain's centre column rises over its basin (the box).
+      expect(bb.max.y, kind).toBeLessThan(h + (kind === 'fountain' ? 2 : 1));
       expect(bb.max.x - bb.min.x, kind).toBeLessThan(Math.max(w, d) + 2);
       expect(bb.max.x - bb.min.x, kind).toBeGreaterThan(Math.min(w, d) * 0.5);
     }

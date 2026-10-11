@@ -19,6 +19,9 @@ export const SURFACE_FROM_MATERIAL: Record<SurfaceMaterial, ImpactSurface> = {
   asphalt: 'concrete',
   cobble: 'concrete',
   rock: 'concrete',
+  canvas: 'dirt',
+  paint: 'metal',
+  rubber: 'rubber',
 };
 
 /** Impact surface for each prop model; unknown models default to wood. */
