@@ -24,11 +24,12 @@ export const SERVER_MAX = 1000;
 
 export const NAME_MIN = 2;
 export const NAME_MAX = 16;
-const NAME_RE = /^[0-9A-Za-z_\-가-힣]+$/;
+// Hangul syllables, lone consonants / vowels (ㄱ-ㅣ, U+3131-318E) and conjoining jamo (some IMEs).
+const NAME_RE = /^[0-9A-Za-z_\-가-힣\u3131-\u318e\u1100-\u11ff\ua960-\ua97f\ud7b0-\ud7ff]+$/;
 
 /** A player name, trimmed, or null when it can't be used. */
 export function cleanName(raw: string): string | null {
-  const name = raw.trim();
+  const name = raw.normalize('NFC').trim();
   if (name.length < NAME_MIN || name.length > NAME_MAX || !NAME_RE.test(name)) return null;
   return name;
 }

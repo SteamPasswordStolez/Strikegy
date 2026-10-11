@@ -107,7 +107,7 @@
   "gadget.soon": "준비 중",
   "hud.medkit": "구급통",
   "hud.down": "쓰러졌습니다",
-  "hud.bleedOut": "출혈까지",
+  "hud.bleedOut": "{s}초 뒤 사망",
   "hud.giveUp": "Space 길게: 포기",
   "hud.giveUpTouch": "포기 버튼 길게: 포기",
   "hud.reviving": "부활 중",

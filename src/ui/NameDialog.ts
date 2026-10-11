@@ -55,6 +55,8 @@ export function askName(parent: HTMLElement, current: string | null, required: b
   });
   input.addEventListener('keydown', (e) => {
     e.stopPropagation();
+    // Enter while a Hangul syllable is still being composed only finishes it (no submit with half a name).
+    if (e.key === 'Enter' && e.isComposing) e.preventDefault();
     if (e.key === 'Escape' && !required) close(null);
   });
   parent.appendChild(shade);

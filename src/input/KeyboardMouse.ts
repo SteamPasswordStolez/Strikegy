@@ -48,6 +48,20 @@ export class KeyboardMouse implements InputSource {
       if (this.locked && ['Space', 'ControlLeft', 'Tab'].includes(e.code)) e.preventDefault();
     });
     this.listen<KeyboardEvent>(window, 'keyup', (e) => this.keys.delete(e.code));
+    // Ctrl is crouch, so Ctrl+W (crouch-walk) would close the tab: browsers don't let a page
+    // take Ctrl+W, but they ask before closing when the page objects, and in fullscreen the
+    // Keyboard Lock API hands the keys to the game.
+    this.listen<BeforeUnloadEvent>(window, 'beforeunload', (e) => {
+      if (this.keys.has('ControlLeft') || this.keys.has('ControlRight')) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+    this.listen(document, 'fullscreenchange', () => {
+      const kb = (navigator as Navigator & { keyboard?: { lock?(codes?: string[]): Promise<void>; unlock?(): void } }).keyboard;
+      if (document.fullscreenElement) kb?.lock?.(['ControlLeft', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyT', 'KeyG', 'KeyB', 'KeyV', 'KeyC']).catch(() => {});
+      else kb?.unlock?.();
+    });
     this.listen(window, 'blur', () => this.releaseAll());
     this.listen<MouseEvent>(target, 'mousedown', (e) => {
       if (!this.locked) return;

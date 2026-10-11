@@ -107,7 +107,7 @@
   "gadget.soon": "coming soon",
   "hud.medkit": "Medkit",
   "hud.down": "You are down",
-  "hud.bleedOut": "Bleeding out in",
+  "hud.bleedOut": "Dying in {s} s",
   "hud.giveUp": "Hold Space: give up",
   "hud.giveUpTouch": "Hold give up to respawn",
   "hud.reviving": "Reviving",

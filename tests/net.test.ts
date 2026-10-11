@@ -8,6 +8,10 @@ describe('names and settings', () => {
   it('accepts Korean, latin, digits, _ and - within 2-16 characters', () => {
     expect(cleanName('  병사_01 ')).toBe('병사_01');
     expect(cleanName('a')).toBeNull();
+    // Lone consonants / vowels and conjoining jamo (some IMEs) are names too (owner's report, 2026-10-12).
+    expect(cleanName('ㄱㄴㄷ')).toBe('ㄱㄴㄷ');
+    expect(cleanName('ㅋㅋ')).toBe('ㅋㅋ');
+    expect(cleanName('각나')).toBe('각나');
     expect(cleanName('x'.repeat(17))).toBeNull();
     expect(cleanName('no spaces')).toBeNull();
     expect(cleanName('<script>')).toBeNull();

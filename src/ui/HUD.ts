@@ -487,7 +487,7 @@ export class HUD {
     const text = d
       ? [
           `${t('hud.down')}${killer}`,
-          d.reviver ? `${d.reviver} ${t('hud.beingRevived')}` : `${t('hud.bleedOut')} ${Math.ceil(d.left)}`,
+          d.reviver ? `${d.reviver} ${t('hud.beingRevived')}` : t('hud.bleedOut').replace('{s}', String(Math.ceil(d.left))),
           this.touch ? t('hud.giveUpTouch') : t('hud.giveUp'),
         ].join('\n')
       : '';
