@@ -85,6 +85,7 @@ export class SettingsPanel {
       const auto = t(`lobby.q.${autoQuality}` as MessageKey);
       this.choice(rows, 'lobby.quality', 'quality', ['auto', 'low', 'medium', 'high'] as const, (v) => (v === 'auto' ? `${t('lobby.q.auto')} (${auto})` : t(`lobby.q.${v}` as MessageKey)));
       this.toggle(rows, 'lobby.showFps', 'showFps');
+      if (!this.opts.live) this.toggle(rows, 'lobby.menuScene', 'menuScene');
     } else {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       this.choice(rows, 'lobby.language', 'locale', ['ko', 'en'] as const, (v) => (v === 'ko' ? '한국어' : 'English'));
@@ -141,7 +142,7 @@ export class SettingsPanel {
   }
 
   /** Two choices, off / on (or named by `names`). */
-  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
+  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
     const seg = el('div', 'sp-seg', this.row(parent, label, key));
     for (const on of [false, true]) {
       const b = el('button', `sp-opt${on === this.s[key] ? ' sel' : ''}`, seg);

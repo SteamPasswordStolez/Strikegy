@@ -288,6 +288,8 @@ export class Renderer {
     window.removeEventListener('resize', this.resize);
     this.postfx?.dispose();
     this.gl.dispose();
+    // Hand the GPU memory back now (the menu's background game is disposed before the match loads).
+    this.gl.forceContextLoss();
     this.gl.domElement.remove();
     this.vignette.remove();
   }

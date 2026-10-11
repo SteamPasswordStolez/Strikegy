@@ -19,6 +19,8 @@ export interface Settings {
   renderScale: number;
   /** Crouch while the key is held (keyboard), instead of a press toggling it. */
   crouchHold: boolean;
+  /** A live battle behind the main menu (desktop; touch screens never run it). */
+  menuScene: boolean;
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   masterVolume: 0.8,
   renderScale: 0.9,
   crouchHold: false,
+  menuScene: true,
 };
 
 /** Korean for browsers set to Korean, English for everyone else (until the player picks one). */

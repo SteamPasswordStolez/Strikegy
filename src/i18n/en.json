@@ -539,5 +539,8 @@
   "lobby.side.random": "Random",
   "lobby.side.blue": "Blue",
   "lobby.side.red": "Red",
-  "lobby.sideDesc": "Pick which side you fight for. Random is settled when the match starts."
+  "lobby.sideDesc": "Pick which side you fight for. Random is settled when the match starts.",
+  "lobby.menuScene": "Battle behind the menu",
+  "setDesc.menuScene": "Shows bots really fighting behind the main menu. Turn it off if your computer struggles (a map drawing instead). Always off on touch screens.",
+  "lobby.live": "LIVE"
 }

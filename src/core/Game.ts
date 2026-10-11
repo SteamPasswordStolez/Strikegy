@@ -82,6 +82,7 @@ import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeploySc
 import { paintMap, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
 import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimAssist';
+import { ShowcaseCamera } from '@/render/showcaseCamera';
 import { wrapAngle, yawPitchOf } from '@/ai/aim';
 import { Squad, WIPE_PENALTY, formSquads, mateSpawnBlock, squadName, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
@@ -144,6 +145,8 @@ export interface GameOptions {
   tutorial?: boolean;
   /** The player's side in a solo match (default blue). */
   team?: Team;
+  /** Behind the main menu: the bots fight, a camera drifts over it; no player, HUD, input or sound. */
+  showcase?: boolean;
 }
 
 /** How big a blast (local or from the game server) sounds. */
@@ -432,8 +435,8 @@ export class Game {
       () => this.settings.invertY,
       () => this.settings.crouchHold,
     );
-    this.sources.push(this.kbm);
-    if (isTouchDevice()) {
+    if (!options.showcase) this.sources.push(this.kbm);
+    if (isTouchDevice() && !options.showcase) {
       container.classList.add('is-touch');
       this.touch = new TouchControls(
         container,
@@ -709,6 +712,7 @@ export class Game {
     this.physics.step();
 
     this.overlay.setContext(this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName);
+    if (this.options.showcase) return this.startShowcase();
     document.addEventListener('pointerlockchange', () => {
       if (!this.kbm.locked && !this.touch && !this.deployScreen?.visible) this.pause();
     });
@@ -1113,6 +1117,11 @@ export class Game {
 
   private frame = (now: number): void => {
     this.rafId = requestAnimationFrame(this.frame);
+    // Behind the menu, every other frame is plenty.
+    if (this.showcaseCam) {
+      if (now - this.showcaseAt < 30) return;
+      this.showcaseAt = now;
+    }
     const frameMs = now - this.lastTime;
     const tStart = performance.now();
     let simMs = 0;
@@ -1157,7 +1166,10 @@ export class Game {
         this.chute.position.lerpVectors(p.prevFeet, p.feet, alpha);
         this.chute.rotation.y = p.yaw;
       }
-      this.updateCamera(alpha, dt, adsFov);
+      if (this.showcaseCam) {
+        this.showcaseCam.update(dt, this.renderer.camera);
+        this.sceneFollowsCamera(this.renderer.camera.position);
+      } else this.updateCamera(alpha, dt, adsFov);
     }
     input.lookYaw = 0;
     input.lookPitch = 0;
@@ -1170,7 +1182,7 @@ export class Game {
       this.net.render(dt);
     }
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
-    if (this.deployScreen && this.running) {
+    if (this.deployScreen && this.running && !this.showcaseCam) {
       if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver && !this.netDeploying) this.openDeploy();
       this.deployRefresh -= dt;
       if (this.deployScreen.visible && this.deployRefresh <= 0) {
@@ -1188,8 +1200,10 @@ export class Game {
     this.flashLeft = Math.max(0, this.flashLeft - simDt);
     this.audio.updateVitals(p.health.value, p.alive);
     this.audio.updateAmbience(dt);
-    this.updateHud(dt);
-    this.updateScoreboard(dt, input.scoreboard);
+    if (!this.showcaseCam) {
+      this.updateHud(dt);
+      this.updateScoreboard(dt, input.scoreboard);
+    }
     const perf = this.perf;
     perf.setVisible(this.settings.showFps);
     const tDraw = performance.now();
@@ -2785,17 +2799,62 @@ export class Game {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
-    if (this.atmosphere.update(cam.position, this.elapsed)) this.renderer.requestShadowUpdate();
-    if (this.forest?.update(cam.position)) this.renderer.requestShadowUpdate();
-    // Scenery clutter near the camera only, and the outer tree line's 3D / impostor switch.
-    if (this.backdrop) cullBackdropDetail(this.backdrop, cam.position);
-    // After the first physics step: scene queries only see the map colliders from then on.
-    if (this.simTime > 0) this.groundCover?.update(cam.position, this.elapsed);
-    this.snowfall?.update(cam.position, this.elapsed, this.renderer.canvas.height);
+    this.sceneFollowsCamera(cam.position);
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);
     this.updateEngines(cam.position);
+  }
+
+  /** Sky, shadows, trees, clutter, grass and snow around wherever the camera is. */
+  private sceneFollowsCamera(at: THREE.Vector3): void {
+    if (this.atmosphere.update(at, this.elapsed)) this.renderer.requestShadowUpdate();
+    if (this.forest?.update(at)) this.renderer.requestShadowUpdate();
+    // Scenery clutter near the camera only, and the outer tree line's 3D / impostor switch.
+    if (this.backdrop) cullBackdropDetail(this.backdrop, at);
+    // After the first physics step: scene queries only see the map colliders from then on.
+    if (this.simTime > 0) this.groundCover?.update(at, this.elapsed);
+    this.snowfall?.update(at, this.elapsed, this.renderer.canvas.height);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Main menu background (options.showcase)
+
+  private showcaseCam: ShowcaseCamera | null = null;
+  /** When the last showcase frame ran (it runs at ~30 fps). */
+  private showcaseAt = 0;
+
+  /** The match runs on its own: nobody deploys, nothing is heard, the camera does its rounds. */
+  private startShowcase(): void {
+    this.audio.setVolume(0);
+    this.renderer.fpScene.visible = false;
+    this.renderer.setRenderScale(Math.min(this.settings.renderScale, 0.75));
+    const zm = this.zoneMode;
+    const down = new THREE.Vector3(0, -1, 0);
+    const from = new THREE.Vector3();
+    this.showcaseCam = new ShowcaseCamera({
+      zones: zm ? zm.zones.map((z) => ({ x: z.x, y: z.y, z: z.z, radius: z.radius })) : [],
+      actors: () => {
+        const bots = this.bots;
+        if (!bots) return [];
+        return bots.bots.filter((b) => b.alive && !b.riding).map((b) => ({ id: b.id, pos: b.feet, yaw: b.yaw, fighting: b.inCombat(bots.time) }));
+      },
+      ground: (x, z) => {
+        const hit = this.physics.raycast(from.set(x, 400, z), down, 800, Layer.WORLD);
+        return hit ? hit.point.y : null;
+      },
+      clear: (a, b) => {
+        const d = b.clone().sub(a);
+        const len = d.length();
+        return len < 0.01 || !this.physics.raycast(a, d.divideScalar(len), len, Layer.WORLD);
+      },
+    });
+    this.running = true;
+    this.started = true;
+    this.loop.reset();
+    this.overlay.hide();
+    this.lastTime = performance.now();
+    this.rafId = requestAnimationFrame(this.frame);
   }
 
   /** Engine sounds: every vehicle and recon plane near enough, retuned each frame (see audio/engines.ts). */

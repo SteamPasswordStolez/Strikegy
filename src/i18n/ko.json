@@ -539,5 +539,8 @@
   "lobby.side.random": "무작위",
   "lobby.side.blue": "블루",
   "lobby.side.red": "레드",
-  "lobby.sideDesc": "블루와 레드 중 어느 편에서 싸울지 고릅니다. 무작위는 게임을 시작할 때 정해집니다."
+  "lobby.sideDesc": "블루와 레드 중 어느 편에서 싸울지 고릅니다. 무작위는 게임을 시작할 때 정해집니다.",
+  "lobby.menuScene": "메뉴 배경 전투",
+  "setDesc.menuScene": "메인 메뉴 뒤에서 봇들이 실제로 싸우는 장면을 보여 줍니다. 컴퓨터가 버거우면 끄세요 (지도 그림으로 바뀝니다). 터치 기기에서는 늘 꺼져 있습니다.",
+  "lobby.live": "실시간 전장"
 }

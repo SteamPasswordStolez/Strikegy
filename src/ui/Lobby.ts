@@ -92,6 +92,8 @@ export class Lobby {
     private readonly prefetch: () => void = () => {},
     /** A room's match on the game server starts: the game takes it from here. */
     private readonly onNetStart: (start: MatchStart, link: ServerLink) => void = () => {},
+    /** A setting changed (already saved). */
+    private readonly onSetting: (key: keyof Settings) => void = () => {},
   ) {
     setLocale(this.settings.locale);
     const saved = loadJSON<Partial<LobbyPick>>(PICK_KEY) ?? {};
@@ -142,6 +144,11 @@ export class Lobby {
     b.textContent = t('lobby.otherLanguage');
     b.title = t('lobby.language');
     b.addEventListener('click', () => this.toggleLocale());
+  }
+
+  /** The map the menu shows behind it (the last one picked). */
+  get backdropMap(): string {
+    return this.pick.map;
   }
 
   private save(): void {
@@ -287,6 +294,7 @@ export class Lobby {
         live: false,
         onChange: (key) => {
           if (key === 'locale') this.render();
+          this.onSetting(key);
         },
       });
       body.appendChild(panel.root);
@@ -318,6 +326,11 @@ export class Lobby {
     this.pickDesc = el('div', 'lb-item-desc', col);
     this.pickDesc.textContent = t(`menu.${ENTRIES[this.entry]!}Desc`);
     el('div', 'lb-version', body).textContent = t('menu.version');
+    // The battle behind the menu (main.ts): shown by CSS once it runs.
+    const live = el('div', 'lb-live', body);
+    el('span', 'lb-live-dot', live);
+    el('span', 'lb-live-tag', live).textContent = t('lobby.live');
+    el('span', 'lb-live-map', live).textContent = t(`map.${this.pick.map}` as MessageKey);
     const corner = el('div', 'lb-corner', body);
     this.langButton(corner);
     const name = el('button', 'lb-name', corner);

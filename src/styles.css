@@ -1,20 +1,36 @@
 :root {
+  /* Battlefield 2042-like (owner, 2026-10-12): cyan on deep navy, white type, glass panels. */
+  --accent: #00e5ff;
+  --accent-soft: rgb(0 229 255 / 0.16);
+  --accent-glow: 0 0 18px rgb(0 229 255 / 0.35);
+  /* Text on the accent (buttons). */
+  --on-accent: #03141f;
+  --navy: #060e1c;
+  /* Selected rows, tabs and options: a cyan glass slab, white type. */
+  --sel-bg: linear-gradient(90deg, rgb(0 229 255 / 0.34), rgb(0 229 255 / 0.1));
+  --sel-fg: #ffffff;
+  /* Menu glass (blurred in menus only, never in the HUD). */
+  --glass: rgb(10 24 44 / 0.5);
+  --glass-strong: rgb(7 16 32 / 0.82);
+  --glass-line: rgb(150 225 255 / 0.16);
+  --glass-blur: blur(14px) saturate(150%);
+  --row-bg: rgb(10 24 44 / 0.55);
   /* Text and accents. */
-  --hud-fg: #eef2f4;
-  --hud-dim: rgb(238 242 244 / 0.64);
-  --hud-faint: rgb(238 242 244 / 0.36);
-  --hud-accent: #f5d14e;
+  --hud-fg: #f2f7fb;
+  --hud-dim: rgb(226 238 248 / 0.68);
+  --hud-faint: rgb(226 238 248 / 0.38);
+  --hud-accent: var(--accent);
   --hud-danger: #ff5a4f;
-  /* Sides: ours cyan-blue, theirs red, the squad green (Modern Warfare-like). */
-  --ally: #3fb2ff;
-  --ally-soft: #9fd8ff;
+  /* Sides: ours blue (kept apart from the cyan accent), theirs red, the squad green. */
+  --ally: #4c9dff;
+  --ally-soft: #a6ceff;
   --enemy: #f2453a;
   --enemy-soft: #ff8f82;
   --squad: #74e08a;
-  /* Panels: dark glass without blur (the HUD sits on the game picture every frame). */
-  --panel: rgb(9 12 16 / 0.58);
-  --panel-strong: rgb(8 10 13 / 0.9);
-  --panel-line: rgb(255 255 255 / 0.1);
+  /* Panels: navy glass without blur (the HUD sits on the game picture every frame). */
+  --panel: rgb(7 16 32 / 0.58);
+  --panel-strong: rgb(6 13 26 / 0.9);
+  --panel-line: rgb(150 225 255 / 0.12);
   --hud-shadow: 0 1px 2px rgb(0 0 0 / 0.9), 0 0 10px rgb(0 0 0 / 0.35);
   /* Bahnschrift (Windows) / DIN for Latin and numbers, the system Korean face for Hangul. */
   --font: 'Bahnschrift', 'DIN Alternate', 'DIN Next', 'Barlow', 'Roboto Condensed', 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Pretendard', 'Noto Sans KR', system-ui, sans-serif;
@@ -352,7 +368,7 @@ body {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: #f2cd78;
+  color: var(--accent);
 }
 .hud-rp .keycap {
   font-size: 10px;
@@ -434,7 +450,7 @@ body {
   display: flex;
   padding: max(24px, 7vh) max(24px, 7vw);
   background:
-    linear-gradient(90deg, rgb(5 7 10 / 0.94) 0%, rgb(5 7 10 / 0.72) 42%, rgb(5 7 10 / 0.28) 100%),
+    linear-gradient(90deg, rgb(4 10 22 / 0.94) 0%, rgb(4 10 22 / 0.72) 42%, rgb(4 10 22 / 0.28) 100%),
     radial-gradient(ellipse at 80% 60%, transparent 40%, rgb(0 0 0 / 0.45));
   cursor: pointer;
   z-index: 10;
@@ -487,14 +503,14 @@ body {
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #0c0f13;
-  background: var(--hud-fg);
+  color: var(--on-accent);
+  background: var(--accent);
   clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
   animation: cta-pulse 1.8s ease-in-out infinite;
 }
 @keyframes cta-pulse {
   50% {
-    background: #ffffff;
+    background: #7ff3ff;
     box-shadow: 0 0 0 0 transparent;
     filter: brightness(1.08);
   }
@@ -535,7 +551,7 @@ body {
 .overlay.kind-win,
 .overlay.kind-loss {
   text-align: center;
-  background: radial-gradient(ellipse at center, rgb(8 10 14 / 0.62), rgb(5 7 10 / 0.92));
+  background: radial-gradient(ellipse at center, rgb(6 16 32 / 0.62), rgb(4 10 22 / 0.92));
 }
 .kind-info .ov-panel,
 .kind-win .ov-panel,
@@ -1409,12 +1425,12 @@ body {
   opacity: 0.42;
 }
 .support-row.on {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .support-row.on .support-key {
-  border-color: #0c0f13;
-  color: #0c0f13;
+  border-color: var(--sel-fg);
+  color: var(--sel-fg);
 }
 .support-row.on .support-cost {
   color: #6b5400;
@@ -1432,7 +1448,7 @@ body {
 }
 .support-cost {
   font-variant-numeric: tabular-nums;
-  color: #f2cd78;
+  color: var(--accent);
 }
 .support-state {
   min-width: 36px;
@@ -1694,7 +1710,7 @@ body {
 @keyframes zb-pulse {
   to {
     border-color: var(--hud-accent);
-    box-shadow: 0 0 10px rgb(255 194 71 / 0.5);
+    box-shadow: 0 0 10px rgb(0 229 255 / 0.5);
   }
 }
 .zb-zone.locked {
@@ -1891,7 +1907,7 @@ body {
   flex-direction: column;
   padding: 18px 24px 20px;
   gap: 12px;
-  background: radial-gradient(ellipse at 50% 45%, rgb(14 18 22 / 0.86), rgb(4 6 8 / 0.96));
+  background: radial-gradient(ellipse at 50% 45%, rgb(10 22 40 / 0.86), rgb(3 8 18 / 0.96));
   backdrop-filter: blur(4px);
   color: var(--hud-fg);
   font-family: var(--font);
@@ -1945,9 +1961,9 @@ body {
   cursor: pointer;
 }
 .deploy-pause:hover {
-  border-color: #f2f2ee;
-  background: #f2f2ee;
-  color: #0c0f13;
+  border-color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .deploy-pause-icon {
   font-size: 10px;
@@ -1958,7 +1974,7 @@ body {
 }
 .deploy-pause:hover .keycap {
   border-color: rgb(0 0 0 / 0.45);
-  color: #0c0f13;
+  color: var(--sel-fg);
 }
 .deploy-tickets {
   margin-left: auto;
@@ -2084,7 +2100,7 @@ body {
   color: #ffb070;
 }
 .dm.k-ride {
-  color: #f2cd78;
+  color: var(--accent);
 }
 .dm.warn .dm-label {
   color: var(--hud-accent);
@@ -2096,14 +2112,14 @@ body {
   z-index: 2;
 }
 .dm.sel .dm-icon {
-  color: #0c0f13;
+  color: var(--sel-fg);
   border-color: #ffffff;
-  background: #f2f2ee;
+  background: var(--sel-bg);
   animation: dm-pulse 1.4s ease-out infinite;
 }
 .dm.sel .dm-label {
-  color: #0c0f13;
-  background: #f2f2ee;
+  color: var(--sel-fg);
+  background: var(--sel-bg);
 }
 @keyframes dm-pulse {
   from {
@@ -2168,8 +2184,8 @@ body {
   background: rgb(255 255 255 / 0.12);
 }
 .deploy-opt.sel {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .deploy-opt.blocked {
   opacity: 0.42;
@@ -2235,7 +2251,7 @@ body {
   background: rgb(255 255 255 / 0.03);
 }
 .deploy-member.sel {
-  box-shadow: inset 3px 0 #f2f2ee;
+  box-shadow: inset 3px 0 var(--accent);
   background: rgb(255 255 255 / 0.1);
 }
 .deploy-member .state {
@@ -2257,8 +2273,8 @@ body {
   cursor: pointer;
 }
 .deploy-onmate:hover {
-  color: #0c0f13;
-  background: #f2f2ee;
+  color: var(--sel-fg);
+  background: var(--sel-bg);
 }
 .deploy-foot {
   display: flex;
@@ -2308,7 +2324,7 @@ body {
   padding: 15px;
   border: 0;
   border-radius: 0;
-  background: #262c33;
+  background: #16263a;
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
   color: #fff;
   font: inherit;
@@ -2323,18 +2339,21 @@ body {
   inset: 0;
   transform-origin: left;
   transform: scaleX(var(--p, 0));
-  background: linear-gradient(180deg, #5ebaff, #2b80e6);
+  background: linear-gradient(90deg, #00e5ff, #6ff2ff);
   transition: transform 0.2s linear;
 }
 .deploy-button-text {
   position: relative;
+}
+.deploy-button:not(:disabled) {
+  color: var(--on-accent);
 }
 .deploy-button:disabled {
   color: rgb(255 255 255 / 0.85);
   cursor: default;
 }
 .deploy-button:disabled .deploy-button-fill {
-  background: linear-gradient(180deg, #56616c, #3f4851);
+  background: linear-gradient(90deg, #2a4a63, #35607c);
 }
 .deploy-button:not(:disabled):hover .deploy-button-fill {
   filter: brightness(1.12);
@@ -2440,8 +2459,8 @@ body {
   height: 20px;
 }
 .lo-class.sel {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .lo-passive {
   font-size: 11px;
@@ -2468,8 +2487,8 @@ body {
   background: rgb(255 255 255 / 0.1);
 }
 .lo-row.open {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
   box-shadow: none;
 }
 .lo-slot {
@@ -2568,11 +2587,11 @@ body {
   background: rgb(255 255 255 / 0.11);
 }
 .lp-item.sel {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .lp-item.sel .lp-stat i {
-  background: linear-gradient(90deg, #0c0f13 calc(var(--v) * 100%), rgb(0 0 0 / 0.15) 0);
+  background: linear-gradient(90deg, var(--accent) calc(var(--v) * 100%), rgb(255 255 255 / 0.15) 0);
 }
 .lp-item.taken {
   opacity: 0.4;
@@ -2772,7 +2791,7 @@ body {
   color: var(--squad);
 }
 .sb-row.you {
-  background: linear-gradient(90deg, rgb(255 194 71 / 0.26), rgb(255 194 71 / 0.06));
+  background: linear-gradient(90deg, rgb(0 229 255 / 0.26), rgb(0 229 255 / 0.06));
   box-shadow: inset 3px 0 var(--hud-accent);
 }
 .sb-row.you .sb-name {
@@ -2912,6 +2931,33 @@ body {
   font-size: 15px;
 }
 
+/* The menu's background battle (main.ts, Game `showcase`): only its canvas shows, fading in once it runs. */
+.showcase {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1.6s ease;
+  pointer-events: none;
+}
+.showcase.ready {
+  opacity: 1;
+}
+.showcase > :not(canvas) {
+  display: none !important;
+}
+.showcase > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.showcase.ready ~ .lobby {
+  background: transparent;
+}
+.showcase.ready ~ .lobby .lb-bg {
+  opacity: 0;
+}
+
 /* ---- Main menu (lobby) ------------------------------------------------------ */
 /* A screen of its own before any match: the last map drifting slowly behind
    a dark shade and a faint grid, the name and a column of entries on the left
@@ -2923,13 +2969,14 @@ body {
   overflow: hidden;
   color: var(--hud-fg);
   font-family: var(--font);
-  background: #07090b;
+  background: var(--navy);
 }
 .lb-bg {
   position: absolute;
   inset: -6%;
-  background: #11161b center / cover no-repeat;
-  filter: blur(3px) saturate(0.55) brightness(0.5);
+  transition: opacity 1.6s ease;
+  background: #0b1626 center / cover no-repeat;
+  filter: blur(3px) saturate(0.7) brightness(0.55) hue-rotate(-10deg);
   animation: lb-drift 70s ease-in-out infinite alternate;
 }
 @keyframes lb-drift {
@@ -2944,17 +2991,16 @@ body {
   position: absolute;
   inset: 0;
   background:
-    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 56px),
-    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 56px),
-    linear-gradient(90deg, rgb(5 7 10 / 0.96) 0%, rgb(5 7 10 / 0.82) 34%, rgb(5 7 10 / 0.35) 72%, rgb(5 7 10 / 0.55) 100%),
-    radial-gradient(ellipse at 70% 50%, transparent 30%, rgb(0 0 0 / 0.55));
+    radial-gradient(ellipse 60% 50% at 8% 0%, rgb(0 229 255 / 0.14), transparent 70%),
+    linear-gradient(90deg, rgb(4 10 22 / 0.92) 0%, rgb(4 10 22 / 0.7) 30%, rgb(4 10 22 / 0.12) 62%, rgb(4 10 22 / 0.25) 100%),
+    linear-gradient(0deg, rgb(4 10 22 / 0.85) 0%, transparent 28%),
+    radial-gradient(ellipse at 70% 45%, transparent 40%, rgb(2 6 14 / 0.5));
 }
 /* Sub-screens: the map steps further back. */
 .lobby:not(.lb-scr-main) .lb-shade {
   background:
-    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.02) 0 1px, transparent 1px 56px),
-    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.02) 0 1px, transparent 1px 56px),
-    linear-gradient(90deg, rgb(5 7 10 / 0.94), rgb(5 7 10 / 0.78));
+    radial-gradient(ellipse 60% 50% at 8% 0%, rgb(0 229 255 / 0.1), transparent 70%),
+    linear-gradient(90deg, rgb(4 10 22 / 0.9), rgb(4 10 22 / 0.62));
 }
 .lb-frame {
   position: relative;
@@ -2986,9 +3032,9 @@ body {
   cursor: pointer;
 }
 .lb-back:hover {
-  border-color: #f2f2ee;
-  background: #f2f2ee;
-  color: #0c0f13;
+  border-color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .lb-back-arrow {
   font-size: 11px;
@@ -2998,7 +3044,7 @@ body {
 }
 .lb-back:hover .keycap {
   border-color: rgb(0 0 0 / 0.45);
-  color: #0c0f13;
+  color: var(--sel-fg);
 }
 .lb-pagehead {
   display: flex;
@@ -3029,27 +3075,34 @@ body {
   position: relative;
   display: flex;
   align-items: center;
+  min-height: 0;
 }
 .lb-maincol {
   display: flex;
   flex-direction: column;
-  width: min(480px, 100%);
-  margin-top: -40px;
+  width: min(460px, 100%);
+  max-height: 100%;
 }
 .lb-wordmark {
-  font-size: clamp(52px, 7vw, 100px);
-  font-weight: 700;
+  font-size: clamp(44px, 5.4vw, 84px);
+  font-weight: 800;
   font-stretch: semi-condensed;
-  letter-spacing: 0.12em;
-  line-height: 0.9;
-  text-shadow: 0 6px 40px rgb(0 0 0 / 0.6);
+  font-style: italic;
+  letter-spacing: 0.06em;
+  line-height: 0.95;
+  background: linear-gradient(180deg, #ffffff 30%, #bff6ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 22px rgb(0 229 255 / 0.35)) drop-shadow(0 4px 18px rgb(0 0 0 / 0.6));
   animation: lb-in 0.6s ease-out both;
 }
 .lb-logo-rule {
-  width: 150px;
-  height: 4px;
-  margin: 16px 0 12px;
-  background: var(--hud-accent);
+  width: 120px;
+  height: 3px;
+  margin: 14px 0 10px;
+  background: linear-gradient(90deg, var(--accent), rgb(0 229 255 / 0));
+  box-shadow: var(--accent-glow);
   animation: lb-rule 0.7s 0.15s ease-out both;
   transform-origin: left;
 }
@@ -3065,30 +3118,30 @@ body {
   }
 }
 .lb-tag {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.42em;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: var(--hud-accent);
+  color: var(--accent);
 }
 .lb-menu {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 46px;
+  gap: 2px;
+  margin-top: clamp(18px, 4vh, 40px);
 }
 .lb-item {
   position: relative;
   display: flex;
   align-items: center;
-  padding: 11px 20px 11px 22px;
+  padding: 9px 20px 9px 22px;
   border: 0;
   background: transparent;
   color: var(--hud-dim);
   font: inherit;
-  font-size: 26px;
+  font-size: clamp(18px, 2.6vh, 24px);
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   text-align: left;
   text-transform: uppercase;
   cursor: pointer;
@@ -3096,15 +3149,23 @@ body {
     color 0.15s,
     padding 0.15s,
     background 0.15s;
+  animation: lb-in 0.5s ease-out both;
 }
+.lb-item:nth-child(2) { animation-delay: 0.04s; }
+.lb-item:nth-child(3) { animation-delay: 0.08s; }
+.lb-item:nth-child(4) { animation-delay: 0.12s; }
+.lb-item:nth-child(5) { animation-delay: 0.16s; }
+.lb-item:nth-child(6) { animation-delay: 0.2s; }
+.lb-item:nth-child(7) { animation-delay: 0.24s; }
 .lb-item::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  background: var(--hud-accent);
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: var(--accent);
+  box-shadow: var(--accent-glow);
   transform: scaleY(0);
   transition: transform 0.15s;
 }
@@ -3113,17 +3174,19 @@ body {
 }
 .lb-item.sel {
   padding-left: 32px;
-  background: linear-gradient(90deg, #f2f2ee 62%, rgb(242 242 238 / 0));
-  color: #0c0f13;
+  background: linear-gradient(90deg, rgb(0 229 255 / 0.36), rgb(0 229 255 / 0.14) 60%, rgb(0 229 255 / 0));
+  color: var(--sel-fg);
+  text-shadow: 0 0 18px rgb(0 229 255 / 0.5);
 }
 .lb-item.sel::before {
   transform: scaleY(1);
 }
 .lb-item-desc {
   min-height: 2.8em;
-  margin-top: 20px;
-  padding-left: 22px;
-  border-left: 1px solid rgb(255 255 255 / 0.18);
+  margin-top: 16px;
+  padding: 10px 14px 10px 18px;
+  border-left: 2px solid var(--accent);
+  background: linear-gradient(90deg, rgb(10 24 44 / 0.7), rgb(10 24 44 / 0));
   font-size: 14px;
   line-height: 1.5;
   color: var(--hud-dim);
@@ -3137,6 +3200,46 @@ body {
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--hud-faint);
+}
+/* "Live" tag over the battle behind the menu (shown once it runs). */
+.lb-live {
+  position: absolute;
+  right: 0;
+  bottom: 26px;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.showcase.ready ~ .lobby .lb-live {
+  display: flex;
+}
+.lb-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4b4b;
+  box-shadow: 0 0 10px #ff4b4b;
+  animation: lb-live 1.4s ease-in-out infinite;
+}
+@keyframes lb-live {
+  50% {
+    opacity: 0.35;
+  }
+}
+.lb-live-tag {
+  color: #ff7b7b;
+  letter-spacing: 0.2em;
+}
+.lb-live-map {
+  color: var(--hud-fg);
 }
 /* Game setup: the rows on the left, the map's card on the right. */
 .lb-play {
@@ -3160,13 +3263,13 @@ body {
   grid-template-columns: minmax(0, 1fr) 34px minmax(120px, 160px) 34px;
   align-items: center;
   padding: 7px 6px 7px 16px;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
 }
 .lb-srow.focus {
-  background: #f2f2ee;
+  background: var(--sel-bg);
   box-shadow: inset 4px 0 0 var(--hud-accent);
-  color: #0c0f13;
+  color: var(--sel-fg);
 }
 .lb-srow-label {
   font-size: 14px;
@@ -3184,7 +3287,7 @@ body {
   color: var(--hud-accent);
 }
 .lb-srow.warn.focus .lb-srow-val {
-  color: #8a5a00;
+  color: #ffd27a;
 }
 .lb-arrow {
   height: 32px;
@@ -3216,9 +3319,10 @@ body {
   margin-top: auto;
   padding: 17px 22px;
   border: 0;
-  background: var(--hud-accent);
+  background: linear-gradient(90deg, #00e5ff, #5ff0ff);
+  box-shadow: 0 0 28px rgb(0 229 255 / 0.35);
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
-  color: #0c0f13;
+  color: var(--on-accent);
   font: inherit;
   font-size: 20px;
   font-weight: 700;
@@ -3227,12 +3331,13 @@ body {
   cursor: pointer;
 }
 .lb-start:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.1);
+  box-shadow: 0 0 40px rgb(0 229 255 / 0.55);
 }
 .lb-start .keycap {
   border-color: rgb(0 0 0 / 0.45);
   background: rgb(0 0 0 / 0.08);
-  color: #0c0f13;
+  color: var(--on-accent);
   font-size: 11px;
   letter-spacing: 0.04em;
 }
@@ -3307,7 +3412,7 @@ body {
   margin-top: 0;
   padding: 22px 24px;
   border-top: 0;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   font-size: 14px;
 }
 .lb-settings .sp {
@@ -3374,27 +3479,24 @@ body {
   .lb-eyebrow {
     font-size: 9px;
   }
-  .lb-maincol {
-    margin-top: -30px;
-  }
   .lb-wordmark {
-    font-size: 42px;
+    font-size: 32px;
   }
   .lb-logo-rule {
     width: 90px;
-    height: 3px;
-    margin: 8px 0 6px;
+    height: 2px;
+    margin: 6px 0 4px;
   }
   .lb-tag {
     font-size: 9px;
   }
   .lb-menu {
-    margin-top: 14px;
-    gap: 2px;
+    margin-top: 8px;
+    gap: 0;
   }
   .lb-item {
-    padding: 6px 14px;
-    font-size: 17px;
+    padding: 5px 14px;
+    font-size: 15px;
   }
   .lb-item.sel {
     padding-left: 22px;
@@ -3404,10 +3506,7 @@ body {
     bottom: 5px;
   }
   .lb-item-desc {
-    min-height: 0;
-    margin-top: 8px;
-    padding-left: 14px;
-    font-size: 11px;
+    display: none;
   }
   .lb-version {
     font-size: 8px;
@@ -3483,16 +3582,16 @@ body {
 }
 .ov-action:hover,
 .ov-action.primary {
-  border-color: #f2f2ee;
-  background: #f2f2ee;
-  color: #0c0f13;
+  border-color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 
 /* Pause menu (Modern Warfare style): the entries in a column on the left,
    the controls or the settings beside them; no click-anywhere resume. */
 .overlay.kind-pause {
   cursor: default;
-  background: linear-gradient(90deg, rgb(5 7 10 / 0.95) 0%, rgb(5 7 10 / 0.84) 45%, rgb(5 7 10 / 0.6) 100%);
+  background: linear-gradient(90deg, rgb(4 10 22 / 0.95) 0%, rgb(4 10 22 / 0.82) 45%, rgb(4 10 22 / 0.55) 100%);
 }
 .kind-pause .ov-panel {
   display: grid;
@@ -3528,27 +3627,31 @@ body {
 .kind-pause .ov-action {
   padding: 14px 18px;
   border: 0;
-  background: rgb(255 255 255 / 0.05);
+  background: var(--row-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
   color: var(--hud-fg);
   font-size: 16px;
   letter-spacing: 0.14em;
   text-align: left;
 }
 .kind-pause .ov-action:hover {
-  background: rgb(255 255 255 / 0.13);
+  background: rgb(0 229 255 / 0.12);
   color: var(--hud-fg);
 }
 .kind-pause .ov-action.sel {
-  background: #f2f2ee;
-  box-shadow: inset 4px 0 0 var(--hud-accent);
-  color: #0c0f13;
+  background: var(--sel-bg);
+  box-shadow: inset 4px 0 0 var(--accent), var(--accent-glow);
+  color: var(--sel-fg);
 }
 .kind-pause .overlay-hint.keys {
   width: auto;
   margin-top: 0;
   padding: 18px 20px;
-  border-top: 0;
-  background: rgb(8 10 13 / 0.55);
+  border: 1px solid var(--glass-line);
+  border-top: 2px solid var(--accent);
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 .kind-pause .overlay-extra {
   width: auto;
@@ -3572,7 +3675,7 @@ body {
 .sp-cat {
   padding: 12px 16px;
   border: 0;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   color: var(--hud-fg);
   font: inherit;
   font-size: 14px;
@@ -3586,8 +3689,8 @@ body {
   background: rgb(255 255 255 / 0.12);
 }
 .sp-cat.sel {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .sp-main {
   display: flex;
@@ -3607,7 +3710,7 @@ body {
   gap: 16px;
   min-height: 46px;
   padding: 6px 14px;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
 }
 .sp-row:hover {
   background: rgb(255 255 255 / 0.09);
@@ -3663,8 +3766,8 @@ body {
   background: rgb(255 255 255 / 0.14);
 }
 .sp-opt.sel {
-  background: #f2f2ee;
-  color: #0c0f13;
+  background: var(--sel-bg);
+  color: var(--sel-fg);
 }
 .sp-desc {
   min-height: 3.2em;
@@ -3723,13 +3826,13 @@ body {
 }
 .sp-key.waiting {
   border-color: var(--hud-accent);
-  background: rgb(245 209 78 / 0.16);
+  background: rgb(0 229 255 / 0.16);
   color: var(--hud-accent);
   animation: sp-wait 0.8s ease-in-out infinite alternate;
 }
 @keyframes sp-wait {
   to {
-    background: rgb(245 209 78 / 0.04);
+    background: rgb(0 229 255 / 0.04);
   }
 }
 .sp-keyrow.clash {
@@ -3909,7 +4012,7 @@ body {
 .lb-lang {
   padding: 8px 14px;
   border: 0;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
   color: var(--hud-fg);
   font: inherit;
@@ -3934,7 +4037,7 @@ body {
   gap: 10px;
   padding: 8px 14px;
   border: 0;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
   color: var(--hud-fg);
   font: inherit;
@@ -3961,7 +4064,9 @@ body {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgb(4 6 8 / 0.72);
+  background: rgb(3 8 18 / 0.72);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 .lb-dialog {
   display: flex;
@@ -3969,8 +4074,9 @@ body {
   gap: 14px;
   width: min(420px, 100%);
   padding: 24px;
-  background: var(--panel-strong);
-  box-shadow: inset 4px 0 0 var(--hud-accent), 0 0 0 1px var(--panel-line);
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 3px 0 0 var(--accent), 0 18px 60px rgb(0 0 0 / 0.5), 0 0 40px rgb(0 229 255 / 0.08);
 }
 .lb-dialog-title {
   font-size: 22px;
@@ -3998,7 +4104,7 @@ body {
 .lb-btn {
   padding: 9px 18px;
   border: 0;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
   color: var(--hud-fg);
   font: inherit;
@@ -4013,7 +4119,7 @@ body {
 .lb-btn.primary {
   background: var(--hud-accent);
   box-shadow: none;
-  color: #0c0f13;
+  color: var(--on-accent);
 }
 .lb-btn.primary:hover {
   filter: brightness(1.08);
@@ -4065,7 +4171,7 @@ body {
   align-items: center;
   padding: 9px 14px;
   border: 0;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
   color: var(--hud-fg);
   font: inherit;
@@ -4076,9 +4182,9 @@ button.mp-row {
   cursor: pointer;
 }
 button.mp-row:hover {
-  background: #f2f2ee;
+  background: var(--sel-bg);
   box-shadow: inset 4px 0 0 var(--hud-accent);
-  color: #0c0f13;
+  color: var(--sel-fg);
 }
 .mp-row.mp-head {
   background: none;
@@ -4136,7 +4242,7 @@ button.mp-row:hover {
   flex-direction: column;
   gap: 4px;
   padding: 18px 22px;
-  background: rgb(8 10 13 / 0.6);
+  background: var(--row-bg);
 }
 .lb-credit-note {
   margin: 0 0 10px;
@@ -4172,4 +4278,39 @@ button.mp-row:hover {
   .lb-credit-by {
     grid-column: 1;
   }
+}
+
+/* Korean: the wide tracking that suits Latin capitals only spreads syllables apart. */
+:lang(ko) .lb-item,
+:lang(ko) .lb-pagetitle,
+:lang(ko) .overlay-title,
+:lang(ko) .lb-start,
+:lang(ko) .sp-cat,
+:lang(ko) .ov-action,
+:lang(ko) .lb-srow-label,
+:lang(ko) .lb-back,
+:lang(ko) .lb-card-name,
+:lang(ko) .deploy-title,
+:lang(ko) .deploy-go,
+:lang(ko) .overlay-sub,
+:lang(ko) .lb-dialog-title,
+:lang(ko) .sb-title {
+  letter-spacing: 0.02em;
+}
+:lang(ko) .lb-tag,
+:lang(ko) .lb-eyebrow,
+:lang(ko) .deploy-eyebrow,
+:lang(ko) .sp-group,
+:lang(ko) .ov-context {
+  letter-spacing: 0.12em;
+}
+
+/* Loading: the name as on the main menu (italic, white to cyan, glowing). */
+.loading .overlay-title {
+  font-style: italic;
+  background: linear-gradient(180deg, #ffffff 30%, #bff6ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgb(0 229 255 / 0.35));
 }

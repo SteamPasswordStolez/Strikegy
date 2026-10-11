@@ -3,6 +3,8 @@ import type { Game } from '@/core/Game';
 import type { NetOptions } from '@/net/NetMatch';
 import { Lobby } from '@/ui/Lobby';
 import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
+import { isTouchDevice, loadSettings } from '@/core/Settings';
+import { MAPS } from '@/data/maps';
 
 const container = document.getElementById('app')!;
 const loadGame = () => import('@/core/Game');
@@ -19,6 +21,7 @@ else {
   const menu: Lobby = new Lobby(
     container,
     (query) => {
+      stopShowcase();
       rememberMatch(query);
       startSolo(query, () => menu.root.remove());
     },
@@ -26,10 +29,67 @@ else {
     // A room's match on the game server: a reload comes back to the
     // multiplayer pages, where the server puts this browser back in its seat.
     (start, link) => {
+      stopShowcase();
       rememberRoom();
       void startGame(new URLSearchParams({ map: start.map, mode: start.mode, bots: 'none' }), () => menu.root.remove(), { link, start });
     },
+    (key) => {
+      if (key !== 'menuScene') return;
+      if (loadSettings().menuScene) startShowcase(menu.backdropMap);
+      else stopShowcase();
+    },
   );
+  // The menu paints first; the battle behind it loads after.
+  setTimeout(() => startShowcase(menu.backdropMap), 400);
+}
+
+/**
+ * The main menu's background: a bot match on the last picked map, the camera
+ * drifting over the fighting (Game's `showcase`). Desktop only, and only while
+ * the menu is up: it is thrown away before a match loads.
+ */
+let showcase: { host: HTMLDivElement; game: Promise<Game | null> } | null = null;
+
+function startShowcase(map: string): void {
+  if (showcase || isTouchDevice() || !loadSettings().menuScene) return;
+  const host = document.createElement('div');
+  host.className = 'showcase';
+  container.prepend(host);
+  const n = Math.min(10, MAPS.find((m) => m.id === map)?.team ?? 8);
+  const entry = { host, game: Promise.resolve<Game | null>(null) };
+  entry.game = loadGame()
+    .then(({ Game }) =>
+      Game.create(host, {
+        mapUrl: `${import.meta.env.BASE_URL}maps/${encodeURIComponent(map)}.json`,
+        loadout: ['ar1'],
+        bots: { allies: n, enemies: n, difficulty: 'normal', plain: null },
+        mode: 'auto',
+        showcase: true,
+      }),
+    )
+    .then((game) => {
+      // Left the menu while it loaded.
+      if (showcase !== entry) {
+        game.dispose();
+        return null;
+      }
+      host.classList.add('ready');
+      return game;
+    })
+    .catch((err: unknown) => {
+      console.warn('menu background:', err);
+      host.remove();
+      return null;
+    });
+  showcase = entry;
+}
+
+function stopShowcase(): void {
+  const s = showcase;
+  if (!s) return;
+  showcase = null;
+  s.host.remove();
+  void s.game.then((g) => g?.dispose());
 }
 
 /** A solo match; "back" in the browser returns to the menu. */
