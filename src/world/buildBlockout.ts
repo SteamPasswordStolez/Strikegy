@@ -612,7 +612,7 @@ function addKitPieces(
   for (const p of pieces) {
     // Far look: chamfered boxes plain, small parts and thin bars left out.
     p.geo.computeBoundingSphere();
-    const far = p.thin || p.geo.boundingSphere!.radius < KIT_FAR.drop ? null : p.bevel ? unchamfer(p.geo, p.bevel) : p.geo.clone();
+    const far = p.far !== undefined ? p.far : p.thin || p.geo.boundingSphere!.radius < KIT_FAR.drop ? null : p.bevel ? unchamfer(p.geo, p.bevel) : p.geo.clone();
     const shade = shadeOf(p.geo);
     const farShade = far && shadeOf(far);
     p.geo.applyMatrix4(toWorld);

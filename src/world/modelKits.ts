@@ -87,6 +87,8 @@ export interface KitPiece {
   bevel?: number;
   /** Thin bar (rope, hose, rail): left out of the far look. */
   thin?: boolean;
+  /** Its own far look (null: none), placed like `geo` (keep the two in step when moving a piece). */
+  far?: THREE.BufferGeometry | null;
 }
 
 /**
@@ -762,6 +764,11 @@ const KITS: Record<ModelKind, Kit> = {
       const layers = T > 0.7 && r < rows - 1 ? 2 : 1;
       for (let k = 0; k < layers; k++) {
         const tz = layers === 2 ? (k - 0.5) * (T / 2) : 0;
+        // Far look: the whole course as one long bag (the joints are under a pixel there).
+        const course = bagGeometry(L, bagH * 1.05, layers === 2 ? T / 2 : T);
+        if (!alongX) course.rotateY(Math.PI / 2);
+        course.translate(...(alongX ? [0, bagH * (r + 0.5), tz] : [tz, bagH * (r + 0.5), 0]) as V3);
+        let first = true;
         for (let x = -L / 2 + bagL / 2 - shift; x < L / 2 - bagL * 0.3; x += bagL) {
           const cx = Math.max(-L / 2 + bagL / 2, Math.min(L / 2 - bagL / 2, x));
           const jitter = (rand() - 0.5) * 0.04;
@@ -770,7 +777,8 @@ const KITS: Record<ModelKind, Kit> = {
           const g = bagGeometry(bagL - 0.02, bagH * 1.05, layers === 2 ? T / 2 : T);
           if (!alongX) g.rotateY(Math.PI / 2);
           g.translate(...at);
-          b.pieces.push({ geo: g, mat: 'body' });
+          b.pieces.push({ geo: g, mat: 'body', far: first ? course : null });
+          first = false;
         }
       }
     }
@@ -1132,6 +1140,7 @@ const KITS: Record<ModelKind, Kit> = {
       KITS.sandbags(bags, w - 0.8, 0.4, 0.5, () => 0.5);
       for (const p of bags.pieces) {
         p.geo.translate(0, inner + roof, -d / 2 + 0.15);
+        p.far?.translate(0, inner + roof, -d / 2 + 0.15);
         b.pieces.push(p);
       }
     }
