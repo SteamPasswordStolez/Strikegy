@@ -28,7 +28,9 @@ export type SurfaceMaterial =
   /** Painted steel with chips and rust (procedural; the colour is the paint). */
   | 'paint'
   /** Tyres and rubber parts (procedural). */
-  | 'rubber';
+  | 'rubber'
+  /** Baled straw and hay (procedural; tinted). */
+  | 'straw';
 /** Kind of trees on a map and in its scenery (default conifer). */
 export type Flora = 'conifer' | 'broadleaf' | 'palm';
 export type ObjectType = 'wall' | 'cover' | 'floor' | 'ramp' | 'prop';

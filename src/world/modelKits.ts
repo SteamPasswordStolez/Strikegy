@@ -76,7 +76,7 @@ export const MODEL_KINDS: readonly ModelKind[] = [
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
-export type KitMaterial = 'body' | 'trim' | 'metal' | 'dark' | 'glass' | 'rubber' | 'wood' | 'canvas' | 'concrete' | 'light' | 'redLight' | 'water' | 'dirt' | 'mesh' | 'snow' | 'paint' | 'bronze';
+export type KitMaterial = 'body' | 'trim' | 'metal' | 'dark' | 'glass' | 'rubber' | 'wood' | 'canvas' | 'concrete' | 'light' | 'redLight' | 'water' | 'dirt' | 'mesh' | 'snow' | 'paint' | 'bronze' | 'straw';
 
 export interface KitPiece {
   geo: THREE.BufferGeometry;
@@ -340,6 +340,30 @@ class Builder {
   }
 }
 
+/**
+ * A fuel dispenser standing at (x, z) on y0, w x h x d (faces +-z): cabinet,
+ * a rounded head with lit displays, nozzles in holsters at both ends with
+ * hoses hanging in loops, and (`sign`) a price board on a post.
+ */
+function fuelDispenser(b: Builder, x: number, z: number, w: number, d: number, h: number, y0: number, sign: boolean): void {
+  const body = h * 0.66;
+  b.box('body', [w, body, d], [x, y0 + body / 2, z]);
+  b.box('dark', [w + 0.02, 0.12, d + 0.02], [x, y0 + 0.06, z]);
+  const hh = h - body - 0.12;
+  b.profile('trim', [[-d / 2 - 0.03, 0], [d / 2 + 0.03, 0], [d / 2 + 0.03, hh * 0.7], [d / 2 - 0.08, hh], [-d / 2 + 0.08, hh], [-d / 2 - 0.03, hh * 0.7]], w + 0.04, [x, y0 + body, z]);
+  for (const s of [-1, 1]) {
+    b.box('light', [w * 0.7, hh * 0.45, 0.02], [x, y0 + body + hh * 0.42, z + s * (d / 2 + 0.035)]);
+    b.box('dark', [w * 0.8, 0.22, 0.02], [x, y0 + body * 0.78, z + s * (d / 2 + 0.01)]);
+    const ex = x + s * (w / 2 + 0.04);
+    b.box('dark', [0.08, 0.2, 0.14], [ex, y0 + body * 0.62, z]);
+    b.rod('dark', [ex + s * 0.03, y0 + body * 0.72, z + 0.02], [ex + s * 0.08, y0 + body * 0.55, z + 0.16], 0.025, 6);
+    b.tube('rubber', [[x + s * (w / 2 - 0.05), y0 + body * 0.7, z - d / 2 + 0.1], [ex + s * 0.12, y0 + 0.25, z - 0.1], [ex + s * 0.18, y0 + 0.12, z + 0.2], [ex + s * 0.06, y0 + body * 0.6, z + 0.05]], 0.022, 16, 6);
+  }
+  if (!sign) return;
+  b.box('metal', [0.05, 0.4, 0.05], [x, y0 + h + 0.05, z]);
+  b.box('light', [w * 0.9, 0.3, 0.05], [x, y0 + h + 0.35, z]);
+}
+
 function dist3(a: V3, b: V3): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
@@ -446,21 +470,61 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   container(b, w, h, d) {
-    b.box('body', [w - 0.08, h - 0.02, d - 0.08], [0, h / 2, 0]);
-    // Corrugated long sides and roof ribs.
-    for (let z = -d / 2 + 0.3; z < d / 2 - 0.2; z += 0.3) {
-      for (const s of [-1, 1]) b.box('body', [0.06, h - 0.3, 0.1], [s * (w / 2 - 0.02), h / 2, z]);
+    // ISO container along z: corrugated sides and back, a dented roof, two
+    // door leaves at +z with locking bars, corner posts with castings, rails.
+    // Painted steel in the object's colour (chips, rust runs).
+    const post = 0.15;
+    const corr = (u: number, n: number) => {
+      // Trapezoid corrugation: flat crest, slopes, flat trough.
+      const t = (u * n) % 1;
+      return t < 0.3 ? 1 : t < 0.5 ? 1 - (t - 0.3) / 0.2 : t < 0.8 ? 0 : (t - 0.8) / 0.2;
+    };
+    const len = d - 2 * post;
+    const hi = h - 0.32;
+    const nLong = Math.round(len / 0.28);
+    for (const s of [-1, 1]) {
+      b.grid('paint', nLong * 5, 1, (u, v) => {
+        const z = s * (-len / 2 + u * len);
+        return [s * (w / 2 - 0.05 + 0.04 * corr(u, nLong)), 0.16 + v * hi, z];
+      });
     }
-    // Corner posts and rails.
-    for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) b.box('trim', [0.16, h, 0.16], [sx * (w / 2 - 0.06), h / 2, sz * (d / 2 - 0.06)]);
-      b.box('trim', [0.14, 0.14, d], [sx * (w / 2 - 0.05), h - 0.07, 0]);
-      b.box('trim', [0.14, 0.14, d], [sx * (w / 2 - 0.05), 0.07, 0]);
+    // Back end (-z) corrugated across x.
+    const nEnd = Math.round((w - 2 * post) / 0.28);
+    b.grid('paint', nEnd * 5, 1, (u, v) => [-(w / 2 - post) + u * (w - 2 * post), 0.16 + v * hi, -d / 2 + 0.05 - 0.035 * corr(u, nEnd)]);
+    // Roof: shallow cross corrugation, a dent here and there.
+    b.grid('paint', 8, Math.round(d / 0.5), (u, v) => {
+      const x = -w / 2 + post * 0.6 + u * (w - post * 1.2);
+      const z = -d / 2 + 0.1 + v * (d - 0.2);
+      return [x, h - 0.06 + 0.012 * Math.sin(v * d * 12) - 0.03 * Math.exp(-((x - 0.3) ** 2 + (z - d * 0.15) ** 2) * 2), z];
+    });
+    b.box('dark', [w - 0.1, 0.1, d - 0.1], [0, 0.11, 0]);
+    // Doors (+z): two leaves, vertical corrugation, four locking bars with handles and cams.
+    const leaf = (w - 2 * post) / 2;
+    for (const s of [-1, 1]) {
+      const cx = s * leaf * 0.5;
+      const n = Math.round(leaf / 0.2);
+      b.grid('paint', n * 5, 1, (u, v) => [cx + leaf / 2 - 0.01 - u * (leaf - 0.02), 0.16 + v * hi, d / 2 - 0.04 + 0.02 * corr(u, n)]);
+      for (const bx of [-0.3, 0.3]) {
+        const x = cx + bx * leaf;
+        b.rod('metal', [x, 0.2, d / 2 + 0.02], [x, h - 0.2, d / 2 + 0.02], 0.022, 6);
+        b.box('paint', [0.08, 0.05, 0.05], [x, 0.24, d / 2 + 0.03]);
+        b.box('paint', [0.08, 0.05, 0.05], [x, h - 0.24, d / 2 + 0.03]);
+        b.box('metal', [0.05, 0.38, 0.05], [x + 0.05, 1.15, d / 2 + 0.06], [0, 0, 0.12]);
+      }
+      // Hinges on the outer edge.
+      for (const y of [0.5, h / 2, h - 0.5]) b.box('metal', [0.06, 0.14, 0.06], [s * (w / 2 - post - 0.02), y, d / 2 + 0.01]);
     }
-    // Door end: two leaves and locking bars.
-    b.box('trim', [w - 0.1, h - 0.2, 0.04], [0, h / 2, d / 2 - 0.02]);
-    b.box('dark', [0.03, h - 0.3, 0.05], [0, h / 2, d / 2]);
-    for (const x of [-0.8, -0.35, 0.35, 0.8]) b.box('metal', [0.04, h - 0.35, 0.05], [x * (w / 2.44), h / 2, d / 2 + 0.03]);
+    // Frame: corner posts, top and bottom rails, door header and sill, castings.
+    for (const sx of [-1, 1])
+      for (const sz of [-1, 1]) {
+        b.box('paint', [post, h - 0.02, post], [sx * (w / 2 - post / 2), h / 2, sz * (d / 2 - post / 2)]);
+        for (const y of [0.09, h - 0.09]) {
+          b.box('paint', [0.18, 0.12, 0.18], [sx * (w / 2 - 0.09), y, sz * (d / 2 - 0.09)]);
+          b.box('dark', [0.07, 0.05, 0.02], [sx * (w / 2 - 0.09), y, sz * (d / 2 + 0.002)]);
+        }
+      }
+    for (const sx of [-1, 1]) for (const y of [0.1, h - 0.08]) b.box('paint', [0.12, y < 1 ? 0.16 : 0.12, d - 0.1], [sx * (w / 2 - 0.06), y, 0]);
+    for (const sz of [-1, 1]) for (const y of [0.1, h - 0.1]) b.box('paint', [w - 0.1, 0.18, 0.12], [0, y, sz * (d / 2 - 0.06)]);
   },
 
   boxcar(b, w, h, d) {
@@ -494,19 +558,42 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   fuelTank(b, w, h, d) {
+    // Steel storage tank: welded courses, a shallow cone roof with a rail round
+    // its edge, a caged ladder, pipework with flanges and a valve at the foot.
     const r = Math.min(w, d) / 2 - 0.3;
     const pad = 0.3;
     b.box('concrete', [w, pad, d], [0, pad / 2, 0]);
-    b.cyl('body', r, r, h - pad - 0.5, [0, pad + (h - pad - 0.5) / 2, 0], [0, 0, 0], 28);
-    b.cyl('body', r * 0.25, r, 0.5, [0, h - 0.25, 0], [0, 0, 0], 28);
-    for (const y of [pad + 0.8, pad + (h - pad) * 0.5, h - 0.8]) b.cyl('trim', r + 0.04, r + 0.04, 0.12, [0, y, 0], [0, 0, 0], 28, true);
-    // Ladder up the side, a hand rail at the top, pipework at the foot.
-    const lx = r + 0.2;
-    for (const s of [-1, 1]) b.box('metal', [0.05, h - pad, 0.05], [lx, pad + (h - pad) / 2, s * 0.22]);
-    for (let y = pad + 0.3; y < h - 0.2; y += 0.35) b.box('metal', [0.04, 0.04, 0.44], [lx, y, 0]);
-    b.cyl('metal', r * 0.5, r * 0.5, 0.9, [0, h + 0.4, 0], [0, 0, 0], 16, true);
-    b.cyl('dark', 0.12, 0.12, w / 2, [0, pad + 0.35, -w / 4 - r * 0.3], [Math.PI / 2, 0, 0], 8);
-    b.box('dark', [0.4, 0.4, 0.4], [0, pad + 0.35, -d / 2 + 0.4]);
+    b.lathe('concrete', [[r + 0.25, 0], [r + 0.25, 0.15], [r + 0.05, 0.2], [0, 0.2]], [0, pad, 0], 40);
+    const shell = h - pad - 0.5;
+    b.lathe('paint', [[r, 0], [r, shell]], [0, pad + 0.15, 0], 48);
+    // Weld seams between the courses (~1.8 m) and vertical seams staggered.
+    for (let y = 1.8; y < shell - 0.2; y += 1.8) b.cyl('trim', r + 0.012, r + 0.012, 0.03, [0, pad + 0.15 + y, 0], [0, 0, 0], 48, true);
+    b.lathe('trim', [[r + 0.03, 0], [r + 0.03, 0.1], [r * 0.15, 0.55], [0.3, 0.6], [0, 0.62]], [0, pad + 0.15 + shell, 0], 48);
+    const top = pad + 0.15 + shell + 0.1;
+    // Edge rail: posts and two rails round the roof edge.
+    const posts = 16;
+    for (let i = 0; i < posts; i++) {
+      const a = (i / posts) * Math.PI * 2;
+      const a2 = ((i + 1) / posts) * Math.PI * 2;
+      const pr = r - 0.12;
+      b.rod('metal', [Math.cos(a) * pr, top - 0.02, Math.sin(a) * pr], [Math.cos(a) * pr, top + 1.0, Math.sin(a) * pr], 0.022, 5);
+      for (const y of [0.5, 1.0]) b.rod('metal', [Math.cos(a) * pr, top + y, Math.sin(a) * pr], [Math.cos(a2) * pr, top + y, Math.sin(a2) * pr], 0.02, 5);
+    }
+    // Caged ladder up the +x side.
+    const lx = r + 0.25;
+    const ly0 = pad + 0.3;
+    for (const s of [-1, 1]) b.rod('metal', [lx, ly0, s * 0.22], [lx, top + 0.9, s * 0.22], 0.025, 5);
+    for (let y = ly0 + 0.3; y < top; y += 0.3) b.rod('metal', [lx, y, -0.22], [lx, y, 0.22], 0.015, 4);
+    for (let y = 2.3; y < top + 0.6; y += 0.9) b.tube('metal', [[lx - 0.1, y, -0.36], [lx + 0.35, y, -0.3], [lx + 0.5, y, 0], [lx + 0.35, y, 0.3], [lx - 0.1, y, 0.36]], 0.018, 10, 4);
+    for (const s of [-1, 0, 1]) b.rod('metal', [lx + 0.3 + 0.2 * (1 - Math.abs(s)), 2.3, s * 0.3], [lx + 0.3 + 0.2 * (1 - Math.abs(s)), top + 0.6, s * 0.3], 0.015, 4);
+    // Pipe out of the foot (-z) along the ground to a valve.
+    b.tinted('#5a3a2a', () => {
+      b.cyl('paint', 0.13, 0.13, 1.6, [0, pad + 0.5, -r - 0.8], [Math.PI / 2, 0, 0], 12);
+      for (const z of [-r - 0.05, -r - 1.55]) b.cyl('paint', 0.2, 0.2, 0.05, [0, pad + 0.5, z], [Math.PI / 2, 0, 0], 14);
+      b.box('paint', [0.3, 0.4, 0.3], [0, pad + 0.5, -r - 1.75]);
+      b.rod('paint', [0, pad + 0.7, -r - 1.75], [0, pad + 0.95, -r - 1.75], 0.025, 6);
+    });
+    b.cyl('redLight', 0.22, 0.22, 0.03, [0, pad + 0.97, -r - 1.75], [0, 0, 0], 14);
     // Round-ish collider: two squares, one turned 45 degrees.
     const side = 2 * r * 0.95;
     return [
@@ -568,7 +655,7 @@ const KITS: Record<ModelKind, Kit> = {
         end.profile('canvas', [[-S / 2, 0], [-dw, 0], [-dw, dh], [0, dh], [0, ridge], [-S / 2, wall]], 0.02);
         end.profile('canvas', [[dw, 0], [S / 2, 0], [S / 2, wall], [0, ridge], [0, dh], [dw, dh]], 0.02);
         // Dark inside, the rolled flap above the door, tie tapes.
-        end.box('dark', [0.02, dh, 2 * dw], [-0.25, dh / 2, 0]);
+        end.tinted('#24241e', () => end.box('canvas', [0.02, dh, 2 * dw], [-0.25, dh / 2, 0]));
         end.cyl('canvas', 0.11, 0.11, 2 * dw + 0.2, [0.12, dh + 0.08, 0], [Math.PI / 2, 0, 0], 10);
         for (const sz of [-1, 1]) end.box('canvas', [0.02, 0.35, 0.03], [0.16, dh - 0.1, sz * (dw - 0.05)]);
       }
@@ -747,31 +834,11 @@ const KITS: Record<ModelKind, Kit> = {
 
   pump(b, w, h, d) {
     if (w < 1.2) {
-      // Fuel dispenser on a kerbed island: cabinet with a rounded head, lit
-      // display windows front and back, nozzles in holsters both sides with
-      // hoses hanging in loops, a price sign on top.
+      // Fuel dispenser on a kerbed island.
       const isl = 0.15;
       b.box('concrete', [w + 0.5, isl, d + 0.9], [0, isl / 2, 0]);
       b.tinted('#d2c64a', () => b.box('paint', [w + 0.56, 0.05, d + 0.96], [0, isl + 0.01, 0]));
-      const body = h * 0.66;
-      b.box('body', [w, body, d], [0, isl + body / 2, 0]);
-      b.box('dark', [w + 0.02, 0.12, d + 0.02], [0, isl + 0.06, 0]);
-      // Head: rounded top profile across x, wider than the cabinet.
-      const hh = h - isl - body - 0.12;
-      b.profile('trim', [[-d / 2 - 0.03, 0], [d / 2 + 0.03, 0], [d / 2 + 0.03, hh * 0.7], [d / 2 - 0.08, hh], [-d / 2 + 0.08, hh], [-d / 2 - 0.03, hh * 0.7]], w + 0.04, [0, isl + body, 0]);
-      for (const s of [-1, 1]) {
-        // Display windows (front / back faces = +-z).
-        b.box('light', [w * 0.7, hh * 0.45, 0.02], [0, isl + body + hh * 0.42, s * (d / 2 + 0.035)]);
-        b.box('dark', [w * 0.8, 0.22, 0.02], [0, isl + body * 0.78, s * (d / 2 + 0.01)]);
-        // Holster and nozzle on each end (+-x), hose from the cabinet's foot up to it.
-        const x = s * (w / 2 + 0.04);
-        b.box('dark', [0.08, 0.2, 0.14], [x, isl + body * 0.62, 0]);
-        b.rod('dark', [x + s * 0.03, isl + body * 0.72, 0.02], [x + s * 0.08, isl + body * 0.55, 0.16], 0.025, 6);
-        b.tube('rubber', [[s * (w / 2 - 0.05), isl + body * 0.7, -d / 2 + 0.1], [x + s * 0.12, isl + 0.25, -0.1], [x + s * 0.18, isl + 0.12, 0.2], [x + s * 0.06, isl + body * 0.6, 0.05]], 0.022, 16, 6);
-      }
-      // Price sign on a post above the head.
-      b.box('metal', [0.05, 0.4, 0.05], [0, h - 0.1, 0]);
-      b.box('light', [w * 0.9, 0.3, 0.05], [0, h + 0.2, 0]);
+      fuelDispenser(b, 0, 0, w, d, h - isl, isl, true);
       return;
     }
     // Village hand pump over a stone trough on a pad: cast-iron column with a
@@ -891,7 +958,9 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   logPile(b, w, h, d, rand) {
-    // Felled trunks stacked in a pyramid along the long side, cut ends showing.
+    // Felled trunks stacked in a pyramid along the long side: bark in the
+    // object's colour, pale cut ends with a darker heart, logs uneven in
+    // length and girth, stakes holding the bottom row.
     const alongX = w >= d;
     const L = alongX ? w : d;
     const T = alongX ? d : w;
@@ -906,12 +975,15 @@ const KITS: Record<ModelKind, Kit> = {
         const rr = r * (0.85 + rand() * 0.2);
         const len = L - rand() * 0.4;
         const off = (rand() - 0.5) * 0.3;
-        logs.cyl('body', rr, rr, len, [off, y, z], [0, 0, Math.PI / 2], 9);
-        for (const s of [-1, 1]) logs.cyl('trim', rr * 0.92, rr * 0.92, 0.02, [off + (s * len) / 2, y, z], [0, 0, Math.PI / 2], 9);
+        logs.cyl('body', rr, rr * 0.94, len, [off, y, z], [0, 0, Math.PI / 2], 12, true);
+        for (const s of [-1, 1]) {
+          const ex = off + (s * len) / 2;
+          logs.tinted('#c9b18a', () => logs.cyl('wood', rr * 0.97, rr * 0.97, 0.03, [ex, y, z], [0, 0, Math.PI / 2], 12));
+          logs.tinted('#8a6a45', () => logs.cyl('wood', rr * 0.35, rr * 0.35, 0.035, [ex + s * 0.003, y, z], [0, 0, Math.PI / 2], 8));
+        }
       }
     }
-    // Stakes holding the bottom row.
-    for (const s of [-1, 1]) for (const e of [-1, 1]) logs.box('wood', [0.1, h * 0.8, 0.1], [e * (L / 2 - 0.5), h * 0.4, s * (T / 2 + 0.05)]);
+    for (const s of [-1, 1]) for (const e of [-1, 1]) logs.box('wood', [0.1, h * 0.8, 0.1], [e * (L / 2 - 0.5), h * 0.4, s * (T / 2 + 0.05)], [s * 0.06, 0, 0]);
     for (const p of logs.pieces) {
       if (!alongX) p.geo.rotateY(Math.PI / 2);
       b.pieces.push(p);
@@ -919,7 +991,9 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   hayBale(b, w, h, d) {
-    // Round bales lying on their side, rolled along the long side.
+    // Round bales lying on their side along the long side: rounded edges,
+    // slightly domed ends, net wrap bands; snow on top in winter maps only
+    // shows where the map paints it (the kit adds a thin cap).
     const alongX = w >= d;
     const L = alongX ? w : d;
     const r = Math.min(h / 2, (alongX ? d : w) / 2);
@@ -928,10 +1002,21 @@ const KITS: Record<ModelKind, Kit> = {
     const bales = new Builder();
     for (let i = 0; i < n; i++) {
       const x = -L / 2 + (L / n) * (i + 0.5);
-      bales.cyl('body', r, r, (L / n) * 0.95, [x, r, 0], [0, 0, Math.PI / 2], 16);
-      // Wrap bands.
-      for (const s of [-0.25, 0.25]) bales.cyl('trim', r + 0.01, r + 0.01, 0.06, [x + (s * L) / n, r, 0], [0, 0, Math.PI / 2], 16, true);
-      bales.box('snow', [(L / n) * 0.8, 0.08, r * 0.9], [x, r * 2 - 0.02, 0]);
+      const half = ((L / n) * 0.95) / 2;
+      // Profile along the axis (radius, axial), turned so the axis is x.
+      const prof: [number, number][] = [[0, -half - 0.03], [r * 0.7, -half], [r * 0.95, -half + 0.03], [r, -half + 0.12], [r, half - 0.12], [r * 0.95, half - 0.03], [r * 0.7, half], [0, half + 0.03]];
+      const piece = new Builder();
+      piece.lathe('straw', prof, [0, 0, 0], 24);
+      // Net wrap edges.
+      piece.tinted('#d9d6c8', () => {
+        for (const s of [-0.42, 0.42]) piece.cyl('canvas', r + 0.006, r + 0.006, 0.06, [0, s * half * 2, 0], [0, 0, 0], 24, true);
+      });
+      for (const p of piece.pieces) {
+        p.geo.rotateZ(-Math.PI / 2);
+        p.geo.translate(x, r, 0);
+        bales.pieces.push(p);
+      }
+      bales.box('snow', [(L / n) * 0.7, 0.06, r * 0.8], [x, r * 2 - 0.01, 0]);
     }
     for (const p of bales.pieces) {
       if (!alongX) p.geo.rotateY(Math.PI / 2);
@@ -972,6 +1057,20 @@ const KITS: Record<ModelKind, Kit> = {
     b.box('snow', [w + 0.2, 0.12, d + 0.4], [0, h + 0.04, -0.1]);
     // Floor inside (darker).
     b.box('trim', [w - 2 * t, 0.05, d - 2 * t], [0, 0.03, 0]);
+    // Steel plate round the slit, a door leaf standing open, a vent, sandbags on the roof's front edge.
+    b.box('dark', [w - 1.0, 0.08, 0.06], [0, slit0 - 0.02, -d / 2 - 0.02]);
+    b.box('dark', [w - 1.0, 0.08, 0.06], [0, slit1 + 0.02, -d / 2 - 0.02]);
+    b.box('dark', [door - 0.1, 2.1, 0.06], [doorX + door / 2 - 0.05, 1.05, d / 2 + 0.45], [0, 1.2, 0]);
+    b.cyl('metal', 0.1, 0.1, 0.6, [-w / 4, inner + roof + 0.3, d / 4], [0, 0, 0], 10);
+    b.cyl('metal', 0.14, 0.14, 0.06, [-w / 4, inner + roof + 0.62, d / 4], [0, 0, 0], 10);
+    {
+      const bags = new Builder();
+      KITS.sandbags(bags, w - 0.8, 0.4, 0.5, () => 0.5);
+      for (const p of bags.pieces) {
+        p.geo.translate(0, inner + roof, -d / 2 + 0.15);
+        b.pieces.push(p);
+      }
+    }
     return cols;
   },
 
@@ -1000,7 +1099,15 @@ const KITS: Record<ModelKind, Kit> = {
     b.box('trim', [w + 0.3, 0.3, d + 0.3], [0, shaft, 0]);
     // A clock face on two sides and slit windows up the shaft.
     for (const s of [-1, 1]) {
-      b.cyl('light', 0.7, 0.7, 0.06, [0, shaft - 1.3, s * (d / 2 + 0.03)], [Math.PI / 2, 0, 0], 20);
+      b.cyl('light', 0.7, 0.7, 0.06, [0, shaft - 1.3, s * (d / 2 + 0.03)], [Math.PI / 2, 0, 0], 24);
+      b.cyl('trim', 0.78, 0.78, 0.08, [0, shaft - 1.3, s * (d / 2 + 0.02)], [Math.PI / 2, 0, 0], 24);
+      // Hour marks and the hands (ten past ten).
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        b.box('dark', [0.04, i % 3 ? 0.1 : 0.16, 0.02], [Math.sin(a) * 0.58, shaft - 1.3 + Math.cos(a) * 0.58, s * (d / 2 + 0.065)], [0, 0, -a]);
+      }
+      b.box('dark', [0.05, 0.42, 0.02], [-0.16, shaft - 1.3 + 0.1, s * (d / 2 + 0.075)], [0, 0, 0.95]);
+      b.box('dark', [0.06, 0.3, 0.02], [0.11, shaft - 1.3 + 0.07, s * (d / 2 + 0.08)], [0, 0, -1.0]);
       for (let y = 2.5; y < shaft - 2.5; y += 3) b.box('dark', [0.35, 1.3, 0.06], [0, y, s * (d / 2 + 0.02)]);
     }
     const p = Math.min(0.9, w * 0.22);
@@ -1198,38 +1305,34 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   fuelCanopy(b, w, h, d) {
-    // Flat canopy on four columns over two pump islands (along z), lit underside, deep fascia.
+    // Filling station canopy: a deck with a two-tone fascia, recessed lights
+    // underneath, round painted columns, two islands with dispensers.
     const deck = 0.55;
-    b.box('body', [w, deck, d], [0, h - deck / 2, 0]);
-    b.box('trim', [w + 0.06, 0.18, d + 0.06], [0, h - deck + 0.12, 0]);
-    b.box('light', [w - 1, 0.03, d - 1], [0, h - deck - 0.01, 0]);
+    b.box('body', [w, deck - 0.2, d], [0, h - deck / 2 - 0.1, 0]);
+    b.tinted('#b8322a', () => b.box('paint', [w + 0.08, 0.22, d + 0.08], [0, h - deck + 0.13, 0]));
+    b.tinted('#e9e6de', () => b.box('paint', [w + 0.08, 0.2, d + 0.08], [0, h - 0.1, 0]));
+    b.box('trim', [w - 0.1, 0.04, d - 0.1], [0, h - deck + 0.02, 0]);
+    for (let x = -w / 2 + 1.5; x <= w / 2 - 1.4; x += 2) for (const z of [-d * 0.25, d * 0.25]) b.box('light', [1.2, 0.03, 0.5], [x, h - deck, z]);
     const cols: KitBox[] = [{ center: [0, h - deck / 2, 0], size: [w, deck, d] }];
     for (const sx of [-1, 1]) {
       const x = sx * w * 0.24;
       const len = d * 0.62;
-      // Raised island with kerbs, a column at each end, two pumps between them.
+      // Island: rounded-off ends, painted kerb.
       b.box('concrete', [1.3, 0.18, len], [x, 0.09, 0]);
-      b.box('trim', [1.36, 0.06, len + 0.06], [x, 0.17, 0]);
+      b.tinted('#d2c64a', () => b.box('paint', [1.36, 0.06, len + 0.06], [x, 0.17, 0]));
       cols.push({ center: [x, 0.09, 0], size: [1.3, 0.18, len] });
       for (const sz of [-1, 1]) {
         const z = sz * (len / 2 - 0.35);
-        b.box('metal', [0.4, h - deck - 0.18, 0.4], [x, 0.18 + (h - deck - 0.18) / 2, z]);
+        b.tinted('#e4e1d8', () => b.cyl('paint', 0.2, 0.2, h - deck - 0.18, [x, 0.18 + (h - deck - 0.18) / 2, z], [0, 0, 0], 16));
+        b.cyl('dark', 0.24, 0.24, 0.3, [x, 0.33, z], [0, 0, 0], 16);
         cols.push({ center: [x, h / 2, z], size: [0.4, h, 0.4] });
-        // Pump: cabinet, display head, nozzles and hoses on both faces.
         const pz = sz * len * 0.16;
-        const ph = 1.75;
-        b.box('body', [0.6, ph * 0.72, 0.9], [x, 0.18 + (ph * 0.72) / 2, pz]);
-        b.box('trim', [0.66, ph * 0.28, 0.96], [x, 0.18 + ph * 0.86, pz]);
-        for (const fx of [-1, 1]) {
-          b.box('dark', [0.03, 0.26, 0.5], [x + fx * 0.34, 0.18 + ph * 0.86, pz]);
-          b.box('dark', [0.1, 0.22, 0.12], [x + fx * 0.33, 0.18 + ph * 0.5, pz + 0.25]);
-          b.cyl('rubber', 0.025, 0.025, ph * 0.5, [x + fx * 0.36, 0.18 + ph * 0.3, pz + 0.32], [0.25, 0, 0], 6);
-        }
-        cols.push({ center: [x, 0.18 + ph / 2, pz], size: [0.6, ph, 0.9] });
-        // Bollards at the island ends.
-        b.cyl('redLight', 0.09, 0.09, 0.9, [x, 0.18 + 0.45, sz * (len / 2 + 0.25)], [0, 0, 0], 8);
+        fuelDispenser(b, x, pz, 0.6, 0.9, 1.75, 0.18, true);
+        cols.push({ center: [x, 0.18 + 1.75 / 2, pz], size: [0.6, 1.75, 0.9] });
+        b.tinted('#d8b13a', () => b.cyl('paint', 0.09, 0.09, 0.9, [x, 0.18 + 0.45, sz * (len / 2 + 0.25)], [0, 0, 0], 10));
       }
     }
+    return cols;
   },
 
   waterTower(b, w, h, d) {
@@ -1432,18 +1535,31 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   silo(b, w, h, d) {
-    // Farm silo: stave-banded cylinder, domed cap, ladder cage up one side.
+    // Concrete stave silo: hoops every metre, a column of chute doors with a
+    // ladder cage beside it, a ribbed metal dome with a vent.
     const r = Math.min(w, d) / 2 - 0.25;
     const body = h - r * 0.6;
-    b.cyl('concrete', r + 0.25, r + 0.25, 0.4, [0, 0.2, 0], [0, 0, 0], 20);
-    b.cyl('body', r, r, body, [0, body / 2, 0], [0, 0, 0], 20);
-    for (let y = 1.2; y < body - 0.3; y += 1.4) b.cyl('trim', r + 0.03, r + 0.03, 0.1, [0, y, 0], [0, 0, 0], 20, true);
-    b.sphere('metal', r, [0, body, 0], [1, 0.6, 1]);
-    b.cyl('metal', 0.25, 0.4, 0.5, [0, body + r * 0.6, 0], [0, 0, 0], 10);
-    const lx = r + 0.25;
-    for (const s of [-1, 1]) b.box('metal', [0.05, body - 1.5, 0.05], [lx, 1.5 + (body - 1.5) / 2, s * 0.22]);
-    for (let y = 1.7; y < body; y += 0.35) b.box('metal', [0.04, 0.04, 0.44], [lx, y, 0]);
-    // Chute down to a shed roof height.
+    b.lathe('concrete', [[r + 0.3, 0], [r + 0.3, 0.35], [r + 0.05, 0.42], [0, 0.42]], [0, 0, 0], 32);
+    b.lathe('body', [[r, 0], [r, body]], [0, 0.4, 0], 40);
+    for (let y = 1; y < body - 0.2; y += 1) b.cyl('metal', r + 0.02, r + 0.02, 0.04, [0, 0.4 + y, 0], [0, 0, 0], 40, true);
+    // Dome: ribbed metal, lip, vent.
+    b.lathe('metal', [[r + 0.08, 0], [r + 0.08, 0.12], [r * 0.85, r * 0.3], [r * 0.5, r * 0.52], [0.3, r * 0.6], [0, r * 0.61]], [0, 0.4 + body - 0.05, 0], 40);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      b.tube('metal', [[c * (r + 0.09), 0.4 + body + 0.08, s * (r + 0.09)], [c * r * 0.86, 0.4 + body + r * 0.3, s * r * 0.86], [c * r * 0.5, 0.4 + body + r * 0.53, s * r * 0.5], [c * 0.3, 0.4 + body + r * 0.6, s * 0.3]], 0.02, 6, 4);
+    }
+    b.lathe('metal', [[0.35, 0], [0.3, 0.3], [0.45, 0.4], [0, 0.55]], [0, 0.4 + body + r * 0.6 - 0.05, 0], 12);
+    // Chute: doors up the -x side in a channel, the ladder in a cage beside it.
+    const cx = -r - 0.05;
+    for (const s of [-1, 1]) b.box('concrete', [0.25, body - 0.6, 0.12], [cx, 0.4 + (body - 0.6) / 2 + 0.3, s * 0.42]);
+    for (let y = 0.8; y < body - 0.6; y += 0.75) b.box('wood', [0.08, 0.6, 0.7], [cx + 0.05, 0.4 + y, 0]);
+    const lx = cx - 0.35;
+    for (const s of [-1, 1]) b.rod('metal', [lx, 0.4, s * 0.22], [lx, 0.4 + body, s * 0.22], 0.025, 5);
+    for (let y = 0.7; y < body; y += 0.3) b.rod('metal', [lx, 0.4 + y, -0.22], [lx, 0.4 + y, 0.22], 0.015, 4);
+    for (let y = 2.4; y < body; y += 1) b.tube('metal', [[lx + 0.15, 0.4 + y, -0.36], [lx - 0.25, 0.4 + y, -0.3], [lx - 0.4, 0.4 + y, 0], [lx - 0.25, 0.4 + y, 0.3], [lx + 0.15, 0.4 + y, 0.36]], 0.018, 10, 4);
+    // Chute to a shed roof height, on a frame.
     b.box('wood', [0.6, 0.6, 1.6], [0, 3.2, -r - 0.6], [0.5, 0, 0]);
     const side = 2 * r * 0.95;
     return [
@@ -1503,27 +1619,54 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   crane(b, w, h, d) {
-    // Gantry crane straddling a yard track: two A-frame legs, a box girder, the hoist.
+    // Gantry crane straddling a yard track: braced A-frame legs on bogies,
+    // a box girder with a walkway and rail, the trolley with its hoist and
+    // hook, a cab with windows, black-and-yellow ends.
     const legW = 0.45;
     const girder = 1.1;
+    const lh = h - girder;
     for (const sx of [-1, 1]) {
       const x = sx * (w / 2 - legW / 2);
-      for (const sz of [-1, 1]) b.box('body', [legW, h - girder, legW], [x, (h - girder) / 2, sz * (d / 2 - 1)], [sz * 0.08, 0, 0]);
-      b.box('trim', [legW, 0.4, d], [x, h - girder - 0.2, 0]);
-      b.box('dark', [0.9, 0.6, d + 0.4], [x, 0.3, 0]);
-      b.box('trim', [0.12, h * 0.55, 0.12], [x, h * 0.45, 0], [0.75, 0, 0]);
+      for (const sz of [-1, 1]) b.box('body', [legW, lh, legW], [x, lh / 2, sz * (d / 2 - 1)], [sz * 0.08, 0, 0]);
+      b.box('trim', [legW + 0.1, 0.5, d], [x, lh - 0.25, 0]);
+      // Lattice between the legs: horizontals and diagonals.
+      for (let k = 0; k < 3; k++) {
+        const y0 = 1.2 + (k * (lh - 1.8)) / 3;
+        const y1 = 1.2 + ((k + 1) * (lh - 1.8)) / 3;
+        b.rod('trim', [x, y0, -(d / 2 - 1.15)], [x, y1, d / 2 - 1.15], 0.06, 6);
+        b.rod('trim', [x, y0, d / 2 - 1.15], [x, y1, -(d / 2 - 1.15)], 0.06, 6);
+        b.rod('trim', [x, y1, -(d / 2 - 1.1)], [x, y1, d / 2 - 1.1], 0.07, 6);
+      }
+      // Bogies with wheels on the rail.
+      b.box('dark', [0.9, 0.55, d + 0.4], [x, 0.38, 0]);
+      for (const z of [-d / 2, -d / 2 + 0.7, d / 2 - 0.7, d / 2]) b.cyl('metal', 0.25, 0.25, 0.2, [x, 0.25, z], [0, 0, Math.PI / 2], 12);
+      for (const sz of [-1, 1]) for (let i = 0; i < 4; i++) b.tinted(i % 2 ? '#1d1e1c' : '#d9b42c', () => b.box('paint', [0.92, 0.12, 0.2], [x, 0.4, sz * (d / 2 + 0.1) + sz * 0.0 - 0.15 * i * sz]));
     }
+    // Girder: box with stiffeners, a walkway with railing on the +z side.
     b.box('body', [w + 1, girder, 1.4], [0.5, h - girder / 2, 0]);
-    b.box('dark', [1.6, 1.2, 1.8], [w * 0.15, h - girder - 0.6, 0]);
-    b.box('glass', [1.4, 1.0, 0.05], [-w / 2 + 1.4, h - girder - 1.2, 0.72]);
-    b.box('body', [1.6, 1.4, 1.5], [-w / 2 + 1.4, h - girder - 1.3, 0]);
-    b.cyl('dark', 0.03, 0.03, h * 0.45, [w * 0.15, h - girder - 1.2 - h * 0.225, 0], [0, 0, 0], 4);
-    b.box('metal', [0.6, 0.3, 0.4], [w * 0.15, h * 0.32, 0]);
+    for (let x = -w / 2; x <= w / 2 + 1; x += 1.2) for (const s of [-1, 1]) b.box('trim', [0.08, girder - 0.1, 0.06], [x, h - girder / 2, s * 0.72]);
+    b.box('mesh', [w + 1, 0.05, 0.8], [0.5, h - girder + 0.1, 1.1]);
+    for (let x = -w / 2; x <= w / 2 + 1; x += 1.5) b.rod('metal', [x, h - girder + 0.1, 1.48], [x, h - girder + 1.1, 1.48], 0.02, 4);
+    b.rod('metal', [-w / 2, h - girder + 1.1, 1.48], [w / 2 + 1, h - girder + 1.1, 1.48], 0.025, 4);
+    // Trolley, hoist rope and hook block.
+    const tx = w * 0.15;
+    b.box('dark', [1.6, 0.7, 1.8], [tx, h - girder - 0.35, 0]);
+    b.tinted('#d9b42c', () => b.box('paint', [1.2, 0.3, 1.2], [tx, h - girder - 0.85, 0]));
+    const hookY = h * 0.32;
+    for (const s of [-0.12, 0.12]) b.rod('metal', [tx + s, h - girder - 1.0, 0], [tx + s, hookY + 0.35, 0], 0.015, 4);
+    b.tinted('#d9b42c', () => b.box('paint', [0.5, 0.45, 0.3], [tx, hookY + 0.15, 0]));
+    b.tube('metal', [[tx, hookY - 0.05, 0], [tx + 0.12, hookY - 0.25, 0], [tx, hookY - 0.4, 0], [tx - 0.1, hookY - 0.3, 0]], 0.04, 8, 6);
+    // Cab under the girder at the -x end.
+    const cxp = -w / 2 + 1.4;
+    b.box('body', [1.6, 1.4, 1.5], [cxp, h - girder - 1.3, 0]);
+    for (const s of [-1, 1]) b.box('glass', [1.3, 0.8, 0.03], [cxp, h - girder - 1.15, s * 0.76]);
+    b.box('glass', [0.03, 0.8, 1.2], [cxp + 0.81, h - girder - 1.15, 0]);
     // Only the legs block.
     const cols: KitBox[] = [];
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) cols.push({ center: [sx * (w / 2 - legW / 2), (h - girder) / 2, sz * (d / 2 - 1)], size: [legW, h - girder, legW] });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) cols.push({ center: [sx * (w / 2 - legW / 2), lh / 2, sz * (d / 2 - 1)], size: [legW, lh, legW] });
     return cols;
   },
+
 };
 
 /**
@@ -1580,6 +1723,7 @@ function bagGeometry(length: number, height: number, thick: number): THREE.Buffe
 export function kitMaterials(): Record<Exclude<KitMaterial, 'body' | 'trim' | 'metal' | 'wood' | 'concrete' | 'dirt'>, THREE.Material> {
   return {
     paint: new THREE.MeshStandardMaterial({ color: 0x5d6152, roughness: 0.6, metalness: 0.3 }),
+    straw: new THREE.MeshStandardMaterial({ color: 0xb89a5a, roughness: 0.95 }),
     dark: new THREE.MeshStandardMaterial({ color: 0x1d1f1f, roughness: 0.7, metalness: 0.3 }),
     // Real glass: a dark dielectric that mirrors only at grazing angles (it was a
     // half-metal that showed the sky as a bright blue panel from every side).

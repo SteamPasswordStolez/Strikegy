@@ -90,6 +90,7 @@ const MACRO_STRENGTH: Record<SurfaceMaterial, number> = {
   canvas: 0.1,
   paint: 0.08,
   rubber: 0.05,
+  straw: 0.1,
 };
 
 interface ScannedSet {
@@ -119,6 +120,7 @@ const SCANNED_TILE_METERS: Record<SurfaceMaterial, number> = {
   canvas: 1.5,
   paint: 2,
   rubber: 1,
+  straw: 1,
 };
 
 /** Surfaces that reuse another surface's scanned set (with their own tiling/tint). */
@@ -146,6 +148,7 @@ const SCANNED_TINT: Record<SurfaceMaterial, number> = {
   canvas: 1,
   paint: 1,
   rubber: 1,
+  straw: 1,
 };
 
 /**
@@ -176,7 +179,7 @@ const TERRAIN_LAYERS: Partial<Record<SurfaceMaterial, { patch: [SurfaceMaterial,
 /** Kinds with a scanned texture set in public/assets/textures (grass and sand are procedural only: the scanned grass tried read as brown earth). */
 export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow', 'plaster', 'brick_old', 'roof', 'asphalt', 'cobble', 'rock'];
 /** Kinds drawn from procedural recipes only (rasterized in workers while the map loads). */
-export const PROCEDURAL_KINDS: SurfaceMaterial[] = ['grass', 'sand', 'paint', 'canvas', 'rubber'];
+export const PROCEDURAL_KINDS: SurfaceMaterial[] = ['grass', 'sand', 'paint', 'canvas', 'rubber', 'straw'];
 
 /** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */
 export class SurfaceLibrary {

@@ -171,7 +171,7 @@ export function buildBlockout(
       continue;
     }
     if (obj.model) {
-      addModel(obj, batches, physics, surfaces, impacts, surfaces ? (kitMats ??= kitLooks()) : null);
+      addModel(obj, batches, physics, surfaces, impacts, surfaces ? (kitMats ??= kitLooks()) : null, snowy);
       continue;
     }
     if (terrain && groundHandle !== null && isGroundPaint(obj, terrain)) {
@@ -441,6 +441,7 @@ function addModel(
   surfaces: SurfaceLibrary | null,
   impacts: SurfaceRegistry,
   shared: ReturnType<typeof kitMaterials> | null,
+  snowy: boolean,
 ): void {
   const [w, h, d] = obj.size;
   const base = obj.base ?? 0;
@@ -458,7 +459,8 @@ function addModel(
     .compose(new THREE.Vector3(...obj.pos), tmpQuat, one)
     .multiply(new THREE.Matrix4().makeTranslation(0, -h / 2 + base, 0));
 
-  if (surfaces && shared) addKitPieces(kit.pieces, toWorld, kind, obj.color, batches, surfaces, shared);
+  // Kits put snow on their tops; it only stays on winter maps.
+  if (surfaces && shared) addKitPieces(snowy ? kit.pieces : kit.pieces.filter((p) => p.mat !== 'snow'), toWorld, kind, obj.color, batches, surfaces, shared);
   if (obj.model === 'watchtower') {
     const l = watchtowerLadder(w, h - base, d);
     const foot = new THREE.Vector3(l.x, 0, l.z).applyMatrix4(toWorld);
@@ -513,6 +515,8 @@ function kitSurface(mat: KitMaterial, tint: string | undefined, kind: SurfaceMat
       return ['canvas', tint ?? color ?? '#6f6c50'];
     case 'rubber':
       return ['rubber', tint];
+    case 'straw':
+      return ['straw', tint ?? color ?? '#c2a35e'];
     default:
       return null;
   }

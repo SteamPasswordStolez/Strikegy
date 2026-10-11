@@ -212,6 +212,33 @@ function paintRecipe(n: TileNoise): SurfaceRecipe {
   };
 }
 
+/** Baled straw / hay: pale stalks lying every which way, darker gaps. Tinted by the object. */
+function strawRecipe(n: TileNoise): SurfaceRecipe {
+  const pale = hexToRgb(0xd6c89c);
+  const dark = hexToRgb(0x75613c);
+  return {
+    tileMeters: 1,
+    normalStrength: 4,
+    paint(u, v, o) {
+      // Stalks: noise stretched along u, along v and along both diagonals, the strongest wins.
+      const a = n.sampleXY(u, v, 6, 160);
+      const b = n.sampleXY(u + 0.37, v, 160, 6);
+      const c = n.sampleXY(u + v, v - u + 0.5, 8, 128);
+      const stalk = Math.max(a, b * 0.95, c * 0.9);
+      const gap = smoothstep(0.35, 0.15, stalk);
+      const tone = n.fbm(u, v, 4, 3);
+      let col = mixRgb(pale, dark, clamp01(gap * 0.8 + (1 - tone) * 0.2));
+      const k = 0.85 + 0.25 * stalk;
+      col = [col[0] * k, col[1] * k, col[2] * k];
+      o.color = col;
+      o.height = stalk;
+      o.rough = 0.95;
+      o.metal = 0;
+      o.ao = 0.7 + 0.3 * stalk;
+    },
+  };
+}
+
 /** Tyres and rubber parts: near black, fine grain, grey dust in patches. */
 function rubberRecipe(n: TileNoise): SurfaceRecipe {
   const black = hexToRgb(0x1c1c1b);
@@ -329,6 +356,8 @@ export function createRecipe(kind: SurfaceMaterial, seed = 1): SurfaceRecipe {
       return paintRecipe(n);
     case 'rubber':
       return rubberRecipe(n);
+    case 'straw':
+      return strawRecipe(n);
   }
 }
 

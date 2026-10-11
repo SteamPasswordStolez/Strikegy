@@ -28,8 +28,10 @@ for (const b of json.buildings ?? []) {
   if (!prev || (s !== 'house' && b.size[0] * b.size[1] > prev.size[0] * prev.size[1])) styles.set(s, b);
 }
 const shots = [];
+const pick = process.env.KITS ? process.env.KITS.split(',') : null;
 if (!only || only === 'kits')
   for (const [k, o] of kits) {
+    if (pick && !pick.includes(k)) continue;
     const r = Math.max(o.size[0], o.size[2], o.size[1]);
     shots.push({ name: `kit-${k}`, x: o.pos[0], z: o.pos[2], cy: o.size[1] / 2, dist: Math.max(5, r * 1.5), up: Math.max(1.6, o.size[1] * 0.6) });
   }
@@ -42,7 +44,6 @@ if (!only || only === 'buildings')
 
 if (only === 'lab') {
   const lay = JSON.parse(readFileSync('public/maps/kitlab.layout.json', 'utf8'));
-  const pick = process.env.KITS ? process.env.KITS.split(',') : null;
   for (const l of lay) {
     if (pick && !pick.includes(l.k)) continue;
     const [w, h, d] = l.size;
