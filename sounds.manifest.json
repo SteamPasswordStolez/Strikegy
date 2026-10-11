@@ -74,6 +74,37 @@
       "url": "https://opengameart.org/sites/default/files/NenadSimic%20-%20Muffled%20Distant%20Explosion.wav",
       "file": "muffled_distant_explosion.wav",
       "license": "CC0 — OpenGameArt 'Muffled Distant Explosion' by NenadSimic"
+    },
+    "c0_piano": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/8/8f/Chopin-waltz-op-69-no-2-in-b-minor.ogg",
+      "file": "c0/Chopin-waltz-op-69-no-2-in-b-minor.ogg",
+      "license": "CC0 — Chopin Waltz in B minor Op. 69 No. 2, Musopen recording (Wikimedia Commons)",
+      "note": "Cutscene C0 (owner approved 2026-10-11); raw in assets-src/sounds/c0, mixed offline, not in the game build yet."
+    },
+    "c0_walla": {
+      "url": "https://commons.wikimedia.org/wiki/File:Restaurant_ambience.ogg",
+      "file": "c0/Restaurant_ambience.ogg",
+      "license": "Public domain — Restaurant ambience by stephan (Wikimedia Commons)",
+      "note": "Cutscene C0 (owner approved 2026-10-11); raw in assets-src/sounds/c0, mixed offline, not in the game build yet."
+    },
+    "c0_clock": {
+      "url": "https://commons.wikimedia.org/wiki/File:Clock_ticking.ogg",
+      "file": "c0/Clock_ticking.ogg",
+      "license": "Public domain — Clock ticking by natalie (Wikimedia Commons)",
+      "note": "Cutscene C0 (owner approved 2026-10-11); raw in assets-src/sounds/c0, mixed offline, not in the game build yet."
+    },
+    "c0_rain": {
+      "url": "https://opengameart.org/sites/default/files/Rain%20OGG.zip",
+      "file": "c0/rain_ogg.zip",
+      "extract": "c0/rain",
+      "license": "CC0 — Rain (loopable) by Ylmir (OpenGameArt)",
+      "note": "Cutscene C0 (owner approved 2026-10-11); raw in assets-src/sounds/c0, mixed offline, not in the game build yet."
+    },
+    "c0_voice": {
+      "url": "https://openrouter.ai/elevenlabs/eleven-v4",
+      "file": "c0/voice",
+      "license": "Generated: ElevenLabs eleven-v4 via OpenRouter (owner's account), voices AE2gO77ACenpl2kFLuMg (Yoon) / wMrz30qBeYiSkAtnZGtn (staff major); check commercial terms before release",
+      "note": "Cutscene C0 (owner approved 2026-10-11); raw in assets-src/sounds/c0, mixed offline, not in the game build yet."
     }
   },
   "sounds": {
