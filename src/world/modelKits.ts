@@ -147,8 +147,12 @@ type V3 = [number, number, number];
 /** Bars thinner than this (radius, m) are left out of far looks. */
 const THIN = 0.03;
 
-/** Chamfered kit boxes: boxes with no side under `minSize` (m) get bevels of `share` of their thinnest side, at most `max`. */
-const BEVEL = { minSize: 0.08, share: 0.12, max: 0.035 };
+/**
+ * Chamfered kit boxes: boxes with no side under `minSize` (m) get bevels of
+ * `share` of their thinnest side, at most `max`. Thinner members (planks, posts)
+ * would get a bevel of a cm or two, gone a few metres away, for 3.7x the triangles.
+ */
+const BEVEL = { minSize: 0.15, share: 0.12, max: 0.035 };
 
 /**
  * A w x h x d box centred on the origin with its 12 edges cut at 45° (`c` deep):
@@ -527,23 +531,30 @@ const KITS: Record<ModelKind, Kit> = {
     // door leaves at +z with locking bars, corner posts with castings, rails.
     // Painted steel in the object's colour (chips, rust runs).
     const post = 0.15;
+    // Trapezoid corrugation: flat crest, slope, flat trough, slope. Sampled at
+    // four points a period (the corners), u running 0..1 over n periods.
     const corr = (u: number, n: number) => {
-      // Trapezoid corrugation: flat crest, slopes, flat trough.
-      const t = (u * n) % 1;
-      return t < 0.3 ? 1 : t < 0.5 ? 1 - (t - 0.3) / 0.2 : t < 0.8 ? 0 : (t - 0.8) / 0.2;
+      const t = Math.round(((u * n) % 1) * 4) % 4;
+      return t === 0 || t === 1 ? 1 : 0;
+    };
+    // Positions along a panel: the corners at 0, 0.3, 0.5, 0.8 of each period.
+    const at = (u: number, n: number) => {
+      const k = Math.floor(u * n + 1e-6);
+      const t = Math.round((u * n - k) * 4) % 4;
+      return (k + [0, 0.3, 0.5, 0.8][t]!) / n;
     };
     const len = d - 2 * post;
     const hi = h - 0.32;
     const nLong = Math.round(len / 0.28);
     for (const s of [-1, 1]) {
-      b.grid('paint', nLong * 5, 1, (u, v) => {
-        const z = s * (-len / 2 + u * len);
+      b.grid('paint', nLong * 4, 1, (u, v) => {
+        const z = s * (-len / 2 + at(u, nLong) * len);
         return [s * (w / 2 - 0.05 + 0.04 * corr(u, nLong)), 0.16 + v * hi, z];
       });
     }
     // Back end (-z) corrugated across x.
     const nEnd = Math.round((w - 2 * post) / 0.28);
-    b.grid('paint', nEnd * 5, 1, (u, v) => [-(w / 2 - post) + u * (w - 2 * post), 0.16 + v * hi, -d / 2 + 0.05 - 0.035 * corr(u, nEnd)]);
+    b.grid('paint', nEnd * 4, 1, (u, v) => [-(w / 2 - post) + at(u, nEnd) * (w - 2 * post), 0.16 + v * hi, -d / 2 + 0.05 - 0.035 * corr(u, nEnd)]);
     // Roof: shallow cross corrugation, a dent here and there.
     b.grid('paint', 8, Math.round(d / 0.5), (u, v) => {
       const x = -w / 2 + post * 0.6 + u * (w - post * 1.2);
@@ -556,7 +567,7 @@ const KITS: Record<ModelKind, Kit> = {
     for (const s of [-1, 1]) {
       const cx = s * leaf * 0.5;
       const n = Math.round(leaf / 0.2);
-      b.grid('paint', n * 5, 1, (u, v) => [cx + leaf / 2 - 0.01 - u * (leaf - 0.02), 0.16 + v * hi, d / 2 - 0.04 + 0.02 * corr(u, n)]);
+      b.grid('paint', n * 4, 1, (u, v) => [cx + leaf / 2 - 0.01 - at(u, n) * (leaf - 0.02), 0.16 + v * hi, d / 2 - 0.04 + 0.02 * corr(u, n)]);
       for (const bx of [-0.3, 0.3]) {
         const x = cx + bx * leaf;
         b.rod('metal', [x, 0.2, d / 2 + 0.02], [x, h - 0.2, d / 2 + 0.02], 0.022, 6);
