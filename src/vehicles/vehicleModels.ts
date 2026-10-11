@@ -27,7 +27,7 @@ export interface VehicleModel {
    * Far look: everything merged per material into the hull and each turret
    * (wheels stop turning, barrels rest level), a few draw calls instead of ~14.
    */
-  setFar?: (far: boolean) => void;
+  setFar?: (far: boolean, fine?: boolean) => void;
 }
 
 export function buildVehicleModel(kind: VehicleKind, team: Team | null): VehicleModel {
@@ -90,10 +90,12 @@ function buildFarLook(m: VehicleModel): (far: boolean) => void {
     }
   }
   let isFar = false;
-  return (want) => {
-    if (want === isFar) return;
+  let showFine = true;
+  return (want, fine = true) => {
+    if (want === isFar && fine === showFine) return;
     isFar = want;
-    for (const d of detail) d.visible = !want;
+    showFine = fine;
+    for (const d of detail) d.visible = !want && (fine || !d.userData.fine);
     for (const f of far) f.visible = want;
   };
 }

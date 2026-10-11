@@ -75,6 +75,8 @@ export class Vehicle implements Damageable {
   wrecked = false;
   /** Drawn with the merged far look (VehicleWorld.render). */
   farLook = false;
+  /** Small parts shown (near the viewer, see VehicleWorld.render). */
+  fineLook = true;
   removeAt = Infinity;
   /** Last time anyone sat in it (abandoned vehicles are cleared away). */
   usedAt = 0;

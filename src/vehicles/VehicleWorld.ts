@@ -50,6 +50,8 @@ const FIRST_ID = 50000;
 const WRECK_LIFE = 12;
 /** Vehicles further than this from the camera (m) draw their merged far look. */
 const FAR_LOOK = 45;
+/** Within this distance (m) vehicles show their small parts too (a pixel or two beyond). */
+const FINE_LOOK = 25;
 const ABANDON = 150;
 
 /** How far a hull reaches from its centre on the ground (half its diagonal, m). */
@@ -222,7 +224,9 @@ export class VehicleWorld {
       // Merged far look past FAR_LOOK (with a little hysteresis so it doesn't flicker).
       const d2 = v.pos.distanceToSquared(eye);
       v.farLook = v.farLook ? d2 > (FAR_LOOK - 5) ** 2 : d2 > (FAR_LOOK + 5) ** 2;
-      v.model.setFar(v.farLook);
+      // Small parts (bolts, vision blocks, track guides) only up close.
+      v.fineLook = v.fineLook ? d2 < (FINE_LOOK + 3) ** 2 : d2 < (FINE_LOOK - 3) ** 2;
+      v.model.setFar(v.farLook, v.fineLook);
     }
   }
 

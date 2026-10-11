@@ -101,9 +101,11 @@ if (process.env.VEH) {
     { sx: spawn.pos[0], sz: spawn.pos[2], vx, vz },
   );
   const mid = placed[4];
-  // Looking down the row from its near end, and from the side at 25 m.
+  // Looking down the row from its near end, from the side at 28 m, and at the tank from 12 m.
   views.unshift({ name: 'vehicles-row', x: mid.x, z: mid.z, a: 3.0, dist: 75, look: [mid.x, mid.y + 1, mid.z] });
   views.unshift({ name: 'vehicles-side', x: mid.x, z: mid.z, a: -1.57, dist: 28, look: [mid.x, mid.y + 1, mid.z] });
+  const tank = placed[2];
+  views.unshift({ name: 'vehicles-close', x: tank.x, z: tank.z, a: -2.2, dist: 12, look: [tank.x, tank.y + 1, tank.z] });
 }
 
 const results = [];
