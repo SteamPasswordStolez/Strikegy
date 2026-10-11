@@ -13,9 +13,9 @@ export interface MapEntry {
 export const MAPS: readonly MapEntry[] = [
   { id: 'iron_gate', team: 12 },
   { id: 'ardennes', team: 16 },
-  { id: 'lyon', team: 10 },
+  { id: 'lyon', team: 16 },
   { id: 'bilbao', team: 12 },
-  { id: 'persia', team: 2 },
+  { id: 'persia', team: 4 },
 ];
 
 /** The practice range: no bots, every weapon. */

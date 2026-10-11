@@ -1,554 +1,372 @@
-// Generates public/maps/lyon.json — "리옹 초원 전선" (Lyon Meadow Front), summer.
-// 3-zone Zone map for about 10v10, ~420 x 320 m (layout from the owner's sketch).
-// Blue comes from the north, red from the south. A creek runs west-east across
-// the southern half (knee deep, three bridges), so red has to cross it to reach
-// the zones: A the farm in the middle, B the barn and silo in the west, C the
-// orchard in the east. A rocky ridge in the south-east looks over the creek.
+// Generates public/maps/lyon.json — "리옹 초원 전선" (Lyon fields), summer.
+// Second layout (2026-10-11, owner: redesign it with BFV's Provence as the reference): a
+// hilltop village of stone houses in terraces, ring streets round the hill and steep alleys
+// between them, the church on top; round it lavender fields in rows, stone walls, hedges and
+// olive groves; a stream along the west and south with a watermill. About 350 x 265 m for 16v16 (five zones need more people than the old 10v10 map).
+// Red comes from the west, blue from the east. Five zones:
+//   A the upper square (west), B the church on the hilltop, C the market square in the middle
+//   of the village, D the watermill by the stream (red side), E the farm (blue side).
 import { writeFileSync } from 'node:fs';
-import { block, edgeDist, inside, lineDist, rng, round, smoothClosed, smoothOpen, stripAlong, wallLine } from './lib.mjs';
+import { edgeDist, inside, lineDist, rng, round, smoothClosed, smoothOpen } from './lib.mjs';
+import { createTown, frame, obb, outlineStats, sAtX, along, samples, spawnRings } from './town.mjs';
+import { block } from './lib.mjs';
 
-const R = rng(20261002);
-const objects = [];
-const buildings = [];
-const props = [];
+const R = rng(20261012);
 
-/** Sketch pixels (1448 x 1086 image) to metres; x east, z south. */
-const S = 0.345;
-const P = (px, py) => [round((px - 727) * S, 1), round((py - 580) * S, 1)];
-const Ps = (list) => list.map(([x, y]) => P(x, y));
-
-// --- Outline -----------------------------------------------------------------
-const boundary = smoothClosed(
-  Ps([
-    [40, 600], [70, 470], [125, 335], [210, 250], [330, 200], [470, 175], [600, 130], [700, 98], [860, 92], [1000, 100],
-    [1140, 135], [1290, 180], [1385, 265], [1422, 400], [1420, 560], [1400, 760], [1335, 935], [1200, 1005], [1010, 1045],
-    [820, 1062], [600, 1052], [400, 1038], [250, 990], [125, 905], [55, 770],
-  ]),
-  2,
-).map(([x, z]) => [round(x, 1), round(z, 1)]);
+// --- Outline -----------------------------------------------------------------------------
+const outline = [
+  [-186, -96], [-150, -136], [-80, -146], [0, -140], [80, -148], [150, -128], [190, -80], [196, 0], [188, 70], [160, 120],
+  [96, 140], [20, 138], [-60, 142], [-130, 128], [-178, 90], [-196, 20],
+];
+const boundary = smoothClosed(outline, 2).map(([x, z]) => [round(x * 0.9, 1), round(z * 0.92, 1)]);
 const inMap = (x, z, pad = 0) => inside(boundary, x, z) && edgeDist(boundary, x, z) > pad;
 
-// --- Creek ---------------------------------------------------------------------
-const river = {
-  pts: smoothOpen(Ps([[-150, 560], [40, 605], [200, 690], [365, 742], [520, 702], [650, 686], [765, 668], [940, 625], [1105, 612], [1250, 560], [1420, 505], [1600, 470]]), 3).map(([x, z]) => [round(x, 1), round(z, 1)]),
-  width: 8,
+// --- Zones, bases, the village hill -------------------------------------------------------------
+const V = [0, -34]; // the hill's top
+// B on the hilltop, A and C on the lower terrace (north-west and south).
+const Z = { A: [-46, -80], B: [0, -34], C: [4, 30], D: [-112, 46], E: [108, 74] };
+const ZR = { A: 22, B: 20, C: 22, D: 28, E: 28 };
+const RED = [-150, -30];
+const BLUE = [152, 14];
+
+// --- The stream (west and south, knee deep) --------------------------------------------------
+const STREAM = {
+  pts: smoothOpen([[-170, -230], [-150, -150], [-132, -70], [-126, -20], [-120, 30], [-106, 74], [-70, 108], [-10, 124], [60, 132], [140, 138], [260, 146]], 2),
+  width: 6,
   depth: 1.9,
-  bank: 5,
+  bank: 4,
   water: 0.55,
 };
-const RIVER_CLEAR = river.width / 2 + river.bank;
-const nearRiver = (x, z, pad) => lineDist(x, z, river.pts) < RIVER_CLEAR + pad;
-/** Unit tangent of the creek near (x, z). */
-function riverDir(x, z) {
-  let best = Infinity;
-  let dir = [1, 0];
-  const p = river.pts;
-  for (let i = 0; i < p.length - 1; i++) {
-    const [ax, az] = p[i];
-    const [bx, bz] = p[i + 1];
-    const d = Math.hypot((ax + bx) / 2 - x, (az + bz) / 2 - z);
-    if (d < best) {
-      best = d;
-      const L = Math.hypot(bx - ax, bz - az);
-      dir = [(bx - ax) / L, (bz - az) / L];
-    }
-  }
-  return dir;
-}
-/** Nearest point on the creek's centre line. */
-function onRiver(x, z) {
-  let best = Infinity;
-  let out = [x, z];
-  const p = river.pts;
-  for (let i = 0; i < p.length - 1; i++) {
-    const [ax, az] = p[i];
-    const [bx, bz] = p[i + 1];
-    const dx = bx - ax;
-    const dz = bz - az;
-    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-    const qx = ax + dx * t;
-    const qz = az + dz * t;
-    const d = Math.hypot(qx - x, qz - z);
-    if (d < best) {
-      best = d;
-      out = [qx, qz];
-    }
-  }
-  return out.map((v) => round(v, 1));
-}
-
-// --- Zones and bases -------------------------------------------------------------
-const Z = {
-  A: P(770, 500), // central farm (pulled south of the sketch so both sides have a similar walk)
-  B: P(330, 545), // barn and silo
-  C: P(1215, 480), // orchard
-};
-const BLUE = P(805, 165);
-const RED = P(745, 900);
-const RIDGE = P(1235, 820);
-
-// Bridges cross the creek square to its flow.
-const bridges = [
-  { at: onRiver(...P(365, 742)), len: 22, w: 4.5, kind: 'stone' },
-  { at: onRiver(...P(765, 668)), len: 24, w: 7, kind: 'arch' },
-  { at: onRiver(...P(1105, 612)), len: 20, w: 3, kind: 'wood' },
-].map((b) => {
-  const [tx, tz] = riverDir(b.at[0], b.at[1]);
-  // Crossing direction (across the flow) and its yaw (map yaw: 0 faces -z).
-  const [cx, cz] = [-tz, tx];
-  return { ...b, x: b.at[0], z: b.at[1], cx, cz, yaw: round((Math.atan2(cx, cz) * 180) / Math.PI, 1) };
-});
-river.crossings = bridges.map((b) => [b.x, b.z]);
-
-// --- Terrain -----------------------------------------------------------------
-const flats = [
-  { pos: Z.A, radius: 30, blend: 12 },
-  { pos: Z.B, radius: 24, blend: 10 },
-  { pos: Z.C, radius: 18, blend: 12 },
-  { pos: BLUE, radius: 22, blend: 10 },
-  { pos: RED, radius: 22, blend: 10 },
+const streamDist = (x, z) => lineDist(x, z, STREAM.pts);
+const BRIDGES = [
+  { at: [-126, -22], w: 7 }, // the main road's stone bridge
+  { at: [-112, 52], w: 2.6, foot: true }, // the mill's footbridge
 ];
-for (const b of bridges) {
-  b.deck = b.kind === 'arch' ? 0.9 : 0.25;
-  for (const s of [-1, 1]) flats.push({ pos: [round(b.x + s * b.cx * (b.len / 2 - 2.5)), round(b.z + s * b.cz * (b.len / 2 - 2.5))], radius: 6, height: round(b.deck - 0.1), blend: 10 });
+STREAM.crossings = BRIDGES.map((b) => b.at);
+const nearStream = (x, z, pad = 0) => streamDist(x, z) < STREAM.width / 2 + STREAM.bank + pad;
+
+// --- Terrain: the hill in terraces -------------------------------------------------------------
+const HILL = { pos: V, radius: 132, height: 12.5 };
+// The village in three levels: the hilltop (church), the upper terrace round it, the lower
+// terrace further out; steps of ~3 m between them with walls and stairs.
+const TOP = { r: 15, h: 12.3 };
+const BAND1 = { r: 31, half: 13, h: 9.4 };
+const BAND2 = { r: 64, half: 14, h: 6.2 };
+const flats = [{ pos: V, radius: TOP.r, height: TOP.h, blend: 3 }];
+for (const band of [BAND1, BAND2]) {
+  const n = Math.ceil((2 * Math.PI * band.r) / 6);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    flats.push({ pos: [round(V[0] + Math.cos(a) * band.r), round(V[1] + Math.sin(a) * band.r)], radius: band.half + 1, height: band.h, blend: 3 });
+  }
 }
+flats.push({ pos: [-74, 30], radius: 10, blend: 6 }, { pos: Z.D, radius: 26, blend: 10 }, { pos: Z.E, radius: 28, blend: 10 }, { pos: RED, radius: 24, blend: 10 }, { pos: BLUE, radius: 24, blend: 10 });
+for (const b of BRIDGES) flats.push({ pos: b.at, radius: 10, height: 0, blend: 6 });
 const terrain = {
   cell: 2,
-  noise: 0.8,
+  noise: 0.6,
   hills: [
-    { pos: RIDGE, radius: 55, height: 10 }, // the ridge
-    { pos: P(1330, 880), radius: 40, height: 6 },
-    { pos: P(1120, 900), radius: 35, height: 4 },
-    { pos: P(500, 330), radius: 70, height: 3 },
-    { pos: P(1050, 300), radius: 60, height: 2.5 },
-    { pos: P(200, 850), radius: 60, height: 3 },
-    { pos: P(560, 860), radius: 50, height: 2 },
-    { pos: P(1350, 300), radius: 45, height: 3 },
+    HILL,
+    { pos: [150, -110], radius: 70, height: 6 }, // a rise north-east (olive terraces)
+    { pos: [-150, 110], radius: 50, height: 3 },
+    ...[[-60, 60], [60, 60], [-90, -100], [110, -30], [-30, 100], [140, 50]].map(([x, z]) => ({ pos: [x, z], radius: 4.5, height: -1.1 })),
   ],
   flats,
-  rivers: [river],
+  rivers: [STREAM],
 };
 
-// --- Roads -------------------------------------------------------------------
-const DIRT = '#cbbba2';
-const at = (b, s) => [round(b.x + s * b.cx * (b.len / 2 + 1)), round(b.z + s * b.cz * (b.len / 2 + 1))];
-const [bW, bC, bE] = bridges;
-const roads = [
-  // Main north-south lane: blue base -> farm -> creek bridge -> red base.
-  { pts: smoothOpen([BLUE, P(800, 260), P(785, 330), Z.A, P(765, 520), P(766, 600), at(bC, -1)]), w: 6 },
-  { pts: smoothOpen([at(bC, 1), P(760, 780), P(752, 860), RED]), w: 6 },
-  // Northern arc.
-  { pts: smoothOpen([P(170, 430), P(260, 330), P(420, 250), P(600, 222), P(800, 215), P(1000, 228), P(1150, 272), P(1300, 340), P(1360, 420)]), w: 5 },
-  // Farm to barn, farm to orchard.
-  { pts: smoothOpen([Z.A, P(640, 470), P(480, 505), Z.B]), w: 5 },
-  { pts: smoothOpen([Z.A, P(900, 420), P(1050, 430), Z.C]), w: 5 },
-  // West: northern arc -> barn -> west bridge -> south.
-  { pts: smoothOpen([P(260, 330), P(300, 450), Z.B, P(355, 650), at(bW, -1)]), w: 5 },
-  { pts: smoothOpen([at(bW, 1), P(420, 830), P(560, 880), P(660, 900), RED]), w: 5 },
-  // East: orchard -> east bridge -> ridge foot -> red base.
-  { pts: smoothOpen([Z.C, P(1180, 500), P(1130, 560), at(bE, -1)]), w: 4 },
-  { pts: smoothOpen([at(bE, 1), P(1080, 700), P(980, 790), P(860, 860), RED]), w: 4 },
-  { pts: smoothOpen([P(1080, 700), P(1170, 760), RIDGE]), w: 3.5 },
+const T = createTown(R, {
+  inMap,
+  terrain,
+  zones: Z,
+  radii: ZR,
+  stone: '#b8ab92',
+  sand: '#a8987a',
+  blocked: (x, z, pad) => nearStream(x, z, pad),
+});
+const { put, putAll, paint, addBuilding, building, thing, road, offRoad, kit, scatter, copse, frontage, kerbCars, H, pick, between } = T;
+
+// --- Roads and village streets ---------------------------------------------------------------
+const DIRT = '#9a8566';
+const keepOffStream = (x, z) => !nearStream(x, z, -1);
+const ring = (cx, cz, r, n, a0 = 0, a1 = Math.PI * 2) => Array.from({ length: n + 1 }, (_, i) => {
+  const a = a0 + (i / n) * (a1 - a0);
+  return [round(cx + Math.cos(a) * r), round(cz + Math.sin(a) * r)];
+});
+// Main road: red base -> the stone bridge -> round the south of the village on the lower
+// terrace, through the market (C) -> east -> blue.
+const MAIN = road([RED, [-126, -22], [-96, -32], ...ring(V[0], V[1], BAND2.r, 12, Math.PI, 0), [86, -30], [112, -4], [134, 10], BLUE], 7, { y: 0.07, keep: keepOffStream, smooth: 1 });
+const STREET = { color: '#8f8778', material: 'cobble', town: true, pave: '#b5aa96', paveMaterial: 'cobble', y: 0.055 };
+// The lower ring's north half (the south half is the main road) and the upper ring.
+const RING = road(ring(V[0], V[1], BAND2.r, 14, Math.PI, Math.PI * 2), 4.5, { ...STREET, smooth: 1 });
+const UPPER = road(ring(V[0], V[1], BAND1.r, 18), 4, { ...STREET, smooth: 1 });
+// Alleys (stairs) up the steps between the levels.
+const ALLEY_ANGLES = [0.4, 1.4, 2.3, 3.3, 4.3, 5.3];
+const at = (a, r) => [round(V[0] + Math.cos(a) * r), round(V[1] + Math.sin(a) * r)];
+const ALLEYS = ALLEY_ANGLES.map((a) => road([at(a, BAND2.r - 6), at(a, BAND1.r + 5)], 3.4, { ...STREET, smooth: 0 }));
+const TOP_ALLEYS = [1.0, 2.9, 4.9].map((a) => road([at(a, BAND1.r - 5), at(a, TOP.r - 2)], 3.4, { ...STREET, smooth: 0 }));
+// Dirt lanes: to the mill, to the farm, the north lane round the hill (the tanks' way round).
+// Dirt lanes (painted; buildings keep off them).
+const LANE_ROADS = [
+  road([[-96, -32], [-98, 10], [-92, 40], [-86, 70], [-70, 92]], 4.5, { color: DIRT, material: 'ground', y: 0.045, keep: keepOffStream }),
+  road([at(0.35, BAND2.r), [80, 20], [100, 50], [104, 66]], 4.5, { color: DIRT, material: 'ground', y: 0.045 }),
+  road([[-96, -32], [-92, -64], [-80, -104], [-30, -124], [40, -126], [100, -104], [124, -60], [134, 10]], 5, { color: DIRT, material: 'ground', y: 0.045, keep: keepOffStream }),
+  road([at(0, BAND2.r), [80, -70], [100, -104]], 4.5, { color: DIRT, material: 'ground', y: 0.045 }),
 ];
-for (const r of roads) {
-  const strips = stripAlong(r.pts, r.w, { color: DIRT, material: 'sand', y: 0.04 });
-  objects.push(...strips.filter((s) => !nearRiver(s.pos[0], s.pos[2], 0.5) && inMap(s.pos[0], s.pos[2], -4)));
-}
-const nearRoad = (x, z, pad) => roads.some((r) => lineDist(x, z, r.pts) < r.w / 2 + pad);
+void LANE_ROADS;
 
-// --- Bridges -------------------------------------------------------------------
-const STONE = '#a59d8c';
-for (const b of bridges) {
-  if (b.kind === 'arch') {
-    // Stone arch: the model's parapets stand 1.25 m above its deck; footings below the bed.
-    const bottom = -3;
-    const top = b.deck + 1.25;
-    objects.push({ type: 'wall', pos: [b.x, round((top + bottom) / 2), b.z], size: [b.w, round(top - bottom), b.len], rot: [0, b.yaw, 0], material: 'concrete', color: STONE, model: 'archBridge', base: 0 });
-    continue;
-  }
-  // Flat deck (local z along the crossing), low parapets / hand rails, piers.
-  const wood = b.kind === 'wood';
-  const thick = wood ? 0.25 : 0.6;
-  const material = wood ? 'wood' : 'concrete';
-  const color = wood ? '#6e5a44' : STONE;
-  const sx = b.cz;
-  const sz = -b.cx;
-  objects.push({ type: 'floor', pos: [b.x, round(b.deck - thick / 2), b.z], size: [b.w, thick, b.len], rot: [0, b.yaw, 0], material, color });
-  for (const s of [-1, 1]) {
-    const rail = wood ? 0.12 : 0.45;
-    const off = b.w / 2 - rail / 2;
-    objects.push({ type: 'wall', pos: [round(b.x + sx * s * off), round(b.deck + 0.5), round(b.z + sz * s * off)], size: [rail, 1, b.len], rot: [0, b.yaw, 0], material, color });
-  }
-  for (const u of [-3.5, 3.5]) {
-    objects.push({ type: 'wall', pos: [round(b.x + b.cx * u), round((b.deck - thick - 2.6) / 2), round(b.z + b.cz * u)], size: [b.w + 0.4, round(2.6 + thick), wood ? 0.5 : 1.6], rot: [0, b.yaw, 0], material, color });
-  }
-}
-
-// --- Placement bookkeeping -------------------------------------------------------
-const placed = [];
-const reserve = (x, z, r) => placed.push({ x, z, r });
-const free = (x, z, r) => placed.every((p) => Math.hypot(x - p.x, z - p.z) > p.r + r);
-const addBuilding = (b) => {
-  buildings.push(b);
-  reserve(b.pos[0], b.pos[1], Math.hypot(b.size[0], b.size[1]) / 2 + 1);
-};
-const obj = (o, r = 2) => {
-  objects.push(o);
-  reserve(o.pos[0], o.pos[2], r);
-};
-const hay = (x, z, yaw) => obj(block(x, z, 2.6, 1.5, 1.5, { yaw, material: 'wood', color: '#c2a35e', model: 'hayBale' }), 2);
-const sandbags = (x, z, len, yaw) => obj(block(x, z, len, 1.1, 0.9, { yaw, material: 'ground', color: '#9c8f76', model: 'sandbags' }), len / 2 + 0.5);
-const stoneWall = (pts, gaps = [], height = 1.1) => {
-  const pieces = wallLine(densify(pts, 4), { height, thick: 0.55, material: 'concrete', color: '#b8a98c', type: 'cover', gaps });
-  for (const p of pieces) if (!nearRiver(p.pos[0], p.pos[2], 0.5) && !nearRoad(p.pos[0], p.pos[2], 0.5)) objects.push(p);
-};
-/** Extra points along a polyline so no piece is longer than `step`. */
-function densify(pts, step) {
-  const out = [pts[0]];
-  for (let i = 1; i < pts.length; i++) {
-    const [ax, az] = pts[i - 1];
-    const [bx, bz] = pts[i];
-    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step));
-    for (let k = 1; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
-  }
-  return out;
-}
-for (const b of bridges) reserve(b.x, b.z, b.len / 2 + 2);
-
-// --- Fields --------------------------------------------------------------------
-// Wheat / hay / ploughed patches (ground paint), edged by stone walls or hedges.
-// [material, tint]: ripe wheat, stubble, ploughed earth, young crop.
-const FIELD_COLORS = [['sand', '#e6c46a'], ['sand', '#d9c27e'], ['ground', '#c9a27c'], ['sand', '#e8cf80'], ['grass', '#d6e08e']];
-const fields = [
-  [P(250, 300), 34, 24, 15],
-  [P(450, 360), 30, 22, -10],
-  [P(1180, 230), 32, 18, 12],
-  [P(1340, 300), 22, 20, 30],
-  [P(1330, 640), 30, 18, -20], // vineyard
-  [P(140, 820), 30, 26, 30],
-  [P(330, 900), 36, 24, -15],
-  [P(650, 760), 26, 20, 10],
-  [P(970, 710), 22, 18, -25],
-  [P(580, 610), 20, 16, 5],
-  [P(980, 330), 24, 18, -5],
-];
-const fieldRects = [];
-for (const [[x, z], w, d, yaw] of fields) {
-  if (!inMap(x, z, 8)) continue;
-  const [material, color] = FIELD_COLORS[Math.floor(R() * FIELD_COLORS.length)];
-  objects.push({ type: 'floor', pos: [x, 0.02, z], size: [w, 0.1, d], rot: [0, yaw, 0], material, color, snap: true });
-  fieldRects.push({ x, z, w, d, yaw });
-  // A low stone wall along two sides, with a gap for a lane.
-  const c = Math.cos((yaw * Math.PI) / 180);
-  const s = Math.sin((yaw * Math.PI) / 180);
-  const pt = (u, v) => [x + u * c + v * s, z - u * s + v * c];
-  if (R() < 0.7) stoneWall([pt(-w / 2 - 1, -d / 2 - 1), pt(w / 2 + 1, -d / 2 - 1), pt(w / 2 + 1, d / 2 + 1)], [[w * 0.4, w * 0.4 + 4]]);
-}
-const inField = (x, z, pad = 0) =>
-  fieldRects.some((f) => {
-    const c = Math.cos((f.yaw * Math.PI) / 180);
-    const s = Math.sin((f.yaw * Math.PI) / 180);
-    const dx = x - f.x;
-    const dz = z - f.z;
-    const u = dx * c - dz * s;
-    const v = dx * s + dz * c;
-    return Math.abs(u) < f.w / 2 + pad && Math.abs(v) < f.d / 2 + pad;
-  });
-
-// --- A: central farm -------------------------------------------------------------
+// --- The village levels: walls along the drops, stairs up the alleys -------------------------------
 {
-  const [ax, az] = Z.A;
-  addBuilding({ pos: [ax - 18, az - 16], size: [13, 9], style: 'house', floors: 2, doors: 'se', rot: 4, material: 'concrete', color: '#b3a68f' });
-  addBuilding({ pos: [ax + 20, az - 14], size: [16, 10], style: 'barn', doors: 'ew', rot: -6 });
-  addBuilding({ pos: [ax - 22, az + 12], size: [11, 8], style: 'house', floors: 1, doors: 'ne', rot: -8, material: 'concrete', color: '#a99c86' });
-  addBuilding({ pos: [ax + 22, az + 15], size: [10, 8], style: 'house', floors: 2, doors: 'nw', rot: 10, material: 'concrete', color: '#bcae95' });
-  addBuilding({ pos: [ax + 2, az - 30], size: [9, 7], style: 'shed', doors: 's', rot: 0 });
-  addBuilding({ pos: [ax + 8, az + 32], size: [9, 7], style: 'shed', doors: 'ns', rot: 5 });
-  // Ruined outbuilding: broken walls round an open floor.
-  objects.push(...wallLine([[ax - 6, az + 20], [ax - 14, az + 20], [ax - 14, az + 27]], { height: 2.2, thick: 0.5, material: 'concrete', color: '#9d9483', gaps: [[4, 5.5]] }));
-  // Farmyard wall with gates on the lanes.
-  const yard = [[ax - 34, az - 30], [ax + 34, az - 30], [ax + 36, az + 30], [ax - 34, az + 32], [ax - 34, az - 30]];
-  stoneWall(yard, [[30, 38], [96, 104], [160, 168], [228, 236]], 1.3);
-  for (const [dx, dz, yaw] of [[-6, -6, 10], [8, 6, 80], [-4, 10, 30]]) hay(ax + dx, az + dz, yaw);
-  obj(block(ax + 4, az - 8, 2.4, 2.6, 5, { yaw: 30, material: 'metal', color: '#5b4a3a', model: 'truck' }), 3);
-  obj(block(ax - 8, az + 2, 1.6, 1.4, 1.6, { material: 'concrete', color: '#8f8a80', model: 'pump' }), 1.5);
-  sandbags(ax + 10, az - 2, 4, 90);
-  sandbags(ax - 12, az - 4, 3, 0);
+  const STONEC = '#b8ab92';
+  const wallRing = (r, gapAngles, h = 1.0) => {
+    const n = Math.ceil((2 * Math.PI * r) / 4);
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * Math.PI * 2;
+      const a1 = ((i + 1) / n) * Math.PI * 2;
+      const am = (a0 + a1) / 2;
+      if (gapAngles.some((g) => Math.abs(Math.atan2(Math.sin(am - g), Math.cos(am - g))) * r < 3.2)) continue;
+      // Not across a street.
+      const [x, z] = at(am, r);
+      if (!offRoad(x, z, 0.6)) continue;
+      put(block(x, z, 0.5, h, round(r * (a1 - a0) + 0.3, 2), { yaw: round((am * 180) / Math.PI + 90, 1), type: 'cover', material: 'concrete', color: STONEC }));
+    }
+  };
+  wallRing(TOP.r + 0.8, [1.0, 2.9, 4.9]);
+  wallRing(BAND1.r + 14.6, ALLEY_ANGLES);
+  for (const a of [1.0, 2.9, 4.9]) T.stairs(at(a, BAND1.r - 6), at(a, TOP.r - 0.5), 3, { parapet: STONEC });
+  for (const a of ALLEY_ANGLES) T.stairs(at(a, BAND2.r - 12.5), at(a, BAND1.r + 14), 3, { parapet: STONEC });
 }
 
-// --- B: barn and silo ----------------------------------------------------------
+// --- Bridges ---------------------------------------------------------------------------------
 {
-  const [bx, bz] = Z.B;
-  addBuilding({ pos: [bx - 22, bz + 12], size: [24, 14], style: 'barn', doors: 'ew', rot: 80 });
-  obj(block(bx - 17, bz - 8, 6, 15, 6, { type: 'wall', material: 'concrete', color: '#b9b4a8', model: 'silo', sink: 0.1 }), 4);
-  addBuilding({ pos: [bx + 10, bz - 18], size: [11, 8], style: 'house', floors: 2, doors: 'sw', rot: 15, material: 'concrete', color: '#c2b49a' });
-  addBuilding({ pos: [bx + 18, bz + 14], size: [8, 6], style: 'shed', doors: 'w', rot: -10 });
-  for (const [dx, dz, yaw] of [[0, 0, 0], [4, 6, 30], [-4, -2, 80], [12, 2, 10], [6, 16, 60], [16, -4, 45]]) hay(bx + dx, bz + dz, yaw);
-  obj(block(bx + 2, bz - 10, 2.4, 2.6, 5, { yaw: -20, material: 'metal', color: '#7b3a2a', model: 'truck' }), 3);
-  const pad = [[bx + 24, bz - 4], [bx + 36, bz - 2], [bx + 36, bz + 16], [bx + 26, bz + 18]];
-  objects.push(...wallLine([...pad, pad[0]], { height: 1.1, thick: 0.3, material: 'wood', color: '#6e5a44', type: 'cover', model: 'fence', gaps: [[6, 9]] }));
+  const STONE = '#a59d8c';
+  for (const b of BRIDGES) {
+    // Crossing direction: across the stream at that point.
+    let best = 0;
+    for (let i = 1; i < STREAM.pts.length; i++) if (Math.hypot(STREAM.pts[i][0] - b.at[0], STREAM.pts[i][1] - b.at[1]) < Math.hypot(STREAM.pts[best][0] - b.at[0], STREAM.pts[best][1] - b.at[1])) best = i;
+    const p = STREAM.pts[Math.max(1, best)];
+    const q = STREAM.pts[Math.max(0, best - 1)];
+    const yaw = round((Math.atan2(p[0] - q[0], p[1] - q[1]) * 180) / Math.PI + 90, 1);
+    const len = STREAM.width + STREAM.bank * 2 + 4;
+    const wood = !!b.foot;
+    const thick = wood ? 0.25 : 0.6;
+    const top = wood ? 0.3 : 0.12;
+    objects().push({ type: 'floor', pos: [b.at[0], round(top - thick / 2), b.at[1]], size: [b.w, thick, len], rot: [0, yaw, 0], material: wood ? 'wood' : 'concrete', color: wood ? '#6e5a44' : STONE });
+    const f = frame(b.at, yaw);
+    for (const s of [-1, 1]) {
+      const [x, z] = f(s * (b.w / 2 - 0.2), 0);
+      objects().push({ type: 'wall', pos: [x, round(top + 0.5), z], size: [wood ? 0.12 : 0.4, 1, len], rot: [0, yaw, 0], material: wood ? 'wood' : 'concrete', color: wood ? '#6e5a44' : STONE });
+    }
+  }
+}
+function objects() {
+  return T.objects;
 }
 
-// --- C: orchard ------------------------------------------------------------------
-const orchard = [];
+// --- Red base (west): an army camp in an orchard ----------------------------------------------
+{
+  const f = frame(RED, 90); // local +z faces east
+  for (const [lx, lz] of [[-10, -12], [0, -14], [10, -12], [-12, 10]]) thing(f, lx, lz, 5, 3, 4, { type: 'wall', material: 'canvas', color: '#b8b08e', model: 'tent' });
+  kit.tower(...f(-16, 16));
+  kit.tower(...f(16, -18));
+  kit.truck(...f(10, 10), f.deg + 90, '#5a5a44');
+  paint(f(0, 0), 24, 24, f.deg, 0.04, '#9a8a66', 'ground');
+  scatter(...RED, 6, 14, 4);
+}
+// --- Blue base (east): a camp by the road --------------------------------------------------------
+{
+  const f = frame(BLUE, -90);
+  for (const [lx, lz] of [[-10, -12], [0, -14], [10, -12], [12, 10]]) thing(f, lx, lz, 5, 3, 4, { type: 'wall', material: 'canvas', color: '#b8b08e', model: 'tent' });
+  kit.tower(...f(-16, 16));
+  kit.tower(...f(16, -18));
+  kit.truck(...f(-10, 10), f.deg - 90, '#4d5a3c');
+  paint(f(0, 0), 24, 24, f.deg, 0.04, '#9a8a66', 'ground');
+  scatter(...BLUE, 6, 14, 4);
+}
+
+// --- C: the market square -------------------------------------------------------------------
 {
   const [cx, cz] = Z.C;
-  addBuilding({ pos: [cx - 28, cz + 26], size: [9, 7], style: 'house', floors: 1, doors: 'n', rot: 20, material: 'concrete', color: '#c4b8a0' });
-  addBuilding({ pos: [cx + 34, cz + 4], size: [10, 7], style: 'house', floors: 2, doors: 'w', rot: -30, material: 'concrete', color: '#b8aa90' });
-  addBuilding({ pos: [cx - 6, cz - 26], size: [7, 6], style: 'shed', doors: 's', rot: 8 });
-  for (const [dx, dz, yaw] of [[3, 4, 20], [-5, -3, 70]]) hay(cx + dx, cz + dz, yaw);
-  sandbags(cx + 6, cz - 6, 4, 30);
-  // Rows of fruit trees, a few gaps, low stone walls between plots.
-  for (let i = -6; i <= 6; i++) {
-    for (let j = -4; j <= 4; j++) {
-      const x = cx + i * 7 + (j % 2) * 2 + (R() - 0.5) * 1.2;
-      const z = cz + j * 7.5 + (R() - 0.5) * 1.2;
-      if (Math.hypot(x - cx, z - cz) < 9 || R() < 0.12) continue;
-      if (!inMap(x, z, 3) || nearRoad(x, z, 1.5) || nearRiver(x, z, 2) || !free(x, z, 1.5)) continue;
-      orchard.push([round(x, 1), round(z, 1), round(0.3 + R() * 0.07)]);
-    }
-  }
-  stoneWall([[cx - 46, cz - 34], [cx - 46, cz + 12]], [[20, 24]]);
-  stoneWall([[cx + 10, cz - 36], [cx + 46, cz - 36]]);
-  stoneWall([[cx - 10, cz + 36], [cx + 30, cz + 36]], [[16, 20]]);
+  paint([cx, cz - 2], 36, 26, 0, 0.06, '#b9ae98', 'cobble');
+  put(block(cx, cz - 10, 6, 1, 6, { material: 'concrete', color: '#c9c0aa', model: 'fountain' }));
+  for (const [dx, dz, yaw] of [[-12, -8, 0], [-6, -15, 0], [7, -15, 0], [13, -8, 20], [-12, 8, 180], [11, 8, 180]]) kit.stall(cx + dx, cz + dz, yaw);
+  for (const [dx, dz, yaw] of [[-16, -12, 80], [17, -12, 100]]) kit.cart(cx + dx, cz + dz, yaw);
+  kit.sandbags(cx - 4, cz + 10, 4, 0);
+  kit.wreckCar(cx + 16, cz + 10, 60);
+  // Plane trees round the square.
+  for (const [dx, dz] of [[-17, -12], [17, -12], [-17, 8], [17, 8]]) T.trees.push([cx + dx, cz + dz, 1.25]);
+  scatter(cx, cz, 6, 18, 4);
+}
+// --- B: the church on the hilltop ---------------------------------------------------------
+{
+  const [bx, bz] = Z.B;
+  addBuilding({ pos: [bx + 3, bz], size: [11, 20], style: 'chapel', doors: 'se', rot: 90, material: 'plaster', color: '#d6c6a4' });
+  put(block(bx - 10.5, bz, 5.5, 22, 5.5, { type: 'wall', material: 'concrete', color: '#c4b59a', model: 'steeple', sink: 0.3 }));
+  paint([bx, bz + 10], 22, 8, 0, 0.06, '#b9ae98', 'cobble');
+  kit.sandbags(bx + 8, bz + 10, 3.5, 20);
+  kit.sandbags(bx - 6, bz - 10, 3.5, 160);
+  scatter(bx, bz, 6, 16, 3);
+}
+// --- A: the upper square: the mairie and a well ------------------------------------------------
+{
+  const [ax, az] = Z.A;
+  // The mairie on the inner side of the street (its door to the street), the square in front.
+  const u = [(ax - V[0]) / Math.hypot(ax - V[0], az - V[1]), (az - V[1]) / Math.hypot(ax - V[0], az - V[1])];
+  const yawOut = round((Math.atan2(u[0], u[1]) * 180) / Math.PI, 1);
+  addBuilding({ pos: [V[0] + u[0] * 53.5, V[1] + u[1] * 53.5], size: [16, 9], style: 'townhall', floors: 2, doors: 'sn', rot: yawOut, material: 'plaster', color: '#dccfb2' });
+  paint([ax, az], 20, 16, yawOut, 0.06, '#b9ae98', 'cobble');
+  put(block(ax + u[0] * 8, az + u[1] * 8, 2.4, 1.1, 2.4, { material: 'concrete', color: '#a59d8c' }));
+  kit.cart(ax + u[0] * 9 + 6, az + u[1] * 9 - 4, 30);
+  kit.sandbags(ax + u[0] * 10 - 6, az + u[1] * 10 + 4, 3.5, 70);
+  scatter(ax, az, 6, 16, 3);
+}
+// --- D: the watermill by the stream ---------------------------------------------------------
+{
+  const [dx, dz] = Z.D;
+  // The mill on the bank with its wheel in the race, a barn, the miller's house.
+  addBuilding({ pos: [dx + 9, dz + 2], size: [12, 9], style: 'mill', floors: 2, doors: 'ew', rot: 80, material: 'plaster', color: '#cbb894' });
+  put(block(dx + 2.4, dz + 2, 1.4, 6, 6, { yaw: 80, type: 'wall', material: 'wood', color: '#5e4a36', model: 'millWheel', sink: 1.2 }));
+  addBuilding({ pos: [-74, 30], size: [14, 9], style: 'barn', doors: 'sn', rot: 0 });
+  addBuilding({ pos: [dx + 6, dz + 26], size: [9, 8.6], style: 'house', floors: 2, doors: 'sn', rot: 160, material: 'plaster', color: '#d8c7a4' });
+  for (const [x, z, yaw] of [[dx + 14, dz - 10, 20], [-66, 44, 80], [dx + 12, dz + 16, 0]]) kit.hay(x, z, yaw);
+  kit.cart(dx + 16, dz + 6, 100);
+  kit.fence([[-66, 20], [-60, 40], [-66, 58]], [[8, 12]]);
+  kit.sandbags(dx + 14, dz - 22, 4, 10);
+  kit.nest(-62, 6, 90);
+  scatter(dx + 12, dz, 6, 20, 5);
+}
+// --- E: the farm (a mas with its barns) ----------------------------------------------------
+{
+  const [ex, ez] = Z.E;
+  addBuilding({ pos: [ex - 16, ez - 4], size: [16, 9], style: 'house', floors: 2, doors: 'sne', rot: 90, material: 'plaster', color: '#dcc9a6' });
+  addBuilding({ pos: [ex + 18, ez + 2], size: [16, 10], style: 'barn', doors: 'sw', rot: 90 });
+  addBuilding({ pos: [ex - 6, ez + 22], size: [12, 8.6], style: 'shed', doors: 'n', rot: 180 });
+  put(block(ex + 14, ez + 22, 6, 14, 6, { type: 'wall', material: 'concrete', color: '#b9b4a8', model: 'silo', sink: 0.1 }));
+  for (const [x, z, yaw] of [[ex + 2, ez + 10, 10], [ex + 6, ez + 14, 80], [ex - 28, ez - 2, 30], [ex + 30, ez - 12, 0]]) kit.hay(x, z, yaw);
+  kit.truck(ex + 6, ez - 14, 120, '#7a6a4a');
+  kit.cart(ex - 2, ez + 6, 40);
+  kit.stoneWall([[ex - 30, ez - 24], [ex + 30, ez - 24]], [[26, 34]], 1.0, '#b8ab92');
+  kit.nest(ex - 20, ez - 18, 270);
+  kit.wreck(ex - 30, ez + 22, 60);
+  scatter(ex, ez, 6, 22, 5);
 }
 
-// --- Ridge -----------------------------------------------------------------------
-{
-  const [rx, rz] = RIDGE;
-  // A watch post on the crest: the old stone tower and a shepherd's hut.
-  obj(block(rx, rz, 5, 14, 5, { type: 'wall', material: 'brick', color: '#958b7c', model: 'steeple', sink: 0.3 }), 4);
-  addBuilding({ pos: [rx + 16, rz - 30], size: [9, 7], style: 'house', floors: 1, doors: 'w', rot: -15, material: 'concrete', color: '#a39886' });
-  addBuilding({ pos: [rx + 26, rz - 24], size: [7, 6], style: 'shed', doors: 'w', rot: -15 });
-  sandbags(rx - 6, rz - 6, 4, -40);
-  sandbags(rx + 6, rz - 7, 4, 40);
-  // Rocks across the slope.
+// --- The village: houses along the streets, in terraces -----------------------------------------
+const PLASTER = ['#eadbb8', '#f0e2c4', '#e2c898', '#ecd0aa', '#e4d2b0', '#f2e6cc'];
+const keepOut = [[RED, 28], [BLUE, 28], [Z.A, 18], [Z.B, 20], [Z.C, 20], [Z.D, 30], [Z.E, 32]];
+const inVillage = (x, z) => Math.hypot(x - V[0], z - V[1]) < 84;
+function lotOK(r) {
+  if (!inVillage(r.x, r.z)) return false;
+  for (const [x, z] of [[r.x, r.z], ...[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, w]) => [r.x + u * r.hw * r.ax[0] + w * r.hd * r.az[0], r.z + u * r.hw * r.ax[1] + w * r.hd * r.az[1]])]) {
+    if (!inMap(x, z, 6) || keepOut.some(([c, cr]) => Math.hypot(x - c[0], z - c[1]) < cr)) return false;
+    if (!offRoad(x, z, 1) || nearStream(x, z, 3)) return false;
+  }
   for (let i = 0; i < 9; i++) {
-    const a = R() * Math.PI * 2;
-    const r = 10 + R() * 34;
-    const x = rx + Math.cos(a) * r;
-    const z = rz + Math.sin(a) * r * 0.8;
-    if (!inMap(x, z, 3) || nearRoad(x, z, 1.5) || !free(x, z, 2)) continue;
-    props.push({ model: R() < 0.5 ? 'rock_moss_set_01' : 'rock_moss_set_02', pos: [round(x), -0.2, round(z)], rot: [0, round(R() * 360), 0], scale: round(0.9 + R() * 0.6), snap: true });
-    reserve(x, z, 4);
+    const x = r.x + (((i % 3) - 1) * r.hw * r.ax[0]) + ((Math.floor(i / 3) - 1) * r.hd * r.az[0]);
+    const z = r.z + (((i % 3) - 1) * r.hw * r.ax[1]) + ((Math.floor(i / 3) - 1) * r.hd * r.az[1]);
+    if (!offRoad(x, z, 0.8)) return false;
   }
+  return true;
 }
-// Boulders along the creek banks.
-for (let i = 0; i < 12; i++) {
-  const p = river.pts[Math.floor(R() * river.pts.length)];
-  const [tx, tz] = riverDir(p[0], p[1]);
+function lotStyle() {
+  const roll = R();
+  const color = pick(PLASTER);
+  if (roll < 0.62) return { style: 'house', w: between(8.6, 10.5), d: between(8.6, 10), floors: R() < 0.4 ? 3 : 2, material: 'plaster', color };
+  if (roll < 0.85) return { style: 'shop', w: between(9, 11), d: between(8.6, 10), floors: 2, material: 'plaster', color };
+  return { style: 'inn', w: between(11, 14), d: between(9, 10.5), floors: 3, material: 'plaster', color };
+}
+let lots = 0;
+const lotOpts = { lotOK, lotStyle, ruins: 0.1, gap: 0.3, maxSlope: 1.2 };
+for (const r of [RING, UPPER, MAIN, ...ALLEYS, ...TOP_ALLEYS]) for (const side of [-1, 1]) lots += frontage(r.pts, r.w / 2, side, lotOpts);
+
+// --- Fields round the village: lavender in rows, wheat, walls and hedges, olive groves --------------
+const fieldsTaken = [];
+function field(cx, cz, w, d, yaw, kind) {
+  const r = obb(cx, cz, w, d, yaw, 2);
+  if (fieldsTaken.some((o) => Math.hypot(o.x - r.x, o.z - r.z) < (Math.max(o.hw, o.hd) + Math.max(r.hw, r.hd)) * 0.75)) return false;
+  for (let i = 0; i < 25; i++) {
+    const x = cx + ((i % 5) / 4 - 0.5) * w * Math.cos((yaw * Math.PI) / 180) + ((Math.floor(i / 5) / 4 - 0.5) * d * Math.sin((yaw * Math.PI) / 180));
+    const z = cz - ((i % 5) / 4 - 0.5) * w * Math.sin((yaw * Math.PI) / 180) + ((Math.floor(i / 5) / 4 - 0.5) * d * Math.cos((yaw * Math.PI) / 180));
+    if (!inMap(x, z, 5) || !offRoad(x, z, 2) || nearStream(x, z, 3) || inVillage(x, z) || Object.entries(Z).some(([id, c]) => Math.hypot(x - c[0], z - c[1]) < ZR[id] + 4)) return false;
+    if ([RED, BLUE].some((c) => Math.hypot(x - c[0], z - c[1]) < 26)) return false;
+  }
+  if (!T.isFree(obb(cx, cz, w, d, yaw))) return false;
+  fieldsTaken.push(r);
+  const f = frame([cx, cz], yaw);
+  if (kind === 'lavender') {
+    // Rows of lavender: purple strips on the field's long axis, a strip of bare earth between.
+    paint([cx, cz], w, d, yaw, 0.035, '#8a7a5c', 'ground');
+    for (let u = -w / 2 + 1; u <= w / 2 - 1; u += 1.7) paint(f(u, 0), 1.0, d - 2, yaw, 0.07, pick(['#7d68aa', '#7462a0', '#8672b2']), 'grass');
+  } else if (kind === 'wheat') {
+    paint([cx, cz], w, d, yaw, 0.04, pick(['#c8ad6a', '#bfa35e', '#cdb577']), 'straw');
+  } else {
+    paint([cx, cz], w, d, yaw, 0.035, '#8f7a58', 'ground');
+  }
+  // Walls and hedges on two or three sides, with gaps.
+  const corners = [f(-w / 2, -d / 2), f(w / 2, -d / 2), f(w / 2, d / 2), f(-w / 2, d / 2), f(-w / 2, -d / 2)];
+  for (let i = 0; i < 4; i++) {
+    if (R() < 0.35) continue;
+    const len = i % 2 ? d : w;
+    const g = between(0.2, 0.7) * len;
+    if (R() < 0.55) kit.stoneWall([corners[i], corners[i + 1]], [[g, g + 4]], 1.0, '#b8ab92');
+    else kit.hedge([corners[i], corners[i + 1]], [[g, g + 4]], 1.6);
+  }
+  return true;
+}
+let fields = 0;
+for (let i = 0; i < 3000 && fields < 22; i++) {
+  const x = between(-180, 180);
+  const z = between(-140, 135);
+  const w = between(22, 42);
+  const d = between(16, 30);
+  const yaw = between(-25, 25) + (R() < 0.5 ? 0 : 90);
+  if (field(x, z, w, d, yaw, R() < 0.6 ? 'lavender' : R() < 0.6 ? 'wheat' : 'fallow')) fields++;
+}
+// Olive groves and cypress lines on the slopes, trees along the stream, a few farm sheds.
+for (const [x, z, r, n] of [[150, -100, 26, 22], [-150, 100, 20, 12], [-100, -110, 18, 12], [90, -128, 16, 10], [-40, 120, 16, 8], [150, 50, 14, 8], [-160, -80, 16, 10]]) copse(x, z, r, n, { minGap: 5.5, scale: [0.6, 0.9] });
+for (let i = 0; i < 40; i++) {
+  const p = along(STREAM.pts, between(40, 380));
+  if (!p) continue;
   const side = R() < 0.5 ? -1 : 1;
-  const off = RIVER_CLEAR + 0.5 + R() * 3;
-  const x = p[0] - tz * off * side;
-  const z = p[1] + tx * off * side;
-  if (!inMap(x, z, 3) || nearRoad(x, z, 2) || !free(x, z, 1.5)) continue;
-  props.push({ model: R() < 0.5 ? 'rock_moss_set_01' : 'rock_moss_set_02', pos: [round(x), -0.2, round(z)], rot: [0, round(R() * 360), 0], scale: round(0.5 + R() * 0.4), snap: true });
-  reserve(x, z, 3);
+  copse(p.x - p.tz * side * 9, p.z + p.tx * side * 9, 3, 1, { minGap: 6, scale: [0.9, 1.3] });
 }
+for (let i = 0, n = 0; i < 200 && n < 8; i++) {
+  const x = between(-170, 170);
+  const z = between(-130, 125);
+  const r = obb(x, z, between(6, 8), between(5, 6.5), between(0, 360), 1.5);
+  if (inVillage(x, z) || !inMap(x, z, 8) || samples(r, 2).some(([px, pz]) => !offRoad(px, pz, 0.5)) || nearStream(x, z, 4) || !T.isFree(r) || T.slopeUnder(r) > 0.8) continue;
+  if (Object.entries(Z).some(([id, c]) => Math.hypot(x - c[0], z - c[1]) < ZR[id] + 6)) continue;
+  addBuilding({ pos: [round(x), round(z)], size: [round(r.hw * 2 - 3, 1), round(r.hd * 2 - 3, 1)], style: 'shed', rot: round(Math.atan2(r.ax[1], r.ax[0]) * -57.2958, 1), doors: 's', material: 'plaster', color: pick(PLASTER) });
+  n++;
+}
+// Dug-in positions out in the fields (the village was fought over).
+for (const [x, z, yaw] of [[-80, 40, 270], [70, -86, 0], [-60, -110, 0], [120, 30, 90], [-96, -50, 270], [40, 90, 180]]) if (T.isFree(obb(x, z, 4, 4))) kit.nest(x, z, yaw);
+for (const [x, z, yaw] of [[-150, 20, 30], [140, -30, 140]]) kit.wreck(x, z, yaw);
+let parked = kerbCars(MAIN, { chance: 0.25, skip: (x) => Math.abs(x) > 150 });
 
-// --- Bases -------------------------------------------------------------------
-{
-  // North: a row of farm buildings the column has taken over, tents, vehicles.
-  const [bx, bz] = BLUE;
-  for (const [dx, dz, w, d, style] of [[-34, 6, 10, 7, 'shed'], [-16, -6, 12, 8, 'barracks'], [22, -6, 12, 8, 'barracks'], [38, 6, 10, 7, 'shed']]) {
-    addBuilding({ pos: [bx + dx, bz + dz], size: [w, d], style, doors: 's', rot: 0 });
-  }
-  for (let i = 0; i < 3; i++) obj(block(bx - 10 + i * 9, bz + 16, 5, 3, 4, { type: 'wall', material: 'wood', color: '#c9c8b8', model: 'tent' }), 3);
-  for (const [dx, dz, yaw] of [[18, 22, 0], [-18, 22, 0]]) sandbags(bx + dx, bz + dz, 5, yaw);
-}
-{
-  const [rx, rz] = RED;
-  for (const [dx, dz, w, d, style] of [[-38, -4, 12, 8, 'house'], [-18, 8, 12, 8, 'barracks'], [20, 8, 12, 8, 'barracks'], [38, -6, 10, 7, 'shed'], [-30, 20, 9, 7, 'shed']]) {
-    addBuilding({ pos: [rx + dx, rz + dz], size: [w, d], style, doors: 'n', rot: 0, ...(style === 'house' ? { material: 'concrete', color: '#b5a68e' } : {}) });
-  }
-  for (let i = 0; i < 3; i++) obj(block(rx - 10 + i * 9, rz - 16, 5, 3, 4, { type: 'wall', material: 'wood', color: '#c9c8b8', model: 'tent' }), 3);
-  for (const [dx, dz, yaw] of [[18, -22, 0], [-18, -22, 0]]) sandbags(rx + dx, rz + dz, 5, yaw);
-}
-
-// --- Second pass (2026-10-02, owner: "a bit dull") --------------------------------------
-// A front line along the creek's north bank (blue dug in at each bridgehead),
-// tanks knocked out crossing the southern fields, a watermill by the east bridge,
-// a hamlet with an inn on the northern road, carts at the farms.
-const spot = (x, z, r, roadPad = 1.5) => inMap(x, z, 3) && !nearRoad(x, z, roadPad) && !nearRiver(x, z, 1) && free(x, z, r);
-/** The free spot nearest (x, z) within `reach`, or null. */
-const near = (x, z, r, reach = 12, roadPad = 1.5) => {
-  for (let d = 0; d <= reach; d += 1.5) {
-    const n = Math.max(1, Math.round(d * 2));
-    for (let k = 0; k < n; k++) {
-      const a = (k / n) * Math.PI * 2;
-      if (spot(x + Math.cos(a) * d, z + Math.sin(a) * d, r, roadPad)) return [x + Math.cos(a) * d, z + Math.sin(a) * d];
-    }
-  }
-  return null;
-};
-const wreck = (x, z, yaw) => {
-  const p = near(x, z, 4.2);
-  if (p) obj(block(p[0], p[1], 3.6, 2.6, 7.4, { yaw, material: 'metal', color: '#4f5640', model: 'tankWreck' }), 4.2);
-};
-const cart = (x, z, yaw) => {
-  const p = near(x, z, 2.2, 8, 0.8);
-  if (p) obj(block(p[0], p[1], 1.8, 1.7, 4.2, { yaw, material: 'wood', color: '#7a5a3c', model: 'cart' }), 2.2);
-};
-// Bridgehead positions on the north bank: sandbag arcs either side of the road, facing south.
-for (const b of bridges) {
-  const north = b.cz < 0 ? 1 : -1; // the crossing direction that points north (-z)
-  const [hx, hz] = [b.x - north * b.cx * (b.len / 2 + 9), b.z - north * b.cz * (b.len / 2 + 9)];
-  const [tx, tz] = riverDir(b.x, b.z);
-  const yaw = (Math.atan2(-tx, -tz) * 180) / Math.PI + 90;
-  for (const side of [-1, 1]) {
-    const p = near(hx + tx * side * 9, hz + tz * side * 9, 2.5, 6, 1);
-    if (p) sandbags(p[0], p[1], 4, yaw);
-    const q = near(hx + tx * side * 17, hz + tz * side * 17, 2.5, 6, 1);
-    if (q) sandbags(q[0], q[1], 3, yaw + side * 25);
-  }
-}
-// Tanks that didn't make it across, and one that did.
-wreck(...P(700, 790), 20);
-wreck(...P(980, 760), -35);
-wreck(...P(460, 700), 60);
-wreck(...P(860, 420), 160);
-// Carts at the farms.
-for (const [dx, dz, yaw] of [[14, 8, 30], [-10, 18, 110]]) cart(Z.A[0] + dx, Z.A[1] + dz, yaw);
-for (const [dx, dz, yaw] of [[8, 10, 70], [-6, -14, 10]]) cart(Z.B[0] + dx, Z.B[1] + dz, yaw);
-cart(Z.C[0] - 14, Z.C[1] + 10, 45);
-// Watermill on the north bank between the middle and east bridges, its wheel on the river side.
-{
-  const [rx, rz] = onRiver(...P(940, 625));
-  const [tx, tz] = riverDir(rx, rz);
-  const n = tz > 0 ? [tz, -tx] : [-tz, tx]; // the bank-normal that points north (-z)
-  const off = RIVER_CLEAR + 5.5;
-  const [mx, mz] = [rx + n[0] * off, rz + n[1] * off];
-  const rot = round((Math.atan2(-tz, tx) * 180) / Math.PI, 1);
-  if (free(mx, mz, 6)) {
-    addBuilding({ pos: [round(mx), round(mz)], size: [12, 9], style: 'mill', floors: 2, doors: 'ew', rot, material: 'concrete', color: '#b1a48e' });
-    // The wheel against the river-side wall: kit -x side to the wall, so its +x points at the river.
-    const [wx, wz] = [mx - n[0] * (4.5 + 0.8), mz - n[1] * (4.5 + 0.8)];
-    const wyaw = round((Math.atan2(n[1], -n[0]) * 180) / Math.PI, 1);
-    objects.push(block(wx, wz, 1.4, 6, 6, { yaw: wyaw, type: 'wall', material: 'wood', color: '#5e4a36', model: 'millWheel', sink: 1.2 }));
-    hay(mx + tx * 9, mz + tz * 9, 20);
-    cart(mx - tx * 9 + n[0] * 3, mz - tz * 9 + n[1] * 3, rot + 90);
-  }
-}
-// Hamlet on the northern road between the farm and the orchard: an inn at the crossroads, two houses, a well.
-{
-  const [hx, hz] = P(1000, 262);
-  const homes = [
-    [0, 0, 16, 10, 'inn', 2, 'sw', 0],
-    [-20, 6, 9, 8, 'house', 2, 'e', 12],
-    [18, 10, 9, 8, 'house', 1, 'w', -10],
-  ];
-  for (const [dx, dz, w, d, style, floors, doors, rot] of homes) {
-    const x = hx + dx;
-    const z = hz + dz;
-    if (!inMap(x, z, 6) || nearRoad(x, z, Math.min(w, d) / 2 + 1) || !free(x, z, Math.hypot(w, d) / 2)) continue;
-    addBuilding({ pos: [round(x), round(z)], size: [w, d], style, floors, doors, rot, ...(style === 'house' || style === 'inn' ? { material: 'concrete', color: '#bfb196' } : {}) });
-  }
-  const wp = near(hx - 6, hz + 14, 1.2, 6, 1);
-  if (wp) obj(block(wp[0], wp[1], 1.6, 1.4, 1.6, { material: 'concrete', color: '#8f8a80', model: 'pump' }), 1.5);
-  cart(hx + 10, hz - 4, 80);
-  stoneWall([[hx - 30, hz + 22], [hx - 8, hz + 26], [hx + 14, hz + 28]], [[10, 13]]);
-}
-
-// Crates and barrels around the zones.
-const crateModels = ['wooden_military_crate', 'old_military_crate', 'barrel_03', 'ammo_box'];
-for (const [zx, zz] of Object.values(Z)) {
-  for (let i = 0; i < 6; i++) {
-    const a = R() * Math.PI * 2;
-    const r = 5 + R() * 10;
-    const x = zx + Math.cos(a) * r;
-    const z = zz + Math.sin(a) * r;
-    if (nearRoad(x, z, 1) || nearRiver(x, z, 1) || !free(x, z, 1)) continue;
-    props.push({ model: crateModels[Math.floor(R() * crateModels.length)], pos: [round(x), 0, round(z)], rot: [0, round(R() * 360), 0], snap: true });
-    reserve(x, z, 1);
-  }
-}
-
-// --- Trees -------------------------------------------------------------------
-// Smooth value noise for copses and hedgerows.
-const hash = (i, j) => {
-  let h = (i * 374761393 + j * 668265263) >>> 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-};
-const vnoise = (x, z) => {
-  const i = Math.floor(x);
-  const j = Math.floor(z);
-  const fx = x - i;
-  const fz = z - j;
-  const sx = fx * fx * (3 - 2 * fx);
-  const sz = fz * fz * (3 - 2 * fz);
-  const a = hash(i, j) + (hash(i + 1, j) - hash(i, j)) * sx;
-  const b = hash(i, j + 1) + (hash(i + 1, j + 1) - hash(i, j + 1)) * sx;
-  return a + (b - a) * sz;
-};
-const woods = (x, z) => 0.6 * vnoise(x / 45, z / 45) + 0.4 * vnoise(x / 17 + 11, z / 17 - 7);
-const zoneClear = (x, z) => Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < 30);
-const trees = [...orchard];
-const STEP = 5;
-for (let gx = -240; gx <= 240; gx += STEP) {
-  for (let gz = -170; gz <= 170; gz += STEP) {
-    const x = gx + (R() - 0.5) * STEP * 0.9;
-    const z = gz + (R() - 0.5) * STEP * 0.9;
-    if (!inMap(x, z, 1.5)) continue;
-    const edge = edgeDist(boundary, x, z);
-    // Copses and tree lines in the meadows, a thick belt along the edge, the creek lined with trees.
-    const w = woods(x, z);
-    let p = w > 0.6 ? 0.6 : w > 0.54 ? 0.16 : 0.02;
-    if (edge < 16) p = Math.max(p, 0.5 - edge / 32);
-    const creek = lineDist(x, z, river.pts) - RIVER_CLEAR;
-    if (creek > 1 && creek < 7) p = Math.max(p, 0.22);
-    if (R() > p) continue;
-    if (zoneClear(x, z) || nearRoad(x, z, 2.5) || nearRiver(x, z, 1.5) || inField(x, z, 1) || !free(x, z, 1.5)) continue;
-    if (Math.hypot(x - BLUE[0], z - BLUE[1]) < 40 || Math.hypot(x - RED[0], z - RED[1]) < 40) continue;
-    trees.push([round(x, 1), round(z, 1), round(0.5 + R() * 0.3)]);
-  }
-}
-
-// --- Spawns & zones ----------------------------------------------------------
-const spawns = [];
-for (let i = 0; i < 6; i++) {
-  const a = (i / 6) * Math.PI * 2;
-  spawns.push({ team: 'blue', pos: [round(BLUE[0] + Math.cos(a) * 6), 0.1, round(BLUE[1] + 4 + Math.sin(a) * 4)], yaw: 180 });
-  spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 6), 0.1, round(RED[1] - 4 + Math.sin(a) * 4)], yaw: 0 });
-}
-const zones = [
-  // About 1.5x the first pass (owner, 2026-10-02: bigger zones).
-  { id: 'A', pos: [Z.A[0], 0, Z.A[1]], radius: 30 },
-  { id: 'B', pos: [Z.B[0], 0, Z.B[1]], radius: 27 },
-  { id: 'C', pos: [Z.C[0], 0, Z.C[1]], radius: 27 },
-];
-
-let area = 0;
-for (let i = 0; i < boundary.length; i++) {
-  const [x1, z1] = boundary[i];
-  const [x2, z2] = boundary[(i + 1) % boundary.length];
-  area += x1 * z2 - x2 * z1;
-}
-area = Math.abs(area / 2);
-const xs = boundary.map((p) => p[0]);
-const zs = boundary.map((p) => p[1]);
-const margin = 70;
-const halfX = Math.max(-Math.min(...xs), Math.max(...xs)) + margin;
-const halfZ = Math.max(-Math.min(...zs), Math.max(...zs)) + margin;
-
+// --- Spawns, zones, write -----------------------------------------------------------------
+T.check();
+const st = outlineStats(boundary);
+const spawns = spawnRings(BLUE, RED, 90, -90);
+const zones = Object.entries(Z).map(([id, [x, z]]) => ({ id, pos: [x, 0, z], radius: ZR[id] }));
 const map = {
   meta: { id: 'lyon', name: '리옹 초원 전선', version: 2 },
-  world: {
-    size: [Math.ceil(halfX * 2), Math.ceil(halfZ * 2)],
-    visualProfile: 'outdoor_day',
-    groundMaterial: 'grass',
-    flora: 'broadleaf',
-    boundary,
-    terrain,
-  },
+  world: { size: st.size, visualProfile: 'outdoor_day', groundMaterial: 'grass', flora: 'broadleaf', boundary, terrain },
   spawns,
   zones,
-  // Modes (owner, 2026-10-03): Zone to 300 (no clear front line: all three zones lie along the creek).
-  modes: { zone: { target: 300 } },
-  objects,
-  buildings,
-  props,
-  trees,
+  // Frontline from the blue (east) end: E, B / C / A, D (C starts neutral); Zone to 300.
+  modes: { zone: { target: 300 }, frontline: { sectors: [['E', 'B'], ['C'], ['A', 'D']] } },
+  objects: T.objects,
+  buildings: T.buildings,
+  props: T.props,
+  trees: T.trees,
 };
 writeFileSync(new URL('../../public/maps/lyon.json', import.meta.url), JSON.stringify(map));
-console.log(`lyon: ${objects.length} objects, ${buildings.length} buildings, ${props.length} props, ${trees.length} trees, area ${Math.round(area)} m², size ${map.world.size}`);
+const styles = {};
+for (const b of T.buildings) styles[b.style] = (styles[b.style] ?? 0) + 1;
+console.log(`lyon: ${T.objects.length} objects, ${T.buildings.length} buildings (${lots} village lots), ${fields} fields, ${T.props.length} props, ${T.trees.length} trees, ${parked} cars, outline ${round(st.w, 0)} x ${round(st.d, 0)} m (${round(st.area, 0)} m²), size ${st.size}`);
+console.log(Object.entries(styles).map(([k, v]) => `${k} ${v}`).join(', '));
+void H;
+void sAtX;
+void putAll;
+void building;

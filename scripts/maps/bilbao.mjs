@@ -449,6 +449,73 @@ for (const [zx, zz] of Object.values(Z)) {
   }
 }
 
+// --- Third pass (2026-10-11, owner: redesign the other maps too) -------------------------------
+// The city took shelling: some houses are roofless ruins of broken walls and rubble, the streets
+// have craters, and barricades close one side of the long streets (their sightlines ran 200 m).
+{
+  const ruinColors = ['#8b6a55', '#7d5e4c', '#94765f', '#857a6c'];
+  const yawPitch = (yawDeg, pitchDeg) => {
+    const p = (yawDeg * Math.PI) / 180;
+    const t = (pitchDeg * Math.PI) / 180;
+    const sp = Math.sin(p);
+    const cp = Math.cos(p);
+    const st = Math.sin(t);
+    const ct = Math.cos(t);
+    return [round((Math.atan2(st, cp * ct) * 180) / Math.PI, 2), round((Math.asin(sp * ct) * 180) / Math.PI, 2), round((Math.atan2(-sp * st, cp) * 180) / Math.PI, 2)];
+  };
+  let ruins = 0;
+  for (let i = buildings.length - 1; i >= 0; i--) {
+    const b = buildings[i];
+    if (!['house', 'apartment', 'shop'].includes(b.style)) continue;
+    if (Object.values(Z).some(([zx, zz]) => Math.hypot(b.pos[0] - zx, b.pos[1] - zz) < 22)) continue;
+    if (R() > 0.13) continue;
+    buildings.splice(i, 1);
+    const [w, d] = b.size;
+    const yaw = b.rot ?? 0;
+    const c = Math.cos((yaw * Math.PI) / 180);
+    const sn = Math.sin((yaw * Math.PI) / 180);
+    const at = (u, v) => [b.pos[0] + u * c + v * sn, b.pos[1] - u * sn + v * c];
+    const cs = [at(-w / 2, -d / 2), at(w / 2, -d / 2), at(w / 2, d / 2), at(-w / 2, d / 2), at(-w / 2, -d / 2)];
+    for (let k = 0; k < 4; k++) {
+      const len = k % 2 ? d : w;
+      const a = (0.15 + R() * 0.4) * len;
+      const gaps = [[a, a + 1.6 + R()]];
+      if (R() < 0.5) gaps.push([len * 0.75, len * 0.75 + 1 + R()]);
+      objects.push(...wallLine([cs[k], cs[k + 1]], { height: round(1.4 + R() * 3.6, 1), thick: 0.45, type: 'wall', material: 'brick', color: ruinColors[Math.floor(R() * ruinColors.length)], gaps }));
+    }
+    for (let k = 0; k < 5; k++) {
+      const [rx, rz] = at((R() - 0.5) * (w - 3), (R() - 0.5) * (d - 3));
+      objects.push({ type: 'cover', pos: [round(rx), round(0.2 + R() * 0.3), round(rz)], size: [round(1.4 + R() * 1.4, 1), round(0.6 + R() * 0.7, 1), round(1.2 + R() * 1.2, 1)], rot: yawPitch(R() * 360, (R() - 0.5) * 24), material: 'concrete', color: '#8a8178', snap: true });
+    }
+    ruins++;
+  }
+  // Craters on the streets and in the yards.
+  for (let i = 0, n = 0; i < 200 && n < 14; i++) {
+    const st = streets[Math.floor(R() * 7)];
+    const p = st.pts[Math.floor(R() * st.pts.length)];
+    const x = p[0] + (R() - 0.5) * st.w;
+    const z = p[1] + (R() - 0.5) * st.w;
+    if (!inMap(x, z, 8) || nearRiver(x, z, 4) || Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < 10)) continue;
+    terrain.hills.push({ pos: [round(x), round(z)], radius: round(3.5 + R() * 1.5, 1), height: round(-(0.9 + R() * 0.5), 2) });
+    n++;
+  }
+  // Barricades across the long streets, every ~45 m, one side left open (tanks get through).
+  for (const st of streets.slice(0, 3)) {
+    for (let k = 1; k < st.pts.length - 1; k += 2) {
+      const [x, z] = st.pts[k];
+      const [nx2, nz2] = st.pts[k + 1];
+      if (!inMap(x, z, 10) || Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < 16)) continue;
+      const yaw = (Math.atan2(nx2 - x, nz2 - z) * 180) / Math.PI;
+      const ox = Math.cos((yaw * Math.PI) / 180) * (st.w / 4);
+      const oz = -Math.sin((yaw * Math.PI) / 180) * (st.w / 4);
+      if (!free(x + ox, z + oz, 2.5)) continue;
+      sandbags(x + ox, z + oz, st.w / 2 - 0.5, yaw + 90);
+      obj(block(x + ox * 1.6 + (nx2 - x) * 0.04, z + oz * 1.6 + (nz2 - z) * 0.04, 1.9, 1.5, 4.4, { yaw: yaw + 70, material: 'metal', color: '#3a302a', model: 'car' }), 2.5);
+    }
+  }
+  console.log(`bilbao third pass: ${ruins} ruins`);
+}
+
 // --- Trees -----------------------------------------------------------------------
 // Street trees in the cathedral close and on the battery hill.
 const trees = [];

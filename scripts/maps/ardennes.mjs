@@ -1,662 +1,755 @@
-// Generates public/maps/ardennes.json — "아르덴 숲" (Ardennes Forest), winter.
-// 7-zone Zone map, about 800 x 650 m. A meandering river runs north-south
-// through the middle and is the front line: blue holds the west bank, red the
-// east. It is knee deep and wadeable everywhere; three bridges cross it: the
-// stone bridge in the central village (D, carries the main road), the
-// footbridge at the watermill (B) and the planked rail bridge at the halt (F,
-// carries the south roads too). Zones read like the minimap: A B C across the
-// north (chapel hill, watermill, sawmill), D in the middle (village under the
-// big hotel), E F G across the south (farm, rail halt, bunker ridge).
-// Dense conifer woods fill the ground between the zones; open fields round the
-// farm, under the chapel hill, at the sawmill and in front of the bunker ridge.
+// Generates public/maps/ardennes.json — "아르덴 숲" (Ardennes), winter.
+// Fourth layout (2026-10-11, owner: redesign it with BFV's Narvik as the reference for the
+// feel — a snowy mountainside coming down to a town on wide water). Read here as a Meuse
+// valley town (Dinant): a strip of town between a steep snowy slope and the wide river,
+// about 480 x 280 m for 16v16. The river runs along the whole south edge, outside the
+// playable area (it is deep); a quay wall, a rail line along the quay and a quay road
+// edge the town. A creek in a ravine comes down the mountain and cuts the map in two:
+// the wooded slope and the fishing hamlet west of it, the town east of it.
+// Six zones in two rows from the blue (west) end to the red (east) end:
+//   upper row: A the sawmill on the slope, C the hotel square on the upper terrace, E the church hill;
+//   lower row: B the fishing hamlet on the point, D the station and depot, F the rail yard and harbour.
+// The upper terrace stands ~7 m above the lower town; the bank between them is steep, with
+// stairs, ramps and climbing streets. Blue comes in from the mountain road in the west, red
+// from the east end of the valley.
 import { writeFileSync } from 'node:fs';
-import { besideLine, block, densify, edgeDist, ellipseIn, inside, lineDist, rng, round, smoothClosed, smoothOpen, stripAlong, wallLine, zAtX } from './lib.mjs';
+import { block, densify, edgeDist, inside, lineDist, rng, round, smoothClosed, smoothOpen, stripAlong, wallLine } from './lib.mjs';
 
-const R = rng(20261002);
+const R = rng(20261011);
+const DEG = Math.PI / 180;
 const objects = [];
 const buildings = [];
 const props = [];
+const trees = [];
+const pick = (list) => list[Math.floor(R() * list.length)];
+const between = (a, b) => a + R() * (b - a);
 
-// --- Outline -----------------------------------------------------------------
+// --- Outline -------------------------------------------------------------------
+// North edge on the mountainside, south edge on the quay; the point (B) pushes out into the river.
 const outline = [
-  [-398, -248], [-338, -318], [-246, -332], [-150, -322], [-66, -340], [12, -326], [92, -342], [172, -322], [252, -334],
-  [334, -306], [394, -246], [410, -150], [398, -58], [414, 30], [400, 122], [406, 212], [374, 282], [302, 328], [212, 318],
-  [120, 340], [30, 324], [-50, 342], [-140, 324], [-232, 336], [-322, 312], [-390, 252], [-406, 160], [-396, 70], [-412, -20],
-  [-400, -112], [-408, -192],
+  [-242, -96], [-176, -118], [-96, -122], [-20, -116], [60, -122], [140, -118], [214, -104], [246, -50], [242, 20], [248, 82],
+  [214, 108], [140, 110], [60, 110], [6, 116], [-30, 128], [-62, 150], [-100, 160], [-138, 150], [-164, 124], [-206, 104],
+  [-246, 64], [-240, 0], [-250, -50],
 ];
-const boundary = smoothClosed(outline, 2).map(([x, z]) => [round(x * 0.97, 1), round(z * 0.97, 1)]);
+const boundary = smoothClosed(outline, 2).map(([x, z]) => [round(x, 1), round(z, 1)]);
 const inMap = (x, z, pad = 0) => inside(boundary, x, z) && edgeDist(boundary, x, z) > pad;
 
-// --- River -------------------------------------------------------------------
-// Bends west north of the village and east south of it, and runs straight
-// north-south at the three bridges (z = -232 / -220, 0, 220).
-const WAVE = 220;
-const riverX = (z) => {
-  const s = z < 0 ? 1 : -1;
-  const env = Math.sin((Math.PI * z) / WAVE) ** 2;
-  return s * 25 * (Math.cos((2 * Math.PI * z) / WAVE) - 1) + 7 * Math.sin(z / 41 + 0.7) * env;
+// --- Zones, bases ----------------------------------------------------------------------------
+const Z = { A: [-118, -50], B: [-98, 118], C: [14, -54], D: [30, 62], E: [140, -58], F: [154, 70] };
+const ZR = { A: 32, B: 30, C: 32, D: 32, E: 30, F: 34 };
+const BLUE = [-206, 22];
+const RED = [214, 6];
+
+// --- Rivers: the wide river (deep, beyond the quay) and the creek in its ravine -------------
+const RIVER = {
+  pts: smoothOpen([[-460, 214], [-300, 222], [-180, 236], [-100, 246], [-30, 230], [30, 205], [100, 194], [240, 192], [460, 198]], 2),
+  width: 130,
+  depth: 16,
+  bank: 9,
+  water: 14.6,
 };
-const river = {
-  pts: Array.from({ length: 148 }, (_, i) => {
-    const z = -440 + i * 6;
-    return [round(riverX(z), 1), z];
-  }),
-  width: 14,
-  depth: 2.3,
-  // Wide banks: gentle enough for wheels and tracks to drive down into the ford.
-  bank: 8,
-  water: 0.7,
-};
-const RIVER_CLEAR = river.width / 2 + river.bank;
-const nearRiver = (x, z, pad) => lineDist(x, z, river.pts) < RIVER_CLEAR + pad;
-
-// --- Zones and bases -----------------------------------------------------------
-const Z = {
-  A: [-228, -150], // chapel hill, west bank
-  B: [0, -220], // watermill, on the river
-  C: [228, -140], // sawmill, east bank
-  D: [0, 0], // village and stone bridge, on the river
-  E: [-222, 150], // farm, west bank
-  F: [0, 220], // rail halt and rail bridge, on the river
-  G: [238, 158], // bunker ridge, east bank
-};
-const RADIUS = { A: 34, B: 36, C: 36, D: 40, E: 38, F: 36, G: 36 };
-const BLUE = [-330, 0];
-const RED = [330, 0];
-
-// --- Rail ----------------------------------------------------------------------
-// Across the south, straight over the river at the halt (F).
-const rail = smoothOpen([[-450, 252], [-300, 240], [-170, 228], [-60, 220], [0, 220], [60, 220], [160, 230], [270, 254], [450, 272]], 2);
-// Sidings: boxcars by the freight shed (west bank), into the engine shed (east bank).
-const sidingW = smoothOpen([[-52, 220], [-58, 222], [-66, 226], [-112, 228]], 2);
-const sidingE = smoothOpen([[22, 220], [30, 223], [38, 232], [44, 235], [50, 236]], 2);
-
-// --- Bridges -----------------------------------------------------------------
-const bridgeD = { x: round(riverX(0)), z: 0, len: 38, w: 8.5, deck: 0.95 };
-const footB = { x: round(riverX(-232)), z: -232, len: 36, w: 2.6, deck: 0.35 };
-const railF = { x: round(riverX(220)), z: 220, len: 40, w: 6.5, deck: 0.3 };
-river.crossings = [bridgeD, footB, railF].map((b) => [b.x, b.z]);
-
-// --- Terrain -----------------------------------------------------------------
-const flats = [
-  { pos: [Z.A[0] + 2, Z.A[1] - 2], radius: 20, blend: 14 },
-  { pos: [240, -146], radius: 30, blend: 12 },
-  { pos: [-214, 150], radius: 32, blend: 12 },
-  // Bases: wide level ground with room for the vehicle pads and tank spots.
-  // The mill reach: a known bed level for the wheel (absolute heights).
-  { pos: [round(riverX(-212) + 4), -212], radius: 14, height: 0, blend: 10 },
-  { pos: BLUE, radius: 44, blend: 18 },
-  { pos: RED, radius: 44, blend: 18 },
+const CREEK_PTS = smoothOpen([[-62, -320], [-50, -170], [-44, -100], [-38, -40], [-36, 10], [-38, 60], [-42, 110], [-46, 170]], 2);
+// Bridges over the creek: the upper road (stone), the lower street (stone), the quay road and the rail (truss).
+const CREEK_BRIDGES = [
+  { z: -58, w: 8, kind: 'road' },
+  { z: 22, w: 7, kind: 'road' },
+  { z: 74, w: 9, kind: 'road' },
+  { z: 96, w: 6, kind: 'rail' },
 ];
-// Bridge abutments sit at the deck height so the decks (absolute y) meet the ground.
-for (const b of [bridgeD, footB, railF]) {
-  for (const s of [-1, 1]) flats.push({ pos: [round(b.x + s * (b.len / 2 - 3)), b.z], radius: b === footB ? 4 : 7, height: round(b.deck - 0.1), blend: 12 });
-}
+const creekX = (z) => {
+  let best = CREEK_PTS[0];
+  for (const p of CREEK_PTS) if (Math.abs(p[1] - z) < Math.abs(best[1] - z)) best = p;
+  return best[0];
+};
+const CREEK = { pts: CREEK_PTS, width: 5, depth: 4.2, bank: 6, water: 0.5, crossings: CREEK_BRIDGES.filter((b) => b.kind !== 'rail').map((b) => [round(creekX(b.z)), b.z]) };
+const CREEK_EDGE = CREEK.width / 2 + CREEK.bank;
+const nearCreek = (x, z, pad = 0) => lineDist(x, z, CREEK_PTS) < CREEK_EDGE + pad;
+// The quay: the ground ends at the river's bank top; a wall stands on it.
+const nearRiverBank = (x, z, pad = 0) => lineDist(x, z, RIVER.pts) < RIVER.width / 2 + RIVER.bank + pad;
+
+// --- Terrain -----------------------------------------------------------------------------------
+// The mountain rises to the north-west; a lower ridge behind the town; pads give the zones,
+// the upper terrace and the lower town their levels. H() mirrors the engine's heightAt (without
+// noise and rivers) so lots can be checked for slope here.
+const UPPER = 7.2; // the upper terrace
+const LOWER = 1.2; // the lower town
+const QUAY = 0.6;
 const hills = [
-  // West bank: plateau behind the blue base, chapel hill, ridges, knolls.
-  { pos: [-310, 0], radius: 200, height: 6 },
-  { pos: [-228, -150], radius: 85, height: 13 },
-  { pos: [-300, -235], radius: 70, height: 7 },
-  { pos: [-120, -270], radius: 75, height: 6 },
-  { pos: [-110, 85], radius: 55, height: 6 },
-  { pos: [-330, 245], radius: 70, height: 7 },
-  { pos: [-60, 290], radius: 60, height: 5 },
-  // A hollow inside the river's western bend.
-  { pos: [-100, -115], radius: 45, height: -2.5 },
-  // East bank: plateau behind the red base, the heights over the sawmill valley,
-  // the bunker ridge (a chain of rises), a hollow inside the eastern bend.
-  { pos: [310, 0], radius: 200, height: 6 },
-  { pos: [322, -250], radius: 90, height: 13 },
-  { pos: [150, -95], radius: 60, height: 7 },
-  { pos: [130, -265], radius: 65, height: 6 },
-  { pos: [242, 105], radius: 55, height: 8 },
-  { pos: [252, 160], radius: 58, height: 11 },
-  { pos: [244, 220], radius: 52, height: 8 },
-  { pos: [100, 120], radius: 45, height: -2 },
-  { pos: [60, -290], radius: 60, height: 5 },
-  // The hotel's terrace above the village square.
-  { pos: [58, -42], radius: 45, height: 3.5 },
+  { pos: [-310, -300], radius: 430, height: 52 }, // the mountain
+  { pos: [70, -270], radius: 230, height: 46 }, // the ridge behind the town
+  { pos: [250, -200], radius: 160, height: 30 },
+  // Knolls and drifts on the slope (cover in the open).
+  ...[[-170, -80], [-150, 10], [-80, -20], [-200, -40], [-130, 40], [-70, 30]].map(([x, z]) => ({ pos: [x, z], radius: between(9, 15), height: between(1.2, 2.4) })),
+  // Shell craters in the town and on the slope.
+  ...[[-96, -6], [-60, -82], [62, -20], [96, 30], [180, 30], [120, -84], [-150, 70], [70, 96], [-10, 40]].map(([x, z]) => ({ pos: [x, z], radius: between(3.5, 5), height: -between(0.8, 1.3) })),
 ];
-// Shell craters in the field in front of the bunker ridge.
-for (const [x, z] of [[150, 128], [176, 176], [192, 142], [138, 186], [196, 196], [158, 140]]) hills.push({ pos: [x, z], radius: 3.5, height: -0.9 });
-const terrain = { cell: 2, noise: 1.2, hills, flats, rivers: [river] };
-
-// --- Roads -------------------------------------------------------------------
-const MUD = '#8c8378';
-const road = (pts, w) => ({ pts: smoothOpen(pts, 2), w });
-const roads = {
-  // Main road: blue base -> stone bridge -> village square -> red base.
-  mainW: road([[-318, 0], [-270, 8], [-215, 4], [-185, -2], [-140, -10], [-95, -6], [-55, 0], [-30, 0], [-19, 0]], 9),
-  mainE: road([[19, 0], [32, 0], [55, 4], [90, 8], [130, 2], [185, -2], [230, 6], [280, 4], [318, 0]], 9),
-  // Ring roads on each bank: chapel / sawmill -> main road -> farm / bunker ridge.
-  ringW: road([[-222, -128], [-210, -95], [-196, -55], [-188, -20], [-185, -2], [-190, 30], [-200, 75], [-206, 110], [-214, 134]], 8),
-  ringE: road([[228, -124], [212, -85], [196, -45], [187, -15], [185, -2], [188, 30], [196, 70], [214, 108], [236, 130], [248, 142]], 8),
-  // North: to the watermill from both banks (people cross on the footbridge).
-  northW: road([[-250, -146], [-254, -180], [-228, -204], [-180, -216], [-150, -222], [-95, -232], [-50, -226], [-21, -222]], 7),
-  northE: road([[224, -128], [200, -150], [170, -195], [120, -215], [70, -222], [40, -220]], 7),
-  // South: farm / bunker ridge -> rail halt, over the planked rail bridge.
-  southW: road([[-228, 172], [-214, 196], [-180, 205], [-130, 212], [-80, 214], [-50, 216.5], [-21, 219.5]], 7),
-  southE: road([[250, 176], [238, 196], [206, 208], [150, 214], [80, 214], [50, 216], [21, 219.5]], 7),
-  // Forest tracks: along each bank from the village, and from each base to its high ground.
-  trackW: road([[-62, -4], [-64, -30], [-75, -60], [-82, -95], [-80, -130], [-62, -170], [-50, -200], [-52, -224]], 5),
-  trackE: road([[50, 16], [50, 40], [62, 62], [78, 85], [80, 125], [66, 170], [68, 212]], 5),
-  baseW: road([[-318, -12], [-300, -60], [-275, -105], [-252, -138]], 5),
-  baseE: road([[318, 12], [300, 60], [278, 108], [256, 140], [250, 146]], 5),
+const flats = [
+  // Upper terrace (C, E and the streets between them).
+  ...[-6, 30, 66, 102, 138, 174, 206].map((x) => ({ pos: [x, -54], radius: 34, height: UPPER, blend: 14 })),
+  // Lower town and quay.
+  ...[-6, 34, 74, 114, 154, 194, 226].map((x) => ({ pos: [x, 40], radius: 34, height: LOWER, blend: 12 })),
+  ...[-10, 40, 90, 140, 190, 232].map((x) => ({ pos: [x, 92], radius: 24, height: QUAY, blend: 8 })),
+  { pos: Z.A, radius: 36, blend: 12 },
+  { pos: Z.B, radius: 40, height: 0.9, blend: 14 },
+  { pos: [-100, 72], radius: 24, height: 1.4, blend: 14 },
+  { pos: BLUE, radius: 26, blend: 10 },
+  { pos: RED, radius: 26, height: 3.6, blend: 14 },
+  // Level ground at both ends of the creek bridges (decks at these heights).
+  ...CREEK_BRIDGES.flatMap((b) => {
+    const h = b.z < 0 ? UPPER : b.z < 50 ? LOWER : QUAY;
+    return [-1, 1].map((sd) => ({ pos: [creekX(b.z) + sd * (CREEK_EDGE + 5), b.z], radius: Math.max(6, b.w / 2 + 3), height: h, blend: 8 }));
+  }),
+];
+const terrain = { cell: 2, noise: 0.5, hills, flats, rivers: [RIVER, CREEK] };
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 };
-const roadList = Object.values(roads);
-for (const r of roadList) {
-  const strips = stripAlong(r.pts, r.w, { color: MUD, material: 'ground', y: 0.04 });
-  objects.push(...strips.filter((s) => !nearRiver(s.pos[0], s.pos[2], 1) && inMap(s.pos[0], s.pos[2])));
+function H(x, z) {
+  let h = 0;
+  for (const hl of hills) {
+    const d = Math.hypot(x - hl.pos[0], z - hl.pos[1]) / hl.radius;
+    if (d < 1) h += hl.height * (0.5 + 0.5 * Math.cos(Math.PI * d));
+  }
+  const base = h;
+  for (const p of flats) {
+    const d = Math.hypot(x - p.pos[0], z - p.pos[1]);
+    const bl = p.blend ?? 8;
+    if (d >= p.radius + bl) continue;
+    let t = p.height;
+    if (t === undefined) {
+      t = 0;
+      for (const hl of hills) {
+        const dd = Math.hypot(p.pos[0] - hl.pos[0], p.pos[1] - hl.pos[1]) / hl.radius;
+        if (dd < 1) t += hl.height * (0.5 + 0.5 * Math.cos(Math.PI * dd));
+      }
+    }
+    const w = 1 - smooth(p.radius, p.radius + bl, d);
+    h += (t - h) * w;
+  }
+  void base;
+  return h;
 }
-const nearRoad = (x, z, pad) => roadList.some((r) => lineDist(x, z, r.pts) < r.w / 2 + pad);
+/** Height spread under a box (max - min over its samples). */
+const slopeUnder = (r) => {
+  const hs = samples(r, 3).map(([x, z]) => H(x, z));
+  return Math.max(...hs) - Math.min(...hs);
+};
 
-// Rail: ballast + two rails, left out over the river (the bridge carries it).
-const railIn = rail.filter(([x, z]) => inMap(x, z, -30));
-function lay(line) {
-  for (const off of [null, -0.72, 0.72]) {
-    const pts = off === null ? line : line.map(([x, z], i) => {
-      const [ax, az] = line[Math.max(0, i - 1)];
-      const [bx, bz] = line[Math.min(line.length - 1, i + 1)];
+// --- Occupancy (oriented boxes of everything solid) -----------------------------------------
+function obb(x, z, w, d, yawDeg = 0, pad = 0) {
+  const c = Math.cos(yawDeg * DEG);
+  const s = Math.sin(yawDeg * DEG);
+  return { x, z, hw: w / 2 + pad, hd: d / 2 + pad, ax: [c, -s], az: [s, c] };
+}
+function overlap(a, b) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  for (const [ux, uz] of [a.ax, a.az, b.ax, b.az]) {
+    const ra = a.hw * Math.abs(a.ax[0] * ux + a.ax[1] * uz) + a.hd * Math.abs(a.az[0] * ux + a.az[1] * uz);
+    const rb = b.hw * Math.abs(b.ax[0] * ux + b.ax[1] * uz) + b.hd * Math.abs(b.az[0] * ux + b.az[1] * uz);
+    if (Math.abs(dx * ux + dz * uz) > ra + rb) return false;
+  }
+  return true;
+}
+function samples(r, step = 2) {
+  const at = (u, w) => [r.x + u * r.ax[0] + w * r.az[0], r.z + u * r.ax[1] + w * r.az[1]];
+  const pts = [[r.x, r.z]];
+  const nx = Math.max(1, Math.ceil((2 * r.hw) / step));
+  const nz = Math.max(1, Math.ceil((2 * r.hd) / step));
+  for (let i = 0; i <= nx; i++) for (const s of [-1, 1]) pts.push(at(-r.hw + (2 * r.hw * i) / nx, s * r.hd));
+  for (let i = 1; i < nz; i++) for (const s of [-1, 1]) pts.push(at(s * r.hw, -r.hd + (2 * r.hd * i) / nz));
+  return pts;
+}
+const occ = [];
+const occupy = (x, z, w, d, yaw = 0, pad = 0) => occ.push(obb(x, z, w, d, yaw, pad));
+const isFree = (r) => occ.every((o) => !overlap(o, r));
+function put(o) {
+  objects.push(o);
+  if (o.type !== 'floor' || o.size[1] > 0.6) occupy(o.pos[0], o.pos[2], o.size[0], o.size[2], o.rot?.[1] ?? 0);
+  return o;
+}
+const putAll = (list) => list.forEach(put);
+const paint = ([x, z], w, d, yaw, y, color, material = 'concrete_floor') =>
+  objects.push({ type: 'floor', pos: [round(x), round(y - 0.15), round(z)], size: [w, 0.3, d], ...(yaw ? { rot: [0, round(yaw, 1), 0] } : {}), material, color, snap: true });
+function addBuilding(b) {
+  buildings.push({ ...b, pos: [round(b.pos[0]), round(b.pos[1])], ...(b.rot !== undefined ? { rot: round(b.rot, 1) } : {}) });
+  occupy(b.pos[0], b.pos[1], b.size[0], b.size[1], b.rot ?? 0, 0.3);
+  return b;
+}
+const frame = (o, deg) => {
+  const c = Math.cos(deg * DEG);
+  const s = Math.sin(deg * DEG);
+  const f = (lx, lz) => [round(o[0] + lx * c + lz * s), round(o[1] - lx * s + lz * c)];
+  f.deg = deg;
+  return f;
+};
+const building = (f, lx, lz, w, d, opts = {}) => addBuilding({ pos: f(lx, lz), size: [w, d], ...opts, rot: round(f.deg + (opts.rot ?? 0), 1) });
+const thing = (f, lx, lz, w, h, d, opts = {}) => put(block(...f(lx, lz), w, h, d, { ...opts, yaw: f.deg + (opts.yaw ?? 0) }));
+function yawPitch(yawDeg, pitchDeg) {
+  const p = yawDeg * DEG;
+  const t = pitchDeg * DEG;
+  const sp = Math.sin(p);
+  const cp = Math.cos(p);
+  const st = Math.sin(t);
+  const ct = Math.cos(t);
+  return [round(Math.atan2(st, cp * ct) / DEG, 2), round(Math.asin(sp * ct) / DEG, 2), round(Math.atan2(-sp * st, cp) / DEG, 2)];
+}
+/** A flight of steps (a ramp) between two ground points, absolute heights (not snapped). */
+function stairs(a, b, width, color = '#8f8b82') {
+  const ya = H(...a);
+  const yb = H(...b);
+  const dx = b[0] - a[0];
+  const dz = b[1] - a[1];
+  const len = Math.hypot(dx, dz);
+  const yaw = Math.atan2(dx, dz) / DEG;
+  const rise = yb - ya;
+  put({
+    type: 'ramp',
+    pos: [round((a[0] + b[0]) / 2), round((ya + yb) / 2 - 0.12), round((a[1] + b[1]) / 2)],
+    size: [width, 0.3, round(Math.hypot(len, rise) + 0.4)],
+    rot: yawPitch(yaw + 180, (Math.atan2(rise, len) / DEG)),
+    material: 'concrete',
+    color,
+  });
+  // Low parapets either side.
+  for (const s of [-1, 1]) {
+    const ox = (-dz / len) * s * (width / 2 + 0.2);
+    const oz = (dx / len) * s * (width / 2 + 0.2);
+    put({ type: 'cover', pos: [round((a[0] + b[0]) / 2 + ox), round((ya + yb) / 2 + 0.35), round((a[1] + b[1]) / 2 + oz)], size: [0.4, 1.0, round(Math.hypot(len, rise) + 0.4)], rot: yawPitch(yaw + 180, (Math.atan2(rise, len) / DEG)), material: 'concrete', color: STONE });
+  }
+}
+
+// --- Roads ---------------------------------------------------------------------------------
+const ASPHALT = '#4f4e4b';
+const LANE = '#5b5955';
+const PAVE = '#a29d92';
+const roads = [];
+function road(pts, w, { y = 0.05, color = ASPHALT, smooth: sm = 2, town = false, material = 'asphalt' } = {}) {
+  const line = sm ? smoothOpen(pts, sm) : pts;
+  const xs = line.map((p) => p[0]);
+  const zs = line.map((p) => p[1]);
+  const r = { pts: line, w, town, bb: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] };
+  roads.push(r);
+  const keep = (s) => inMap(s.pos[0], s.pos[2], -3) && !nearCreek(s.pos[0], s.pos[2], -1);
+  objects.push(...stripAlong(line, w, { color, y, material }).filter(keep));
+  if (town) objects.push(...stripAlong(line, w + 3.4, { color: PAVE, material: 'cobble', y: 0.03 }).filter(keep));
+  return r;
+}
+const offRoad = (x, z, pad) =>
+  roads.every((r) => {
+    const m = r.w / 2 + pad;
+    if (x < r.bb[0] - m || x > r.bb[2] + m || z < r.bb[1] - m || z > r.bb[3] + m) return true;
+    return lineDist(x, z, r.pts) >= m;
+  });
+
+// Quay road (the tank lane along the water): from the blue road's foot past the hamlet,
+// over the creek, along the quay to the rail yard and up to the red base.
+const QR = road([[-240, 40], [-196, 52], [-150, 70], [-100, 80], [-60, 76], [-38, 74], [0, 76], [60, 80], [120, 82], [180, 80], [214, 60], [214, 20]], 8.5, { y: 0.07 });
+// Upper road: blue base up the slope to the sawmill, along the terrace through C and E to red.
+const UR = road([[-206, 10], [-186, -16], [-160, -36], [-130, -48], [-96, -56], [-60, -58], [-36, -58], [0, -60], [60, -62], [110, -60], [160, -58], [196, -40], [214, -8]], 7.5, { y: 0.07 });
+// Lower town street (mid): from the creek bridge east under the terrace bank.
+const MS = road([[-60, 24], [-36, 22], [0, 24], [60, 26], [120, 24], [180, 26], [240, 30]], 5.5, { y: 0.06, town: true, smooth: 1 });
+// Streets climbing from the lower town to the terrace (steep: ~7 m over 35-45 m).
+const CLIMB = [
+  road([[64, 76], [66, 26], [70, -14], [74, -60]], 5, { y: 0.06, town: true, smooth: 1 }),
+  road([[196, 80], [196, 26], [190, -14], [184, -56]], 5.5, { y: 0.06, smooth: 1 }),
+];
+// Back street on the terrace and lanes.
+const BS = road([[-20, -92], [40, -94], [100, -92], [160, -90], [210, -84]], 4.5, { y: 0.05, town: true, color: LANE, smooth: 1 });
+const lane = (pts) => road(pts, 4, { y: 0.045, town: true, color: LANE, smooth: 1 });
+const LANES = [
+  lane([[-4, 24], [-6, 76]]),
+  lane([[120, 24], [120, 80]]),
+  lane([[104, -60], [104, -92]]),
+];
+// Hamlet track down the point, and the blue base track to the quay road.
+road([[-100, 80], [-98, 100], [-96, 132]], 5, { y: 0.05, color: '#6b645a', material: 'ground' });
+road([[-206, 22], [-206, 40], [-196, 52]], 6, { y: 0.06 });
+
+// --- Rail: along the quay, sidings into the yard (F) ----------------------------------------
+const RAIL_MAIN = smoothOpen([[-260, 30], [-190, 46], [-140, 64], [-80, 88], [-40, 96], [20, 100], [100, 101], [180, 100], [260, 100]], 2);
+const S1 = smoothOpen([[96, 101], [120, 94], [150, 90], [200, 90], [228, 94]], 2);
+const S2 = smoothOpen([[130, 94], [160, 84], [206, 84]], 2);
+const tracks = [RAIL_MAIN, S1, S2];
+for (const line of tracks) {
+  const pts = line.filter(([x, z]) => inMap(x, z, -25));
+  objects.push(...stripAlong(pts, 3.2, { color: '#5b5048', material: 'ground', y: 0.12, thickness: 0.4 }).filter((s) => inMap(s.pos[0], s.pos[2], -2) && !nearCreek(s.pos[0], s.pos[2], 1)));
+  for (const off of [-0.72, 0.72]) {
+    const rail = pts.map(([x, z], i) => {
+      const [ax, az] = pts[Math.max(0, i - 1)];
+      const [bx, bz] = pts[Math.min(pts.length - 1, i + 1)];
       const len = Math.hypot(bx - ax, bz - az) || 1;
       return [x + (-(bz - az) / len) * off, z + ((bx - ax) / len) * off];
     });
-    const strips = off === null
-      ? stripAlong(pts, 3.2, { color: '#5b5048', material: 'ground', y: 0.12, thickness: 0.4 })
-      : stripAlong(pts, 0.12, { color: '#6d6a66', material: 'metal', y: 0.28, thickness: 0.16, type: 'prop' });
-    objects.push(...strips.filter((s) => !nearRiver(s.pos[0], s.pos[2], 2) && inMap(s.pos[0], s.pos[2], -2)));
+    objects.push(...stripAlong(rail, 0.12, { color: '#6d6a66', material: 'metal', y: 0.28, thickness: 0.16, type: 'prop' }).filter((s) => inMap(s.pos[0], s.pos[2], -2) && !nearCreek(s.pos[0], s.pos[2], 1)));
   }
 }
-for (const line of [railIn, sidingW, sidingE]) lay(line);
-const nearRail = (x, z, pad) => [railIn, sidingW, sidingE].some((l) => lineDist(x, z, l) < pad);
-
-// --- Bridges -------------------------------------------------------------------
-const STONE = '#8d887e';
-/** Deck boxes at absolute heights (not snapped): top of the deck at y = `top`. */
-function bridge({ x, z, len, w }, { top = 0.12, thick = 0.7, rail = 1, material = 'concrete', color = STONE, piers = [-5, 5], pierW = 2.2, parapet = 0.5 } = {}) {
-  objects.push({ type: 'floor', pos: [x, round(top - thick / 2), z], size: [len, thick, w], material, color });
-  for (const side of [-1, 1]) objects.push({ type: 'wall', pos: [x, round(top + rail / 2), round(z + side * (w / 2 - parapet / 2))], size: [len, rail, parapet], material, color });
-  // Piers down to the river bed.
-  for (const u of piers) objects.push({ type: 'wall', pos: [round(x + u), round((top - thick - 3.4) / 2 + 0.2), z], size: [pierW, round(3.4 + thick), w + 0.6], material, color });
-}
-/** A bridge model (world/modelKits) at absolute heights: deck top at `deck`, footings below the river bed. */
-function bridgeModel({ x, z, len, w }, model, { deck, above, yaw, color, material }) {
-  const bottom = -3.4;
-  const top = deck + above;
-  objects.push({ type: 'wall', pos: [round(x), round((top + bottom) / 2), round(z)], size: [w, round(top - bottom), len], rot: [0, round(yaw, 1), 0], material, color, model, base: 0 });
-}
-// Stone arch bridge (east-west): the model's parapets stand 1.25 m above its deck.
-bridgeModel(bridgeD, 'archBridge', { deck: bridgeD.deck, above: 1.25, yaw: 90, color: STONE, material: 'concrete' });
-// Wooden footbridge by the watermill: planks on trestles, low handrails.
-bridge(footB, { top: footB.deck, thick: 0.25, rail: 1, material: 'wood', color: '#6e5a44', piers: [-4.5, 4.5], pierW: 0.5, parapet: 0.12 });
-// Rail bridge: steel through-truss on two piers, planked between the rails so
-// vehicles cross it too (the truss is 55% of the model's height).
-bridgeModel(railF, 'trussBridge', { deck: railF.deck, above: ((railF.deck + 3.4) / 0.45) * 0.55, yaw: 90, color: '#4a5055', material: 'metal' });
-
-// --- Placement helpers ----------------------------------------------------------
-const placed = [];
-const reserve = (x, z, r) => placed.push({ x, z, r });
-const free = (x, z, r) => placed.every((p) => Math.hypot(x - p.x, z - p.z) > p.r + r);
-const addBuilding = (b) => {
-  buildings.push({ ...b, pos: [round(b.pos[0]), round(b.pos[1])], ...(b.rot !== undefined ? { rot: round(b.rot, 1) } : {}) });
-  reserve(b.pos[0], b.pos[1], Math.hypot(b.size[0], b.size[1]) / 2 + 1);
-};
-const obj = (o, r = 2) => {
-  objects.push(o);
-  reserve(o.pos[0], o.pos[2], r);
-};
-const SANDBAG = '#9c8f76';
-const WOOD = '#6e5a44';
-const deg = (rad) => (rad * 180) / Math.PI;
-const sandbags = (x, z, len, yaw) => obj(block(x, z, len, 1.1, 0.9, { yaw, material: 'ground', color: SANDBAG, model: 'sandbags' }), len / 2 + 0.5);
-const logs = (x, z, len, yaw, h = 1.6) => obj(block(x, z, len, h, 2.4, { yaw, material: 'wood', color: '#86684a', model: 'logPile' }), len / 2 + 1);
-const hay = (x, z, yaw) => obj(block(x, z, 2.6, 1.5, 1.5, { yaw, material: 'wood', color: '#b89a5a', model: 'hayBale' }), 2);
-// Vehicles and carts: length along local z.
-const CAR_COLORS = ['#5a2a24', '#2e3f55', '#8f8a7c', '#4c5a3a'];
-const car = (x, z, yaw) => obj(block(x, z, 1.9, 1.5, 4.4, { yaw, material: 'metal', color: CAR_COLORS[Math.floor(R() * CAR_COLORS.length)], model: 'car' }), 3);
-const truck = (x, z, yaw, color = '#4d5a3c') => obj(block(x, z, 2.5, 3, 7, { yaw, material: 'metal', color, model: 'truck' }), 4);
-const cart = (x, z, yaw) => obj(block(x, z, 1.7, 1.6, 3.6, { yaw, material: 'wood', color: WOOD, model: 'cart' }), 2.5);
-const bus = (x, z, yaw) => obj(block(x, z, 2.6, 3.2, 11, { yaw, type: 'wall', material: 'metal', color: '#6f7a5c', model: 'bus' }), 6);
-const wreck = (x, z, yaw) => obj(block(x, z, 3.6, 2.6, 7.2, { yaw, type: 'wall', material: 'metal', color: '#4a4d42', model: 'tankWreck' }), 5);
-/** A pillbox with its firing slit (the kit's local -z) facing yaw `face` (map yaw: 0 = north, 90 = west). */
-const bunker = (x, z, face) => obj(block(x, z, 7, 3, 5, { yaw: face, type: 'wall', material: 'concrete', color: '#8f8c84', model: 'bunker', sink: 0.2 }), 5);
-const tent = (x, z, yaw = 0, color = '#e3e4df') => obj(block(x, z, 5, 3, 4, { yaw, type: 'wall', material: 'wood', color, model: 'tent' }), 3.5);
-const tower = (x, z) => obj(block(x, z, 3, 7.5, 3, { type: 'wall', material: 'wood', color: '#6d6450', model: 'watchtower' }), 3);
-const stoneWall = (pts, gaps = [], height = 1.0) => objects.push(...wallLine(densify(pts, 3), { height, thick: 0.5, material: 'concrete', color: STONE, type: 'cover', gaps }));
-const fence = (pts, gaps = []) => objects.push(...wallLine(densify(pts, 6), { height: 1.1, thick: 0.3, material: 'wood', color: WOOD, type: 'cover', model: 'fence', gaps }));
-const bagLine = (pts, gaps = []) => objects.push(...wallLine(densify(pts, 4), { height: 1.1, thick: 0.9, material: 'ground', color: SANDBAG, type: 'cover', model: 'sandbags', gaps }));
-const timber = (pts, gaps = []) => objects.push(...wallLine(densify(pts, 4), { height: 1.4, thick: 0.25, material: 'wood', color: '#5c4633', type: 'cover', gaps }));
-/** Timber barricade (plain boxes, cheap): long side along local x. */
-const barricade = (x, z, len, yaw) => obj(block(x, z, len, 1.25, 0.35, { yaw, material: 'wood', color: '#5c4633' }), len / 2 + 0.5);
-// Scanned props (barrels, ammo boxes, crates) are instanced on every frame
-// wherever they are, at 1.5-7k triangles each: only a few, the rest of the
-// clutter is plain crate boxes.
-const CRATES = ['barrel_03', 'ammo_box', 'barrel_03', 'old_military_crate', 'ammo_box'];
-const PROPS_PER_ZONE = 3;
-const propsIn = {};
-const zoneAt = (x, z) => Object.keys(Z).find((id) => Math.hypot(x - Z[id][0], z - Z[id][1]) < RADIUS[id] + 8);
-const CRATE_COLORS = ['#6f5a3e', '#5d6346'];
-const crate = (x, z) => {
-  const id = zoneAt(x, z);
-  if (id && (propsIn[id] = (propsIn[id] ?? 0) + 1) <= PROPS_PER_ZONE) props.push({ model: CRATES[props.length % CRATES.length], pos: [round(x), 0, round(z)], rot: [0, round(R() * 360), 0], snap: true });
-  else {
-    const s = 0.8 + R() * 0.5;
-    const yaw = R() * 90;
-    const color = CRATE_COLORS[Math.floor(R() * CRATE_COLORS.length)];
-    objects.push(block(x, z, s * 1.3, s * 0.8, s, { yaw, material: 'wood', color }));
-    if (R() < 0.4) objects.push(block(x, z, s * 0.9, s * 0.7, s * 0.8, { yaw: yaw + 20, lift: s * 0.8, sink: 0, material: 'wood', color }));
-  }
-  reserve(x, z, 1);
-};
-/** A few crates / barrels huddled together. */
-const stack = (x, z, n = 3) => {
-  for (let i = 0; i < n; i++) crate(x + (R() - 0.5) * 2.4, z + (R() - 0.5) * 2.4);
-};
-/** Something on the verge of a road, `frac` of the way along it, long side along the road. */
-const verge = (r, frac, side, place) => {
-  const p = besideLine(r.pts, frac, side * (r.w / 2 + 2.6));
-  place(p.x, p.z, deg(Math.atan2(p.dx, p.dz)));
-};
-
-/**
- * Houses lined up along a road within `maxR` of (cx, cz): each faces the road
- * (door side 's'), set back behind a verge, skipped where anything is in the way.
- */
-function street(r, { cx, cz, maxR, minR = 0, skip = 0.3, near = 45, solidNear = 0.2, solidFar = 0.55, shop = 0.25 }) {
-  const pts = r.pts;
+const nearRail = (x, z, pad) => tracks.some((t) => lineDist(x, z, t) < pad);
+function along(pts, s) {
   for (let i = 0; i < pts.length - 1; i++) {
     const [ax, az] = pts[i];
     const [bx, bz] = pts[i + 1];
     const len = Math.hypot(bx - ax, bz - az);
-    const steps = Math.max(1, Math.round(len / 3));
-    for (let k = 0; k < steps; k++) {
-      const t = (k + 0.5) / steps;
-      const px = ax + (bx - ax) * t;
-      const pz = az + (bz - az) * t;
-      const dc = Math.hypot(px - cx, pz - cz);
-      if (dc > maxR || dc < minR) continue;
-      for (const side of [-1, 1]) {
-        if (R() < skip) continue;
-        const w = 8 + R() * 3;
-        const d = 7.5 + R() * 2;
-        const nx = (-(bz - az) / len) * side;
-        const nz = ((bx - ax) / len) * side;
-        const setback = r.w / 2 + 2.5 + d / 2;
-        const x = px + nx * setback;
-        const z = pz + nz * setback;
-        const rr = Math.hypot(w, d) / 2 + 1;
-        if (nearRoad(x, z, Math.hypot(w, d) / 2 - 0.5) || !free(x, z, rr) || nearRiver(x, z, 5) || nearRail(x, z, 8) || !inMap(x, z, 12)) continue;
-        if (Object.entries(Z).some(([id, [zx, zz]]) => id !== 'D' && Math.hypot(x - zx, z - zz) < RADIUS[id] + 4)) continue;
-        const yaw = deg(Math.atan2(-nx, -nz));
-        const close = Math.hypot(x - cx, z - cz) < near;
-        addBuilding({ pos: [x, z], size: [round(w), round(d)], style: R() < shop ? 'shop' : 'house', rot: yaw + (R() - 0.5) * 4, doors: ['sn', 'se', 'sw'][Math.floor(R() * 3)], // Every house can be entered (owner, 2026-10-10); the roll stays so the rest of the layout doesn't move.
-          solid: (close ? R() < solidNear : R() < solidFar) && false });
+    if (s <= len || i === pts.length - 2) {
+      const t = len ? Math.min(1, s / len) : 0;
+      return { x: ax + (bx - ax) * t, z: az + (bz - az) * t, tx: (bx - ax) / (len || 1), tz: (bz - az) / (len || 1), yaw: (Math.atan2(bx - ax, bz - az) * 180) / Math.PI };
+    }
+    s -= len;
+  }
+  return null;
+}
+const lengthOf = (pts) => pts.slice(1).reduce((a, p, i) => a + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+function sAtX(pts, x) {
+  let best = Infinity;
+  let at = 0;
+  let acc = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const len = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    const d = Math.abs((pts[i][0] + pts[i + 1][0]) / 2 - x);
+    if (d < best) {
+      best = d;
+      at = acc + len / 2;
+    }
+    acc += len;
+  }
+  return at;
+}
+const BOXCAR_COLORS = ['#6a4a3a', '#5d4033', '#4f5a4a', '#6b5a3c', '#3f4b55'];
+function boxcar(line, x) {
+  const p = along(line, sAtX(line, x));
+  put(block(p.x, p.z, 3, 3.6, 12, { yaw: p.yaw, lift: 0.36, type: 'wall', material: 'metal', color: pick(BOXCAR_COLORS), model: 'boxcar' }));
+}
+
+// --- Shared clutter ------------------------------------------------------------------------
+const STONE = '#8d887e';
+const SAND = '#9c8f76';
+const WOOD = '#6e5a44';
+const CAR_COLORS = ['#5a2a24', '#2e3f55', '#8f8a7c', '#4c5a3a', '#3c3c3a', '#6b5a3c'];
+const WRECK = ['#2b2724', '#3a302a', '#4a3d33'];
+const CONTAINER_COLORS = ['#8a4a3a', '#3b5a80', '#56704a', '#9a7a3c', '#6d6d6d'];
+const car = (x, z, yaw, color = pick(CAR_COLORS)) => put(block(x, z, 1.9, 1.5, 4.4, { yaw, material: 'metal', color, model: 'car' }));
+const truck = (x, z, yaw, color = '#4d5a3c') => put(block(x, z, 2.5, 3, 7, { yaw, material: 'metal', color, model: 'truck' }));
+const sandbags = (x, z, len, yaw, h = 1.1) => put(block(x, z, len, h, 0.9, { yaw, material: 'ground', color: SAND, model: 'sandbags' }));
+function nest(x, z, yaw) {
+  const f = frame([x, z], yaw);
+  thing(f, 0, -1.6, 3.6, 1.1, 0.9, { material: 'ground', color: SAND, model: 'sandbags' });
+  thing(f, -1.6, 0, 0.9, 1.1, 2.6, { material: 'ground', color: SAND, model: 'sandbags' });
+  thing(f, 1.6, 0, 0.9, 1.1, 2.6, { material: 'ground', color: SAND, model: 'sandbags' });
+}
+const logs = (x, z, len, yaw, h = 1.6) => put(block(x, z, len, h, 2.4, { yaw, material: 'wood', color: '#86684a', model: 'logPile' }));
+const cart = (x, z, yaw) => put(block(x, z, 1.7, 1.6, 3.6, { yaw, material: 'wood', color: WOOD, model: 'cart' }));
+const wreck = (x, z, yaw) => put(block(x, z, 3.6, 2.6, 7.2, { yaw, type: 'wall', material: 'metal', color: '#4a4d42', model: 'tankWreck' }));
+const bunker = (x, z, face) => put(block(x, z, 7, 3, 5, { yaw: face, type: 'wall', material: 'concrete', color: '#8f8c84', model: 'bunker', sink: 0.2 }));
+const tower = (x, z, yaw = 0) => put(block(x, z, 3.4, 8, 3.4, { yaw, type: 'wall', material: 'wood', color: '#6d6450', model: 'watchtower' }));
+const fence = (pts, gaps = []) => putAll(wallLine(densify(pts, 6), { height: 1.1, thick: 0.3, material: 'wood', color: WOOD, type: 'cover', model: 'fence', gaps }));
+const stoneWall = (pts, gaps = [], height = 1.0) => putAll(wallLine(densify(pts, 3), { height, thick: 0.5, material: 'concrete', color: STONE, type: 'cover', gaps }));
+function container(f, lx, lz, yaw = 0, stack = 1) {
+  for (let s = 0; s < stack; s++) thing(f, lx, lz, 2.44, 2.6, 6.1, { yaw: yaw + (s ? (R() - 0.5) * 4 : 0), lift: s * 2.6, sink: s ? 0 : 0.3, type: 'cover', material: 'metal', color: pick(CONTAINER_COLORS), model: 'container' });
+}
+/** A rock outcrop: a few tipped boulders (cover on the open slope). */
+function outcrop(x, z, size = 1) {
+  for (let k = 0; k < 3; k++) {
+    const w = between(2, 4.5) * size;
+    const h = between(1.2, 2.6) * size;
+    put({ type: 'wall', pos: [round(x + (R() - 0.5) * 3 * size), round(h / 2 - 0.4), round(z + (R() - 0.5) * 3 * size)], size: [round(w, 1), round(h + 0.8, 1), round(between(1.8, 3.6) * size, 1)], rot: yawPitch(R() * 360, between(-14, 14)), material: 'rock', color: pick(['#6d6a66', '#5f5d5a', '#77736d']), snap: true });
+  }
+}
+// Scanned props cost 1.5-7k triangles each wherever they are: a few per zone, plain crates elsewhere.
+const CRATES = ['barrel_03', 'ammo_box', 'old_military_crate'];
+const PROPS_PER_ZONE = 3;
+const propsIn = {};
+const zoneAt = (x, z) => Object.keys(Z).find((id) => Math.hypot(x - Z[id][0], z - Z[id][1]) < ZR[id] + 8);
+function crate(x, z) {
+  const id = zoneAt(x, z);
+  if (id && (propsIn[id] = (propsIn[id] ?? 0) + 1) <= PROPS_PER_ZONE) props.push({ model: pick(CRATES), pos: [round(x), 0, round(z)], rot: [0, round(R() * 360), 0], snap: true });
+  else {
+    const s = 0.8 + R() * 0.5;
+    const yaw = R() * 90;
+    const color = pick(['#6f5a3e', '#5d6346']);
+    objects.push(block(x, z, s * 1.3, s * 0.8, s, { yaw, material: 'wood', color }));
+    if (R() < 0.4) objects.push(block(x, z, s * 0.9, s * 0.7, s * 0.8, { yaw: yaw + 20, lift: s * 0.8, sink: 0, material: 'wood', color }));
+  }
+  occupy(x, z, 1.4, 1.4);
+}
+function scatter(cx, cz, rMin, rMax, n) {
+  for (let i = 0, placed = 0; placed < n && i < n * 12; i++) {
+    const a = R() * Math.PI * 2;
+    const r = between(rMin, rMax);
+    const x = cx + Math.cos(a) * r;
+    const z = cz + Math.sin(a) * r;
+    if (!inMap(x, z, 4) || !offRoad(x, z, 0.8) || nearRail(x, z, 2.5) || nearCreek(x, z, 1) || !isFree(obb(x, z, 1.6, 1.6, 0, 0.4))) continue;
+    crate(x, z);
+    placed++;
+  }
+}
+
+// --- The quay wall along the river, the creek's ravine and its bridges -----------------------------
+{
+  // Quay wall on the bank top, just inside the boundary: chest high, a few bollards and mooring posts.
+  const edge = boundary.filter(([x, z]) => z > 60 && Math.abs(x) < 240 && !(x > -175 && x < -20 && z > 100));
+  const QPTS = edge.sort((a, b) => a[0] - b[0]).map(([x, z]) => [x, z - 2.4]);
+  for (const p of wallLine(densify(QPTS, 4), { height: 1.1, thick: 0.6, type: 'cover', material: 'concrete', color: STONE })) if (inMap(p.pos[0], p.pos[2], 0.5)) put(p);
+  // Bridges over the creek: flat stone decks at the pads' level, parapets; the rail on a truss.
+  for (const b of CREEK_BRIDGES) {
+    const x = creekX(b.z);
+    const len = CREEK_EDGE * 2 + 6;
+    const top = b.z < 0 ? UPPER : b.z < 50 ? LOWER : QUAY;
+    if (b.kind === 'rail') {
+      const deck = top + 0.3;
+      const above = ((0.3 + 3.4) / 0.45) * 0.55;
+      objects.push({ type: 'wall', pos: [round(x), round(top + (0.3 + above - 4.2) / 2), b.z], size: [b.w, round(0.3 + above + 4.2), len], rot: [0, 90, 0], material: 'metal', color: '#4a5055', model: 'trussBridge', base: 0 });
+      void deck;
+      continue;
+    }
+    const thick = 0.8;
+    objects.push({ type: 'floor', pos: [round(x), round(top + 0.12 - thick / 2), b.z], size: [len, thick, b.w], material: 'concrete', color: STONE });
+    for (const side of [-1, 1]) objects.push({ type: 'wall', pos: [round(x), round(top + 0.62), round(b.z + side * (b.w / 2 - 0.22))], size: [len, 1, 0.45], material: 'concrete', color: STONE });
+    objects.push({ type: 'wall', pos: [round(x), round(top - CREEK.depth / 2), b.z], size: [1.6, round(CREEK.depth + 0.4), b.w + 0.4], material: 'concrete', color: STONE });
+  }
+}
+
+// --- Blue base: a camp on the mountain road (west) ---------------------------------------------
+{
+  const f = frame(BLUE, -90); // local +z faces east (into the map)
+  for (const [lx, lz] of [[-12, -10], [-4, -12], [6, -12], [-12, 8]]) thing(f, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#e3e4df', model: 'tent' });
+  for (const [lx, lz] of [[-16, -16], [16, -16], [16, 16]]) tower(...f(lx, lz));
+  truck(...f(12, 10), f.deg + 90);
+  truck(...f(6, 10), f.deg + 90, '#5a6046');
+  logs(...f(-14, 14), 6, f.deg);
+  paint(f(0, 0), 26, 26, f.deg, 0.04, '#cfd3d6', 'ground');
+  scatter(...BLUE, 6, 14, 4);
+}
+
+// --- Red base: the east end of the valley ---------------------------------------------------
+{
+  const f = frame(RED, 90); // local +z faces west
+  addBuilding({ pos: [228, -14], size: [16, 9], style: 'barracks', doors: 'w', rot: 90 });
+  for (const [lx, lz] of [[-10, -12], [10, -12]]) thing(f, lx, lz, 5, 3, 4, { type: 'wall', material: 'wood', color: '#e3e4df', model: 'tent' });
+  tower(...f(-15, 14));
+  tower(...f(15, 14));
+  truck(...f(0, -6), f.deg + 90, '#5d5a4a');
+  paint(f(0, 0), 26, 22, f.deg, 0.04, '#cfd3d6', 'ground');
+  scatter(...RED, 6, 14, 4);
+}
+
+// --- A: the sawmill on the slope --------------------------------------------------------------
+{
+  const [ax, az] = Z.A;
+  const f = frame(Z.A, 8);
+  thing(f, -4, -6, 13, 5.2, 7, { type: 'wall', material: 'wood', color: '#5c4633', model: 'sawShed', sink: 0.1 });
+  building(f, 16, -18, 12, 9, { style: 'mill', floors: 2, doors: 'sw' });
+  building(f, -16, 22, 10, 9, { style: 'inn', floors: 2, doors: 'sn' });
+  building(f, 10, 16, 7, 6, { style: 'shed', doors: 'w' });
+  for (const [lx, lz, len, yaw] of [[-2, 8, 7, 90], [4, 6, 6, 80], [-12, -16, 7, 0], [20, 4, 5, 20], [-24, -6, 6, 100], [0, 20, 5, 10]]) logs(...f(lx, lz), len, f.deg + yaw, between(1.2, 1.8));
+  cart(...f(8, -18), f.deg + 70);
+  truck(...f(-14, -2), f.deg + 30, '#5a4a3a');
+  // Dug in toward the town (east): a bunker on the knoll, sandbags.
+  bunker(ax + 26, az + 18, 270);
+  nest(ax + 22, az - 22, -90);
+  sandbags(ax - 6, az + 24, 4, 10);
+  outcrop(ax - 30, az - 26, 1.2);
+  outcrop(ax + 30, az - 4, 0.9);
+  scatter(ax, az, 6, 26, 6);
+}
+
+// --- B: the fishing hamlet on the point -----------------------------------------------------
+{
+  const [bx, bz] = Z.B;
+  // Chapel with its spire on the point, the landmark seen from the whole river front.
+  addBuilding({ pos: [bx - 18, bz + 6], size: [9.5, 18], style: 'chapel', doors: 'se', rot: 12 });
+  put(block(bx - 20.5, bz - 6, 5, 20, 5, { yaw: 12, type: 'wall', material: 'brick', color: '#948b7e', model: 'steeple', sink: 0.3 }));
+  // Fishermen's houses and boat sheds round a little landing.
+  for (const [x, z, w, d, rot, style, fl] of [
+    [bx + 8, bz - 18, 9, 8, 180, 'house', 2], [bx + 22, bz - 6, 8.6, 8.6, 260, 'house', 2], [bx + 20, bz + 14, 10, 7, 300, 'shed', 1],
+    [bx - 2, bz + 24, 12, 7, 350, 'shed', 1], [bx - 30, bz - 14, 8.6, 8.6, 100, 'house', 2], [bx + 12, bz + 2, 9, 8.6, 200, 'shop', 2],
+  ]) addBuilding({ pos: [x, z], size: [w, d], style, floors: fl, rot, doors: 'sn' });
+  // Net racks and drying fences, boats pulled up on the shingle, a timber jetty.
+  fence([[bx - 8, bz + 30], [bx + 6, bz + 34]]);
+  fence([[bx + 26, bz + 24], [bx + 30, bz + 10]]);
+  for (const [x, z, yaw] of [[bx - 14, bz + 30, 20], [bx + 12, bz + 30, -30], [bx + 30, bz - 22, 70]]) put(block(x, z, 1.8, 0.9, 5.5, { yaw, material: 'wood', color: pick(['#4d5f6e', '#6e4a3a', '#5a6a4e']) }));
+  put({ type: 'floor', pos: [bx + 4, 0.55, bz + 40], size: [3.2, 0.3, 16], rot: [0, 10, 0], material: 'wood', color: '#5e4c3a', snap: true });
+  // The hamlet was held: sandbags across the track, a nest at the landing, crates.
+  nest(bx + 4, bz - 30, 0);
+  sandbags(bx - 16, bz - 26, 4, 70);
+  sandbags(bx + 30, bz + 2, 3.5, 100);
+  wreck(bx - 34, bz + 18, 40);
+  scatter(bx, bz, 6, 24, 6);
+}
+
+// --- C: the hotel square on the upper terrace ------------------------------------------------
+{
+  const [cx, cz] = Z.C;
+  paint([cx, cz + 4], 44, 30, 0, 0.055, '#b9b2a3', 'cobble');
+  // The grand hotel (four floors, 54 m): the landmark, the north side of the square.
+  addBuilding({ pos: [cx + 4, cz - 26], size: [54, 18], style: 'hotel', floors: 4, doors: 'sn' });
+  put(block(cx, cz + 6, 6, 1, 6, { material: 'concrete', color: '#c9c3b5', model: 'fountain' }));
+  put(block(cx, cz + 6, 1, 3.6, 1, { material: 'concrete', color: '#8a8478', model: 'statue' }));
+  // The square's other fronts: a townhall, a café, apartments.
+  addBuilding({ pos: [cx - 30, cz + 14], size: [12, 16], style: 'townhall', floors: 2, doors: 'ew', rot: 90 });
+  addBuilding({ pos: [cx + 34, cz + 8], size: [12, 10], style: 'shop', floors: 3, doors: 'sw', rot: -90 });
+  // The terrace edge (south): a balustrade over the bank with a gap at the stairs.
+  stoneWall([[cx - 26, cz + 24], [cx + 26, cz + 24]], [[22, 30]], 1.0);
+  // Barricades and dug-in positions.
+  sandbags(cx - 8, cz - 12, 4, 0);
+  sandbags(cx + 10, cz - 12, 4, 0);
+  for (const [x, z, yaw] of [[cx + 16, cz + 14, 40], [cx - 16, cz + 16, -30]]) car(x, z, yaw, pick(WRECK));
+  put(block(cx - 14, cz - 2, 2.6, 3.2, 11, { yaw: 80, type: 'wall', material: 'metal', color: '#6f7a5c', model: 'bus' }));
+  for (const [x, z, yaw] of [[cx + 10, cz + 2, 15], [cx + 18, cz - 4, 100]]) cart(x, z, yaw);
+  scatter(cx, cz, 8, 22, 5);
+}
+
+// --- D: the station, the engine depot and the water tower (lower town) --------------------------
+{
+  const [dx, dz] = Z.D;
+  addBuilding({ pos: [dx - 14, 89.5], size: [18, 8.6], style: 'station', floors: 2, doors: 'ns' });
+  addBuilding({ pos: [dx + 26, 90.5], size: [28, 10], style: 'depot', doors: 'ew' });
+  // Platform along the rail, a water tower, boxcars and a tank wreck in the station yard.
+  put({ type: 'floor', pos: [dx - 14, 0.5, 96.6], size: [30, 0.9, 2.6], material: 'concrete', color: '#a19c90', snap: true });
+  put(block(dx + 2, dz - 6, 5, 13, 5, { type: 'wall', material: 'wood', color: '#5c4633', model: 'waterTower', sink: 0.2 }));
+  for (const x of [-120, -10, 70]) boxcar(RAIL_MAIN, x);
+  wreck(dx - 20, dz - 4, 70);
+  for (const [x, z, yaw] of [[dx + 14, dz - 6, 100], [dx - 4, dz - 14, 20]]) truck(x, z, yaw, pick(['#4d5a3c', '#5a4a3a']));
+  nest(dx + 8, dz - 18, 180);
+  sandbags(dx - 26, dz + 6, 4, 90);
+  scatter(dx, dz, 6, 24, 6);
+}
+
+// --- E: the church hill (upper terrace, east) -----------------------------------------------
+{
+  const [ex, ez] = Z.E;
+  addBuilding({ pos: [ex - 2, ez - 22], size: [14, 26], style: 'chapel', doors: 'se', rot: 90, material: 'brick', color: '#8e8577' });
+  put(block(ex + 14.5, ez - 22, 7, 26, 7, { type: 'wall', material: 'brick', color: '#8a8173', model: 'steeple', sink: 0.3 }));
+  // Churchyard north of the road (walled, gates to the road and the back street), gravestones.
+  stoneWall([[ex - 26, ez - 8], [ex - 26, ez - 36], [ex + 24, ez - 36], [ex + 24, ez - 8], [ex - 26, ez - 8]], [[12, 18], [60, 66], [100, 108]]);
+  for (let i = 0; i < 16; i++) put(block(ex - 22 + (i % 4) * 2.4, ez - 32 + Math.floor(i / 4) * 5, 0.6, 0.9, 0.2, { material: 'concrete', color: STONE }));
+  addBuilding({ pos: [ex - 24, ez + 18], size: [10, 9], style: 'house', floors: 2, doors: 'sn', rot: 180 });
+  addBuilding({ pos: [ex + 22, ez + 18], size: [11, 9], style: 'inn', floors: 2, doors: 'sn', rot: 180 });
+  nest(ex - 6, ez + 20, 180);
+  sandbags(ex + 18, ez + 22, 4, 0);
+  car(ex + 6, ez + 28, 70, pick(WRECK));
+  scatter(ex, ez, 6, 24, 5);
+}
+
+// --- F: the rail yard and the harbour (east) -------------------------------------------------
+{
+  const [fx, fz] = Z.F;
+  addBuilding({ pos: [fx - 6, 52], size: [34, 14], style: 'warehouse', doors: 'nsw' });
+  addBuilding({ pos: [fx + 24, 52], size: [20, 12], style: 'warehouse', doors: 'sw' });
+  put(block(fx - 34, fz + 4, 10, 12, 6, { yaw: 90, type: 'wall', material: 'metal', color: '#3f4a3c', model: 'crane', sink: 0.1 }));
+  put(block(fx + 26, fz + 8, 10, 12, 6, { yaw: 90, type: 'wall', material: 'metal', color: '#3f4a3c', model: 'crane', sink: 0.1 }));
+  for (const x of [140, 176]) boxcar(S1, x);
+  for (const x of [150, 190]) boxcar(S2, x);
+  for (const x of [120, 214]) boxcar(RAIL_MAIN, x);
+  const fF = frame(Z.F, 0);
+  container(fF, -18, 2, 90, 2);
+  container(fF, 12, -2, 0, 2);
+  container(fF, 30, -6, 90);
+  for (const [lx, lz] of [[-24, -6], [40, 4]]) thing(fF, lx, lz, 6, 5, 6, { type: 'wall', material: 'metal', color: '#9a978c', model: 'fuelTank' });
+  truck(fx + 4, fz + 2, 90, '#5a5f66');
+  nest(fx - 8, fz + 4, 270);
+  sandbags(fx + 18, fz - 6, 4, 90);
+  wreck(fx - 40, fz - 10, 100);
+  scatter(fx, fz, 6, 26, 6);
+}
+
+// --- The bank between the terrace and the lower town: stairs and retaining walls -----------------
+{
+  for (const x of [-12, 40, 96, 130, 166]) {
+    const top = [x, -24];
+    const bottom = [x + 2, 6];
+    stairs(bottom, top, 3);
+  }
+  // Retaining wall pieces on the upper edge (cover looking down on the lower town).
+  for (let x = -20; x < 205; x += 10) {
+    if ([-12, 40, 96, 130, 166, 66, 70, 184, 190].some((g) => Math.abs(g - x) < 6)) continue;
+    put(block(x, -22, 8, 1.1, 0.6, { material: 'concrete', color: STONE, type: 'cover' }));
+  }
+}
+
+// --- The town: buildings along the streets -----------------------------------------------------
+const keepOut = [[BLUE, 30], [RED, 32], [Z.A, 32], [Z.B, 34], [Z.C, 30], [Z.D, 30], [Z.E, 30], [Z.F, 34]];
+let townLots = 0;
+function lotOK(r) {
+  for (const [x, z] of samples(r, 2)) {
+    if (!inMap(x, z, 6) || keepOut.some(([c, cr]) => Math.hypot(x - c[0], z - c[1]) < cr)) return false;
+    if (!offRoad(x, z, 1.2) || nearRail(x, z, 4.5) || nearCreek(x, z, 2) || nearRiverBank(x, z, 4)) return false;
+  }
+  if (slopeUnder(r) > 1.1) return false;
+  return isFree(r);
+}
+function lotStyle(x, z) {
+  const roll = R();
+  const upper = z < -10;
+  if (x < -40) {
+    if (roll < 0.7) return { style: 'house', w: between(8.6, 10), d: between(8.6, 9.5), floors: 2 };
+    return { style: 'shed', w: between(6, 8), d: between(5, 7) };
+  }
+  if (roll < 0.32) return { style: 'shop', w: between(9, 12), d: between(9, 11), floors: R() < 0.4 ? 3 : 2 };
+  if (roll < 0.6) return { style: 'apartment', w: between(11, 15), d: between(9.5, 11.5), floors: upper ? (R() < 0.5 ? 4 : 3) : 3 };
+  if (roll < 0.9) return { style: 'house', w: between(8.6, 10.5), d: between(8.6, 9.5), floors: R() < 0.3 ? 3 : 2 };
+  return { style: 'inn', w: between(12, 15), d: between(9.5, 11), floors: 3 };
+}
+/** A ruined house: broken walls with blown-out gaps, rubble inside (the town was shelled). */
+function ruin(x, z, w, d, yaw) {
+  const f = frame([x, z], yaw);
+  const corners = [f(-w / 2, -d / 2), f(w / 2, -d / 2), f(w / 2, d / 2), f(-w / 2, d / 2), f(-w / 2, -d / 2)];
+  for (let i = 0; i < 4; i++) {
+    const len = i % 2 ? d : w;
+    const a = between(0.15, 0.55) * len;
+    const gaps = [[a, a + between(1.4, 2.6)]];
+    if (R() < 0.5) gaps.push([len * 0.75, len * 0.75 + between(1, 2)]);
+    putAll(wallLine([corners[i], corners[i + 1]], { height: round(between(1.2, 3.6), 1), thick: 0.45, type: 'wall', material: 'brick', color: pick(['#8b6a55', '#7d5e4c', '#94765f']), gaps }));
+  }
+  for (let k = 0; k < 4; k++) {
+    const [rx, rz] = f(between(-w / 2 + 1.5, w / 2 - 1.5), between(-d / 2 + 1.5, d / 2 - 1.5));
+    put({ type: 'cover', pos: [round(rx), round(between(0.2, 0.5)), round(rz)], size: [round(between(1.4, 2.6), 1), round(between(0.6, 1.2), 1), round(between(1.2, 2.2), 1)], rot: yawPitch(R() * 360, between(-12, 12)), material: 'concrete', color: pick(['#8a8178', '#7b6a5e', '#968b80']), snap: true });
+  }
+  occupy(x, z, w, d, yaw);
+}
+function frontage(pts, halfW, side) {
+  const total = lengthOf(pts);
+  let s = 1;
+  while (s < total - 3) {
+    const p0 = along(pts, s);
+    let done = false;
+    for (let tries = 0; tries < 4 && !done; tries++) {
+      const lot = tries < 3 ? lotStyle(p0.x, p0.z) : { style: 'house', w: 8.6, d: 8.6, floors: 2 };
+      if ((lot.floors ?? 1) > 1) {
+        lot.w = Math.max(lot.w, 8.6);
+        lot.d = Math.max(lot.d, 8.6);
       }
+      if (s + lot.w > total + 1) continue;
+      const mid = along(pts, s + lot.w / 2);
+      const nx = -mid.tz * side;
+      const nz = mid.tx * side;
+      const off = halfW + 1.9 + lot.d / 2;
+      const x = mid.x + nx * off;
+      const z = mid.z + nz * off;
+      const yaw = (Math.atan2(-nx, -nz) * 180) / Math.PI;
+      if (!lotOK(obb(x, z, lot.w, lot.d, yaw))) continue;
+      if (lot.style !== 'shed' && R() < 0.16) {
+        ruin(x, z, lot.w, lot.d, yaw);
+        townLots++;
+        s += lot.w + 0.5;
+        done = true;
+        continue;
+      }
+      const doors = 's' + (R() < 0.85 ? 'n' : '') + (R() < 0.45 ? pick(['e', 'w']) : '');
+      addBuilding({ pos: [x, z], size: [round(lot.w, 1), round(lot.d, 1)], style: lot.style, ...(lot.floors ? { floors: lot.floors } : {}), rot: round(yaw + (R() - 0.5) * 2, 1), doors });
+      townLots++;
+      s += lot.w + (R() < 0.25 ? between(2.6, 3.6) : 0.5);
+      done = true;
+    }
+    if (!done) s += 1;
+  }
+}
+for (const r of [UR, MS, BS, ...CLIMB, ...LANES, QR]) for (const side of [-1, 1]) frontage(r.pts, r.w / 2, side);
+// Sheds and garages in the yards behind the street fronts.
+for (let gx = -30; gx <= 214; gx += 8) {
+  for (let gz = -110; gz <= 90; gz += 8) {
+    if (R() < 0.5) continue;
+    const x = gx + (R() - 0.5) * 4;
+    const z = gz + (R() - 0.5) * 4;
+    const r = obb(x, z, between(5, 7), between(4.5, 6), R() * 360, 1.5);
+    if (!lotOK(r)) continue;
+    addBuilding({ pos: [round(x), round(z)], size: [round(r.hw * 2 - 3, 1), round(r.hd * 2 - 3, 1)], style: 'shed', rot: round(Math.atan2(r.ax[1], r.ax[0]) / -DEG, 1), doors: pick(['s', 'n', 'e']) });
+  }
+}
+
+// --- Cars along the kerbs, roadblocks --------------------------------------------------------
+let parked = 0;
+for (const r of [QR, MS, UR]) {
+  const total = lengthOf(r.pts);
+  for (const side of [-1, 1]) {
+    for (let s = 6; s < total - 6; s += between(6, 10)) {
+      if (R() < 0.62) continue;
+      const p = along(r.pts, s);
+      const off = r.w / 2 - 1.1;
+      const x = p.x - p.tz * side * off;
+      const z = p.z + p.tx * side * off;
+      if (!inMap(x, z, 5) || x < -40 || nearCreek(x, z, 3) || Object.values(Z).some(([zx, zz]) => Math.hypot(x - zx, z - zz) < 14)) continue;
+      if (roads.some((o) => o !== r && lineDist(x, z, o.pts) < o.w / 2 + 3)) continue;
+      if (!isFree(obb(x, z, 1.9, 4.4, p.yaw, 0.3))) continue;
+      car(x, z, p.yaw + (side < 0 ? 180 : 0) + (R() - 0.5) * 4, R() < 0.3 ? pick(WRECK) : undefined);
+      parked++;
     }
   }
 }
-
-// --- A: chapel hill — chapel and steeple in a walled churchyard on the crest,
-// the presbytery and a cottage on the slope, sandbagged posts looking east.
-{
-  const [ax, az] = Z.A;
-  addBuilding({ pos: [ax + 2, az - 2], size: [9.5, 19], style: 'chapel', doors: 'se', rot: 0 });
-  // Bell tower and spire against the north end of the nave.
-  obj(block(ax + 2, az - 14.1, 5, 22, 5, { type: 'wall', material: 'brick', color: '#948b7e', model: 'steeple', sink: 0.3 }), 4);
-  // Churchyard wall: gates on the east side and on the south side (the road).
-  stoneWall([[ax - 15, az - 24], [ax + 18, az - 24], [ax + 18, az + 16], [ax - 15, az + 16], [ax - 15, az - 24]], [[44, 50], [82, 90]]);
-  // Gravestones in rows east and west of the nave, a stone cross.
-  for (let i = 0; i < 24; i++) {
-    const west = i < 12;
-    const x = ax + (west ? -11 : 9) + (i % 4) * 2;
-    const z = az - 16 + Math.floor((i % 12) / 4) * 4 + (west ? 10 : 0);
-    obj(block(x, z, 0.6, 0.9, 0.2, { material: 'concrete', color: STONE }), 0.4);
-  }
-  obj(block(ax + 12, az + 10, 0.8, 3, 0.8, { material: 'concrete', color: STONE, model: 'statue' }), 1);
-  // Presbytery and its garden east of the yard, a cottage below the south gate, a shed.
-  addBuilding({ pos: [ax + 28, az + 12], size: [11, 9], style: 'house', floors: 2, doors: 'sn', rot: -90 });
-  fence([[ax + 20, az + 22], [ax + 38, az + 22], [ax + 38, az + 2]], [[4, 8]]);
-  addBuilding({ pos: [ax - 14, az + 34], size: [9, 8], style: 'house', floors: 1, doors: 's', rot: 160 });
-  addBuilding({ pos: [ax - 34, az - 6], size: [7, 6], style: 'shed', doors: 'e', rot: 10 });
-  cart(ax + 24, az + 24, 80);
-  car(ax + 22, az - 6, 5);
-  logs(ax - 38, az + 10, 5, 80, 1.2);
-  sandbags(ax + 22, az - 20, 4, 30);
-  barricade(ax + 20, az + 30, 5, -10);
-  barricade(ax - 8, az + 26, 4, 0);
-  barricade(ax - 18, az - 30, 4, 90);
-  stack(ax + 6, az - 20);
-  stack(ax - 6, az + 20, 2);
+/** A roadblock closing one side of a road (the other side left open for tanks). */
+function roadblock(r, s) {
+  const p = along(r.pts, s);
+  const nx = -p.tz;
+  const nz = p.tx;
+  const half = r.w / 2;
+  const at = (k, f = 0) => [p.x + nx * k + p.tx * f, p.z + nz * k + p.tz * f];
+  car(...at(-half + 1.2, 0.5), p.yaw + 15, pick(WRECK));
+  sandbags(...at(-half - 0.2, -4), 3.2, p.yaw + 180);
 }
+roadblock(QR, sAtX(QR.pts, -10));
+roadblock(QR, sAtX(QR.pts, 100));
+roadblock(UR, sAtX(UR.pts, -70));
+roadblock(UR, sAtX(UR.pts, 80));
 
-// --- B: watermill — the mill on the east bank with its wheel in the river,
-// the miller's house and granary on the west bank, the footbridge between.
-{
-  const rx = riverX(-212);
-  // Mill wall just above the water; the wheel (absolute heights) turns in the river beside it.
-  addBuilding({ pos: [rx + 19, -212], size: [13, 16], style: 'mill', floors: 2, doors: 'en', rot: 0 });
-  objects.push({ type: 'wall', pos: [round(rx + 9.6), 0.8, -212], size: [2, 5.6, 5.6], material: 'wood', color: '#5c4633', model: 'millWheel', base: 0 });
-  reserve(rx + 9.6, -212, 3.5);
-  // Mill yard: carts, sacks and barrels, the miller's truck, a log pile for the stove.
-  cart(rx + 30, -226, 10);
-  cart(rx + 33, -200, 95);
-  truck(rx + 37, -208, 0, '#5a4a36');
-  stack(rx + 28, -230, 4);
-  stack(rx + 28, -196, 3);
-  logs(rx + 30, -242, 6, 0, 1.4);
-  hay(rx + 42, -230, 30);
-  addBuilding({ pos: [rx + 46, -238], size: [8, 6], style: 'shed', doors: 'n', rot: 0 });
-  fence([[rx + 52, -250], [rx + 52, -190]], [[25, 35]]);
-  // West bank: miller's house, granary, garden fence, a cart by the door.
-  addBuilding({ pos: [rx - 26, -208], size: [11, 9], style: 'house', floors: 2, doors: 'sw', rot: 90 });
-  addBuilding({ pos: [rx - 30, -238], size: [10, 8], style: 'shed', doors: 's', rot: 90 });
-  fence([[rx - 36, -196], [rx - 18, -196], [rx - 18, -186]], [[6, 10]]);
-  cart(rx - 36, -214, 170);
-  hay(rx - 44, -212, 80);
-  stack(rx - 20, -246, 2);
-  // Sandbags at both ends of the footbridge.
-  sandbags(rx - 24, -239, 4, 0);
-  sandbags(rx + 20, -239, 4, 0);
-  barricade(rx + 14, -190, 4, -20);
-  barricade(rx - 30, -190, 4, 10);
-}
-
-// --- C: sawmill — the long mill hall and open saw shed, a log yard, the office.
-{
-  addBuilding({ pos: [240, -160], size: [28, 12], style: 'warehouse', material: 'wood', color: '#6b5139', doors: 'sw', rot: 6 });
-  obj(block(232, -138, 13, 5.2, 7, { yaw: 6, type: 'wall', material: 'wood', color: '#5c4633', model: 'sawShed', sink: 0.1 }), 7);
-  addBuilding({ pos: [254, -122], size: [10, 8], style: 'house', floors: 2, doors: 'sw', rot: 186 });
-  addBuilding({ pos: [206, -130], size: [9, 7], style: 'shed', doors: 'n', rot: 10 });
-  addBuilding({ pos: [266, -146], size: [8, 6], style: 'shed', doors: 'w', rot: 0 });
-  // Log yard: trunks waiting to be sawn, planks stacked to dry.
-  for (const [x, z, yaw, len, h] of [[244, -140, 6, 8, 1.6], [244, -134, 6, 8, 1.6], [256, -138, 96, 7, 1.6], [218, -158, 80, 7, 1.6], [212, -118, 20, 6, 1.4], [236, -112, 50, 6, 1.2], [270, -128, 0, 6, 1.6], [200, -120, 90, 6, 1.4], [214, -150, 50, 6, 1.0]]) {
-    logs(x, z, len, yaw, h);
-  }
-  truck(236, -176, 96, '#4d5a3c');
-  truck(262, -114, 10, '#7b3a2a');
-  cart(222, -146, 40);
-  stack(248, -146, 3);
-  stack(230, -126, 3);
-  stack(208, -160, 2);
-  logs(198, -134, 4, 90, 1.2);
-  barricade(244, -184, 4, 0);
-  logs(276, -132, 4, 100, 1.2);
-}
-
-// --- D: village — inn and cottages at the west bridgehead, the square at the
-// east bridgehead with the grand hotel above it, houses along the main road.
-{
-  // West bridgehead.
-  addBuilding({ pos: [-40, -17], size: [20, 11], style: 'inn', floors: 2, doors: 'se', rot: 0 });
-  car(-52, -7.5, 90);
-  truck(-25, -15, 0, '#5a4a36');
-  cart(-58, -16, 0);
-  addBuilding({ pos: [-34, 17], size: [10, 8.5], style: 'house', floors: 2, doors: 'sw', rot: 180 });
-  addBuilding({ pos: [-26, 38], size: [9, 8], style: 'house', floors: 2, doors: 'se', rot: 90 });
-  addBuilding({ pos: [-52, 24], size: [11, 9], style: 'shop', floors: 2, doors: 'se', rot: 180 });
-  fence([[-40, 30], [-40, 50], [-16, 50]], [[8, 12]]);
-  sandbags(-24, -7, 4, 90);
-  sandbags(-24, 8, 4, 90);
-  stack(-20, 22, 3);
-  car(-44, 8, 92);
-  // East bridgehead: the square (cobbles, fountain, benches) and the hotel.
-  objects.push({ type: 'floor', pos: [54, -0.24, 2], size: [46, 0.3, 36], material: 'concrete_floor', color: '#8e8a84', snap: true });
-  obj(block(56, -9, 3.4, 1, 3.4, { material: 'concrete', color: STONE, model: 'fountain' }), 2.5);
-  for (const [x, z] of [[49, -13], [63, -13], [49, -5], [63, -5]]) obj(block(x, z, 2.2, 0.8, 0.6, { material: 'wood', color: WOOD, model: 'bench' }), 1.2);
-  addBuilding({ pos: [58, -36], size: [54, 18], style: 'hotel', floors: 4, doors: 'sn', rot: 0 });
-  bus(72, -20, 90);
-  for (const x of [38, 42.5, 47]) car(x, -21, 0);
-  car(102, -4, 90);
-  stack(30, -22, 3);
-  addBuilding({ pos: [21, -34], size: [8, 7], style: 'shed', doors: 's', rot: -90 });
-  addBuilding({ pos: [38, 30], size: [12, 9], style: 'shop', floors: 2, doors: 'sn', rot: 180 });
-  addBuilding({ pos: [64, 31], size: [11, 9], style: 'house', floors: 2, doors: 'sn', rot: 180 });
-  addBuilding({ pos: [92, -18], size: [14, 10], style: 'townhall', floors: 2, doors: 'sn', rot: 0 });
-  addBuilding({ pos: [80, 30], size: [10, 9], style: 'house', floors: 2, doors: 'se', rot: 180 });
-  truck(86, 16, 92, '#4d5a3c');
-  sandbags(24, -7, 4, 90);
-  sandbags(24, 8, 4, 90);
-  barricade(38, 16, 4, 0);
-  stack(70, 18, 3);
-  wreck(122, 30, 70);
-  // The rest of the village along the main road and the bank tracks.
-  street(roads.mainW, { cx: -60, cz: 0, maxR: 75, minR: 18 });
-  street(roads.mainE, { cx: 110, cz: 4, maxR: 50, minR: 8 });
-  street(roads.trackW, { cx: -70, cz: -50, maxR: 30, skip: 0.45 });
-  street(roads.trackE, { cx: 66, cz: 66, maxR: 30, skip: 0.45 });
-}
-
-// --- E: farm — farmhouse, two barns and sheds round a yard, hay, carts, paddocks.
-{
-  addBuilding({ pos: [-196, 138], size: [12, 9], style: 'house', floors: 2, doors: 'sn', rot: -90 });
-  addBuilding({ pos: [-236, 154], size: [24, 13], style: 'barn', doors: 'ew', rot: 90 });
-  addBuilding({ pos: [-206, 172], size: [16, 10], style: 'barn', doors: 'n', rot: 0 });
-  addBuilding({ pos: [-240, 126], size: [8, 6], style: 'shed', doors: 's', rot: 20 });
-  addBuilding({ pos: [-188, 160], size: [7, 6], style: 'shed', doors: 's', rot: -90 });
-  for (const [x, z, yaw] of [[-224, 146, 0], [-220, 152, 30], [-228, 140, 80], [-212, 148, 10], [-216, 160, 60], [-250, 182, 0], [-252, 186, 90], [-282, 130, 20], [-170, 182, 70], [-262, 120, 0]]) hay(x, z, yaw);
-  cart(-206, 146, 20);
-  cart(-226, 166, 100);
-  cart(-188, 150, 170);
-  truck(-226, 122, 80, '#7b3a2a');
-  car(-196, 124, 90);
-  logs(-196, 186, 6, 0, 1.4);
-  const pad = [[-180, 130], [-160, 132], [-158, 162], [-178, 166]];
-  fence([...pad, pad[0]], [[8, 12], [56, 60]]);
-  fence([[-266, 120], [-266, 190], [-232, 194]], [[30, 36]]);
-  stoneWall([[-292, 118], [-292, 200]], [[36, 42]], 0.9);
-  hay(-228, 114, 10);
-  barricade(-182, 176, 4, 90);
-  stack(-218, 170, 3);
-  stack(-248, 140, 2);
-  // Burnt-out tanks in the fields.
-  wreck(-160, 118, 50);
-  wreck(-280, 160, -20);
-}
-
-// --- F: rail halt — station and platform on the west bank, freight shed and
-// boxcars on the siding; engine shed and water tower on the east bank.
-{
-  obj(block(-36, 224.4, 30, 1.0, 4, { type: 'floor', material: 'concrete', color: '#96918a' }), 2);
-  addBuilding({ pos: [-34, 230.4], size: [16, 8], style: 'station', doors: 'ns', rot: 0 });
-  addBuilding({ pos: [-40, 200], size: [9, 8], style: 'house', floors: 2, doors: 's', rot: 0 });
-  addBuilding({ pos: [-84, 241], size: [18, 10], style: 'warehouse', material: 'wood', color: '#5f4c3a', doors: 'sn', rot: 0 });
-  for (const x of [-76, -92]) obj(block(x, zAtX(sidingW, x), 3, 3.6, 12, { yaw: 90, lift: 0.36, type: 'wall', material: 'metal', color: '#5a3d31', model: 'boxcar' }), 6);
-  addBuilding({ pos: [64, 236], size: [28, 12], style: 'depot', doors: 'ew', rot: 0 });
-  obj(block(28, 206, 5, 13, 5, { type: 'wall', material: 'wood', color: '#5c4633', model: 'waterTower', sink: 0.2 }), 3.5);
-  // Coal heap by the water tower, crates by the station, carts and trucks in the yards.
-  obj(block(44, 206, 6, 1.6, 4, { material: 'ground', color: '#2f2c2a' }), 3.5);
-  stack(-20, 234, 3);
-  stack(-48, 234, 2);
-  cart(-24, 204, 0);
-  truck(-60, 205, 90, '#4d5a3c');
-  logs(58, 252, 6, 0, 1.4);
-  logs(-36, 254, 7, 0, 1.8);
-  sandbags(-18, 228, 4, 90);
-  sandbags(24, 210, 4, 90);
-  barricade(22, 246, 4, 30);
-  barricade(-20, 190, 4, -20);
-  stack(36, 244, 3);
-}
-
-// --- G: bunker ridge — pillboxes on the crest facing the river, sandbag and
-// timber trench lines between them, a command post behind.
-{
-  for (const [x, z] of [[208, 130], [214, 158], [212, 184], [236, 146], [234, 176]]) bunker(x, z, 90 + (R() - 0.5) * 20);
-  bagLine([[206, 140], [210, 150]]);
-  bagLine([[212, 166], [208, 176]]);
-  bagLine([[210, 192], [214, 198]]);
-  timber([[220, 124], [222, 146], [222, 168], [220, 188]], [[30, 34]]);
-  tent(256, 158, 0, '#7a7b62');
-  tent(256, 166, 0, '#7a7b62');
-  addBuilding({ pos: [262, 182], size: [8, 6], style: 'shed', doors: 'w', rot: -90 });
-  tower(250, 124);
-  truck(264, 140, 10, '#4d5a3c');
-  stack(244, 160, 4);
-  stack(228, 194, 3);
-  barricade(230, 136, 4, 60);
-  barricade(244, 188, 4, -30);
-  // Field in front: a burnt-out tank, a lost truck.
-  wreck(170, 152, 110);
-  truck(186, 118, 140, '#4d5a3c');
-}
-
-// --- Bases -------------------------------------------------------------------
-// Tents, a hut and sandbags on the flanks; the ground behind is left clear for
-// the vehicle pads and tank spots (found at load by ray casts).
-for (const [[bx, bz], s] of [[BLUE, 1], [RED, -1]]) {
-  for (let i = 0; i < 3; i++) {
-    tent(bx - s * 6 + s * i * 8, bz - 26, 0);
-    tent(bx - s * 6 + s * i * 8, bz + 26, 0);
-  }
-  for (const dz of [-12, 12]) barricade(bx + s * 24, bz + dz, 5, 90);
-  tower(bx + s * 26, bz - 32);
-  addBuilding({ pos: [bx + s * 4, bz - 40], size: [14, 7], style: 'barracks', doors: 's', rot: 0 });
-  truck(bx + s * 30, bz + 30, 90, '#dcdcd4');
-  stack(bx + s * 16, bz - 20, 3);
-}
-
-// --- Between the zones -------------------------------------------------------
-// Roadside inns at the ring-road junctions, a forester's lodge, woodcutters'
-// huts, hunting stands, timber stacked by the tracks, broken-down trucks.
-addBuilding({ pos: [-166, -22], size: [18, 10], style: 'inn', floors: 2, doors: 'sw', rot: 180 });
-truck(-150, -24, 0, '#5a4a36');
-car(-178, -32, 90);
-cart(-160, -34, 90);
-addBuilding({ pos: [166, 22], size: [18, 10], style: 'inn', floors: 2, doors: 'se', rot: 0 });
-truck(150, 24, 180, '#5a4a36');
-car(178, 32, 90);
-cart(160, 34, 90);
-addBuilding({ pos: [-120, -62], size: [10, 8], style: 'house', floors: 2, doors: 'se', rot: 30 });
-addBuilding({ pos: [128, 52], size: [10, 8], style: 'house', floors: 2, doors: 'nw', rot: 210 });
-addBuilding({ pos: [-150, 250], size: [7, 6], style: 'shed', doors: 'n', rot: 15 });
-addBuilding({ pos: [140, -250], size: [7, 6], style: 'shed', doors: 's', rot: -15 });
-for (const [x, z] of [[-300, -130], [300, 130], [-90, 190], [92, -190], [-150, -150], [150, 150]]) tower(x, z);
-for (const [r, frac, side] of [[roads.ringW, 0.3, 1], [roads.ringE, 0.7, -1], [roads.northW, 0.55, -1], [roads.northE, 0.45, 1], [roads.southW, 0.4, 1], [roads.southE, 0.6, -1], [roads.trackW, 0.6, 1], [roads.trackE, 0.4, -1]]) {
-  verge(r, frac, side, (x, z, yaw) => logs(x, z, 7, yaw - 90, 1.6));
-}
-verge(roads.ringW, 0.82, -1, (x, z, yaw) => truck(x, z, yaw + 8, '#4d5a3c'));
-verge(roads.ringE, 0.18, 1, (x, z, yaw) => truck(x, z, yaw - 8, '#4d5a3c'));
-
-// Clutter so no zone is an empty clearing: crates, barrels, sandbags, logs.
-for (const [id, [zx, zz]] of Object.entries(Z)) {
-  const r0 = RADIUS[id];
-  let n = 0;
-  for (let i = 0; i < 80 && n < 14; i++) {
+// --- The mountainside: woods, outcrops, firing positions ----------------------------------------
+function copse(cx, cz, radius, n, minGap = 3.4) {
+  for (let i = 0, placed = 0; placed < n && i < n * 12; i++) {
     const a = R() * Math.PI * 2;
-    const r = 6 + R() * (r0 - 4);
-    const x = zx + Math.cos(a) * r;
-    const z = zz + Math.sin(a) * r;
-    if (nearRoad(x, z, 1.5) || nearRiver(x, z, 1) || nearRail(x, z, 3) || !free(x, z, 1.6)) continue;
-    const k = R();
-    if (k < 0.55) crate(x, z);
-    else if (k < 0.8) barricade(x, z, 3 + R() * 2, R() * 180);
-    else logs(x, z, 4 + R() * 2, R() * 180, 1.2);
-    n++;
+    const r = Math.sqrt(R()) * radius;
+    const x = cx + Math.cos(a) * r;
+    const z = cz + Math.sin(a) * r;
+    if (!inMap(x, z, 2) || !offRoad(x, z, 3) || nearRail(x, z, 4) || nearCreek(x, z, 1) || nearRiverBank(x, z, 3)) continue;
+    if (Object.entries(Z).some(([id, c]) => Math.hypot(x - c[0], z - c[1]) < ZR[id] - 4)) continue;
+    if (!isFree(obb(x, z, 1, 1, 0, 2.2)) || trees.some(([tx, tz]) => Math.hypot(x - tx, z - tz) < minGap)) continue;
+    trees.push([round(x, 1), round(z, 1), round(between(0.75, 1.35), 2)]);
+    placed++;
   }
 }
+// Wooded slope west of the creek (blue's approach) and along the ravine.
+for (const [x, z, r, n] of [
+  [-190, -80, 30, 40], [-150, -100, 26, 30], [-80, -96, 28, 34], [-170, 70, 18, 14], [-60, -20, 18, 18], [-80, 40, 18, 16],
+  [-200, -20, 18, 12], [-140, 10, 14, 10], [-54, 80, 12, 8], [-130, 90, 12, 8],
+  // Behind the town on the ridge foot and in the yards.
+  [40, -108, 16, 10], [130, -108, 16, 10], [210, -70, 14, 8], [226, 50, 12, 6],
+]) copse(x, z, r, n);
+for (const [x, z, s] of [[-170, -50, 1.3], [-100, -90, 1.1], [-70, -40, 1], [-150, 40, 1.1], [-190, -60, 0.9], [-60, 50, 0.8], [-130, -20, 0.9], [-210, -90, 1.2]]) outcrop(x, z, s);
+for (const [x, z, yaw] of [[-80, -40, 90], [-64, 8, 90], [-150, -20, 60], [-120, 60, 120]]) nest(x, z, yaw);
 
-// --- Forest ------------------------------------------------------------------
-// Smooth value noise for the woods' shape (clumps, clearings, glades).
-const hash = (i, j) => {
-  let h = (i * 374761393 + j * 668265263) >>> 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-};
-const vnoise = (x, z) => {
-  const i = Math.floor(x);
-  const j = Math.floor(z);
-  const fx = x - i;
-  const fz = z - j;
-  const sx = fx * fx * (3 - 2 * fx);
-  const sz = fz * fz * (3 - 2 * fz);
-  const a = hash(i, j) + (hash(i + 1, j) - hash(i, j)) * sx;
-  const b = hash(i, j + 1) + (hash(i + 1, j + 1) - hash(i, j + 1)) * sx;
-  return a + (b - a) * sz;
-};
-const noiseAt = (x, z) => 0.65 * vnoise(x / 80 + 3, z / 80) + 0.35 * vnoise(x / 26 + 11, z / 26 - 7);
-// Mirrored through the map centre (the zone layout is too), blended across the
-// middle: each side gets the same woods.
-const woods = (x, z) => {
-  const t = Math.min(1, Math.max(0, (x + 40) / 80));
-  const k = t * t * (3 - 2 * t);
-  return noiseAt(x, z) * (1 - k) + noiseAt(-x, -z) * k;
-};
-// Open ground: fields and meadows (room for tanks), ellipses [cx, cz, rx, rz, yaw].
-const fields = [
-  [-245, 172, 98, 64, 10], // farm fields
-  [-255, -62, 64, 34, -15], // meadow under the chapel hill
-  [166, 156, 64, 58, 0], // in front of the bunker ridge
-  [258, -70, 56, 32, 20], // sawmill meadow
-  [-96, 150, 42, 28, 30], // west bank, south
-  [100, -156, 42, 28, -30], // east bank, north
-];
-const fieldAt = (x, z) => Math.min(...fields.map(([cx, cz, rx, rz, yaw]) => ellipseIn(x, z, cx, cz, rx, rz, yaw)));
-// Candidates with a chance each, then thinned evenly to about TREES in all.
-const TREES = 2800;
-const STEP = 5;
-const cand = [];
-for (let gx = -420; gx <= 420; gx += STEP) {
-  for (let gz = -350; gz <= 350; gz += STEP) {
-    const x = gx + (R() - 0.5) * STEP * 0.9;
-    const z = gz + (R() - 0.5) * STEP * 0.9;
-    if (!inMap(x, z, 1.5)) continue;
-    const edge = edgeDist(boundary, x, z);
-    // Clumped woods with glades, deepest away from the roads, open near the
-    // fights. (The scenery outside draws the forest beyond the edge, so the
-    // band inside stays thin.)
-    const w = woods(x, z);
-    let p = 0.02 + 0.9 * Math.min(1, Math.max(0, (w - 0.4) / 0.16));
-    let roadGap = Infinity;
-    for (const r of roadList) roadGap = Math.min(roadGap, lineDist(x, z, r.pts) - r.w / 2);
-    if (roadGap > 30) p += 0.2;
-    if (edge < 12) p = Math.max(p, 0.5 - edge / 24);
-    const f = fieldAt(x, z);
-    if (f < 1) continue;
-    if (f < 1.2) p *= 0.25; // hedgerows at the field edges
-    let zoneGap = Infinity;
-    for (const [id, [zx, zz]] of Object.entries(Z)) zoneGap = Math.min(zoneGap, Math.hypot(x - zx, z - zz) - RADIUS[id]);
-    if (zoneGap < 3) continue;
-    if (zoneGap < 16) p *= 0.3;
-    if (Math.hypot(x, z) < 95) p *= 0.25; // village gardens
-    if (roadGap < 3 || nearRiver(x, z, 2) || nearRail(x, z, 6) || !free(x, z, 1.2)) continue;
-    if (Math.hypot(x - BLUE[0], z - BLUE[1]) < 75 || Math.hypot(x - RED[0], z - RED[1]) < 75) continue;
-    cand.push([x, z, Math.min(1, p)]);
-  }
-}
-const thin = Math.min(1, TREES / cand.reduce((a, c) => a + c[2], 0));
-const trees = [];
-for (const [x, z, p] of cand) if (R() < p * thin) trees.push([round(x, 1), round(z, 1), round(0.62 + R() * 0.42)]);
-
-// --- Spawns & zones ----------------------------------------------------------
-// A line across each base, facing the river: the vehicle pads are found behind
-// the spawns' middle, so a line keeps them clear of where people appear.
+// --- Spawns & zones ------------------------------------------------------------------------
 const spawns = [];
-for (let i = 0; i < 6; i++) {
-  const dz = (i - 2.5) * 4.4;
-  spawns.push({ team: 'blue', pos: [BLUE[0], 0.1, round(BLUE[1] + dz)], yaw: -90 });
-  spawns.push({ team: 'red', pos: [RED[0], 0.1, round(RED[1] - dz)], yaw: 90 });
+for (let i = 0; i < 8; i++) {
+  const a = (i / 8) * Math.PI * 2;
+  spawns.push({ team: 'blue', pos: [round(BLUE[0] + Math.cos(a) * 6), 0.1, round(BLUE[1] + Math.sin(a) * 5)], yaw: -90 });
+  spawns.push({ team: 'red', pos: [round(RED[0] + Math.cos(a) * 6), 0.1, round(RED[1] + Math.sin(a) * 5)], yaw: 90 });
 }
-const zones = Object.entries(Z).map(([id, [x, z]]) => ({ id, pos: [round(x), 0, round(z)], radius: RADIUS[id] }));
+const zones = Object.entries(Z).map(([id, [x, z]]) => ({ id, pos: [x, 0, z], radius: ZR[id] }));
 
-// --- Checks (printed, not fatal): nothing solid on a road, the river or a bridge.
-const kitsOnRoads = objects.filter((o) => o.model && o.snap && !['fence', 'sandbags'].includes(o.model) && nearRoad(o.pos[0], o.pos[2], Math.min(o.size[0], o.size[2]) / 2 - 0.3));
-const blocked = buildings.filter((b) => nearRoad(b.pos[0], b.pos[1], Math.min(...b.size) / 2 - 0.5) || nearRiver(b.pos[0], b.pos[1], Math.min(...b.size) / 2 - 4));
-for (const o of kitsOnRoads) console.warn(`  on a road: ${o.model} at ${o.pos[0]}, ${o.pos[2]}`);
-for (const b of blocked) console.warn(`  building on a road / the river: ${b.style} at ${b.pos}`);
-
-// Playable area, for the report.
-let area = 0;
-for (let i = 0; i < boundary.length; i++) {
-  const [x1, z1] = boundary[i];
-  const [x2, z2] = boundary[(i + 1) % boundary.length];
-  area += x1 * z2 - x2 * z1;
+// --- Self-check ---------------------------------------------------------------------------
+const problems = [];
+for (const b of buildings) {
+  const r = obb(b.pos[0], b.pos[1], b.size[0], b.size[1], b.rot ?? 0);
+  if (samples(r, 2).some(([x, z]) => !offRoad(x, z, 0))) problems.push(`building ${b.style} at ${b.pos} is on a road`);
+  if (samples(r, 4).some(([x, z]) => !inMap(x, z, 1))) problems.push(`building ${b.style} at ${b.pos} leaves the map`);
+  const sl = slopeUnder(r);
+  if (sl > 1.6) problems.push(`building ${b.style} at ${b.pos} stands on a ${round(sl, 1)} m slope`);
 }
-area = Math.abs(area / 2);
+for (const o of objects) {
+  if (o.type === 'floor' && o.size[1] < 0.6) continue;
+  if (!inMap(o.pos[0], o.pos[2], -1)) problems.push(`object ${o.model ?? o.type} at ${o.pos} is outside the map`);
+}
+if (problems.length) console.warn(problems.join('\n'));
 
 const xs = boundary.map((p) => p[0]);
 const zs = boundary.map((p) => p[1]);
 const margin = 70;
 const halfX = Math.max(-Math.min(...xs), Math.max(...xs)) + margin;
 const halfZ = Math.max(-Math.min(...zs), Math.max(...zs)) + margin;
+let area = 0;
+for (let i = 0; i < boundary.length; i++) {
+  const [ax, az] = boundary[i];
+  const [bx, bz] = boundary[(i + 1) % boundary.length];
+  area += ax * bz - bx * az;
+}
 
 const map = {
   meta: { id: 'ardennes', name: '아르덴 숲', version: 2 },
@@ -669,9 +762,8 @@ const map = {
   },
   spawns,
   zones,
-  // Modes (owner, 2026-10-03): Frontline by rows — west bank A, E / the river B, D, F /
-  // east bank C, G (the river row starts neutral); Zone to 700.
-  modes: { zone: { target: 700 }, frontline: { sectors: [['A', 'E'], ['B', 'D', 'F'], ['C', 'G']] } },
+  // Frontline from the blue end: A, B / C, D / E, F (the middle row starts neutral); Zone to 500.
+  modes: { zone: { target: 500 }, frontline: { sectors: [['A', 'B'], ['C', 'D'], ['E', 'F']] } },
   objects,
   buildings,
   props,
@@ -680,8 +772,8 @@ const map = {
 writeFileSync(new URL('../../public/maps/ardennes.json', import.meta.url), JSON.stringify(map));
 const styles = {};
 for (const b of buildings) styles[b.style] = (styles[b.style] ?? 0) + 1;
-const kits = {};
-for (const o of objects) if (o.model) kits[o.model] = (kits[o.model] ?? 0) + 1;
-console.log(`ardennes: ${objects.length} objects, ${buildings.length} buildings, ${props.length} props, ${trees.length} trees, area ${Math.round(area)} m², bounds ${Math.round(Math.max(...xs) - Math.min(...xs))} x ${Math.round(Math.max(...zs) - Math.min(...zs))} m, size ${map.world.size}`);
-console.log('  styles', JSON.stringify(styles));
-console.log('  kits', JSON.stringify(kits));
+console.log(
+  `ardennes: ${objects.length} objects, ${buildings.length} buildings (${townLots} town lots), ${props.length} props, ${trees.length} trees, ${parked} parked cars, ` +
+    `outline ${round(Math.max(...xs) - Math.min(...xs), 0)} x ${round(Math.max(...zs) - Math.min(...zs), 0)} m (${round(Math.abs(area) / 2, 0)} m²), size ${map.world.size}`,
+);
+console.log(Object.entries(styles).map(([k, v]) => `${k} ${v}`).join(', '));

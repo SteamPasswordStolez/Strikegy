@@ -6,25 +6,31 @@ import type { MapDef } from '@/world/mapTypes';
 
 const load = (id: string) => JSON.parse(readFileSync(`public/maps/${id}.json`, 'utf8')) as MapDef;
 
-describe('Lyon meadow map', () => {
+describe('Lyon hill-village map', () => {
+  // Hilltop village in terraces among lavender fields (2026-10-11).
   const map = load('lyon');
 
-  it('is valid: summer meadow, broadleaf trees, three zones', () => {
+  it('is valid: summer, broadleaf trees, five zones', () => {
     expect(validateMap(map)).toEqual([]);
     expect(map.world.groundMaterial).toBe('grass');
     expect(map.world.flora).toBe('broadleaf');
-    expect(map.zones?.map((z) => z.id)).toEqual(['A', 'B', 'C']);
+    expect(map.zones?.map((z) => z.id)).toEqual(['A', 'B', 'C', 'D', 'E']);
   });
 
-  it('has blue in the north, red in the south of the creek', () => {
+  it('has red in the west, blue in the east, the church zone on the hilltop', () => {
     const blue = map.spawns.filter((s) => s.team === 'blue');
     const red = map.spawns.filter((s) => s.team === 'red');
-    expect(Math.max(...blue.map((s) => s.pos[2]))).toBeLessThan(-100);
-    expect(Math.min(...red.map((s) => s.pos[2]))).toBeGreaterThan(100);
-    expect(map.world.terrain!.rivers![0]!.crossings).toHaveLength(3);
+    expect(Math.min(...blue.map((s) => s.pos[0]))).toBeGreaterThan(100);
+    expect(Math.max(...red.map((s) => s.pos[0]))).toBeLessThan(-100);
+    const hills = map.world.terrain!.hills!;
+    const top = hills.reduce((a, h) => (h.height > a.height ? h : a));
+    const b = map.zones!.find((z) => z.id === 'B')!;
+    expect(Math.hypot(b.pos[0] - top.pos[0], b.pos[2] - top.pos[1])).toBeLessThan(10);
+    expect(map.world.terrain!.rivers![0]!.crossings).toHaveLength(2);
+    expect(map.buildings!.length).toBeGreaterThan(45);
   });
 
-  it('keeps trees inside the outline and out of the creek', () => {
+  it('keeps trees inside the outline and out of the stream', () => {
     const b = new Boundary(map.world.boundary!);
     const r = map.world.terrain!.rivers![0]!;
     for (const [x, z] of map.trees!) {
@@ -46,7 +52,7 @@ describe('Persia desert map', () => {
     expect(map.zones?.map((z) => z.id)).toEqual(['A', 'B', 'C']);
   });
 
-  it('is small (about 180 x 140 m) with blue north-west and red south-east', () => {
+  it('is small (about 180 x 130 m) with blue north-west and red south-east', () => {
     const xs = map.world.boundary!.map((p) => p[0]);
     const zs = map.world.boundary!.map((p) => p[1]);
     expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(220);
