@@ -22,7 +22,7 @@ The owner writes in Korean; reply in Korean.
 - **Downloads need approval first.** Before fetching any asset/texture/model/sound, show the owner the list with sources, licenses and sizes, and wait for a yes. Prefer CC0 (Poly Haven etc.). Record new assets in `assets.manifest.json` / `sounds.manifest.json`.
 - Don't port p1 code wholesale; port numbers and concepts.
 - The campaign story and the class redesign (M4-C) are co-designed with the owner — ask before building content for them.
-- **Campaign (owner, 2026-10-11):** a **linear story** (CoD-like, not episodes / operations), **real history blended with fiction**, **with voice**, and **the design doc first** (`docs/design/campaign.md`: three world pitches, story layout, voice routes, the mission system to build, open questions for the owner). Nothing is built until the owner settles the doc's open questions.
+- **Campaign (owner, 2026-10-11):** a **linear story** (CoD-like, not episodes / operations), **real history blended with fiction**, **with voice**, and **the design doc first** (`docs/design/campaign.md`: story skeleton, voice routes, the mission system to build, open questions for the owner). Model: **Call of Duty Modern Warfare 1 and 3** — unbroken immersion, one story running straight through (first person throughout, briefings on the loading screens, several viewpoints on one arc, missions leading straight into each other); real history worked in **Black Ops-style** (a fictional figure and secret threaded through real events, short flashback missions). Nothing is built until the owner settles the doc's open questions.
 
 ## Working style the owner expects
 
