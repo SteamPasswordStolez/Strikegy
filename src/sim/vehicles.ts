@@ -20,9 +20,10 @@ import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { DRAW_TIME } from '@/weapons/WeaponController';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
-import { VehicleWorld, flatSpot, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
+import { VehicleWorld, callInSpot, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import type { MapDef, Team } from '@/world/mapTypes';
+import { Boundary } from '@/world/terrain';
 import type { NetDrive } from '@/net/matchProtocol';
 import type { MatchSim } from './MatchSim';
 import type { Soldier } from './Soldier';
@@ -110,7 +111,7 @@ export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry,
     bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
   }
   const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
-  const plan = planVehicleSpots(physics, bases, zones);
+  const plan = planVehicleSpots(physics, bases, zones, Boundary.fromMap(map));
   const heavy = map.world.vehicles !== 'light';
   const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
   const vw = new VehicleWorld(physics, registry, hooks, pads, plan.bikes, size, heavy ? plan.tankSpots : [], heavy, map.world.vehicles !== 'noJets');
@@ -161,6 +162,10 @@ export class MatchVehicles {
 
   private get physics(): PhysicsWorld {
     return this.sim.physics;
+  }
+
+  private get boundary(): Boundary {
+    return this.sim.world.terrain.boundary;
   }
 
   // ---------------------------------------------------------------------------
@@ -582,21 +587,14 @@ export class MatchVehicles {
   callRocketTank(owner: GadgetOwner, near: THREE.Vector3): boolean {
     const zm = this.sim.zoneMode;
     if (!this.world.heavy || !zm) return false;
-    const zones = zm.zones.map((z) => ({ id: z.id, pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius })).sort((a, b) => a.pos.distanceTo(near) - b.pos.distanceTo(near));
-    for (const z of zones.slice(0, 2)) {
-      for (let i = 0; i < 36; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        const r = z.radius + 4 + Math.floor(i / 12) * 6;
-        const yaw = a + Math.PI / 2;
-        const p = flatSpot(this.physics, z.pos.x + Math.cos(a) * r, z.pos.z + Math.sin(a) * r, z.pos.y, 1.9, 4.2, yaw);
-        if (!p || this.world.vehicles.some((v) => v.pos.distanceTo(p) < 8)) continue;
-        const v = this.world.spawn('rocket', p, yaw, owner.team);
-        v.driverOnly = owner.id;
-        this.onRocketTank(owner.team, z.id, owner.name, owner.id);
-        this.sim.bots?.rocketTankFor(owner.id, v);
-        return true;
-      }
-    }
-    return false;
+    const zones = zm.zones.map((z) => ({ id: z.id, pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius }));
+    const spot = callInSpot(this.physics, this.boundary, zones, near, this.world.vehicles, 1.9, 4.2);
+    if (!spot) return false;
+    const v = this.world.spawn('rocket', spot.pos, spot.yaw, owner.team);
+    v.driverOnly = owner.id;
+    this.onRocketTank(owner.team, spot.zone, owner.name, owner.id);
+    this.sim.bots?.rocketTankFor(owner.id, v);
+    return true;
   }
+
 }

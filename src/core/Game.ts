@@ -20,7 +20,7 @@ import type { BuiltMap } from '@/world/buildBlockout';
 import { buildWorld, fortPlanFor } from '@/sim/world';
 import { kitToggles, restockAmmo, stepFort, stepGadget, type KitWorld } from '@/sim/kit';
 import { Soldier, type SoldierHooks } from '@/sim/Soldier';
-import type { Terrain } from '@/world/terrain';
+import { Boundary, type Terrain } from '@/world/terrain';
 import { GROUND_COVER, GroundCover } from '@/world/groundCover';
 import { BACKDROP_MODELS, buildBackdrop, cullBackdropDetail } from '@/world/backdrop';
 import { createConiferKit } from '@/world/conifers';
@@ -48,7 +48,7 @@ import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type Blast
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
-import { VehicleWorld, flatSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
+import { VehicleWorld, callInSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
@@ -142,6 +142,8 @@ export interface GameOptions {
   net?: NetOptions;
   /** The menu's tutorial: the basics step by step (on the range), whether seen before or not. */
   tutorial?: boolean;
+  /** The player's side in a solo match (default blue). */
+  team?: Team;
 }
 
 /** How big a blast (local or from the game server) sounds. */
@@ -276,6 +278,8 @@ export class Game {
   /** Squad call-ins (B): barrages, recon planes, supply drops; the menu and the call being aimed. */
   private support!: SupportWorld;
   private supportMenu!: SupportMenu;
+  /** The playable outline (vehicle spots stay inside it). */
+  private boundary: Boundary | null = null;
   /** The first-play tutorial while it runs, its card, and how long the closing line stays. */
   private tutorial: TutorialRun | null = null;
   private tutorialPanel: TutorialPanel | null = null;
@@ -408,7 +412,7 @@ export class Game {
     private readonly options: GameOptions,
   ) {
     this.myId = options.net?.start.me ?? PLAYER_ID;
-    this.myTeam = options.net?.start.team ?? PLAYER_TEAM;
+    this.myTeam = options.net?.start.team ?? options.team ?? PLAYER_TEAM;
     this.settings = loadSettings();
     setLocale(this.settings.locale);
     const quality = resolveQuality(this.settings.quality);
@@ -426,6 +430,7 @@ export class Game {
       this.renderer.canvas,
       () => this.settings.sensitivity,
       () => this.settings.invertY,
+      () => this.settings.crouchHold,
     );
     this.sources.push(this.kbm);
     if (isTouchDevice()) {
@@ -636,7 +641,7 @@ export class Game {
         // Every soldier + weapon model, built in pieces so the loading screen keeps drawing.
         await this.loadStep(0.72, 'load.soldiers');
         await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
-        this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, botOpts);
+        this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, { ...botOpts, side: this.myTeam });
         this.bots.grenades = this.throwables;
         this.bots.gadgets = this.gadgets;
         this.bots.squadKey = (b) => this.squadKeyOf(b.team, b.id);
@@ -1098,6 +1103,8 @@ export class Game {
       onChange: (key) => {
         if (key === 'masterVolume') this.audio.setVolume(this.settings.masterVolume);
         if (key === 'renderScale') this.renderer.setRenderScale(this.settings.renderScale);
+        // Toggled down when crouching becomes held: stand up (the key isn't held).
+        if (key === 'crouchHold' && this.settings.crouchHold && this.player.crouchToggled) this.kbm.flipCrouchOnce();
       },
     });
     this.settingsPanelCache.render();
@@ -1644,7 +1651,8 @@ export class Game {
       bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
-    const plan = planVehicleSpots(this.physics, bases, zones);
+    this.boundary = Boundary.fromMap(map);
+    const plan = planVehicleSpots(this.physics, bases, zones, this.boundary);
     // Small maps: jeeps and motorbikes only.
     const heavy = map.world.vehicles !== 'light';
     const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
@@ -1711,25 +1719,17 @@ export class Game {
     const vw = this.vehicles;
     const zm = this.zoneMode;
     if (!vw?.heavy || !zm) return false;
-    const zones = zm.zones.map((z) => ({ id: z.id, pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius })).sort((a, b) => a.pos.distanceTo(near) - b.pos.distanceTo(near));
-    for (const z of zones.slice(0, 2)) {
-      for (let i = 0; i < 36; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        const r = z.radius + 4 + Math.floor(i / 12) * 6;
-        const yaw = a + Math.PI / 2;
-        const p = flatSpot(this.physics, z.pos.x + Math.cos(a) * r, z.pos.z + Math.sin(a) * r, z.pos.y, 1.9, 4.2, yaw);
-        if (!p || vw.vehicles.some((v) => v.pos.distanceTo(p) < 8)) continue;
-        const v = vw.spawn('rocket', p, yaw, owner.team);
-        v.driverOnly = owner.id;
-        if (owner.team === this.myTeam) {
-          const who = owner.id === this.myId ? playerName(t('feed.you')) : owner.name;
-          this.hud.notify(t('support.rocketArrived').replace('{zone}', z.id).replace('{who}', who), 'ally');
-        }
-        this.bots?.rocketTankFor(owner.id, v);
-        return true;
-      }
+    const zones = zm.zones.map((z) => ({ id: z.id, pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius }));
+    const spot = callInSpot(this.physics, this.boundary, zones, near, vw.vehicles, 1.9, 4.2);
+    if (!spot) return false;
+    const v = vw.spawn('rocket', spot.pos, spot.yaw, owner.team);
+    v.driverOnly = owner.id;
+    if (owner.team === this.myTeam) {
+      const who = owner.id === this.myId ? playerName(t('feed.you')) : owner.name;
+      this.hud.notify(t('support.rocketArrived').replace('{zone}', spot.zone).replace('{who}', who), 'ally');
     }
-    return false;
+    this.bots?.rocketTankFor(owner.id, v);
+    return true;
   }
 
   /**
@@ -3309,10 +3309,12 @@ export class Game {
 
   private setupSquads(map: MapDef, terrain: Terrain): void {
     const bots = this.bots!;
-    const blue = bots.bots.filter((b) => b.team === 'blue');
-    const red = bots.bots.filter((b) => b.team === 'red');
-    this.squads = [...formSquads('blue', [this.playerCombatant, ...blue]), ...formSquads('red', red)];
-    for (const c of [this.playerCombatant, ...blue, ...red]) this.scores.add(c.id, c.id === this.myId ? playerName(t('feed.you')) : c.name, c.team);
+    const us = this.myTeam;
+    const them = otherTeam(us);
+    const ours = bots.bots.filter((b) => b.team === us);
+    const theirs = bots.bots.filter((b) => b.team === them);
+    this.squads = [...formSquads(us, [this.playerCombatant, ...ours]), ...formSquads(them, theirs)];
+    for (const c of [this.playerCombatant, ...ours, ...theirs]) this.scores.add(c.id, c.id === this.myId ? playerName(t('feed.you')) : c.name, c.team);
     this.playerSquad = this.squads.find((s) => s.has(this.myId)) ?? null;
     bots.setSquads(
       this.squads.map((sq) => ({

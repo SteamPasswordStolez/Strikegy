@@ -16,6 +16,8 @@ export class KeyboardMouse implements InputSource {
   private queued = new Set<Pulse>();
   private cycleQueued = 0;
   private slotQueued = -1;
+  /** One toggle press on the next apply (the crouch mode changed while crouched). */
+  private flipCrouch = false;
   /** Code -> the actions it does (rebuilt when the bindings change). */
   private byCode = new Map<string, Action[]>();
   private disposers: (() => void)[] = [];
@@ -24,6 +26,8 @@ export class KeyboardMouse implements InputSource {
     private readonly target: HTMLElement,
     private readonly getSensitivity: () => number,
     private readonly getInvertY: () => boolean,
+    /** Crouch while the key is held instead of a press toggling it (setting). */
+    private readonly getCrouchHold: () => boolean = () => false,
   ) {
     this.rebind();
     this.disposers.push(onBindingsChange(() => this.rebind()));
@@ -133,7 +137,12 @@ export class KeyboardMouse implements InputSource {
     s.firePressed ||= this.take('fire');
     s.ads ||= this.held('ads');
     s.sprint ||= this.held('sprint');
-    s.crouchToggle ||= this.take('crouch');
+    if (this.getCrouchHold()) {
+      this.take('crouch');
+      s.crouch ||= this.held('crouch');
+    } else s.crouchToggle ||= this.take('crouch');
+    s.crouchToggle ||= this.flipCrouch;
+    this.flipCrouch = false;
     s.scoreboard ||= this.held('scoreboard');
     s.jump ||= this.take('jump');
     s.reload ||= this.take('reload');
@@ -152,6 +161,11 @@ export class KeyboardMouse implements InputSource {
     s.viewToggle ||= this.take('view');
     this.cycleQueued = 0;
     this.slotQueued = -1;
+  }
+
+  /** Sends one crouch toggle (here and to the game server): stands up from a toggled crouch when the mode becomes hold. */
+  flipCrouchOnce(): void {
+    this.flipCrouch = true;
   }
 
   private releaseAll(): void {

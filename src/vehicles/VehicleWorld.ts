@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
+import type { Boundary } from '@/world/terrain';
 import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, VEHICLES, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
 
@@ -379,6 +380,46 @@ export function flatSpot(physics: PhysicsWorld, x: number, z: number, y0: number
 }
 
 /**
+ * Inside the playable outline with the whole footprint (half sizes `hx`, `hz`,
+ * any turn) and 2 m to spare. Outside it the ground keeps going (the rise into
+ * the scenery hills), so a flat spot there is easy to find and out of play.
+ */
+export function inPlay(boundary: Boundary | null, x: number, z: number, hx: number, hz: number): boolean {
+  return !boundary || (boundary.contains(x, z) && boundary.edgeDistance(x, z) >= Math.hypot(hx, hz) + 2);
+}
+
+/**
+ * Where a called-in vehicle (half sizes `hx`, `hz`) comes out: a flat, clear
+ * spot just outside one of the two zones nearest `near`, in play, 8 m from
+ * other vehicles. Null when there is none.
+ */
+export function callInSpot(
+  physics: PhysicsWorld,
+  boundary: Boundary | null,
+  zones: { id: string; pos: THREE.Vector3; radius: number }[],
+  near: THREE.Vector3,
+  vehicles: readonly { pos: THREE.Vector3 }[],
+  hx: number,
+  hz: number,
+): { zone: string; pos: THREE.Vector3; yaw: number } | null {
+  const order = [...zones].sort((a, b) => a.pos.distanceTo(near) - b.pos.distanceTo(near));
+  for (const z of order.slice(0, 2)) {
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const r = z.radius + 4 + Math.floor(i / 12) * 6;
+      const yaw = a + Math.PI / 2;
+      const x = z.pos.x + Math.cos(a) * r;
+      const zz = z.pos.z + Math.sin(a) * r;
+      if (!inPlay(boundary, x, zz, hx, hz)) continue;
+      const p = flatSpot(physics, x, zz, z.pos.y, hx, hz, yaw);
+      if (!p || vehicles.some((v) => v.pos.distanceTo(p) < 8)) continue;
+      return { zone: z.id, pos: p, yaw };
+    }
+  }
+  return null;
+}
+
+/**
  * Pad and motorbike spots for a map: a clear, flat patch near each side's
  * base spawns (a jeep pad and an APC pad), and a few flat spots around each
  * zone for its motorbike. Found by ray casts at load, no map data needed.
@@ -387,10 +428,11 @@ export function planVehicleSpots(
   physics: PhysicsWorld,
   bases: { team: Team; pos: THREE.Vector3; facing: number }[],
   zones: { id: string; pos: THREE.Vector3; radius: number }[],
+  boundary: Boundary | null = null,
 ): { pads: PadSpot[]; bikes: BikeSpot[]; tankSpots: TankSpot[] } {
   const pads: PadSpot[] = [];
   const taken: THREE.Vector3[] = [];
-  const flat = (x: number, z: number, y0: number, hx: number, hz: number, yaw: number) => flatSpot(physics, x, z, y0, hx, hz, yaw);
+  const flat = (x: number, z: number, y0: number, hx: number, hz: number, yaw: number) => (inPlay(boundary, x, z, hx, hz) ? flatSpot(physics, x, z, y0, hx, hz, yaw) : null);
   const clear = (p: THREE.Vector3, r: number) => taken.every((t) => t.distanceTo(p) > r);
   for (const b of bases) {
     for (const kind of ['jeep', 'apc'] as VehicleKind[]) {

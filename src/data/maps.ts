@@ -29,21 +29,27 @@ export const BIG_TEAM = 48;
 
 export type LobbyMode = 'zone' | 'frontline' | 'conquest' | 'skirmish';
 export type Difficulty = 'easy' | 'normal' | 'hard';
+/** The side the player fights on; random is settled when the match starts. */
+export type LobbySide = 'random' | 'blue' | 'red';
+export const SIDES: readonly LobbySide[] = ['random', 'blue', 'red'];
 
 export interface LobbyPick {
   map: string;
   mode: LobbyMode;
   team: number;
   difficulty: Difficulty;
+  side: LobbySide;
 }
 
 /**
  * The game's address for a pick (main.ts reads it): the player plus team-1
- * bots against team bots; the practice range takes no bots.
+ * bots against team bots, on the picked side (`roll` settles random); the
+ * practice range takes no bots.
  */
-export function matchQuery(p: LobbyPick): string {
+export function matchQuery(p: LobbyPick, roll: () => number = Math.random): string {
   if (p.map === RANGE_ID) return `?map=${RANGE_ID}&bots=0`;
-  const q = new URLSearchParams({ map: p.map, bots: `${Math.max(0, p.team - 1)}v${p.team}`, mode: p.mode, difficulty: p.difficulty });
+  const side = p.side === 'random' ? (roll() < 0.5 ? 'blue' : 'red') : p.side;
+  const q = new URLSearchParams({ map: p.map, bots: `${Math.max(0, p.team - 1)}v${p.team}`, mode: p.mode, difficulty: p.difficulty, side });
   return `?${q.toString()}`;
 }
 

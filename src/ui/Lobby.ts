@@ -1,7 +1,7 @@
 import { setLocale, t, type MessageKey } from '@/i18n';
-import { isTouchDevice, loadSettings, type Settings } from '@/core/Settings';
+import { isTouchDevice, loadSettings, saveSettings, type Settings } from '@/core/Settings';
 import { loadJSON, saveJSON } from '@/core/storage';
-import { BIG_TEAM, MAPS, RANGE_ID, TEAM_SIZES, matchQuery, snapTeam, type Difficulty, type LobbyMode, type LobbyPick } from '@/data/maps';
+import { BIG_TEAM, MAPS, RANGE_ID, SIDES, TEAM_SIZES, matchQuery, snapTeam, type Difficulty, type LobbyMode, type LobbyPick } from '@/data/maps';
 import type { MapDef } from '@/world/mapTypes';
 import { paintMap } from './mapPainter';
 import { renderHint } from './Overlay';
@@ -16,9 +16,9 @@ import type { ServerLink } from '@/net/ServerLink';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
-type Row = 'mode' | 'map' | 'team' | 'difficulty';
-const ROWS: readonly Row[] = ['mode', 'map', 'team', 'difficulty'];
-const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map', team: 'lobby.team', difficulty: 'lobby.difficulty' };
+type Row = 'mode' | 'map' | 'side' | 'team' | 'difficulty';
+const ROWS: readonly Row[] = ['mode', 'map', 'side', 'team', 'difficulty'];
+const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map', side: 'lobby.side', team: 'lobby.team', difficulty: 'lobby.difficulty' };
 
 /** The main menu's entries, top to bottom. */
 const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'credits'] as const;
@@ -101,6 +101,7 @@ export class Lobby {
       mode: saved.mode ?? 'zone',
       team: snapTeam(saved.team ?? entry?.team ?? MAPS[0]!.team),
       difficulty: DIFFICULTIES.includes(saved.difficulty as Difficulty) ? saved.difficulty! : 'normal',
+      side: SIDES.find((s) => s === saved.side) ?? 'random',
     };
     this.root = el('div', 'lobby', container);
     this.bg = el('div', 'lb-bg', this.root);
@@ -116,10 +117,31 @@ export class Lobby {
   }
 
   private editName(required: boolean): void {
-    askName(this.root, this.playerName, required, (name) => {
-      if (name) this.playerName = name;
-      this.render();
-    });
+    askName(
+      this.root,
+      this.playerName,
+      required,
+      (name) => {
+        if (name) this.playerName = name;
+        this.render();
+      },
+      () => this.toggleLocale(),
+    );
+  }
+
+  /** Korean <-> English, at once (a button named in the other language, so either reader finds it). */
+  private toggleLocale(): void {
+    this.settings.locale = this.settings.locale === 'ko' ? 'en' : 'ko';
+    saveSettings(this.settings);
+    setLocale(this.settings.locale);
+    this.render();
+  }
+
+  private langButton(parent: HTMLElement): void {
+    const b = el('button', 'lb-lang', parent);
+    b.textContent = t('lobby.otherLanguage');
+    b.title = t('lobby.language');
+    b.addEventListener('click', () => this.toggleLocale());
   }
 
   private save(): void {
@@ -296,7 +318,9 @@ export class Lobby {
     this.pickDesc = el('div', 'lb-item-desc', col);
     this.pickDesc.textContent = t(`menu.${ENTRIES[this.entry]!}Desc`);
     el('div', 'lb-version', body).textContent = t('menu.version');
-    const name = el('button', 'lb-name', body);
+    const corner = el('div', 'lb-corner', body);
+    this.langButton(corner);
+    const name = el('button', 'lb-name', corner);
     el('span', 'lb-name-label', name).textContent = t('name.label');
     el('span', 'lb-name-value', name).textContent = this.playerName ?? '—';
     name.addEventListener('click', () => this.editName(false));
@@ -314,6 +338,7 @@ export class Lobby {
       mode: modeName(p.mode),
       map: t(`map.${p.map}` as MessageKey),
       team: `${p.team} vs ${p.team}`,
+      side: t(`lobby.side.${p.side}` as MessageKey),
       difficulty: t(`lobby.diff.${p.difficulty}` as MessageKey),
     };
     ROWS.forEach((id, i) => {
@@ -344,6 +369,7 @@ export class Lobby {
     const p = this.pick;
     if (row === 'mode') return t(`modeDesc.${p.mode}` as MessageKey);
     if (row === 'map') return t(`mapDesc.${p.map}` as MessageKey);
+    if (row === 'side') return t('lobby.sideDesc');
     if (row === 'team') return p.team >= BIG_TEAM ? t('lobby.bigTeam') : t('lobby.teamHint').replace('{n}', String(MAPS.find((m) => m.id === p.map)?.team ?? 12));
     return t(`lobby.diffDesc.${p.difficulty}` as MessageKey);
   }
@@ -371,7 +397,8 @@ export class Lobby {
     } else if (row === 'team') {
       const i = TEAM_SIZES.indexOf(p.team as (typeof TEAM_SIZES)[number]);
       p.team = TEAM_SIZES[Math.max(0, Math.min(TEAM_SIZES.length - 1, i + d))]!;
-    } else p.difficulty = step(DIFFICULTIES, p.difficulty, d);
+    } else if (row === 'side') p.side = step(SIDES, p.side, d);
+    else p.difficulty = step(DIFFICULTIES, p.difficulty, d);
     this.focus = ROWS.indexOf(row);
     this.save();
     this.render();

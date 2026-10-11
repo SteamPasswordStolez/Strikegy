@@ -78,6 +78,8 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void, n
     net,
     // ?tutorial: the menu's tutorial (the basics step by step on the range).
     tutorial: params.has('tutorial'),
+    // ?side=red: the player's side in a solo match (blue without it).
+    team: params.get('side') === 'red' ? 'red' : 'blue',
   });
   // Game.create puts its loading screen up before its first await.
   onLoadingShown?.();

@@ -74,6 +74,7 @@ export class SettingsPanel {
       this.slider(rows, 'lobby.sensitivity', 'sensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2));
       this.slider(rows, 'lobby.adsSensitivity', 'adsSensitivity', 0.3, 1.5, 0.05, (v) => v.toFixed(2));
       this.toggle(rows, 'lobby.invertY', 'invertY');
+      this.toggle(rows, 'lobby.crouchHold', 'crouchHold', ['lobby.crouchToggle', 'lobby.crouchHeld']);
     } else if (this.cat === 'keys') {
       this.keyRows(rows);
     } else if (this.cat === 'video') {
@@ -139,11 +140,12 @@ export class SettingsPanel {
     }
   }
 
-  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps'): void {
+  /** Two choices, off / on (or named by `names`). */
+  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
     const seg = el('div', 'sp-seg', this.row(parent, label, key));
     for (const on of [false, true]) {
       const b = el('button', `sp-opt${on === this.s[key] ? ' sel' : ''}`, seg);
-      b.textContent = t(on ? 'lobby.on' : 'lobby.off');
+      b.textContent = t(names[on ? 1 : 0]);
       b.addEventListener('click', () => {
         this.set(key, on);
         this.render();

@@ -17,6 +17,8 @@ export interface Settings {
   masterVolume: number;
   /** Render resolution as a share of the screen's (0.5..1; no automatic changes). */
   renderScale: number;
+  /** Crouch while the key is held (keyboard), instead of a press toggling it. */
+  crouchHold: boolean;
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -31,10 +33,17 @@ export const DEFAULT_SETTINGS: Settings = {
   showFps: false,
   masterVolume: 0.8,
   renderScale: 0.9,
+  crouchHold: false,
 };
 
+/** Korean for browsers set to Korean, English for everyone else (until the player picks one). */
+export function browserLocale(languages: readonly string[] = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language])): Locale {
+  const first = languages.find((l) => !!l);
+  return !first || first.toLowerCase().startsWith('ko') ? 'ko' : 'en';
+}
+
 export function loadSettings(): Settings {
-  return { ...DEFAULT_SETTINGS, ...(loadJSON<Partial<Settings>>(KEY) ?? {}) };
+  return { ...DEFAULT_SETTINGS, locale: browserLocale(), ...(loadJSON<Partial<Settings>>(KEY) ?? {}) };
 }
 
 export function saveSettings(s: Settings): void {

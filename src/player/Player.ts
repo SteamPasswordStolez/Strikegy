@@ -39,6 +39,11 @@ export class Player {
   crouching = false;
   /** Crouch toggled on from the keyboard (Ctrl / C); touch sends its own toggle state. */
   private crouchLatched = false;
+
+  /** Crouched by a toggle press (not by a held key). */
+  get crouchToggled(): boolean {
+    return this.crouchLatched;
+  }
   /** Time left in a slide (s); 0 = not sliding. */
   private slideLeft = 0;
   /** Sprint key held last step (a fresh press stands up from a crouch; holding it through a slide doesn't). */

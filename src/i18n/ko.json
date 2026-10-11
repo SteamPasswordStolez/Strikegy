@@ -529,5 +529,15 @@
   "tut.build": "건설 모드: 거점의 표시된 자리에서 사격을 길게 눌러 엄폐물을 짓습니다.",
   "tut.buildTouch": "건설 버튼: 거점의 표시된 자리에서 사격 버튼을 길게 눌러 엄폐물을 짓습니다.",
   "tut.support": "전장 지원: 분대 RP로 연막·보급·포격을 부릅니다. 숫자로 고르세요.",
-  "tut.supportTouch": "지원 버튼: 분대 RP로 연막·보급·포격을 부릅니다."
+  "tut.supportTouch": "지원 버튼: 분대 RP로 연막·보급·포격을 부릅니다.",
+  "lobby.crouchHold": "앉기 방식",
+  "lobby.crouchToggle": "토글",
+  "lobby.crouchHeld": "누르고 있기",
+  "setDesc.crouchHold": "토글: 한 번 누르면 앉고 다시 누르면 일어섭니다. 누르고 있기: 키를 누르는 동안만 앉습니다 (달리다 누르면 슬라이딩은 그대로). 키보드에만 해당하고, 터치 앉기 버튼은 늘 토글입니다.",
+  "lobby.otherLanguage": "English",
+  "lobby.side": "팀",
+  "lobby.side.random": "무작위",
+  "lobby.side.blue": "블루",
+  "lobby.side.red": "레드",
+  "lobby.sideDesc": "블루와 레드 중 어느 편에서 싸울지 고릅니다. 무작위는 게임을 시작할 때 정해집니다."
 }

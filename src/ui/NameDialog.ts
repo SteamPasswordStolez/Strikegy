@@ -6,7 +6,7 @@ import { NAME_MAX } from '@/net/lobbyProtocol';
  * "Pick your name": shown over the main menu on the first visit, and when the
  * name on the menu is clicked. `required` hides the cancel button.
  */
-export function askName(parent: HTMLElement, current: string | null, required: boolean, done: (name: string | null) => void): void {
+export function askName(parent: HTMLElement, current: string | null, required: boolean, done: (name: string | null) => void, switchLanguage?: () => void): void {
   const shade = document.createElement('div');
   shade.className = 'lb-dialog-shade';
   const box = document.createElement('form');
@@ -31,8 +31,9 @@ export function askName(parent: HTMLElement, current: string | null, required: b
   ok.className = 'lb-btn primary';
   ok.textContent = t('lobby.hint.ok');
   row.appendChild(ok);
+  let cancel: HTMLButtonElement | null = null;
   if (!required) {
-    const cancel = document.createElement('button');
+    cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'lb-btn';
     cancel.textContent = t('mp.cancel');
@@ -40,6 +41,25 @@ export function askName(parent: HTMLElement, current: string | null, required: b
     row.appendChild(cancel);
   }
   box.append(title, input, note, row);
+  // The first thing a new player sees: a way to English (or back) right here.
+  if (switchLanguage) {
+    const lang = document.createElement('button');
+    lang.type = 'button';
+    lang.className = 'lb-lang';
+    const label = () => (lang.textContent = t('lobby.otherLanguage'));
+    label();
+    lang.addEventListener('click', () => {
+      switchLanguage();
+      title.textContent = t('name.title');
+      input.placeholder = t('name.placeholder');
+      note.textContent = t('name.rule');
+      ok.textContent = t('lobby.hint.ok');
+      if (cancel) cancel.textContent = t('mp.cancel');
+      label();
+      input.focus();
+    });
+    box.prepend(lang);
+  }
   const close = (name: string | null): void => {
     shade.remove();
     done(name);

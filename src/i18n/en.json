@@ -529,5 +529,15 @@
   "tut.build": "Build mode: hold fire on a marked spot at a zone to build cover.",
   "tut.buildTouch": "Build button: hold fire on a marked spot at a zone to build cover.",
   "tut.support": "Call-ins: spend squad RP on smoke, supplies and artillery. Pick with the number keys.",
-  "tut.supportTouch": "Call-in button: spend squad RP on smoke, supplies and artillery."
+  "tut.supportTouch": "Call-in button: spend squad RP on smoke, supplies and artillery.",
+  "lobby.crouchHold": "Crouch",
+  "lobby.crouchToggle": "Toggle",
+  "lobby.crouchHeld": "Hold",
+  "setDesc.crouchHold": "Toggle: press once to crouch, again to stand. Hold: crouch only while the key is down (sliding from a sprint still works). Keyboard only; the touch crouch button always toggles.",
+  "lobby.otherLanguage": "한국어",
+  "lobby.side": "Side",
+  "lobby.side.random": "Random",
+  "lobby.side.blue": "Blue",
+  "lobby.side.red": "Red",
+  "lobby.sideDesc": "Pick which side you fight for. Random is settled when the match starts."
 }

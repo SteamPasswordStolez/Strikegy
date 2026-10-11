@@ -226,6 +226,8 @@ export interface BotOptions {
   capacity?: number;
   /** This side (or both) plays the older, plainer behaviour (comparison runs, `?plain=red`). */
   plain?: Team | 'both' | null;
+  /** The person's side (solo): `allies` join it, `enemies` the other one. Default blue. */
+  side?: Team;
 }
 
 /**
@@ -505,7 +507,7 @@ export class BotManager implements BotServices {
     const plain = (team: Team) => opts.plain === team || opts.plain === 'both';
     this.smart = { blue: this.skill.smart && !plain('blue'), red: this.skill.smart && !plain('red') };
     const teamState = (team: Team): TeamState => {
-      const own = spawns.filter((s) => s.team === team || (team === PLAYER_TEAM && s.team === 'player'));
+      const own = spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
       const base = own.length
         ? own.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(own.length)
         : new THREE.Vector3(0, 0, team === 'blue' ? 40 : -40);
@@ -515,16 +517,17 @@ export class BotManager implements BotServices {
     // Build every soldier + weapon mesh now rather than hitching on first respawn.
     SoldierModel.prewarm(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]));
 
+    const mine = opts.side ?? PLAYER_TEAM;
     const add = (team: Team, n: number) => {
       for (let i = 0; i < n; i++) {
         // The player's own squad has them in the first slot: allies are counted from 1.
-        const cls = botClass(team === PLAYER_TEAM ? i + 1 : i);
+        const cls = botClass(team === mine ? i + 1 : i);
         const style = rollPersonality(Math.random, cls);
         const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(cls, style)], physics, registry, cls, style);
         this.respawn(bot);
         const model = new SoldierModel(team, bot.def);
         scene.add(model.root);
-        const marker = team === PLAYER_TEAM ? this.makeMarker('#4d8cff') : null;
+        const marker = team === mine ? this.makeMarker('#4d8cff') : null;
         if (marker) scene.add(marker);
         this.entries.push({
           bot,
@@ -553,8 +556,8 @@ export class BotManager implements BotServices {
         this.byBot.set(bot, this.entries[this.entries.length - 1]!);
       }
     };
-    add(PLAYER_TEAM, opts.allies);
-    add(otherTeam(PLAYER_TEAM), opts.enemies);
+    add(mine, opts.allies);
+    add(otherTeam(mine), opts.enemies);
     this.crowd = new Crowd(core(), {
       cell: CELL,
       sepRadius: SEPARATION_RADIUS,
