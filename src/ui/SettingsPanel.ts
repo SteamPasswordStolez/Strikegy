@@ -1,7 +1,16 @@
 import { setLocale, t, type MessageKey } from '@/i18n';
 import { resolveQuality, saveSettings, type Settings } from '@/core/Settings';
+import { RESERVED, bind, bindings, commitBindings, conflicts, keyName, resetBindings, type Action } from '@/input/bindings';
 
-type Category = 'controls' | 'video' | 'audio';
+type Category = 'controls' | 'keys' | 'video' | 'audio';
+
+/** The key rows, in groups. */
+const KEY_GROUPS: [MessageKey, Action[]][] = [
+  ['keys.g.move', ['forward', 'back', 'left', 'right', 'sprint', 'jump', 'crouch']],
+  ['keys.g.combat', ['fire', 'ads', 'reload', 'melee', 'grenade', 'breath', 'inspect']],
+  ['keys.g.kit', ['interact', 'medkit', 'build', 'support', 'view', 'scoreboard']],
+  ['keys.g.slots', ['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6', 'slot7', 'slot8', 'slot9']],
+];
 
 export interface SettingsPanelOptions {
   /** In a match: quality and language only take effect on the next load (said under them). */
@@ -29,6 +38,10 @@ export class SettingsPanel {
   readonly root: HTMLDivElement;
   private cat: Category = 'controls';
   private desc!: HTMLDivElement;
+  /** The key slot waiting for a key press. */
+  private capture: { action: Action; slot: number } | null = null;
+  /** Said at the bottom after the last key change (a refused key). */
+  private keyNote = '';
 
   constructor(
     private readonly s: Settings,
@@ -44,10 +57,11 @@ export class SettingsPanel {
   render(): void {
     this.root.replaceChildren();
     const cats = el('div', 'sp-cats', this.root);
-    for (const c of ['controls', 'video', 'audio'] as const) {
+    for (const c of ['controls', 'keys', 'video', 'audio'] as const) {
       const b = el('button', `sp-cat${c === this.cat ? ' sel' : ''}`, cats);
       b.textContent = t(c === 'audio' ? 'lobby.audioLang' : (`lobby.${c}` as MessageKey));
       b.addEventListener('click', () => {
+        this.stopCapture();
         this.cat = c;
         this.render();
       });
@@ -60,6 +74,8 @@ export class SettingsPanel {
       this.slider(rows, 'lobby.sensitivity', 'sensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2));
       this.slider(rows, 'lobby.adsSensitivity', 'adsSensitivity', 0.3, 1.5, 0.05, (v) => v.toFixed(2));
       this.toggle(rows, 'lobby.invertY', 'invertY');
+    } else if (this.cat === 'keys') {
+      this.keyRows(rows);
     } else if (this.cat === 'video') {
       this.slider(rows, 'lobby.fov', 'fov', 60, 100, 1, (v) => `${Math.round(v)}°`);
       this.slider(rows, 'lobby.renderScale', 'renderScale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
@@ -134,4 +150,123 @@ export class SettingsPanel {
       });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Key bindings: a row an action with its two keys; click one, then press a key
+  // or a mouse button (Esc: cancel, Backspace: clear). Shared keys show in red.
+
+  private keyRows(rows: HTMLElement): void {
+    rows.classList.add('sp-keys');
+    const b = bindings();
+    const clash = conflicts(b);
+    const names = (acts: Action[]) => acts.map((a) => this.actionName(a)).join(', ');
+    const clashText = (a: Action): string =>
+      b[a]
+        .filter((c) => clash.get(c)?.includes(a))
+        .map((c) =>
+          t('keys.conflict')
+            .replace('{key}', keyName(c))
+            .replace('{names}', names(clash.get(c)!.filter((o) => o !== a))),
+        )
+        .join(' · ');
+    this.desc.textContent = this.keyNote || (clash.size ? t('keys.conflicts') : t('keys.hint'));
+    this.desc.classList.toggle('warn', clash.size > 0 || !!this.keyNote);
+    for (const [head, actions] of KEY_GROUPS) {
+      el('div', 'sp-group', rows).textContent = t(head);
+      for (const a of actions) {
+        const bad = clashText(a);
+        const r = el('div', `sp-row sp-keyrow${bad ? ' clash' : ''}`, rows);
+        el('div', 'sp-label', r).textContent = this.actionName(a);
+        const ctl = el('div', 'sp-ctl', r);
+        for (let slot = 0; slot < 2; slot++) {
+          const code = b[a][slot];
+          const waiting = this.capture?.action === a && this.capture.slot === slot;
+          const k = el('button', `sp-key${waiting ? ' waiting' : ''}${code && clash.get(code)?.includes(a) ? ' clash' : ''}${code ? '' : ' empty'}`, ctl);
+          k.textContent = waiting ? t('keys.press') : code ? keyName(code) : '—';
+          k.addEventListener('click', () => this.startCapture(a, Math.min(slot, b[a].length)));
+        }
+        const about = a === 'crouch' ? t('keys.crouchDesc') : a === 'view' ? t('keys.viewDesc') : a.startsWith('slot') ? t('keys.slotDesc') : t('keys.hint');
+        // A refused key's note stays until the next binding; shared keys are said on every row.
+        r.addEventListener('pointerenter', () => {
+          this.desc.textContent = this.keyNote || (bad ? `${bad}. ${about}` : clash.size ? `${t('keys.conflicts')} ${about}` : about);
+          this.desc.classList.toggle('warn', !!this.keyNote || !!bad || clash.size > 0);
+        });
+      }
+    }
+    const reset = el('button', 'sp-opt sp-reset', rows);
+    reset.textContent = t('keys.reset');
+    reset.addEventListener('click', () => {
+      this.stopCapture();
+      resetBindings();
+      this.keyNote = '';
+      this.render();
+    });
+  }
+
+  private actionName(a: Action): string {
+    const slot = /^slot(\d)$/.exec(a);
+    return slot ? t('keys.slot').replace('{n}', slot[1]!) : t(`keys.${a}` as MessageKey);
+  }
+
+  private startCapture(action: Action, slot: number): void {
+    this.stopCapture();
+    this.capture = { action, slot };
+    this.keyNote = '';
+    window.addEventListener('keydown', this.onCaptureKey, true);
+    window.addEventListener('mousedown', this.onCaptureMouse, true);
+    this.render();
+  }
+
+  private stopCapture(): void {
+    if (!this.capture) return;
+    this.capture = null;
+    window.removeEventListener('keydown', this.onCaptureKey, true);
+    window.removeEventListener('mousedown', this.onCaptureMouse, true);
+  }
+
+  private finishCapture(code: string | null): void {
+    const c = this.capture;
+    this.stopCapture();
+    if (c) {
+      bind(bindings(), c.action, c.slot, code);
+      commitBindings();
+    }
+    this.render();
+  }
+
+  /** Takes the key before the game, the pause screen or the menu see it. */
+  private onCaptureKey = (e: KeyboardEvent): void => {
+    // The panel was closed while waiting: nothing to bind.
+    if (!this.root.isConnected) return this.stopCapture();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat) return;
+    if (e.code === 'Escape') {
+      this.stopCapture();
+      this.render();
+    } else if (e.code === 'Backspace' || e.code === 'Delete') this.finishCapture(null);
+    else if (RESERVED.has(e.code) || !e.code) {
+      this.keyNote = t('keys.reserved').replace('{key}', e.code ? keyName(e.code) : e.key);
+      this.stopCapture();
+      this.render();
+    } else this.finishCapture(e.code);
+  };
+
+  /** A mouse button binds too; its click and context menu go nowhere else. */
+  private onCaptureMouse = (e: MouseEvent): void => {
+    if (!this.root.isConnected) return this.stopCapture();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    // What this button sends after its mousedown (left: click, right: context menu, others: auxclick) goes nowhere.
+    const after = e.button === 0 ? ['click'] : e.button === 2 ? ['contextmenu', 'auxclick'] : ['auxclick'];
+    const swallow = (ev: Event) => {
+      if ((ev as MouseEvent).button !== e.button) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    };
+    for (const type of after) window.addEventListener(type, swallow, true);
+    // Until the button comes up (and a little after): the events follow mouseup.
+    setTimeout(() => after.forEach((type) => window.removeEventListener(type, swallow, true)), 1000);
+    this.finishCapture(`Mouse${e.button}`);
+  };
 }

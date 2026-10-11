@@ -32,6 +32,7 @@ import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource, type InputState } from '@/input/InputState';
 import { KeyboardMouse } from '@/input/KeyboardMouse';
+import { actionKey, type Action } from '@/input/bindings';
 import { TouchControls } from '@/input/Touch';
 import { AirMarkers, type AirMark } from '@/render/airMarkers';
 import { Player } from '@/player/Player';
@@ -70,6 +71,8 @@ import { HUD } from '@/ui/HUD';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
 import { SettingsPanel } from '@/ui/SettingsPanel';
+import { TutorialPanel } from '@/ui/TutorialPanel';
+import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
 import { ZoneMode } from '@/modes/ZoneMode';
 import { ConquestRules, DominationRules, FrontlineRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { ZoneRules } from '@/modes/zoneRules';
@@ -137,6 +140,8 @@ export interface GameOptions {
   sandbox?: boolean;
   /** A match on the game server (multiplayer): the connection and the match's start message. */
   net?: NetOptions;
+  /** The menu's tutorial: the basics step by step (on the range), whether seen before or not. */
+  tutorial?: boolean;
 }
 
 /** How big a blast (local or from the game server) sounds. */
@@ -271,6 +276,11 @@ export class Game {
   /** Squad call-ins (B): barrages, recon planes, supply drops; the menu and the call being aimed. */
   private support!: SupportWorld;
   private supportMenu!: SupportMenu;
+  /** The first-play tutorial while it runs, its card, and how long the closing line stays. */
+  private tutorial: TutorialRun | null = null;
+  private tutorialPanel: TutorialPanel | null = null;
+  private tutorialEndLeft = 0;
+  private readonly tutLast = { x: 0, z: 0, ammo: -1, weapon: '', reloading: false, crouching: false };
   private supportAim: SupportId | null = null;
   private supportPoint: THREE.Vector3 | null = null;
   private supportRing: THREE.Mesh | null = null;
@@ -760,6 +770,7 @@ export class Game {
    * click is too long ago, the first click on the game takes it.
    */
   private begin(): void {
+    this.startTutorial();
     this.audio.unlock();
     this.running = true;
     this.started = true;
@@ -980,9 +991,102 @@ export class Game {
             },
           ]
         : []),
+      ...(this.tutorial
+        ? [
+            {
+              label: t('tut.skip'),
+              onClick: () => {
+                this.endTutorial(true);
+                this.pause(view);
+              },
+            },
+          ]
+        : []),
       { label: t('pause.quit'), onClick: () => this.quit() },
     ]);
     this.overlay.setExtra(view === 'settings' ? this.settingsPanel().root : null);
+  }
+
+  // ---------------------------------------------------------------------------
+  // First-play tutorial (core/tutorial.ts): the basics on the first match or
+  // range visit and from the menu, the match steps on the first match.
+
+  private startTutorial(): void {
+    if (this.tutorial || this.tutorialPanel) return;
+    const guided = !!this.options.tutorial;
+    const seen = loadSeen();
+    // The menu's tutorial shows the match tips again on the next match.
+    if (guided && seen.match) saveSeen({ ...seen, match: false });
+    const steps = stepsFor(guided, guided ? {} : seen, {
+      deployFlow: this.deployFlow,
+      zones: !!this.zoneMode,
+      fort: !!this.fort,
+      support: !!this.playerSquad,
+    });
+    if (!steps.length) return;
+    this.tutorial = new TutorialRun(steps);
+    this.tutorialPanel = new TutorialPanel(this.container, !!this.touch, () => this.endTutorial(true));
+    const p = this.player.feet;
+    Object.assign(this.tutLast, { x: p.x, z: p.z, ammo: -1, weapon: '', reloading: false, crouching: this.player.crouching });
+  }
+
+  /** Done or skipped: remembered so it doesn't come back (the menu's tutorial replays it). */
+  private endTutorial(skipped: boolean): void {
+    const run = this.tutorial;
+    if (!run) return;
+    run.skip();
+    const seen = loadSeen();
+    if (run.steps.some((id) => STEPS.find((s) => s.id === id)!.basic)) seen.basics = true;
+    if (run.steps.some((id) => !STEPS.find((s) => s.id === id)!.basic) || (!this.options.tutorial && this.deployFlow)) seen.match = true;
+    saveSeen(seen);
+    this.tutorial = null;
+    this.tutorialEndLeft = skipped ? 0 : 5;
+  }
+
+  /** Feeds the tutorial what the player did this frame (input still holds its presses). */
+  private stepTutorial(dt: number, input: InputState): void {
+    const panel = this.tutorialPanel;
+    if (!panel) return;
+    const run = this.tutorial;
+    const p = this.player;
+    const w = this.weapons;
+    const last = this.tutLast;
+    const deploying = !!this.deployScreen?.visible;
+    const onField = this.running && p.alive && this.deployed && !this.overlay.visible;
+    if (run) {
+      const moved = Math.min(1, Math.hypot(p.feet.x - last.x, p.feet.z - last.z));
+      const ammo = w.state.ammo;
+      const fired = w.def.id === last.weapon && last.ammo >= 0 && ammo < last.ammo;
+      const probe: TutorialProbe = {
+        dt,
+        onField,
+        deploying,
+        moved: onField && !this.ride ? moved : 0,
+        turned: Math.abs(input.lookYaw) + Math.abs(input.lookPitch),
+        sprinting: p.sprinting,
+        crouched: input.crouchToggle || p.sliding || p.crouching !== last.crouching,
+        jumped: input.jump,
+        fired,
+        ads: input.ads && w.adsBlend > 0.5,
+        reloaded: w.state.reloading && !last.reloading,
+        grenade: input.throwGrenade,
+        medkit: input.medkit,
+        interact: input.interactPressed,
+        building: this.buildMode,
+        supportOpen: this.supportMenu.open,
+        inZone: !!this.zoneMode?.zoneAt(p.feet),
+      };
+      run.update(probe);
+      if (run.finished) this.endTutorial(false);
+    }
+    Object.assign(last, { x: p.feet.x, z: p.feet.z, ammo: w.state.ammo, weapon: w.def.id, reloading: w.state.reloading, crouching: p.crouching });
+    if (!this.tutorial && this.tutorialEndLeft > 0) this.tutorialEndLeft -= dt;
+    const ended = !this.tutorial && this.tutorialEndLeft > 0;
+    panel.update(this.tutorial, (onField || (deploying && this.tutorial?.current?.id === 'deploy')) && !this.matchOver, deploying, ended);
+    if (!this.tutorial && !ended) {
+      panel.root.remove();
+      this.tutorialPanel = null;
+    }
   }
 
   private settingsPanelCache: SettingsPanel | null = null;
@@ -1013,6 +1117,7 @@ export class Game {
     const input = this.input;
     resetFrameInput(input);
     for (const s of this.sources) s.apply(input);
+    this.stepTutorial(dt, input);
 
     const w = this.weapons;
     const p = this.player;
@@ -2939,7 +3044,7 @@ export class Game {
       if (mount?.overheated) parts.push(t('vehicle.overheat'));
       if (v.reloadLeft(seat, this.simTime) > 0) parts.push(t('vehicle.reloading'));
       parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
-      if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{n}', String(n)));
+      if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{keys}', `${actionKey('slot1')}–${actionKey(`slot${Math.min(9, n)}` as Action)}`));
       if (!this.touch) parts.push(t('vehicle.view'));
       const f = v.flight;
       if (f) {
@@ -3015,13 +3120,13 @@ export class Game {
             ? { air: this.breath.air / BREATH.air, holding: this.breath.holding, locked: this.breath.locked, hint: t(this.touch ? 'breath.hintTouch' : 'breath.hint') }
             : null,
         dark: this.player.alive ? this.breath.dark : 0,
-        rp: supportState ? `${t('support.hud')} ${supportState.rp}${this.touch ? '' : ' · B'}` : null,
+        rp: supportState ? `${t('support.hud')} ${supportState.rp}${this.touch || !actionKey('support') ? '' : ` · ${actionKey('support')}`}` : null,
         grenadeLabel: t(`grenade.${sel}` as MessageKey),
         grenadeType: sel,
         grenadeCount: this.grenades.count,
         gadget:
           this.gadget && this.deployed
-            ? { id: this.gadget, key: this.touch ? '' : '4 · ', label: t(`gadgetName.${this.gadget}`), count: this.gadgetCount, out: this.gadgetOut }
+            ? { id: this.gadget, key: this.touch || !actionKey('slot4') ? '' : `${actionKey('slot4')} · `, label: t(`gadgetName.${this.gadget}`), count: this.gadgetCount, out: this.gadgetOut }
             : null,
         flash,
         respawnIn: this.player.alive || this.playerDowned ? null : Math.max(0, this.respawnTimer),

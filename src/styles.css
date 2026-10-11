@@ -3674,6 +3674,186 @@ body {
   line-height: 1.5;
   color: var(--hud-dim);
 }
+/* Key bindings: a row an action, its two keys as buttons; shared keys in red. */
+.sp-rows.sp-keys {
+  max-height: min(56vh, 620px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.sp-group {
+  margin-top: 8px;
+  padding: 2px 2px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hud-accent);
+}
+.sp-group:first-child {
+  margin-top: 0;
+}
+.sp-keyrow {
+  min-height: 40px;
+}
+.sp-key {
+  flex: 1;
+  max-width: 160px;
+  padding: 7px 10px;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 0.35);
+  color: var(--hud-fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sp-key:hover {
+  background: rgb(255 255 255 / 0.14);
+}
+.sp-key.empty {
+  color: var(--hud-faint);
+}
+.sp-key.clash {
+  border-color: var(--hud-danger);
+  color: #ffb3ad;
+}
+.sp-key.waiting {
+  border-color: var(--hud-accent);
+  background: rgb(245 209 78 / 0.16);
+  color: var(--hud-accent);
+  animation: sp-wait 0.8s ease-in-out infinite alternate;
+}
+@keyframes sp-wait {
+  to {
+    background: rgb(245 209 78 / 0.04);
+  }
+}
+.sp-keyrow.clash {
+  box-shadow: inset 3px 0 0 var(--hud-danger);
+}
+.sp-reset {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 10px;
+  padding: 9px 16px;
+}
+.sp-desc.warn {
+  color: #ffb3ad;
+}
+
+/* Tutorial card under the objective bar (at the bottom over the deploy screen). */
+.tut {
+  position: fixed;
+  left: 50%;
+  top: 96px;
+  z-index: 45;
+  display: none;
+  width: min(440px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  padding: 10px 14px 0;
+  background: var(--panel-strong);
+  border-left: 3px solid var(--hud-accent);
+  color: var(--hud-fg);
+  font-family: var(--font);
+  pointer-events: none;
+}
+.tut.on {
+  display: block;
+  animation: tut-in 0.25s ease-out;
+}
+@keyframes tut-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+}
+.overlay-up .tut {
+  display: none;
+}
+.tut.at-deploy {
+  top: auto;
+  bottom: 96px;
+}
+.tut-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.tut-head {
+  color: var(--hud-accent);
+}
+.tut-skiphint {
+  color: var(--hud-faint);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.tut-skip {
+  pointer-events: auto;
+  width: 30px;
+  height: 30px;
+  margin: -6px -8px -6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--hud-dim);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+.tut-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.tut-keys {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+.tut-keys:empty {
+  display: none;
+}
+.tut-keys .keycap {
+  font-size: 14px;
+}
+.tut-track {
+  height: 3px;
+  margin: 0 -14px;
+  background: rgb(255 255 255 / 0.12);
+}
+.tut-fill {
+  height: 100%;
+  width: 0;
+  background: var(--hud-accent);
+  transition: width 0.15s linear;
+}
+.tut.done .tut-fill {
+  background: var(--squad);
+}
+.tut.done .tut-head::after {
+  content: ' ✓';
+  color: var(--squad);
+}
+.is-touch .tut {
+  top: 64px;
+  width: min(380px, calc(100vw - 32px));
+}
+.is-touch .tut-body {
+  font-size: 13px;
+}
+
 @media (max-height: 520px) {
   .kind-pause .ov-panel {
     grid-template-columns: 180px minmax(0, 1fr);

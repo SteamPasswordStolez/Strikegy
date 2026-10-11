@@ -1,27 +1,23 @@
 import type { InputSource, InputState } from './InputState';
+import { ACTIONS, bindings, onBindingsChange, type Action } from './bindings';
 
 /** Base radians per mouse count at sensitivity 1.0. */
 const MOUSE_RAD_PER_COUNT = 0.0022;
 
+/** Pulse actions: a press is queued until the next `apply`. */
+const PULSES = ['jump', 'fire', 'reload', 'medkit', 'interact', 'build', 'grenade', 'melee', 'support', 'view', 'crouch', 'inspect'] as const;
+type Pulse = (typeof PULSES)[number];
+
 export class KeyboardMouse implements InputSource {
+  /** Codes held down: keys (`KeyboardEvent.code`) and mouse buttons (`Mouse0`..`Mouse4`). */
   private keys = new Set<string>();
-  private buttons = new Set<number>();
   private dx = 0;
   private dy = 0;
-  private jumpQueued = false;
-  private fireQueued = false;
-  private reloadQueued = false;
+  private queued = new Set<Pulse>();
   private cycleQueued = 0;
   private slotQueued = -1;
-  private grenadeQueued = false;
-  private medkitQueued = false;
-  private interactQueued = false;
-  private buildQueued = false;
-  private meleeQueued = false;
-  private inspectQueued = false;
-  private supportQueued = false;
-  private viewQueued = false;
-  private crouchQueued = false;
+  /** Code -> the actions it does (rebuilt when the bindings change). */
+  private byCode = new Map<string, Action[]>();
   private disposers: (() => void)[] = [];
 
   constructor(
@@ -29,28 +25,17 @@ export class KeyboardMouse implements InputSource {
     private readonly getSensitivity: () => number,
     private readonly getInvertY: () => boolean,
   ) {
+    this.rebind();
+    this.disposers.push(onBindingsChange(() => this.rebind()));
     this.listen<KeyboardEvent>(window, 'keydown', (e) => {
       if (e.repeat) return;
-      this.keys.add(e.code);
-      if (e.code === 'Space') this.jumpQueued = true;
-      if (e.code === 'KeyR') this.reloadQueued = true;
-      if (e.code === 'KeyQ') this.medkitQueued = true;
-      if (e.code === 'KeyE') this.interactQueued = true;
-      if (e.code === 'KeyT') this.buildQueued = true;
-      if (e.code === 'KeyG') this.grenadeQueued = true;
-      if (e.code === 'KeyV') this.meleeQueued = true;
-      if (e.code === 'KeyB') this.supportQueued = true;
-      if (e.code === 'KeyC') this.viewQueued = true;
-      if (e.code === 'KeyC' || e.code === 'ControlLeft') this.crouchQueued = true;
-      if (e.code === 'Backquote') this.inspectQueued = true;
-      const digit = /^Digit([1-9])$/.exec(e.code);
-      if (digit) this.slotQueued = Number(digit[1]) - 1;
-      if (this.locked && ['Space', 'ControlLeft', 'Tab'].includes(e.code)) e.preventDefault();
+      this.press(e.code);
+      if (this.locked && (this.byCode.has(e.code) || e.code === 'Tab')) e.preventDefault();
     });
     this.listen<KeyboardEvent>(window, 'keyup', (e) => this.keys.delete(e.code));
-    // Ctrl is crouch, so Ctrl+W (crouch-walk) would close the tab: browsers don't let a page
-    // take Ctrl+W, but they ask before closing when the page objects, and in fullscreen the
-    // Keyboard Lock API hands the keys to the game.
+    // Ctrl+W (a crouch-walk when crouch is on Ctrl) would close the tab: browsers don't
+    // let a page take Ctrl+W, but they ask before closing when the page objects, and in
+    // fullscreen the Keyboard Lock API hands the keys to the game.
     this.listen<BeforeUnloadEvent>(window, 'beforeunload', (e) => {
       if (this.keys.has('ControlLeft') || this.keys.has('ControlRight')) {
         e.preventDefault();
@@ -59,16 +44,15 @@ export class KeyboardMouse implements InputSource {
     });
     this.listen(document, 'fullscreenchange', () => {
       const kb = (navigator as Navigator & { keyboard?: { lock?(codes?: string[]): Promise<void>; unlock?(): void } }).keyboard;
-      if (document.fullscreenElement) kb?.lock?.(['ControlLeft', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyT', 'KeyG', 'KeyB', 'KeyV', 'KeyC']).catch(() => {});
+      if (document.fullscreenElement) kb?.lock?.([...this.byCode.keys()].filter((c) => !c.startsWith('Mouse'))).catch(() => {});
       else kb?.unlock?.();
     });
     this.listen(window, 'blur', () => this.releaseAll());
     this.listen<MouseEvent>(target, 'mousedown', (e) => {
       if (!this.locked) return;
-      this.buttons.add(e.button);
-      if (e.button === 0) this.fireQueued = true;
+      this.press(`Mouse${e.button}`);
     });
-    this.listen<MouseEvent>(window, 'mouseup', (e) => this.buttons.delete(e.button));
+    this.listen<MouseEvent>(window, 'mouseup', (e) => this.keys.delete(`Mouse${e.button}`));
     this.listen(target, 'contextmenu', (e) => e.preventDefault());
     this.listen<WheelEvent>(target, 'wheel', (e) => {
       if (this.locked && e.deltaY !== 0) this.cycleQueued = e.deltaY > 0 ? 1 : -1;
@@ -81,6 +65,32 @@ export class KeyboardMouse implements InputSource {
     this.listen(document, 'pointerlockchange', () => {
       if (!this.locked) this.releaseAll();
     });
+  }
+
+  private rebind(): void {
+    this.byCode.clear();
+    const b = bindings();
+    for (const a of ACTIONS) for (const c of b[a]) this.byCode.set(c, [...(this.byCode.get(c) ?? []), a]);
+  }
+
+  private press(code: string): void {
+    this.keys.add(code);
+    for (const a of this.byCode.get(code) ?? []) {
+      const slot = /^slot([1-9])$/.exec(a);
+      if (slot) this.slotQueued = Number(slot[1]) - 1;
+      else if ((PULSES as readonly string[]).includes(a)) this.queued.add(a as Pulse);
+    }
+  }
+
+  /** Any key of the action held. */
+  private held(a: Action): boolean {
+    for (const c of bindings()[a]) if (this.keys.has(c)) return true;
+    return false;
+  }
+
+  /** Takes a queued press. */
+  private take(p: Pulse): boolean {
+    return this.queued.delete(p);
   }
 
   get locked(): boolean {
@@ -107,9 +117,8 @@ export class KeyboardMouse implements InputSource {
   }
 
   apply(s: InputState): void {
-    const k = this.keys;
-    const x = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
-    const y = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
+    const x = (this.held('right') ? 1 : 0) - (this.held('left') ? 1 : 0);
+    const y = (this.held('forward') ? 1 : 0) - (this.held('back') ? 1 : 0);
     if (x || y) {
       s.moveX = x;
       s.moveY = y;
@@ -120,46 +129,33 @@ export class KeyboardMouse implements InputSource {
     this.dx = 0;
     this.dy = 0;
 
-    s.fire ||= this.buttons.has(0);
-    s.firePressed ||= this.fireQueued;
-    this.fireQueued = false;
-    s.ads ||= this.buttons.has(2);
-    s.sprint ||= k.has('ShiftLeft');
-    s.crouchToggle ||= this.crouchQueued;
-    this.crouchQueued = false;
-    s.scoreboard ||= k.has('KeyZ');
-    s.jump ||= this.jumpQueued;
-    s.reload ||= this.reloadQueued;
+    s.fire ||= this.held('fire');
+    s.firePressed ||= this.take('fire');
+    s.ads ||= this.held('ads');
+    s.sprint ||= this.held('sprint');
+    s.crouchToggle ||= this.take('crouch');
+    s.scoreboard ||= this.held('scoreboard');
+    s.jump ||= this.take('jump');
+    s.reload ||= this.take('reload');
     if (this.cycleQueued) s.weaponCycle = this.cycleQueued;
     if (this.slotQueued >= 0) s.weaponSlot = this.slotQueued;
-    this.jumpQueued = false;
-    this.reloadQueued = false;
-    s.throwGrenade ||= this.grenadeQueued;
-    s.medkit ||= this.medkitQueued;
-    s.interactPressed ||= this.interactQueued;
-    s.buildMode ||= this.buildQueued;
-    s.interact ||= k.has('KeyE');
-    s.jumpHeld ||= k.has('Space');
-    s.holdBreath ||= k.has('KeyX');
-    this.medkitQueued = false;
-    this.interactQueued = false;
-    this.buildQueued = false;
+    s.throwGrenade ||= this.take('grenade');
+    s.medkit ||= this.take('medkit');
+    s.interactPressed ||= this.take('interact');
+    s.buildMode ||= this.take('build');
+    s.interact ||= this.held('interact');
+    s.jumpHeld ||= this.held('jump');
+    s.holdBreath ||= this.held('breath');
+    s.melee ||= this.take('melee');
+    s.inspect ||= this.take('inspect');
+    s.support ||= this.take('support');
+    s.viewToggle ||= this.take('view');
     this.cycleQueued = 0;
     this.slotQueued = -1;
-    this.grenadeQueued = false;
-    s.melee ||= this.meleeQueued;
-    s.inspect ||= this.inspectQueued;
-    this.meleeQueued = false;
-    this.inspectQueued = false;
-    s.support ||= this.supportQueued;
-    this.supportQueued = false;
-    s.viewToggle ||= this.viewQueued;
-    this.viewQueued = false;
   }
 
   private releaseAll(): void {
     this.keys.clear();
-    this.buttons.clear();
   }
 
   private listen<T extends Event = Event>(el: EventTarget, type: string, fn: (e: T) => void): void {

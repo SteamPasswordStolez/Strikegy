@@ -76,6 +76,8 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void, n
     mode,
     tickets,
     net,
+    // ?tutorial: the menu's tutorial (the basics step by step on the range).
+    tutorial: params.has('tutorial'),
   });
   // Game.create puts its loading screen up before its first await.
   onLoadingShown?.();

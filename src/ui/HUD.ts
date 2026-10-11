@@ -1,4 +1,5 @@
 import { t } from '@/i18n';
+import { actionKey, bindingsVersion } from '@/input/bindings';
 import { playerName } from '@/net/identity';
 import { reticleSvg, type Reticle } from '@/weapons/optics';
 
@@ -360,8 +361,8 @@ export class HUD {
       this.magBar.classList.toggle('reloading', f.reloading);
       this.magFill.style.width = `${Math.round(gauge * 100)}%`;
     });
-    this.set('grenade', `${f.grenadeType}:${f.grenadeCount}`, () => {
-      chip(this.grenade, this.touch ? '' : 'G', f.grenadeLabel, f.grenadeCount, f.grenadeType);
+    this.set('grenade', `${f.grenadeType}:${f.grenadeCount}:${bindingsVersion()}`, () => {
+      chip(this.grenade, this.touch ? '' : actionKey('grenade'), f.grenadeLabel, f.grenadeCount, f.grenadeType);
       this.grenade.classList.toggle('empty', f.grenadeCount === 0);
     });
     const gd = f.gadget;
@@ -432,11 +433,11 @@ export class HUD {
       this.death.classList.toggle('on', gone);
     });
     this.updateDown(f.down, killer);
-    const kitKey = f.medkit ? `${f.medkit.text}|${f.medkit.ready}` : '';
+    const kitKey = f.medkit ? `${f.medkit.text}|${f.medkit.ready}|${bindingsVersion()}` : '';
     this.set('medkit', kitKey, () => {
       this.medkit.style.display = f.medkit ? '' : 'none';
       if (!f.medkit) return;
-      chip(this.medkit, this.touch ? '' : 'Q', t('hud.medkit'), f.medkit.text, 'medkit');
+      chip(this.medkit, this.touch ? '' : actionKey('medkit'), t('hud.medkit'), f.medkit.text, 'medkit');
       this.medkit.classList.toggle('ready', f.medkit.ready);
     });
     const pr = f.prompt;

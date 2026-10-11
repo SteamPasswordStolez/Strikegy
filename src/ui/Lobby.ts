@@ -21,7 +21,7 @@ const ROWS: readonly Row[] = ['mode', 'map', 'team', 'difficulty'];
 const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map', team: 'lobby.team', difficulty: 'lobby.difficulty' };
 
 /** The main menu's entries, top to bottom. */
-const ALL_ENTRIES = ['play', 'multi', 'range', 'controls', 'settings', 'credits'] as const;
+const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'credits'] as const;
 type Entry = (typeof ALL_ENTRIES)[number];
 const ENTRIES: readonly Entry[] = ALL_ENTRIES;
 type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits';
@@ -127,10 +127,10 @@ export class Lobby {
   }
 
   /** Leaves for the match (main.ts takes the menu down once the loading screen is up). */
-  private finish(pick: LobbyPick): void {
+  private finish(pick: LobbyPick, extra = ''): void {
     this.save();
     window.removeEventListener('keydown', this.onKey);
-    this.onStart(matchQuery(pick));
+    this.onStart(matchQuery(pick) + extra);
   }
 
   private go(screen: Screen): void {
@@ -160,6 +160,7 @@ export class Lobby {
 
   private activate(e: Entry): void {
     if (e === 'range') this.finish({ ...this.pick, map: RANGE_ID });
+    else if (e === 'tutorial') this.finish({ ...this.pick, map: RANGE_ID }, '&tutorial');
     else this.go(e);
   }
 
