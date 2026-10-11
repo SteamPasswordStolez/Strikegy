@@ -142,24 +142,31 @@ export function vehicleMaterial(mat: KitMaterial, tint: string | undefined, team
  */
 export function bakeInto(node: THREE.Object3D, b: KitBuilder, team: Team | null, livery: Livery = 'ground'): void {
   // Small parts (bolts, vision blocks, handles: under FINE m across) go in
-  // meshes of their own, left out of the far look (a few pixels past 45 m).
-  const groups = new Map<string, { m: THREE.Material; fine: boolean; geos: THREE.BufferGeometry[] }>();
+  // meshes of their own, shown up close only and left out of the far look;
+  // pieces marked near-only (track links) are left out of it too, and
+  // far-only stand-ins (a track belt) are only in it.
+  const groups = new Map<string, { m: THREE.Material; tag: 'fine' | 'near' | 'far' | ''; geos: THREE.BufferGeometry[] }>();
   for (const p of b.pieces) {
     const m = vehicleMaterial(p.mat, p.tint, team, livery);
     for (const k of Object.keys(p.geo.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') p.geo.deleteAttribute(k);
     p.geo.computeBoundingSphere();
-    const fine = p.geo.boundingSphere!.radius < FINE;
-    const key = `${m.uuid}${fine ? 'f' : ''}`;
-    const g = groups.get(key) ?? { m, fine, geos: [] };
+    const tag = p.lod === 'far' ? 'far' : p.geo.boundingSphere!.radius < FINE ? 'fine' : p.lod === 'near' ? 'near' : '';
+    const key = `${m.uuid}${tag}`;
+    const g = groups.get(key) ?? { m, tag, geos: [] };
     g.geos.push(p.geo);
     groups.set(key, g);
   }
-  for (const { m, fine, geos } of groups.values()) {
+  for (const { m, tag, geos } of groups.values()) {
     const merged = geos.length > 1 ? mergeGeometries(geos) : geos[0]!;
     if (!merged) continue;
     if (merged !== geos[0]) for (const g of geos) g.dispose();
     const mesh = new THREE.Mesh(merged, m);
-    if (fine) mesh.userData.fine = true;
+    if (tag === 'fine') mesh.userData.fine = true;
+    if (tag === 'near') mesh.userData.nearOnly = true;
+    if (tag === 'far') {
+      mesh.userData.farOnly = true;
+      mesh.visible = false;
+    }
     node.add(mesh);
   }
 }

@@ -89,6 +89,8 @@ export interface KitPiece {
   thin?: boolean;
   /** Its own far look (null: none), placed like `geo` (keep the two in step when moving a piece). */
   far?: THREE.BufferGeometry | null;
+  /** Vehicles: drawn near only, or only in the far look (stand-ins for detailed parts). */
+  lod?: 'near' | 'far';
 }
 
 /**
@@ -235,6 +237,17 @@ export class KitBuilder {
   readonly pieces: KitPiece[] = [];
   /** Colour given to the pieces added while set (painted / cloth parts of their own colour). */
   tint: string | undefined;
+
+  /** Level of detail given to the pieces added while set (vehicles; see KitPiece.lod). */
+  lod: 'near' | 'far' | undefined;
+
+  /** Runs `fn` with its pieces drawn near only / in the far look only. */
+  only(lod: 'near' | 'far', fn: () => void): void {
+    const was = this.lod;
+    this.lod = lod;
+    fn();
+    this.lod = was;
+  }
 
   /** Runs `fn` with pieces tinted `color`. */
   tinted(color: string, fn: () => void): void {
@@ -422,7 +435,10 @@ export class KitBuilder {
     // Merged batches need the same attribute set everywhere.
     const ng = g.index ? g.toNonIndexed() : g;
     if (ng !== g) g.dispose();
-    this.pieces.push(this.tint ? { geo: ng, mat, tint: this.tint } : { geo: ng, mat });
+    const piece: KitPiece = { geo: ng, mat };
+    if (this.tint) piece.tint = this.tint;
+    if (this.lod) piece.lod = this.lod;
+    this.pieces.push(piece);
   }
 }
 

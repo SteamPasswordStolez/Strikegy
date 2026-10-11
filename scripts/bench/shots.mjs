@@ -169,7 +169,7 @@ if (!only || only === 'vehicles') {
   for (const v of placed) {
     const big = ['fighter', 'cas', 'tank', 'spg', 'td', 'rocket', 'apc'].includes(v.k);
     const air = v.k === 'fighter' || v.k === 'cas';
-    await shoot(`veh-${v.k}`, { x: v.x, z: v.z, ty: v.y, cy: air ? 4 : big ? 1.4 : 0.9, dist: air ? 14 : big ? 10 : 6, up: air ? 5 : big ? 3 : 2, a0: 2.2, hideTrees: true });
+    await shoot(`veh-${v.k}`, { x: v.x, z: v.z, ty: v.y, cy: air ? 4 : big ? 1.4 : 0.9, dist: (air ? 14 : big ? 10 : 6) * Number(process.env.VDIST ?? 1), up: air ? 5 : big ? 3 : 2, a0: 2.2, hideTrees: true, fov: process.env.VDIST ? 12 : 55 });
   }
 }
 for (const s of shots) {

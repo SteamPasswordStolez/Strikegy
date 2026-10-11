@@ -56,9 +56,10 @@ function buildFarLook(m: VehicleModel): (far: boolean) => void {
   m.root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh || Array.isArray(mesh.material)) return;
-    detail.push(mesh);
-    // Small parts don't make it into the far look.
-    if (mesh.userData.fine) return;
+    // Far-only stand-ins go into the far look and are never shown near.
+    if (!mesh.userData.farOnly) detail.push(mesh);
+    // Small and near-only parts don't make it into the far look.
+    if (mesh.userData.fine || mesh.userData.nearOnly) return;
     let anchor: THREE.Object3D = m.root;
     for (let p = mesh.parent; p && p !== m.root; p = p.parent) {
       if (turrets.has(p)) {
@@ -118,7 +119,7 @@ function mergeTree(node: THREE.Object3D, pivots: Set<THREE.Object3D>): void {
   for (const c of node.children) {
     const mesh = c as THREE.Mesh;
     // Fine parts stay apart (the far look leaves them out).
-    if (!mesh.isMesh || pivots.has(c) || c.children.length || Array.isArray(mesh.material) || mesh.userData.fine) continue;
+    if (!mesh.isMesh || pivots.has(c) || c.children.length || Array.isArray(mesh.material) || mesh.userData.fine || mesh.userData.nearOnly || mesh.userData.farOnly) continue;
     const list = byMat.get(mesh.material as THREE.Material) ?? [];
     list.push(mesh);
     byMat.set(mesh.material as THREE.Material, list);
@@ -169,7 +170,13 @@ function runningGear(b: KitBuilder, g: number, x: number, len: number, wheels: n
   const top = g + 0.97;
   for (const s of [-1, 1]) {
     const cx = s * x;
-    // Road wheels: two discs with rubber rims, a hub with bolts between them.
+    // Road wheels: two discs with rubber rims, a hub with bolts between them
+    // (far away: one plain disc a wheel).
+    for (let i = 0; i < wheels; i++) {
+      const zf = front + 0.95 + (i * (len - 1.9)) / (wheels - 1);
+      b.only('far', () => b.cyl('dark', rw, rw, 0.42, [cx, g + rw, zf], [0, 0, Math.PI / 2], 10));
+    }
+    b.lod = 'near';
     for (let i = 0; i < wheels; i++) {
       const z = front + 0.95 + (i * (len - 1.9)) / (wheels - 1);
       for (const o of [-0.14, 0.14]) {
@@ -182,6 +189,7 @@ function runningGear(b: KitBuilder, g: number, x: number, len: number, wheels: n
         b.cyl('metal', 0.018, 0.018, 0.04, [cx + s * 0.24, g + rw + Math.cos(a) * 0.17, z + Math.sin(a) * 0.17], [0, 0, Math.PI / 2], 5);
       }
     }
+    b.lod = undefined;
     // Sprocket with teeth, idler, return rollers.
     b.cyl('dark', sprocket.r - 0.04, sprocket.r - 0.04, 0.42, [cx, sprocket.y, sprocket.z], [0, 0, Math.PI / 2], 16);
     for (let k = 0; k < 12; k++) {
@@ -206,7 +214,16 @@ function runningGear(b: KitBuilder, g: number, x: number, len: number, wheels: n
     path.push([idler.z, top]);
     arc(idler, Math.PI, Math.PI * 2 - 0.4);
     path.push([idler.z + 0.2, g + 0.035]);
-    // Walk the loop, a link every 0.17 m.
+    // Far away the track is one belt round the loop.
+    b.only('far', () =>
+      b.grid('dark', path.length - 1, 1, (u, v) => {
+        const k = Math.min(path.length - 1, Math.round(u * (path.length - 1)));
+        const [z, y] = path[k]!;
+        return [cx + (v - 0.5) * tw * s, y, z];
+      }, true),
+    );
+    // Walk the loop, a link every 0.17 m (near only).
+    b.lod = 'near';
     const pitch = 0.17;
     let carry = 0;
     for (let i = 0; i < path.length - 1; i++) {
@@ -223,6 +240,7 @@ function runningGear(b: KitBuilder, g: number, x: number, len: number, wheels: n
       }
       carry = (carry + Math.ceil((segLen - carry) / pitch) * pitch) - segLen;
     }
+    b.lod = undefined;
     // Fender over the track, and side skirts with panel joints.
     b.box('paint', [tw + 0.1, 0.05, len + 0.35], [cx, g + 1.12, 0.05]);
     if (skirt) {
@@ -483,6 +501,12 @@ function wheel(r: number, width: number, side: number, team: Team | null = null)
   const g = new THREE.Group();
   const b = new KitBuilder();
   const hw = width / 2;
+  // Far away: a plain tyre and rim.
+  b.only('far', () => {
+    b.cyl('rubber', r, r, width, [0, 0, 0], [0, 0, Math.PI / 2], 12);
+    b.cyl('paint', r * 0.6, r * 0.6, width + 0.02, [0, 0, 0], [0, 0, Math.PI / 2], 8);
+  });
+  b.lod = 'near';
   b.lathe(
     'rubber',
     [[r * 0.62, -hw], [r * 0.9, -hw], [r * 0.97, -hw + width * 0.12], [r, -hw + width * 0.3], [r, hw - width * 0.3], [r * 0.97, hw - width * 0.12], [r * 0.9, hw], [r * 0.62, hw]],
@@ -507,6 +531,7 @@ function wheel(r: number, width: number, side: number, team: Team | null = null)
     const a = (k / 8) * Math.PI * 2;
     b.cyl('metal', 0.015, 0.015, 0.04, [face + side * 0.02, Math.cos(a) * r * 0.36, Math.sin(a) * r * 0.36], [0, 0, Math.PI / 2], 5);
   }
+  b.lod = undefined;
   bakeInto(g, b, team);
   return g;
 }
