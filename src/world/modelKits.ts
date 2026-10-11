@@ -309,8 +309,10 @@ class Builder {
     this.add(mat, g, at, rot);
   }
 
+  /** Sphere; small ones get fewer segments (a 12 cm fruit doesn't need a 12 x 8 grid). */
   sphere(mat: KitMaterial, r: number, at: V3, scale: V3 = [1, 1, 1]): void {
-    const g = new THREE.SphereGeometry(r, 12, 8);
+    const small = r * Math.max(...scale) < 0.1;
+    const g = new THREE.SphereGeometry(r, small ? 7 : 12, small ? 5 : 8);
     g.scale(...scale);
     this.add(mat, g, at);
   }
