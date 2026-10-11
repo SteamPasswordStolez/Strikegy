@@ -102,8 +102,19 @@ const FAR_GUNFIRE_M = 45;
  * the F3 panel shows dropped voices and the browser's glitch count).
  */
 const MAX_SPATIAL = 32;
+
+/** A world position as a key on a `cell` m grid (sources sharing a voice, see AudioSystem.out). */
+function spot(p: THREE.Vector3, cell: number): string {
+  return `${Math.round(p.x / cell)},${Math.round(p.y / cell)},${Math.round(p.z / cell)}`;
+}
 const MAX_HRTF = 6;
 const HRTF_RANGE_M = 30;
+/** A new world sound cuts the quietest playing one only when this many times louder. */
+const STEAL_RATIO = 2;
+/** Gunfire further than this shares a voice per direction and gun class (see remoteGunshot). */
+const FAR_SHARE_M = 60;
+/** Bullet impacts further than this aren't played. */
+const IMPACT_RANGE_M = 40;
 /** Other people's footsteps are inaudible past this anyway. */
 const REMOTE_STEP_RANGE_M = 30;
 
@@ -114,6 +125,10 @@ interface Voice {
   hrtf: boolean;
   /** Set once the voice is admitted (nodes are only made for admitted sounds). */
   gain: GainNode | null;
+  /** Source it belongs to (see `out`): later sounds from it share this voice while it plays. */
+  key?: string;
+  /** Its panner (moved to where the source is now when shared). */
+  panner?: PannerNode;
 }
 
 /**
@@ -137,6 +152,8 @@ export class AudioSystem {
   private raw = new Map<string, ArrayBuffer[]>();
   private samples = new Map<string, AudioBuffer[]>();
   private voices: Voice[] = [];
+  /** Playing voices by source key (a shooter, a walker, a spot being hit). */
+  private keyed = new Map<string, Voice>();
   private listenerPos = { x: 0, y: 0, z: 0 };
   /** World sounds skipped or cut for louder ones (F3). */
   private culled = 0;
@@ -341,6 +358,17 @@ export class AudioSystem {
 
   // ---------- building blocks ----------
 
+  /** Length of a loaded recording (s), 0 when it isn't loaded. */
+  private length(id: string): number {
+    return this.samples.get(id)?.[0]?.duration ?? 0;
+  }
+
+  /** Which eighth of the compass `pos` lies in, seen from the listener. */
+  private sector(pos: THREE.Vector3): number {
+    const l = this.listenerPos;
+    return Math.round((Math.atan2(pos.z - l.z, pos.x - l.x) / (Math.PI * 2)) * 8) & 7;
+  }
+
   private distanceTo(pos: THREE.Vector3): number {
     const l = this.listenerPos;
     return Math.hypot(pos.x - l.x, pos.y - l.y, pos.z - l.z);
@@ -356,7 +384,10 @@ export class AudioSystem {
     // Drop finished voices in place.
     const vs = this.voices;
     let live = 0;
-    for (const v of vs) if (v.until > now) vs[live++] = v;
+    for (const v of vs) {
+      if (v.until > now) vs[live++] = v;
+      else if (v.key && this.keyed.get(v.key) === v) this.keyed.delete(v.key);
+    }
     vs.length = live;
     const dist = this.distanceTo(pos);
     const loud = weight / Math.max(2.5, dist);
@@ -364,9 +395,11 @@ export class AudioSystem {
       let quietest = this.voices[0]!;
       for (const v of this.voices) if (v.loud < quietest.loud) quietest = v;
       this.culled++;
-      if (quietest.loud >= loud) return null;
+      // Only a clearly louder sound cuts one that is playing (a cut is heard; a skipped quiet one under a fight is not).
+      if (loud < quietest.loud * STEAL_RATIO) return null;
       quietest.gain?.gain.setTargetAtTime(0, now, 0.015);
       this.voices.splice(this.voices.indexOf(quietest), 1);
+      if (quietest.key && this.keyed.get(quietest.key) === quietest) this.keyed.delete(quietest.key);
     }
     let hrtfCount = 0;
     for (const v of this.voices) if (v.hrtf) hrtfCount++;
@@ -381,12 +414,35 @@ export class AudioSystem {
    * limiting and get null when culled.
    */
   private out(pos: null, reverbSend: number): AudioNode;
-  private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number, ref?: number): AudioNode | null;
-  private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1, ref = 2.5): AudioNode | null {
+  private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number, ref?: number, key?: string): AudioNode | null;
+  private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1, ref = 2.5, key?: string): AudioNode | null {
     const ctx = this.ctx!;
+    // Sounds from a source that is still sounding (a burst from one gun, steps
+    // of one runner, rounds landing on one spot) play through its voice: they
+    // are all heard, for one panner. A big fight asked for 110+ voices a
+    // second and dropped ~80 of them (Iron Gate 32v32 at the front, 2026-10-11).
+    if (pos && key) {
+      const v = this.keyed.get(key);
+      const now = ctx.currentTime;
+      if (v && v.gain && v.until > now && this.voices.includes(v)) {
+        // The source may have moved (a gunner running while firing).
+        if (v.panner) {
+          v.panner.positionX.setValueAtTime(pos.x, now);
+          v.panner.positionY.setValueAtTime(pos.y, now);
+          v.panner.positionZ.setValueAtTime(pos.z, now);
+        }
+        v.until = Math.max(v.until, now + seconds);
+        v.loud = Math.max(v.loud, weight / Math.max(2.5, this.distanceTo(pos)));
+        return v.gain;
+      }
+    }
     // A culled world sound (a big fight fills the voices) costs no nodes at all.
     const voice = pos ? this.claimVoice(pos, weight, seconds) : null;
     if (pos && !voice) return null;
+    if (voice && key) {
+      voice.key = key;
+      this.keyed.set(key, voice);
+    }
     const input = ctx.createGain();
     let dry: AudioNode = input;
     if (pos && voice) {
@@ -400,6 +456,7 @@ export class AudioSystem {
       p.positionX.value = pos.x;
       p.positionY.value = pos.y;
       p.positionZ.value = pos.z;
+      voice.panner = p;
       input.connect(p);
       dry = p;
     }
@@ -510,13 +567,22 @@ export class AudioSystem {
   }
 
   /** Someone else's gunfire at a world position (bots, M3). */
-  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number): void {
+  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number, source?: number): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     this.excite(0.5 / Math.max(5, distance));
-    const out = this.out(pos, 0.6, 1, 1.5);
-    if (!out) return;
+    // One voice per shooter (by id, else by spot): its bursts share it. Far
+    // away (where one can't tell shooters apart, only the direction) one
+    // voice per gun class and eighth of the compass.
+    const key =
+      distance > FAR_SHARE_M
+        ? `G${cls}${this.sector(pos)}`
+        : source !== undefined
+          ? `g${source}`
+          : `g${cls}${spot(pos, 2)}`;
     const id = distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`;
+    const out = this.out(pos, 0.6, 1, (this.length(id) || 1.4) + 0.1, undefined, key);
+    if (!out) return;
     if (!this.sample(id, out, t, 0.9, rand(0.96, 1.04))) {
       const v = VOICES[cls];
       this.noiseBurst(out, t, v.decay * 1.5, v.gain, { type: 'lowpass', freq: Math.max(800, v.cutoff - distance * 20), endFreq: 200 });
@@ -670,9 +736,11 @@ export class AudioSystem {
     const t = this.ctx!.currentTime;
     // Budget so shotgun volleys don't stack a dozen identical transients.
     if (t < this.impactBudget) return;
+    // Rounds landing further off are lost under the gunfire anyway.
+    if (this.distanceTo(pos) > IMPACT_RANGE_M) return;
     this.impactBudget = t + 0.015;
     const s = SURFACE_SOUND[surface];
-    const out = this.out(pos, 0.2, 0.4, 0.4);
+    const out = this.out(pos, 0.2, 0.4, 0.4, undefined, `i${spot(pos, 3)}`);
     if (!out) return;
     if (this.sample(HIT_SAMPLE[surface], out, t, 0.7, rand(0.9, 1.15))) return;
     this.noiseBurst(out, t, s.len, 0.5, { type: s.type, freq: s.freq * rand(0.85, 1.15), q: s.q });
@@ -699,10 +767,10 @@ export class AudioSystem {
   }
 
   /** Someone else's footstep at a world position (bots): quieter, spatialized. */
-  remoteFootstep(surface: ImpactSurface, pos: THREE.Vector3, sprinting: boolean): void {
+  remoteFootstep(surface: ImpactSurface, pos: THREE.Vector3, sprinting: boolean, source?: number): void {
     if (!this.ready) return;
     if (this.distanceTo(pos) > REMOTE_STEP_RANGE_M) return;
-    const out = this.out(pos, 0.05, sprinting ? 0.5 : 0.32, 0.45);
+    const out = this.out(pos, 0.05, sprinting ? 0.5 : 0.32, 0.45, undefined, source !== undefined ? `f${source}` : `f${spot(pos, 3)}`);
     if (!out) return;
     this.sample(STEP_SAMPLE[surface], out, this.ctx!.currentTime, sprinting ? 0.5 : 0.32, rand(0.9, 1.1));
   }
@@ -886,9 +954,12 @@ export class AudioSystem {
     const b = BOOM[size];
     const t = this.ctx!.currentTime + (distance > DELAY_FROM_M ? Math.min(3, distance / SOUND_SPEED) : 0);
     this.excite((b.weight / 2) / Math.max(4, distance));
-    const out = this.out(pos, 0.9, b.weight, 4.5, b.ref);
-    if (!out) return;
     const far = distance > (b.big ? 90 : 60);
+    // Far blasts (a barrage, a fight across the map) share a voice per direction.
+    // Held for as long as it sounds: the delay (sound travelling) and the longest recording it uses.
+    const length = (b.big && distance > 140 ? this.length('rumble_far') : 0) || this.length(far ? 'explosion_far' : 'explosion') || 3;
+    const out = this.out(pos, 0.9, b.weight, t - this.ctx!.currentTime + length + 0.1, b.ref, far ? `E${b.big ? 'b' : ''}${this.sector(pos)}` : undefined);
+    if (!out) return;
     const rate = b.rate * rand(0.94, 1.04);
     let played: boolean;
     if (b.big) {

@@ -2897,7 +2897,7 @@ export class BotManager implements BotServices {
       if (pellets === 1 || i < 3) this.effects.spawnShots([{ from: eye, to }], this.muzzle);
     }
     this.effects.muzzleFlash(this.muzzle, dir);
-    this.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(this.listener));
+    this.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(this.listener), bot.id);
     // Gunfire alerts everyone in earshot (both teams).
     this.alert(eye, HEAR_SHOT, bot);
   }
@@ -2906,7 +2906,7 @@ export class BotManager implements BotServices {
     const d = bot.feet.distanceTo(this.listener);
     if (d < 30) {
       const hit = this.physics.raycast({ x: bot.feet.x, y: bot.feet.y + 0.2, z: bot.feet.z }, { x: 0, y: -1, z: 0 }, 0.6, Layer.WORLD);
-      if (hit) this.audio.remoteFootstep(this.surfaces.get(hit.collider.handle, hit.point), bot.feet, sprinting);
+      if (hit) this.audio.remoteFootstep(this.surfaces.get(hit.collider.handle, hit.point), bot.feet, sprinting, bot.id);
     }
     this.alert(bot.feet, sprinting ? HEAR_STEP_SPRINT : HEAR_STEP, bot, 'step');
   }
