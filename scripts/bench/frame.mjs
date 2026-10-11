@@ -3,7 +3,7 @@
 //   node scripts/bench/frame.mjs <map> [bots=1v1] [views=street] > out.json
 // Dev server running. Math.random is seeded, so two runs of the same code see
 // the same match. Per view (eye height 30 m from each zone looking at it, ANGLES=
-// directions, default 2.4; VIEW=WxH, default 960x540; with
+// directions, default 2.4, 'none' for none; VIEW=WxH, default 960x540; with
 // VEH=1 also every vehicle kind in a row by the blue spawn, see shots.mjs VX/VZ):
 //   draw   - Renderer.render + a 1-pixel read-back (median of 7): CPU submit plus the
 //            rasterizing, which swiftshader does on the CPU, so triangle and
@@ -26,7 +26,7 @@ const json = JSON.parse(readFileSync(`public/maps/${map}.json`, 'utf8'));
 const [vw, vh] = (process.env.VIEW ?? '960x540').split('x').map(Number);
 
 const views = [];
-const angles = (process.env.ANGLES ?? '2.4').split(',').map(Number);
+const angles = process.env.ANGLES === 'none' ? [] : (process.env.ANGLES ?? '2.4').split(',').map(Number);
 for (const zn of json.zones ?? []) for (const a of angles) views.push({ name: `${zn.id}-${a}`, x: zn.pos[0], z: zn.pos[2], a, dist: 30 });
 
 const browser = await chromium.launch({

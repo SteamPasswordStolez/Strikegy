@@ -148,8 +148,8 @@ function fixedMount(parent: THREE.Object3D, x: number, y: number, z: number): Mo
   return { turret: null, gun, muzzle };
 }
 
-/** Hull-frame height of the ground under a tracked vehicle at rest (m, measured in game). */
-const TRACK_GROUND = -1.05;
+/** Hull-frame height of the ground under each tracked vehicle at rest (m, measured in game on Lyon, 2026-10-11). */
+const TRACK_GROUND = { tank: -0.98, spg: -1.02, td: -1.04 } as const;
 
 /**
  * Tracked running gear down both sides at |x| = `x`: dual road wheels with
@@ -157,8 +157,7 @@ const TRACK_GROUND = -1.05;
  * the front, return rollers, and a track of separate links wrapped round them
  * (the physics wheels are invisible hubs on tracked vehicles).
  */
-function runningGear(b: KitBuilder, x: number, len: number, wheels: number, skirt: boolean): void {
-  const g = TRACK_GROUND;
+function runningGear(b: KitBuilder, g: number, x: number, len: number, wheels: number, skirt: boolean): void {
   const rw = 0.33;
   const tw = 0.56;
   const front = -len / 2;
@@ -288,9 +287,9 @@ function hiddenWheels(root: THREE.Group, kind: VehicleKind): THREE.Object3D[] {
 
 function buildTank(team: Team | null): VehicleModel {
   const root = new THREE.Group();
-  const g = TRACK_GROUND;
+  const g = TRACK_GROUND.tank;
   const hull = new KitBuilder();
-  runningGear(hull, 1.45, 6.6, 7, true);
+  runningGear(hull, g, 1.45, 6.6, 7, true);
   // Hull: lower front plate, upper glacis, flat deck, sloped rear; sponsons over the tracks.
   hull.profile(
     'paint',
@@ -377,9 +376,9 @@ function buildTank(team: Team | null): VehicleModel {
 
 function buildSpg(team: Team | null): VehicleModel {
   const root = new THREE.Group();
-  const g = TRACK_GROUND;
+  const g = TRACK_GROUND.spg;
   const hull = new KitBuilder();
-  runningGear(hull, 1.4, 6.4, 7, false);
+  runningGear(hull, g, 1.4, 6.4, 7, false);
   // Hull: sloped nose, flat deck, the big turret over the back; a recoil spade at the rear.
   hull.profile('paint', [[-2.85, g + 0.45], [3.15, g + 0.45], [3.3, g + 1.45], [-2.0, g + 1.45], [-3.35, g + 1.0]], 2.3);
   for (const s of [-1, 1]) hull.box('paint', [0.6, 0.33, 5.8], [s * 1.4, g + 1.29, 0.15]);
@@ -430,9 +429,9 @@ function buildSpg(team: Team | null): VehicleModel {
 
 function buildTd(team: Team | null): VehicleModel {
   const root = new THREE.Group();
-  const g = TRACK_GROUND;
+  const g = TRACK_GROUND.td;
   const hull = new KitBuilder();
-  runningGear(hull, 1.4, 6.8, 7, true);
+  runningGear(hull, g, 1.4, 6.8, 7, true);
   // Low hull and a sloped casemate built onto it; the gun sits in a ball mantlet.
   hull.profile('paint', [[-3.1, g + 0.45], [3.3, g + 0.45], [3.45, g + 1.4], [-2.4, g + 1.4], [-3.65, g + 0.95]], 2.3);
   for (const s of [-1, 1]) hull.box('paint', [0.6, 0.3, 6.2], [s * 1.4, g + 1.26, 0.15]);
@@ -837,7 +836,7 @@ function buildFighter(team: Team | null): VehicleModel {
   // Nozzle: petals round a dark throat.
   fuselage(b, 'metal', [[0.58, 6.2], [0.62, 6.6], [0.55, 7.05]], [0, 0, 0], 1, 16);
   b.cyl('dark', 0.5, 0.5, 0.1, [0, 0, 6.9], [Math.PI / 2, 0, 0], 16);
-  bakeInto(root, b, team);
+  bakeInto(root, b, team, 'air');
   const gun = fixedMount(root, 0.7, 0.2, -5.0);
   return { root, wheels: [], mounts: [gun] };
 }
@@ -883,7 +882,7 @@ function buildCas(team: Team | null): VehicleModel {
     }
   }
   panel(b, 'paint', [[-2.7, 4.8], [2.7, 4.8], [2.7, 6.3], [-2.7, 6.3]], 1.0, 0.1);
-  bakeInto(root, b, team);
+  bakeInto(root, b, team, 'air');
   const gun = fixedMount(root, 0, -0.35, -8.0);
   const rear = mgMount(root, 0, 1.2, -1.6, team);
   return { root, wheels: [], mounts: [gun, rear] };

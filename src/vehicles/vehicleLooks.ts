@@ -27,11 +27,19 @@ function cached(key: string, make: () => THREE.Material): THREE.Material {
   return m;
 }
 
-/** Camouflage colours (base, second, third) per side. */
-const CAMO: Record<'blue' | 'red' | 'none', [number, number, number]> = {
-  blue: [0x4b5a3a, 0x5a4a32, 0x23261f],
-  red: [0x9a8660, 0x6e573a, 0x7c7a5c],
-  none: [0x5a5c48, 0x55553f, 0x3e3f33],
+/** Camouflage colours (base, second, third) per side: ground vehicles, and aircraft (greys). */
+export type Livery = 'ground' | 'air';
+const CAMO: Record<Livery, Record<'blue' | 'red' | 'none', [number, number, number]>> = {
+  ground: {
+    blue: [0x3c4a2e, 0x4c3d2a, 0x1e201a],
+    red: [0x8a7650, 0x67503a, 0x726c4c],
+    none: [0x4e5040, 0x4a4a38, 0x36372d],
+  },
+  air: {
+    blue: [0x4f5861, 0x434b53, 0x3a4148],
+    red: [0x6e6656, 0x5d5648, 0x4f4b42],
+    none: [0x585b5e, 0x4c4f52, 0x424548],
+  },
 };
 
 const CAMO_GLSL = /* glsl */ `
@@ -48,18 +56,21 @@ float camoFbm(vec3 p) { return 0.65 * camoNoise(p) + 0.35 * camoNoise(p * 2.3 + 
 `;
 
 /** Painted steel in the side's camouflage: blotches in object space (they stay put on the hull), dust toward the bottom. */
-function camoPaint(team: Team | null): THREE.Material {
-  return cached(`camo-${team}`, () => {
-    const [a, b, c] = CAMO[team ?? 'none'];
+function camoPaint(team: Team | null, livery: Livery): THREE.Material {
+  return cached(`camo-${livery}-${team}`, () => {
+    const [a, b, c] = CAMO[livery][team ?? 'none'];
     const base = lib ? lib.get('paint').clone() : new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.2 });
+    // The paint texture's colour (chips, rust) reads as measles at a vehicle's
+    // scale; its roughness / normal maps keep the worn finish.
+    base.map = null;
     base.color.set(0xffffff);
     if (!lib) base.color.set(a);
     const uniforms = {
       uCamoA: { value: new THREE.Color(a) },
       uCamoB: { value: new THREE.Color(b) },
       uCamoC: { value: new THREE.Color(c) },
-      uCamoScale: { value: team ? 0.55 : 0 },
-      uDust: { value: 0.35 },
+      uCamoScale: { value: team ? (livery === 'air' ? 0.22 : 0.55) : 0 },
+      uDust: { value: livery === 'air' ? 0 : 0.35 },
     };
     base.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
@@ -67,8 +78,8 @@ function camoPaint(team: Team | null): THREE.Material {
         .replace('#include <common>', '#include <common>\nvarying vec3 vCamoPos;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCamoPos = position;');
       shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${CAMO_GLSL}`).replace(
-        '#include <map_fragment>',
-        `#include <map_fragment>
+        '#include <color_fragment>',
+        `#include <color_fragment>
         vec3 camo = uCamoA;
         if (uCamoScale > 0.0) {
           float n1 = camoFbm(vCamoPos * uCamoScale);
@@ -81,7 +92,7 @@ function camoPaint(team: Team | null): THREE.Material {
         diffuseColor.rgb *= mix(camo, vec3(0.42, 0.37, 0.29), dust);`,
       );
     };
-    base.customProgramCacheKey = () => `camo-${team}`;
+    base.customProgramCacheKey = () => `camo-${livery}-${team}`;
     return base;
   });
 }
@@ -96,12 +107,12 @@ function surface(kind: 'paint' | 'rubber' | 'canvas' | 'metal', color: number, f
 }
 
 /** The material a vehicle piece is drawn with. */
-export function vehicleMaterial(mat: KitMaterial, tint: string | undefined, team: Team | null): THREE.Material {
+export function vehicleMaterial(mat: KitMaterial, tint: string | undefined, team: Team | null, livery: Livery = 'ground'): THREE.Material {
   switch (mat) {
     case 'body':
     case 'trim':
     case 'paint':
-      return tint ? surface('paint', new THREE.Color(tint).getHex(), { roughness: 0.6, metalness: 0.2 }) : camoPaint(team);
+      return tint ? surface('paint', new THREE.Color(tint).getHex(), { roughness: 0.6, metalness: 0.2 }) : camoPaint(team, livery);
     case 'dark':
       return surface('paint', tint ? new THREE.Color(tint).getHex() : 0x2b2d2c, { roughness: 0.6, metalness: 0.3 });
     case 'metal':
@@ -121,7 +132,7 @@ export function vehicleMaterial(mat: KitMaterial, tint: string | undefined, team
     case 'redLight':
       return cached('redLamp', () => new THREE.MeshStandardMaterial({ color: 0x8a1a14, emissive: 0x2a0503, roughness: 0.4 }));
     default:
-      return camoPaint(team);
+      return camoPaint(team, livery);
   }
 }
 
@@ -129,12 +140,12 @@ export function vehicleMaterial(mat: KitMaterial, tint: string | undefined, team
  * Adds a builder's pieces to `node` as one mesh per material (all pieces of
  * a moving part merged: a handful of draw calls per part).
  */
-export function bakeInto(node: THREE.Object3D, b: KitBuilder, team: Team | null): void {
+export function bakeInto(node: THREE.Object3D, b: KitBuilder, team: Team | null, livery: Livery = 'ground'): void {
   // Small parts (bolts, vision blocks, handles: under FINE m across) go in
   // meshes of their own, left out of the far look (a few pixels past 45 m).
   const groups = new Map<string, { m: THREE.Material; fine: boolean; geos: THREE.BufferGeometry[] }>();
   for (const p of b.pieces) {
-    const m = vehicleMaterial(p.mat, p.tint, team);
+    const m = vehicleMaterial(p.mat, p.tint, team, livery);
     for (const k of Object.keys(p.geo.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') p.geo.deleteAttribute(k);
     p.geo.computeBoundingSphere();
     const fine = p.geo.boundingSphere!.radius < FINE;
