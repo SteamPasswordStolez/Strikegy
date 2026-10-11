@@ -178,7 +178,8 @@ function chamferedBox(w: number, h: number, d: number, c: number): THREE.BufferG
   return g;
 }
 
-class Builder {
+/** Builds kit pieces (also used for vehicles, see vehicleModels.ts). */
+export class KitBuilder {
   readonly pieces: KitPiece[] = [];
   /** Colour given to the pieces added while set (painted / cloth parts of their own colour). */
   tint: string | undefined;
@@ -252,6 +253,33 @@ class Builder {
     const uv = g.getAttribute('uv') as THREE.BufferAttribute;
     const len = curve.getLength();
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len, uv.getY(i) * Math.PI * 2 * r);
+    this.add(mat, g);
+  }
+
+  /**
+   * A solid between two convex outlines seen from above, `bottom` at `y0` and
+   * `top` at `y1` ((x, z) pairs, same count, anticlockwise from above): sloped
+   * armour, turrets, casemates. Flat faces, UVs in meters.
+   */
+  loft(mat: KitMaterial, bottom: [number, number][], top: [number, number][], y0: number, y1: number): void {
+    const n = bottom.length;
+    const pos: number[] = [];
+    const B = bottom.map(([x, z]) => [x, y0, z] as V3);
+    const T = top.map(([x, z]) => [x, y1, z] as V3);
+    const tri = (a: V3, b: V3, c: V3) => pos.push(...a, ...b, ...c);
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      tri(B[i]!, B[j]!, T[j]!);
+      tri(B[i]!, T[j]!, T[i]!);
+    }
+    for (let i = 1; i < n - 1; i++) {
+      tri(T[0]!, T[i + 1]!, T[i]!);
+      tri(B[0]!, B[i]!, B[i + 1]!);
+    }
+    // Wind every face outward (the centroid is inside a convex solid).
+    const c = [0, 0, 0];
+    for (const p of [...B, ...T]) for (let k = 0; k < 3; k++) c[k]! += p[k]! / (2 * n);
+    const g = flatGeometry(pos, c as V3);
     this.add(mat, g);
   }
 
@@ -347,7 +375,7 @@ class Builder {
  * a rounded head with lit displays, nozzles in holsters at both ends with
  * hoses hanging in loops, and (`sign`) a price board on a post.
  */
-function fuelDispenser(b: Builder, x: number, z: number, w: number, d: number, h: number, y0: number, sign: boolean): void {
+function fuelDispenser(b: KitBuilder, x: number, z: number, w: number, d: number, h: number, y0: number, sign: boolean): void {
   const body = h * 0.66;
   b.box('body', [w, body, d], [x, y0 + body / 2, z]);
   b.box('dark', [w + 0.02, 0.12, d + 0.02], [x, y0 + 0.06, z]);
@@ -366,6 +394,50 @@ function fuelDispenser(b: Builder, x: number, z: number, w: number, d: number, h
   b.box('light', [w * 0.9, 0.3, 0.05], [x, y0 + h + 0.35, z]);
 }
 
+/**
+ * Triangles (9 numbers each) of a convex solid round `centre` as a geometry:
+ * each turned to face away from the centre, flat normals, UVs in meters
+ * projected along each face's main axis.
+ */
+function flatGeometry(pos: number[], centre: V3): THREE.BufferGeometry {
+  const nrm: number[] = [];
+  const uv: number[] = [];
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  for (let i = 0; i < pos.length; i += 9) {
+    e1.set(pos[i + 3]! - pos[i]!, pos[i + 4]! - pos[i + 1]!, pos[i + 5]! - pos[i + 2]!);
+    e2.set(pos[i + 6]! - pos[i]!, pos[i + 7]! - pos[i + 1]!, pos[i + 8]! - pos[i + 2]!);
+    n.crossVectors(e1, e2);
+    if (n.lengthSq() < 1e-12) n.set(0, 1, 0);
+    n.normalize();
+    const cx = (pos[i]! + pos[i + 3]! + pos[i + 6]!) / 3 - centre[0];
+    const cy = (pos[i + 1]! + pos[i + 4]! + pos[i + 7]!) / 3 - centre[1];
+    const cz = (pos[i + 2]! + pos[i + 5]! + pos[i + 8]!) / 3 - centre[2];
+    if (n.x * cx + n.y * cy + n.z * cz < 0) {
+      for (let k = 0; k < 3; k++) [pos[i + 3 + k], pos[i + 6 + k]] = [pos[i + 6 + k]!, pos[i + 3 + k]!];
+      n.negate();
+    }
+    const ax = Math.abs(n.x);
+    const ay = Math.abs(n.y);
+    const az = Math.abs(n.z);
+    for (let v = 0; v < 3; v++) {
+      nrm.push(n.x, n.y, n.z);
+      const x = pos[i + v * 3]!;
+      const y = pos[i + v * 3 + 1]!;
+      const z = pos[i + v * 3 + 2]!;
+      if (ax >= ay && ax >= az) uv.push(z, y);
+      else if (ay >= az) uv.push(x, z);
+      else uv.push(x, y);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return g;
+}
+
 function dist3(a: V3, b: V3): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
@@ -381,12 +453,12 @@ export function watchtowerLadder(w: number, h: number, d: number): { x: number; 
 }
 
 export function buildKit(kind: ModelKind, w: number, h: number, d: number, rand: () => number = Math.random): KitModel {
-  const b = new Builder();
+  const b = new KitBuilder();
   const colliders = KITS[kind](b, w, h, d, rand);
   return { pieces: b.pieces, colliders: colliders ?? undefined };
 }
 
-type Kit = (b: Builder, w: number, h: number, d: number, rand: () => number) => KitBox[] | void;
+type Kit = (b: KitBuilder, w: number, h: number, d: number, rand: () => number) => KitBox[] | void;
 
 const KITS: Record<ModelKind, Kit> = {
   car(b, w, h, d) {
@@ -615,7 +687,7 @@ const KITS: Record<ModelKind, Kit> = {
     const ridge = h - 0.05;
     const eave = S / 2 + 0.22;
     const bays = Math.max(1, Math.round(L / 2.4));
-    const t = new Builder();
+    const t = new KitBuilder();
     // Sag between poles along the length (0 at each pole) and across the panel.
     const sagAlong = (x: number) => Math.abs(Math.sin(((x + L / 2) / L) * bays * Math.PI));
     const wrinkle = (x: number, y: number) => 0.012 * Math.sin(x * 7.3 + y * 3.1) * Math.sin(x * 2.1 - y * 5.7);
@@ -648,7 +720,7 @@ const KITS: Record<ModelKind, Kit> = {
         [0, ridge],
         [-S / 2, wall],
       ];
-      const end = new Builder();
+      const end = new KitBuilder();
       if (e < 0) end.profile('canvas', pts, 0.02);
       else {
         // Around a doorway 1.1 m wide, 1.9 m high: two side pieces and the gable above.
@@ -793,7 +865,7 @@ const KITS: Record<ModelKind, Kit> = {
     const band = top - sill;
     for (const side of [0, 1, 2, 3]) {
       const across = side < 2 ? w : d;
-      const f = new Builder();
+      const f = new KitBuilder();
       const door = side === 0;
       // In local space: the face at +z, running along x.
       f.box('glass', [across - 0.14, band - 0.1, 0.02], [0, sill + band / 2, -0.05]);
@@ -902,7 +974,7 @@ const KITS: Record<ModelKind, Kit> = {
     const s = (h - ped - 0.1) / 1.9;
     const y0 = ped + 0.08;
     b.box('bronze', [0.62 * s, 0.06, 0.48 * s], [0, y0 - 0.02, 0]);
-    const B = new Builder();
+    const B = new KitBuilder();
     for (const x of [-1, 1]) {
       // Legs and boots, a step apart.
       const lz = x * 0.07;
@@ -937,7 +1009,7 @@ const KITS: Record<ModelKind, Kit> = {
     const L = alongX ? w : d;
     const T = alongX ? d : w;
     const seat = h * 0.42;
-    const pieces = new Builder();
+    const pieces = new KitBuilder();
     for (let i = 0; i < 4; i++) pieces.box('wood', [L, 0.035, T * 0.15], [0, seat, -T / 2 + T * 0.18 + i * T * 0.19]);
     for (let i = 0; i < 3; i++) pieces.box('wood', [L, T * 0.14, 0.035], [0, seat + 0.16 + i * 0.13, -T / 2 + 0.06 - i * 0.03], [-0.22, 0, 0]);
     pieces.tinted('#232624', () => {
@@ -968,7 +1040,7 @@ const KITS: Record<ModelKind, Kit> = {
     const T = alongX ? d : w;
     const r = Math.min(0.32, h / 5);
     const layers = Math.max(1, Math.floor(h / (r * 1.75)));
-    const logs = new Builder();
+    const logs = new KitBuilder();
     for (let k = 0; k < layers; k++) {
       const n = Math.max(1, Math.floor(T / (2 * r)) - k);
       for (let i = 0; i < n; i++) {
@@ -1001,13 +1073,13 @@ const KITS: Record<ModelKind, Kit> = {
     const r = Math.min(h / 2, (alongX ? d : w) / 2);
     const len = Math.min(1.3, L);
     const n = Math.max(1, Math.floor(L / len));
-    const bales = new Builder();
+    const bales = new KitBuilder();
     for (let i = 0; i < n; i++) {
       const x = -L / 2 + (L / n) * (i + 0.5);
       const half = ((L / n) * 0.95) / 2;
       // Profile along the axis (radius, axial), turned so the axis is x.
       const prof: [number, number][] = [[0, -half - 0.03], [r * 0.7, -half], [r * 0.95, -half + 0.03], [r, -half + 0.12], [r, half - 0.12], [r * 0.95, half - 0.03], [r * 0.7, half], [0, half + 0.03]];
-      const piece = new Builder();
+      const piece = new KitBuilder();
       piece.lathe('straw', prof, [0, 0, 0], 24);
       // Net wrap edges.
       piece.tinted('#d9d6c8', () => {
@@ -1066,7 +1138,7 @@ const KITS: Record<ModelKind, Kit> = {
     b.cyl('metal', 0.1, 0.1, 0.6, [-w / 4, inner + roof + 0.3, d / 4], [0, 0, 0], 10);
     b.cyl('metal', 0.14, 0.14, 0.06, [-w / 4, inner + roof + 0.62, d / 4], [0, 0, 0], 10);
     {
-      const bags = new Builder();
+      const bags = new KitBuilder();
       KITS.sandbags(bags, w - 0.8, 0.4, 0.5, () => 0.5);
       for (const p of bags.pieces) {
         p.geo.translate(0, inner + roof, -d / 2 + 0.15);
@@ -1081,7 +1153,7 @@ const KITS: Record<ModelKind, Kit> = {
     const alongX = w >= d;
     const L = alongX ? w : d;
     const n = Math.max(1, Math.round(L / 2.2));
-    const parts = new Builder();
+    const parts = new KitBuilder();
     for (let i = 0; i <= n; i++) parts.box('wood', [0.12, h, 0.12], [-L / 2 + (L / n) * i, h / 2, 0]);
     for (const y of [h * 0.45, h * 0.85]) parts.box('wood', [L, 0.08, 0.06], [0, y, 0.07]);
     parts.box('snow', [L, 0.04, 0.08], [0, h * 0.85 + 0.06, 0.07]);
@@ -1137,7 +1209,7 @@ const KITS: Record<ModelKind, Kit> = {
     const alongX = w >= d;
     const L = alongX ? w : d;
     const T = alongX ? d : w;
-    const parts = new Builder();
+    const parts = new KitBuilder();
     const cols: KitBox[] = [];
     const eave = h * 0.62;
     const n = Math.max(2, Math.round(L / 4));
@@ -1441,7 +1513,7 @@ const KITS: Record<ModelKind, Kit> = {
     const ty = hullTop + (h - hullTop) / 2 - 0.05;
     const turn = (rand() - 0.5) * 1.6;
     const tilt = 0.08 + rand() * 0.1;
-    const turret = new Builder();
+    const turret = new KitBuilder();
     turret.cyl('body', tr * 0.82, tr, h - hullTop - 0.05, [0, 0, 0], [0, 0, 0], 10);
     turret.box('trim', [tr * 0.9, 0.35, tr * 0.9], [0, (h - hullTop) * 0.25, -tr * 0.6]);
     turret.cyl('dark', 0.1, 0.13, d * 0.42, [0, -0.08 - d * 0.04, tr + d * 0.2], [Math.PI / 2 + 0.22, 0, 0], 8);

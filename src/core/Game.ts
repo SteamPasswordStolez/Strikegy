@@ -10,6 +10,7 @@ import { playerName } from '@/net/identity';
 import { Renderer } from '@/render/Renderer';
 import { Atmosphere, loadPhotoSky } from '@/render/visualProfiles';
 import { PROCEDURAL_KINDS, SURFACE_KINDS, SurfaceLibrary } from '@/render/textures';
+import { setVehicleSurfaces } from '@/vehicles/vehicleLooks';
 import { ModelLibrary } from '@/render/models';
 import { Effects } from '@/render/Effects';
 import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
@@ -484,6 +485,8 @@ export class Game {
       art,
       this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])]),
     ]);
+    // Vehicle models take the map's surfaces (paint, rubber, canvas) from here on.
+    setVehicleSurfaces(this.surfaces);
     await this.loadStep(0.3, 'load.terrain');
     this.physics.timestep = 1 / SIM_HZ;
     this.audio.setAmbience(ambienceFor(map.world.visualProfile, (map.zones?.length ?? 0) > 0, map.world.ambience));
