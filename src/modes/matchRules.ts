@@ -22,9 +22,9 @@ import { ZoneRules, type ZoneEvent, type ZoneState } from './zoneRules';
  *   when those run out.
  */
 
-export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame';
+export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd';
 
-export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame'];
+export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd'];
 
 /** Modes where the zones are no front: soldiers spawn at any zone with no enemy near it (owner, 2026-10-12). */
 export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killconfirm'];
@@ -33,7 +33,7 @@ export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killc
 export const SOLO_MODES: readonly ModeKind[] = ['ffa', 'gungame'];
 
 /** How a match ended. */
-export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors';
+export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds';
 
 /** Something worth announcing. */
 export type ModeEvent =
@@ -50,7 +50,12 @@ export type ModeEvent =
   /** A dog tag was picked up: `by` (combatant id, team `team`) confirmed a kill or denied one. */
   | { type: 'tag'; team: Team; confirmed: boolean; by: number }
   /** Gun game: soldier `id` moved to step `level` of the lineup (`up`: by a kill; else knocked back by a melee kill). */
-  | { type: 'level'; id: number; level: number; up: boolean };
+  | { type: 'level'; id: number; level: number; up: boolean }
+  /** A charge (Rush, S&D) was armed, defused or went off; `team` did it, `by` who (-1: the fuse). */
+  | { type: 'charge'; id: string; zone: string; state: 'armed' | 'defused' | 'blown'; team: Team; by: number }
+  /** S&D: round `n` begins (`attacker` attacks it), or ended (`winner`, why). */
+  | { type: 'round'; n: number; attacker: Team }
+  | { type: 'roundEnd'; n: number; winner: Team; why: 'eliminated' | 'blown' | 'defused' | 'time' };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
 
@@ -60,6 +65,8 @@ export interface Presence {
   readonly team: Team;
   readonly alive: boolean;
   readonly feet: { readonly x: number; readonly y: number; readonly z: number };
+  /** Holding E on foot (planting / defusing a charge). */
+  readonly using?: boolean;
 }
 const other = (t: Team): Team => (t === 'blue' ? 'red' : 'blue');
 
@@ -567,6 +574,462 @@ export class GunGameRules extends SoloRules {
     this.pending = [];
     return [...out, ...super.step(dt)];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Charges: Rush and Search & Destroy (owner, 2026-10-12)
+
+/** A charge spot: attackers plant at it (hold E), defenders defuse it once armed. */
+export interface Charge {
+  /** 'A1', 'A2' (Rush: two per zone) or the site's zone id (S&D). */
+  id: string;
+  /** The zone it stands in. */
+  zone: string;
+  x: number;
+  y: number;
+  z: number;
+  state: 'idle' | 'armed' | 'gone';
+  /** Seconds of planting (idle) or defusing (armed) done by `by`. */
+  work: number;
+  /** Combatant working it, -1 for nobody. */
+  by: number;
+  /** Armed: seconds until it goes off. */
+  fuse: number;
+  /** Open to work now. */
+  live: boolean;
+}
+
+export interface ChargeTimes {
+  plant: number;
+  defuse: number;
+  fuse: number;
+  /** How close (m, flat) and how far up or down (2.5 m) a soldier works it from. */
+  reach: number;
+}
+
+export function newCharge(id: string, zone: string, x: number, y: number, z: number): Charge {
+  return { id, zone, x, y, z, state: 'idle', work: 0, by: -1, fuse: 0, live: false };
+}
+
+/**
+ * Planting and defusing for one step: at each live charge the nearest soldier
+ * holding E who may work it (attackers an idle charge, defenders an armed one)
+ * works it; someone else taking over starts from nothing, letting go loses it.
+ * `defused` / `blown`: what to do then (Rush: a defused charge can be planted
+ * again, a blown one is gone).
+ */
+export function workCharges(charges: Charge[], list: readonly Presence[], attacker: Team, dt: number, c: ChargeTimes, out: ModeEvent[]): void {
+  const r2 = c.reach * c.reach;
+  for (const ch of charges) {
+    if (ch.state === 'gone' || !ch.live) {
+      ch.work = 0;
+      ch.by = -1;
+      continue;
+    }
+    if (ch.state === 'armed') {
+      ch.fuse -= dt;
+      if (ch.fuse <= 0) {
+        ch.state = 'gone';
+        ch.work = 0;
+        ch.by = -1;
+        out.push({ type: 'charge', id: ch.id, zone: ch.zone, state: 'blown', team: attacker, by: -1 });
+        continue;
+      }
+    }
+    const want = ch.state === 'idle' ? attacker : other(attacker);
+    let worker: Presence | null = null;
+    let best = r2;
+    for (const s of list) {
+      if (!s.alive || !s.using || s.team !== want || Math.abs(s.feet.y - ch.y) > 2.5) continue;
+      const d = (s.feet.x - ch.x) ** 2 + (s.feet.z - ch.z) ** 2;
+      if (d < best) {
+        best = d;
+        worker = s;
+      }
+    }
+    if (!worker) {
+      ch.work = 0;
+      ch.by = -1;
+      continue;
+    }
+    if (worker.id !== ch.by) {
+      ch.by = worker.id;
+      ch.work = 0;
+    }
+    ch.work += dt;
+    if (ch.state === 'idle' && ch.work >= c.plant) {
+      ch.state = 'armed';
+      ch.fuse = c.fuse;
+      ch.work = 0;
+      ch.by = -1;
+      out.push({ type: 'charge', id: ch.id, zone: ch.zone, state: 'armed', team: attacker, by: worker.id });
+    } else if (ch.state === 'armed' && ch.work >= c.defuse) {
+      ch.state = 'idle';
+      ch.work = 0;
+      ch.by = -1;
+      out.push({ type: 'charge', id: ch.id, zone: ch.zone, state: 'defused', team: other(attacker), by: worker.id });
+    }
+  }
+}
+
+/** Modes played over charges (bots plant and defuse; the HUD and the charge models read them). */
+export abstract class ChargeRules extends MatchRules {
+  readonly charges: Charge[] = [];
+  abstract readonly attacker: Team;
+  abstract readonly times: ChargeTimes;
+
+  get defender(): Team {
+    return other(this.attacker);
+  }
+
+  /** The charge `id` is working on now, if any (hands busy, the prompt's progress). */
+  workOf(id: number): Charge | null {
+    return this.charges.find((c) => c.by === id) ?? null;
+  }
+
+  /** Charges in play (live and not gone). */
+  liveCharges(): Charge[] {
+    return this.charges.filter((c) => c.live && c.state !== 'gone');
+  }
+
+  /** Zones a side may spawn at besides its base (null: the usual rule). */
+  spawnZones(team: Team): string[] | null {
+    void team;
+    return null;
+  }
+}
+
+/**
+ * Rush [제안]: one sector at a time, each a zone with two charges about a
+ * third of its radius out to either side of the line of attack. The attackers
+ * have tickets (`perSoldier` x their side, `refillPerSoldier` more each
+ * sector); a charge armed (`plant` s) goes off after `fuse` s unless the
+ * defenders defuse it (`defuse` s); both gone, the next sector opens. Out
+ * of tickets with no charge armed, the defenders win; every sector taken,
+ * the attackers do. The first sector opens after `setup` s.
+ */
+export const RUSH = { perSoldier: 3, refillPerSoldier: 2, plant: 4, defuse: 6, fuse: 30, reach: 2.2, setup: 15 };
+
+export interface RushOptions {
+  attacker: Team;
+  /** Zone ids per sector, in attack order. */
+  sectors: readonly (readonly string[])[];
+  charges: Charge[];
+  tickets: number;
+  refill: number;
+  setup?: number;
+}
+
+export class RushRules extends ChargeRules {
+  readonly kind = 'rush';
+  readonly attacker: Team;
+  readonly sectors: string[][];
+  readonly times: ChargeTimes = { plant: RUSH.plant, defuse: RUSH.defuse, fuse: RUSH.fuse, reach: RUSH.reach };
+  /** The sector under attack (= sectors taken so far). */
+  active = 0;
+  setupLeft: number;
+  private readonly refill: number;
+
+  constructor(opts: RushOptions) {
+    super();
+    this.attacker = opts.attacker;
+    this.sectors = opts.sectors.map((s) => [...s]);
+    this.charges.push(...opts.charges);
+    this.tickets[this.attacker] = opts.tickets;
+    this.refill = opts.refill;
+    this.setupLeft = opts.setup ?? RUSH.setup;
+  }
+
+  private sectorOf(zone: string): number {
+    return this.sectors.findIndex((s) => s.includes(zone));
+  }
+
+  start(zr: ZoneRules): void {
+    this.show(zr);
+  }
+
+  /** Taken sectors the attackers', the rest the defenders'; the active one's charges live once the setup is over. */
+  private show(zr: ZoneRules): void {
+    for (const z of zr.zones) {
+      const i = this.sectorOf(z.id);
+      z.locked = true;
+      z.noCapture = true;
+      z.hidden = i < 0;
+      const left = this.charges.some((c) => c.zone === z.id && c.state !== 'gone');
+      ZoneRules.force(z, i < this.active || (i === this.active && !left) ? this.attacker : this.defender);
+      z.pushing = this.charges.some((c) => c.zone === z.id && c.state === 'armed') ? this.attacker : null;
+    }
+    for (const c of this.charges) c.live = !this.ended && this.setupLeft <= 0 && this.sectorOf(c.zone) === this.active;
+  }
+
+  step(dt: number, zr: ZoneRules): ModeEvent[] {
+    if (this.ended) return [];
+    const out: ModeEvent[] = [];
+    if (this.setupLeft > 0) {
+      this.setupLeft = Math.max(0, this.setupLeft - dt);
+      if (this.setupLeft === 0) out.push({ type: 'attack', attacker: this.attacker, reason: 'opening' });
+    }
+    this.show(zr);
+    workCharges(this.charges, this.present, this.attacker, dt, this.times, out);
+    const ids = this.sectors[this.active] ?? [];
+    if (this.setupLeft <= 0 && this.charges.filter((c) => ids.includes(c.zone)).every((c) => c.state === 'gone')) {
+      out.push({ type: 'sector', team: this.attacker, sector: this.active });
+      this.active++;
+      if (this.active >= this.sectors.length) this.end(this.attacker, 'sectors');
+      else {
+        this.tickets[this.attacker] = (this.tickets[this.attacker] ?? 0) + this.refill;
+        out.push({ type: 'refill', team: this.attacker, tickets: this.refill });
+        out.push({ type: 'attack', attacker: this.attacker, reason: 'captured' });
+      }
+    }
+    // Out of tickets: lost, unless a charge is still ticking.
+    if (!this.ended && (this.tickets[this.attacker] ?? 0) <= 0 && !this.charges.some((c) => c.state === 'armed')) this.end(this.defender, 'tickets');
+    this.show(zr);
+    return out;
+  }
+
+  private present: readonly Presence[] = [];
+
+  override observe(list: readonly Presence[]): ModeEvent[] {
+    this.present = list;
+    return [];
+  }
+
+  /** Tickets run down without ending the match here (a charge may still be ticking: `step` decides). */
+  override onDeath(team: Team): void {
+    const t = this.tickets[team];
+    if (this.ended || t === null) return;
+    this.tickets[team] = Math.max(0, t - 1);
+  }
+
+  override focus(): readonly string[] {
+    return this.sectors[this.active] ?? [];
+  }
+
+  override spawnZones(team: Team): string[] {
+    return this.sectors.filter((_, i) => (team === this.attacker ? i < this.active : i > this.active)).flat();
+  }
+
+  order(team: Team): string[] {
+    const ids = this.sectors.flat();
+    return team === this.attacker ? ids : ids.reverse();
+  }
+}
+
+/**
+ * Search & destroy [제안]: rounds with one life each, no reviving. The
+ * attackers plant at either of two sites (`plant` s); armed, the bomb goes
+ * off after `fuse` s unless defused (`defuse` s). A round is won by the
+ * attackers when it goes off or every defender is down; by the defenders
+ * when it is defused, every attacker is down with nothing armed, or the
+ * round clock (`roundTime` s, stopped once armed) runs out. `pre` s to get
+ * ready (nothing can be planted), `post` s to see who won. Sides swap roles
+ * after `half` rounds; first to `win` rounds wins. Sites: the two zones
+ * deepest in the defenders' half (they change with the swap).
+ */
+export const SND = { win: 4, half: 3, roundTime: 150, pre: 8, post: 6, plant: 4, defuse: 7, fuse: 40, reach: 2.2 };
+
+/** Where each half is played: the sites (charges to copy) and where each side starts a round. */
+export interface SndHalf {
+  attacker: Team;
+  sites: Charge[];
+  attackerStart: { x: number; y: number; z: number };
+  defenderStart: { x: number; y: number; z: number };
+}
+
+export class SearchDestroyRules extends ChargeRules {
+  readonly kind = 'snd';
+  readonly times: ChargeTimes = { plant: SND.plant, defuse: SND.defuse, fuse: SND.fuse, reach: SND.reach };
+  readonly halves: SndHalf[];
+  attacker: Team;
+  round = 1;
+  phase: 'pre' | 'live' | 'post' = 'pre';
+  /** Seconds left in this phase (live: the round clock, stopped while a charge is armed). */
+  phaseLeft: number = SND.pre;
+  readonly wins: Record<Team, number> = { blue: 0, red: 0 };
+  /** The last round's result. */
+  last: { winner: Team; why: 'eliminated' | 'blown' | 'defused' | 'time' } | null = null;
+  /** Living soldiers a side at the last step. */
+  readonly alive: Record<Team, number> = { blue: 0, red: 0 };
+
+  constructor(halves: SndHalf[]) {
+    super();
+    this.halves = halves;
+    this.attacker = halves[0]!.attacker;
+    this.setHalf();
+  }
+
+  /** The half being played now. */
+  get half(): SndHalf {
+    return this.halves[this.round > SND.half ? 1 : 0] ?? this.halves[0]!;
+  }
+
+  private setHalf(): void {
+    const h = this.half;
+    this.attacker = h.attacker;
+    this.charges.length = 0;
+    for (const s of h.sites) this.charges.push({ ...s, state: 'idle', work: 0, by: -1, fuse: 0, live: false });
+  }
+
+  start(zr: ZoneRules): void {
+    this.show(zr);
+  }
+
+  private show(zr: ZoneRules): void {
+    const sites = this.charges.map((c) => c.zone);
+    for (const z of zr.zones) {
+      z.locked = true;
+      z.noCapture = true;
+      z.hidden = !sites.includes(z.id);
+      const c = this.charges.find((x) => x.zone === z.id);
+      ZoneRules.force(z, c && c.state === 'gone' ? this.attacker : this.defender);
+      z.pushing = c?.state === 'armed' ? this.attacker : null;
+    }
+    for (const c of this.charges) c.live = this.phase === 'live' && !this.ended;
+  }
+
+  override observe(list: readonly Presence[]): ModeEvent[] {
+    this.present = list;
+    this.alive.blue = this.alive.red = 0;
+    for (const s of list) if (s.alive) this.alive[s.team]++;
+    return [];
+  }
+
+  private present: readonly Presence[] = [];
+
+  step(dt: number, zr: ZoneRules): ModeEvent[] {
+    if (this.ended) return [];
+    const out: ModeEvent[] = [];
+    if (this.phase === 'pre') {
+      this.phaseLeft -= dt;
+      if (this.phaseLeft <= 0) {
+        this.phase = 'live';
+        this.phaseLeft = SND.roundTime;
+      }
+    } else if (this.phase === 'live') {
+      workCharges(this.charges, this.present, this.attacker, dt, this.times, out);
+      const armed = this.charges.some((c) => c.state === 'armed');
+      if (!armed) this.phaseLeft -= dt;
+      const def = this.defender;
+      let won: { winner: Team; why: 'eliminated' | 'blown' | 'defused' | 'time' } | null = null;
+      for (const e of out) {
+        if (e.type !== 'charge') continue;
+        if (e.state === 'blown') won = { winner: this.attacker, why: 'blown' };
+        else if (e.state === 'defused') won = { winner: def, why: 'defused' };
+      }
+      if (!won && this.alive[def] === 0) won = { winner: this.attacker, why: 'eliminated' };
+      else if (!won && this.alive[this.attacker] === 0 && !armed) won = { winner: def, why: 'eliminated' };
+      else if (!won && this.phaseLeft <= 0) won = { winner: def, why: 'time' };
+      if (won) {
+        this.wins[won.winner]++;
+        this.last = won;
+        out.push({ type: 'roundEnd', n: this.round, winner: won.winner, why: won.why });
+        if (this.wins[won.winner] >= SND.win) this.end(won.winner, 'rounds');
+        this.phase = 'post';
+        this.phaseLeft = SND.post;
+        for (const c of this.charges) if (c.state === 'armed') c.state = 'idle';
+      }
+    } else {
+      this.phaseLeft -= dt;
+      if (this.phaseLeft <= 0) {
+        this.round++;
+        this.setHalf();
+        this.phase = 'pre';
+        this.phaseLeft = SND.pre;
+        out.push({ type: 'round', n: this.round, attacker: this.attacker });
+      }
+    }
+    this.show(zr);
+    return out;
+  }
+
+  /** No tickets: deaths only matter for who is left this round. */
+  override onDeath(): void {}
+
+  override focus(): readonly string[] {
+    return this.charges.map((c) => c.zone);
+  }
+
+  override spawnZones(): string[] {
+    return [];
+  }
+
+  order(team: Team): string[] {
+    void team;
+    return this.charges.map((c) => c.zone);
+  }
+}
+
+/** The line of attack: the attackers' base toward the defenders' (unit, xz). */
+function axis(att: { x: number; z: number }, def: { x: number; z: number }): { ux: number; uz: number } {
+  const dx = def.x - att.x;
+  const dz = def.z - att.z;
+  const l = Math.hypot(dx, dz) || 1;
+  return { ux: dx / l, uz: dz / l };
+}
+
+/**
+ * Rush's sectors and charges for a map: the map's own sectors in attack order
+ * when it has them (`sectors`), else a zone a sector along the line of attack.
+ * Two charges in a one-zone sector (a third of its radius out to either side
+ * of the line), one in the middle of each zone of a bigger one.
+ */
+export function rushPlan(
+  zones: readonly { id: string; x: number; y: number; z: number; radius: number }[],
+  att: { x: number; z: number },
+  def: { x: number; z: number },
+  sectors?: readonly (readonly string[])[],
+): { sectors: string[][]; charges: Charge[] } {
+  const { ux, uz } = axis(att, def);
+  const known = (id: string) => zones.some((z) => z.id === id);
+  const list = sectors?.length
+    ? sectors.map((s) => s.filter(known)).filter((s) => s.length > 0)
+    : [...zones].sort((a, b) => (a.x - att.x) * ux + (a.z - att.z) * uz - ((b.x - att.x) * ux + (b.z - att.z) * uz)).map((z) => [z.id]);
+  const charges: Charge[] = [];
+  for (const sector of list) {
+    for (const id of sector) {
+      const z = zones.find((q) => q.id === id)!;
+      if (sector.length > 1) {
+        charges.push(newCharge(id, id, z.x, z.y, z.z));
+        continue;
+      }
+      const off = Math.min(18, Math.max(6, z.radius * 0.45));
+      charges.push(newCharge(`${id}1`, id, z.x - uz * off, z.y, z.z + ux * off), newCharge(`${id}2`, id, z.x + uz * off, z.y, z.z - ux * off));
+    }
+  }
+  return { sectors: list.map((s) => [...s]), charges };
+}
+
+/**
+ * S&D's halves for a map: the two zones deepest in the defenders' half are
+ * the sites; the defenders start between them, the attackers at the zone (or
+ * their base) nearest `SND_START` m from the sites.
+ */
+export const SND_START = 90;
+
+export function sndHalves(zones: readonly { id: string; x: number; y: number; z: number }[], bases: Record<Team, { x: number; y: number; z: number }>, first: Team): SndHalf[] {
+  const half = (attacker: Team): SndHalf => {
+    const def = other(attacker);
+    const lean = (z: { x: number; z: number }) => Math.hypot(z.x - bases[def].x, z.z - bases[def].z) - Math.hypot(z.x - bases[attacker].x, z.z - bases[attacker].z);
+    const sites = [...zones].sort((a, b) => lean(a) - lean(b)).slice(0, Math.min(2, zones.length));
+    const mid = { x: sites.reduce((a, s) => a + s.x, 0) / sites.length, y: sites.reduce((a, s) => a + s.y, 0) / sites.length, z: sites.reduce((a, s) => a + s.z, 0) / sites.length };
+    const near = (p: { x: number; z: number }) => Math.min(...sites.map((s) => Math.hypot(s.x - p.x, s.z - p.z)));
+    const cands = [...zones.filter((z) => !sites.includes(z)), bases[attacker]];
+    let start = bases[attacker];
+    let best = Infinity;
+    for (const c of cands) {
+      const d = near(c);
+      // Not right on a site, and on the attackers' side of them.
+      if (d < 45 || lean(c) < lean(mid)) continue;
+      const score = Math.abs(d - SND_START);
+      if (score < best) {
+        best = score;
+        start = c;
+      }
+    }
+    return { attacker, sites: sites.map((s) => newCharge(s.id, s.id, s.x, s.y, s.z)), attackerStart: { x: start.x, y: start.y, z: start.z }, defenderStart: mid };
+  };
+  return [half(first), half(other(first))];
 }
 
 // ---------------------------------------------------------------------------

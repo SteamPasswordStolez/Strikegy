@@ -41,6 +41,7 @@ export default defineConfig({
         botAudit: here('./botAudit.ts'),
         botAb: here('./botAb.ts'),
         pace: here('./pace.ts'),
+        modeCheck: here('./modeCheck.ts'),
         bakeNav: here('./bakeNav.ts'),
       },
       output: { entryFileNames: '[name].js' },

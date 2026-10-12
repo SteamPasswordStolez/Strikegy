@@ -47,6 +47,8 @@ export const BLASTS = {
   salvo: { innerRadius: 2, radius: 7, maxDamage: 150, fortMult: 1.8 },
   // Aircraft: a missile.
   missile: { innerRadius: 1.5, radius: 4, maxDamage: 120, fortMult: 1.5 },
+  // A Rush / S&D charge going off: everyone close by is caught in it.
+  charge: { innerRadius: 4, radius: 12, maxDamage: 250, fortMult: 3 },
 } satisfies Record<string, BlastSpec>;
 
 export type BlastKind = keyof typeof BLASTS;

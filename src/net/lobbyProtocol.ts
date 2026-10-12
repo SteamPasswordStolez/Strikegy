@@ -159,6 +159,7 @@ export type MatchEvent =
   /** To the soldier's player: on the field at `pos`, spread drawn from `seed`. */
   | { k: 'spawn'; id: number; pos: [number, number, number]; yaw: number; seed: number; kit: unknown }
   | { k: 'down'; id: number; by: string | null; cause: 'bullet' | 'explosion' | 'fall' }
+  /** `respawn`: seconds before deploying again; -1: not before the next round (S&D). */
   | { k: 'died'; id: number; respawn: number }
   | { k: 'revived'; id: number; by: string; byId?: number }
   | { k: 'zone'; type: 'captured' | 'neutralized'; zone: string; team: Side }
@@ -166,7 +167,7 @@ export type MatchEvent =
   /** A grenade went off at tick `tick` (browsers show it when they draw that moment). */
   | {
       k: 'boom';
-      type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck';
+      type: 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck' | 'charge';
       pos: [number, number, number];
       tick: number;
     }

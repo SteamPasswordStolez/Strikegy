@@ -203,6 +203,8 @@ export interface BotServices {
   overwatch(bot: Bot): THREE.Vector3 | null;
   /** A melee blow at `target` in reach; false when it can't land. */
   melee(bot: Bot, target: Combatant): boolean;
+  /** A charge spot this bot should stand on holding E (Rush, S&D), when it is near; else null. */
+  useSpot(bot: Bot): THREE.Vector3 | null;
 }
 
 let nextBotId = 1;
@@ -278,6 +280,8 @@ export class Bot implements Damageable, Combatant {
   respawnPenalty = 0;
   /** Only the rifle butt can kill (gun game's last step): run at the target instead of shooting. */
   meleeOnly = false;
+  /** Holding E on a charge (planting / defusing), as the mode's rules see it. */
+  using = false;
   /** Rounds fired, counting up (the game server sends it: shots heard and seen). */
   shots = 0;
   /** Off the field for a person who took this bot's place (game server rooms with bots). */
@@ -1069,6 +1073,21 @@ export class Bot implements Damageable, Combatant {
     }
     // Where to look while walking: the dangerous side, not just the path.
     this.scan = smart && !this.target && this.hasGoal && this.path.length > 0 ? s.scanYaw(this, this.pathYaw()) : null;
+    // A charge to plant or defuse close by: onto it and hold E (kneeling), the fight can wait once there.
+    this.using = false;
+    const spot = s.useSpot(this);
+    if (spot) {
+      const d = this.feet.distanceTo(spot);
+      if (d > 0.9 && (!this.target || d < 4)) {
+        this.action = 'cover';
+        this.cover = null;
+        this.setGoal(spot, s);
+      } else if (d <= 0.9) {
+        this.hasGoal = false;
+        this.using = true;
+        this.setCrouch(true);
+      }
+    }
     // Only the butt left (gun game's last step): straight at whoever it is after, sprinting.
     if (this.meleeOnly && this.target) {
       this.action = 'cover';

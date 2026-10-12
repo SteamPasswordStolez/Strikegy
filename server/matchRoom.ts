@@ -747,7 +747,15 @@ export class MatchRoom {
     });
     bus.on('zone:captured', (e) => this.broadcastEvents.push({ k: 'zone', type: 'captured', zone: e.zone, team: e.team }));
     bus.on('zone:neutralized', (e) => this.broadcastEvents.push({ k: 'zone', type: 'neutralized', zone: e.zone, team: e.team }));
-    bus.on('mode:event', (e) => this.broadcastEvents.push({ k: 'mode', e }));
+    bus.on('mode:event', (e) => {
+      this.broadcastEvents.push({ k: 'mode', e });
+      // S&D: a new round. Soldiers still up are put back at their side's start (and told so); the rest may deploy.
+      if (e.type !== 'round') return;
+      for (const seat of this.seats.values()) {
+        const at = this.sim.roundRespawn(seat.soldier.id, seat.kit ?? undefined);
+        if (at) seat.events.push({ k: 'spawn', id: seat.soldier.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit: seat.kit });
+      }
+    });
     bus.on('combatant:revived', (e) => this.broadcastEvents.push({ k: 'revived', id: e.id, by: e.byName, byId: e.byId }));
     bus.on('match:ended', (e) => {
       if (this.over) return;
@@ -783,7 +791,7 @@ export class MatchRoom {
     return {
       hurt: (amount, from, cause) => seat.events.push({ k: 'hurt', amount, from: from ? [from.x, from.y, from.z] : null, cause }),
       down: (cause) => this.broadcastEvents.push({ k: 'down', id: s.id, by: s.killedBy, cause }),
-      died: () => this.broadcastEvents.push({ k: 'died', id: s.id, respawn: s.respawnTimer }),
+      died: () => this.broadcastEvents.push({ k: 'died', id: s.id, respawn: Number.isFinite(s.respawnTimer) ? s.respawnTimer : -1 }),
     };
   }
 }

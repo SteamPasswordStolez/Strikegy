@@ -17,7 +17,7 @@ import { ROCKET } from '@/data/gadgets';
 import { CALL_RANGE, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { t } from '@/i18n';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
-import { ZoneMode } from '@/modes/ZoneMode';
+import { ZoneMode, pickMode } from '@/modes/ZoneMode';
 import { Fortifications } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { GunGameRules, type ModeKind } from '@/modes/matchRules';
@@ -95,7 +95,7 @@ export function seeded(seed: number): () => number {
 }
 
 /** What goes off where everyone should see it. */
-export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck';
+export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck' | 'charge';
 
 /** Where a deployed soldier came out and the seed of its spread for this life. */
 export interface Deployed {
@@ -177,6 +177,7 @@ export class MatchSim {
     this.throwables = new Throwables(new THREE.Scene(), physics, this.bus);
     const map = world.map;
     this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize }) : null;
+    this.zoneMode?.snapCharges(nav);
     this.fort = this.zoneMode ? new Fortifications(fortPlanFor(world, physics), new FortModels(null), physics, impacts, nav) : null;
     this.gadgets = new GadgetWorld(physics, this.registry, {
       explode: (kind, point, owner) => {
@@ -242,7 +243,9 @@ export class MatchSim {
     const world = buildWorld(map, physics, impacts);
     let nav: NavWorld | null = null;
     let vehicleNav: VehicleNav | null = null;
-    if (opts.bots && opts.bots.blue + opts.bots.red > 0) {
+    // Charges (Rush, S&D) go on walkable ground: those modes need the navmesh even without bots.
+    const charges = ['rush', 'snd'].includes(pickMode(map, opts.mode, true));
+    if ((opts.bots && opts.bots.blue + opts.bots.red > 0) || charges) {
       // Colliders into the broadphase before the navmesh reads them.
       physics.step();
       nav = await NavWorld.build(physics, world.built.navExtra ?? undefined);
@@ -416,6 +419,21 @@ export class MatchSim {
       }
     });
     bus.on('match:ended', (e) => (this.winner = e.winner));
+    // Rush / S&D: a charge going off takes everyone near it; a new S&D round brings every bot back.
+    bus.on('mode:event', (e) => {
+      if (e.type === 'charge' && e.state === 'blown') {
+        const c = zm?.charges?.charges.find((x) => x.id === e.id);
+        if (!c) return;
+        const at = new THREE.Vector3(c.x, c.y + 0.4, c.z);
+        this.blast('charge', at, { id: -1, name: t('charge.name'), team: e.team }, t('charge.name'));
+        this.onBoom('charge', at);
+      } else if (e.type === 'round') this.bots?.respawnAll();
+      // The fight moved (a charge armed or gone, a new sector or round): bots re-plan soon.
+      if (e.type === 'charge' || e.type === 'sector' || e.type === 'round' || e.type === 'hill' || e.type === 'attack') {
+        this.bots?.replan('blue');
+        this.bots?.replan('red');
+      }
+    });
     // Gun game: a new step's gun in hand at once.
     bus.on('mode:event', (e) => {
       if (e.type !== 'level' || !(zm?.match instanceof GunGameRules)) return;
@@ -746,8 +764,10 @@ export class MatchSim {
       }
       if (input.medkit) s.useMedkit();
       s.stepMedkit(dt);
-      const reviving = this.stepRevive(s, input.interact, dt);
-      const gave = reviving ? null : stepGive(s, input, this.soldiers.values(), this.time, this.giveClock);
+      // At a charge it may work (Rush, S&D): holding E is planting / defusing, nothing else.
+      s.using = input.interact && this.canWorkCharge(s);
+      const reviving = !s.using && this.stepRevive(s, input.interact, dt);
+      const gave = reviving || s.using ? null : stepGive(s, input, this.soldiers.values(), this.time, this.giveClock);
       if (gave) {
         this.scores.resupply(s.id);
         this.onGive(s, gave.mate, gave.kind);
@@ -757,21 +777,53 @@ export class MatchSim {
         consumePulses(input);
         return;
       }
-      if (reviving || gave) s.working = -1;
+      if (reviving || gave || s.using) s.working = -1;
       else stepFort(s, input, dt, this.kit);
       if (input.throwGrenade) {
         const owner: GrenadeOwner = { id: s.id, name: s.combatant.name, team: s.team };
         s.throwGrenade((type, origin, dir, carry) => this.throwables.throw(type, origin, dir, carry, owner));
       }
-      const busy = s.throwBlock > 0 || s.medkitUse > 0 || reviving || s.working >= 0 || s.buildMode || s.gadgetOut;
+      const busy = s.throwBlock > 0 || s.medkitUse > 0 || reviving || s.working >= 0 || s.buildMode || s.gadgetOut || s.using;
       const shots = s.weapons.shots;
       s.stepOnFoot(dt, input, busy, this.fort?.slowAt(s.player.feet) ?? 1);
       if (s.weapons.shots !== shots) this.bots?.alert(s.player.feet, WEAPONS[s.weapons.def.id as WeaponId].suppressed ? 22 : 70, s.combatant);
       // The eye follows crouching as the browser's view does (shots start there).
       s.player.eyePosition(1, dt, this.eyeTmp);
-    } else if (s.downed) s.stepDowned(dt, input.jumpHeld);
-    else s.respawnTimer -= dt;
+    } else {
+      s.using = false;
+      if (s.downed) s.stepDowned(dt, input.jumpHeld);
+      else s.respawnTimer -= dt;
+    }
     consumePulses(input);
+  }
+
+  /** A live charge within reach that `s`'s side may work: attackers an idle one, defenders an armed one. */
+  private canWorkCharge(s: Soldier): boolean {
+    const zm = this.zoneMode;
+    const m = zm?.charges;
+    if (!zm || !m) return false;
+    const c = zm.chargeNear(s.player.feet);
+    if (!c || !c.live) return false;
+    return c.state === 'idle' ? s.team === m.attacker : s.team === m.defender;
+  }
+
+  /**
+   * S&D: a new round for soldier `id`. On the field: back at its side's start
+   * with a fresh life (the returned spot goes to its browser); off it: may
+   * deploy at once. Null when it wasn't on the field.
+   */
+  roundRespawn(id: number, kit?: Loadout): Deployed | null {
+    const s = this.soldiers.get(id);
+    if (!s) return null;
+    this.vehicles?.leave(s, false);
+    if (!s.deployed || !s.player.alive || s.downed) {
+      s.deployed = false;
+      s.respawnTimer = 0;
+      return null;
+    }
+    s.deployed = false;
+    s.respawnTimer = 0;
+    return this.deploy(id, 'base', kit);
   }
 
   /** Ends a step: the bots, hitboxes, the zone rules, grenades and gadgets, the physics; poses are kept. */

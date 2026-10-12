@@ -21,6 +21,8 @@ export interface DeployState {
   selected: string;
   /** Seconds until deploying is allowed (0 = ready). */
   wait: number;
+  /** Instead of the countdown on the button (S&D: waiting for the next round). */
+  waitText?: string;
   /** Extra text under the countdown (e.g. squad wiped). */
   note: string | null;
   /** The map's name. */
@@ -176,7 +178,7 @@ export class DeployScreen {
     this.button.style.setProperty('--p', ready ? '1' : (1 - s.wait / Math.max(0.01, this.waitFrom)).toFixed(3));
     // Touch screens have no Space key: drop the hint.
     const go = this.touch ? t('deploy.go').replace(/\s*\(.*\)$/, '') : t('deploy.go');
-    this.buttonText.textContent = ready ? go : `${t('deploy.wait')} ${Math.ceil(s.wait)}`;
+    this.buttonText.textContent = ready ? go : (s.waitText ?? `${t('deploy.wait')} ${Math.ceil(s.wait)}`);
 
     const listKey = `${s.selected}|${s.options.map((o) => `${o.key}${o.label}${o.blocked}${o.warn}`).join()}`;
     if (listKey !== this.listKey) {

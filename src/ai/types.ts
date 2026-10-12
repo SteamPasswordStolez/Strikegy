@@ -24,6 +24,8 @@ export interface Combatant {
   readonly yaw: number;
   /** Fired, got hit or had an enemy in sight recently (sim time). */
   inCombat(now: number): boolean;
+  /** Holding E on foot (a charge to plant / defuse). */
+  readonly using?: boolean;
 }
 
 export function otherTeam(t: Team): Team {

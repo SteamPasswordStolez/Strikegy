@@ -134,6 +134,8 @@ export class Soldier {
   buildMode = false;
   /** Seconds of hands-on work (building, restocking) going on now, or -1. */
   working = -1;
+  /** Holding E on foot at a charge (Rush, S&D): the mode's rules count the planting / defusing from it. */
+  using = false;
   /** In a vehicle (match on the game server): which one and the seat. */
   ride: { v: Vehicle; seat: number } | null = null;
   /** Under a parachute after bailing out of a plane high up: the drift (null: not). */
@@ -182,6 +184,9 @@ export class Soldier {
       },
       get firingUntil() {
         return s.firingUntil;
+      },
+      get using() {
+        return s.using && s.player.alive && s.deployed;
       },
     };
     this.target = {

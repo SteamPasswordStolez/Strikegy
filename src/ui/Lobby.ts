@@ -42,6 +42,7 @@ function modesOf(map: MapDef | undefined): LobbyMode[] {
     if (map?.modes?.conquest) out.push('conquest');
     if (!map || (map.zones?.length ?? 0) >= 2) out.push('hardpoint');
     out.push('tdm', 'killconfirm', 'ffa', 'gungame');
+    if (!map || (map.zones?.length ?? 0) >= 2) out.push('rush', 'snd');
   }
   out.push('skirmish');
   return out;

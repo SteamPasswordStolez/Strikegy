@@ -3,7 +3,7 @@ import type { GameBus } from '@/core/events';
 import type { NavWorld } from '@/ai/NavWorld';
 import type { MapDef, SpawnPoint, Team } from '@/world/mapTypes';
 import { ZoneRules, type ZoneRulesOptions, type ZoneState } from './zoneRules';
-import { ConquestRules, DOMINATION, DominationRules, DeathmatchRules, FFA, FREE_SPAWN_MODES, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, SOLO_MODES, hardpointRoute, killTarget, type MatchRules, type ModeKind } from './matchRules';
+import { ChargeRules, ConquestRules, DOMINATION, DominationRules, DeathmatchRules, FFA, FREE_SPAWN_MODES, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, hardpointRoute, killTarget, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
 import { setMatchFlags, type MatchFlags } from './matchFlags';
 
 const DEG = Math.PI / 180;
@@ -39,6 +39,8 @@ export function matchFlagsFor(kind: ModeKind): Partial<MatchFlags> {
   if (kind === 'ffa' || kind === 'gungame') {
     return { ffa: true, revive: false, respawn: kind === 'ffa' ? FFA.respawn : GUN_GAME.respawn, squads: false, vehicles: false, callIns: false };
   }
+  // One life a round: back only when the next round starts (Game / MatchSim respawn everyone then).
+  if (kind === 'snd') return { revive: false, respawn: Infinity, vehicles: false, callIns: false };
   return {};
 }
 
@@ -50,6 +52,7 @@ export function modesOf(map: MapDef): ModeKind[] {
   const n = map.zones?.length ?? 0;
   if (n >= 2) out.push('hardpoint');
   if (n >= 1) out.push('tdm', 'killconfirm', 'ffa', 'gungame');
+  if (n >= 2) out.push('rush', 'snd');
   return out;
 }
 
@@ -102,6 +105,28 @@ function createMatch(kind: ModeKind, map: MapDef, opts: ZoneModeOptions): MatchR
   }
   if (kind === 'ffa') return new FreeForAllRules();
   if (kind === 'gungame') return new GunGameRules();
+  if (kind === 'rush' || kind === 'snd') {
+    const zones = (map.zones ?? []).map((z) => ({ id: z.id, x: z.pos[0], y: z.pos[1], z: z.pos[2], radius: z.radius }));
+    const center = (team: Team) => {
+      const c = spawnCenter(map, team);
+      const list = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
+      return { x: c.x, y: list.reduce((a, s) => a + s.pos[1], 0) / Math.max(1, list.length), z: c.z };
+    };
+    // The side a map's breakthrough has attacking attacks here too (else red).
+    const attacker: Team = m?.conquest?.attacker ?? 'red';
+    if (kind === 'snd') return new SearchDestroyRules(sndHalves(zones, { blue: center('blue'), red: center('red') }, attacker));
+    // The map's own sectors in attack order: the breakthrough's, else the frontline's (listed from the blue end).
+    const front = m?.frontline?.sectors;
+    const sectors = m?.conquest?.sectors ?? (front && (attacker === 'blue' ? front : [...front].reverse()));
+    const plan = rushPlan(zones, center(attacker), center(attacker === 'blue' ? 'red' : 'blue'), sectors);
+    return new RushRules({
+      attacker,
+      sectors: plan.sectors,
+      charges: plan.charges,
+      tickets: opts.tickets ?? Math.round(RUSH.perSoldier * size[attacker]),
+      refill: Math.round(RUSH.refillPerSoldier * size[attacker]),
+    });
+  }
   return new DominationRules(m?.zone?.target ?? DOMINATION.target);
 }
 
@@ -122,6 +147,8 @@ export interface Objective {
   front?: THREE.Vector3;
   /** Held by the other side. */
   enemyHeld?: boolean;
+  /** A charge to stand on holding E (plant / defuse). */
+  use?: boolean;
 }
 
 interface Presence {
@@ -129,6 +156,8 @@ interface Presence {
   readonly team: Team;
   readonly alive: boolean;
   readonly feet: THREE.Vector3;
+  /** Holding E on foot. */
+  readonly using?: boolean;
 }
 
 /**
@@ -227,6 +256,52 @@ export class ZoneMode {
     return this.zone(id)?.owner ?? null;
   }
 
+  /** Charges (Rush, S&D): the rules, or null. */
+  get charges(): ChargeRules | null {
+    return this.match instanceof ChargeRules ? this.match : null;
+  }
+
+  /** The charge soldier `id` is planting / defusing now, if any. */
+  charging(id: number): Charge | null {
+    return this.charges?.workOf(id) ?? null;
+  }
+
+  /** A charge within reach of `p` (the prompt): live, not gone. */
+  chargeNear(p: THREE.Vector3): Charge | null {
+    const m = this.charges;
+    if (!m) return null;
+    const r = m.times.reach;
+    return m.charges.find((c) => c.state !== 'gone' && (c.x - p.x) ** 2 + (c.z - p.z) ** 2 < r * r && Math.abs(c.y - p.y) < 2.5) ?? null;
+  }
+
+  /**
+   * Puts the charges on walkable ground (once there is a navmesh): the zone's
+   * middle can be a fountain or a wall. The game server's copy is what a
+   * browser in a match there shows (the rules' state goes to it).
+   */
+  snapCharges(nav: NavWorld | null): void {
+    const m = this.charges;
+    if (!m || !nav) return;
+    const all = m instanceof SearchDestroyRules ? m.halves.flatMap((h) => h.sites) : [];
+    for (const c of [...m.charges, ...all]) {
+      const at = new THREE.Vector3(c.x, c.y, c.z);
+      const p = nav.closest(at);
+      const q = p && Math.abs(p.y - c.y) < 2.5 ? p : groundAround(nav, at, 4);
+      if (q) {
+        c.x = q.x;
+        c.y = q.y;
+        c.z = q.z;
+      }
+    }
+    // S&D: the half in play has copies of its sites.
+    if (m instanceof SearchDestroyRules) {
+      for (const c of m.charges) {
+        const s = m.half.sites.find((x) => x.id === c.id);
+        if (s) Object.assign(c, { x: s.x, y: s.y, z: s.z });
+      }
+    }
+  }
+
   /** Soldiers spawn at any zone with no enemy near it, not only at zones they hold. */
   get freeSpawns(): boolean {
     return FREE_SPAWN_MODES.includes(this.kind);
@@ -312,6 +387,8 @@ export class ZoneMode {
    */
   spawnOptions(team: Team): SpawnOption[] {
     if (this.solo) return [{ id: 'base', underAttack: false }];
+    const allowed = this.charges?.spawnZones(team);
+    if (allowed) return [{ id: 'base', underAttack: false }, ...allowed.map((id) => ({ id, underAttack: false }))];
     if (this.freeSpawns) return [{ id: 'base', underAttack: false }, ...this.rules.zones.filter((z) => this.freeSpawnOk(team, z)).map((z) => ({ id: z.id, underAttack: false }))];
     const zones = this.rules.owned(team).filter((z) => this.kind === 'zone' || z.locked);
     return [{ id: 'base', underAttack: false }, ...zones.map((z) => ({ id: z.id, underAttack: ZoneRules.underAttack(z) }))];
@@ -323,15 +400,25 @@ export class ZoneMode {
    */
   spawnPoint(team: Team, choice: string, nav: NavWorld | null, rand = Math.random, selfId = -1): { pos: THREE.Vector3; yaw: number } {
     if (this.solo) return this.soloSpawn(nav, selfId, rand);
+    // S&D: each side starts a round at its spot of the half (attackers off the sites, defenders between them).
+    if (this.match instanceof SearchDestroyRules) {
+      const h = this.match.half;
+      const s = team === h.attacker ? h.attackerStart : h.defenderStart;
+      const c = new THREE.Vector3(s.x, s.y, s.z);
+      const pos = (nav && groundAround(nav, c, 9)) || c;
+      return { pos, yaw: this.faceYaw(team, pos) };
+    }
+    const allowed = this.charges?.spawnZones(team);
+    if (allowed && choice !== 'base' && !allowed.includes(choice)) choice = 'base';
     const z = choice === 'base' ? undefined : this.zone(choice);
     let pos: THREE.Vector3;
-    const usable = z && (this.freeSpawns ? this.freeSpawnOk(team, z) : z.owner === team && (this.kind === 'zone' || z.locked));
+    const usable = z && (allowed ? true : this.freeSpawns ? this.freeSpawnOk(team, z) : z.owner === team && (this.kind === 'zone' || z.locked));
     if (!z || !usable) {
       const list = this.bases[team];
       const sp = list[Math.floor(rand() * list.length)];
       pos = sp ? new THREE.Vector3(...sp.pos) : this.baseCenter[team].clone();
       if (nav) pos = nav.randomAround(pos, 3) ?? pos;
-    } else if (!this.freeSpawns && ZoneRules.underAttack(z)) {
+    } else if (!this.freeSpawns && !allowed && ZoneRules.underAttack(z)) {
       // Back from the fight, toward our own base. The spot can land inside a
       // building (no floor there at the zone's height): then another angle, and
       // failing that the zone itself, never the spot as it is.
@@ -375,6 +462,7 @@ export class ZoneMode {
    * (frontline / conquest: everything but the sector fought over) are not.
    */
   objectives(team: Team): Objective[] {
+    if (this.charges) return this.chargeObjectives(team, this.charges);
     const base = this.baseCenter[team];
     const enemyBase = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
     // With one sector in play, its zones (also while it waits to open).
@@ -409,6 +497,27 @@ export class ZoneMode {
       enemyHeld: z.owner !== null && z.owner !== team,
       front: new THREE.Vector3(enemy.x - z.x, 0, enemy.z - z.z).normalize(),
     }));
+  }
+
+  /**
+   * Rush / S&D for the bots: attackers go for idle charges to plant (the
+   * nearest bots stand on them holding E) and guard armed ones; defenders go
+   * for armed charges to defuse and guard the idle ones, facing the attack.
+   */
+  private chargeObjectives(team: Team, m: ChargeRules): Objective[] {
+    const att = team === m.attacker;
+    const focus = m.focus() ?? [];
+    const list = m.charges.filter((c) => c.state !== 'gone' && focus.includes(c.zone));
+    const enemyBase = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
+    const scored = list.map((c) => {
+      const pos = new THREE.Vector3(c.x, c.y, c.z);
+      const front = new THREE.Vector3(enemyBase.x - c.x, 0, enemyBase.z - c.z).normalize();
+      const armed = c.state === 'armed';
+      const work = c.live && (att ? !armed : armed);
+      const o: Objective = work ? { pos, radius: 6, use: true, enemyHeld: att } : { pos, radius: 14, defend: true, guard: !armed && !att, front };
+      return { o, s: (work ? 2 : 1) - pos.distanceTo(this.baseCenter[team]) / 1000 };
+    });
+    return scored.sort((a, b) => b.s - a.s).map((x) => x.o);
   }
 }
 

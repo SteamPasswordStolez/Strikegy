@@ -13,6 +13,7 @@
     "bots:ab": "npm run server:build && node dist-server/botAb.js",
     "bots:audit": "npm run server:build && node dist-server/botAudit.js",
     "bots:pace": "npm run server:build && node dist-server/pace.js",
+    "mode:check": "npm run server:build && node dist-server/modeCheck.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

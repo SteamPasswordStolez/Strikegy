@@ -76,7 +76,8 @@ import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
 import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { armForLevel, gunGameKit } from '@/modes/gunGame';
-import { ConquestRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, SoloRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { ConquestRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { ChargeVisuals } from '@/modes/chargeVisuals';
 import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
@@ -157,7 +158,7 @@ function boomSize(kind: string): BoomSize {
   if (kind === 'cannon') return 'small';
   if (kind === 'rocket' || kind === 'missile' || kind === 'atshell') return 'rocket';
   if (kind === 'shell' || kind === 'mortar' || kind === 'salvo') return 'shell';
-  if (kind === 'artillery' || kind === 'howitzer' || kind === 'wreck') return 'heavy';
+  if (kind === 'artillery' || kind === 'howitzer' || kind === 'wreck' || kind === 'charge') return 'heavy';
   return 'grenade';
 }
 /** Camera shake by blast size (big shells shake from further off). */
@@ -224,6 +225,7 @@ export class Game {
   private zoneMode: ZoneMode | null = null;
   private zoneVisuals: ZoneVisuals | null = null;
   private tagVisuals: TagVisuals | null = null;
+  private chargeVisuals: ChargeVisuals | null = null;
   private matchOver = false;
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
@@ -279,6 +281,8 @@ export class Game {
     | { kind: 'reviveMate'; name: string }
     /** A mate in a match there who could use a medkit / ammo from this medic / support. */
     | { kind: 'giveMate'; name: string; what: 'medkit' | 'ammo' }
+    /** A charge (Rush, S&D) to plant or defuse. */
+    | { kind: 'charge'; charge: Charge; plant: boolean }
     | null = null;
   /** Zone supply stations and build spots. */
   private fort: Fortifications | null = null;
@@ -1196,6 +1200,7 @@ export class Game {
     }
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.tagVisuals && this.zoneMode?.match instanceof KillConfirmRules) this.tagVisuals.update(this.zoneMode.match.tags, this.myTeam, this.elapsed);
+    if (this.chargeVisuals && this.zoneMode?.charges) this.chargeVisuals.update(this.zoneMode.charges.charges, this.elapsed);
     if (this.deployScreen && this.running && !this.showcaseCam) {
       if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver && !this.netDeploying) this.openDeploy();
       this.deployRefresh -= dt;
@@ -1358,8 +1363,8 @@ export class Game {
       this.stepInteract(dt, input);
       if (!this.interact && input.interactPressed && this.tryEnterVehicle()) return this.finishStep(dt, input);
       if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
-      // Hands busy (throwing, patching up, reviving): no shooting.
-      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut || this.supportAim !== null;
+      // Hands busy (throwing, patching up, reviving, at a charge): no shooting.
+      const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut || this.supportAim !== null || this.me.using;
       // Barbed wire slows everyone wading through it.
       this.me.stepOnFoot(dt, input, busy, this.fort?.slowAt(p.feet) ?? 1);
       this.stepSway(dt, input.holdBreath);
@@ -1423,9 +1428,10 @@ export class Game {
       }
       if (input.medkit) me.useMedkit();
       me.stepMedkit(dt);
-      const reviving = this.netRevive(net, input.interact, dt);
+      const atCharge = this.stepCharge(input);
+      const reviving = !atCharge && this.netRevive(net, input.interact, dt);
       this.buildTarget = null;
-      if (reviving || this.interact) me.working = -1;
+      if (atCharge || reviving || this.interact) me.working = -1;
       else {
         const view = stepFort(me, input, dt, kit);
         this.buildTarget = view.target;
@@ -1433,7 +1439,7 @@ export class Game {
       }
       // The server throws it; here only the hands move.
       if (input.throwGrenade) me.throwGrenade(null);
-      const busy = me.throwBlock > 0 || this.medkitUse > 0 || reviving || me.working >= 0 || me.buildMode || me.gadgetOut || this.supportAim !== null;
+      const busy = me.throwBlock > 0 || this.medkitUse > 0 || reviving || me.working >= 0 || me.buildMode || me.gadgetOut || this.supportAim !== null || me.using;
       me.stepOnFoot(dt, input, busy, this.fort?.slowAt(p.feet) ?? 1);
       this.stepSway(dt, input.holdBreath);
       net.stepped(n.seq, p.feet);
@@ -2584,6 +2590,7 @@ export class Game {
     this.interact = null;
     const prevWork = this.working;
     this.working = -1;
+    if (this.stepCharge(input)) return;
     const bots = this.bots;
     if (!bots) return;
     const feet = this.player.feet;
@@ -2632,6 +2639,24 @@ export class Game {
       return;
     }
     this.stepFort(dt, input, prevWork);
+  }
+
+  /**
+   * At a charge (Rush, S&D) this soldier may work: hold E to plant (attackers)
+   * or defuse (defenders); the rules count it up from `using`. True while at one.
+   */
+  private stepCharge(input: InputState): boolean {
+    this.me.using = false;
+    const zm = this.zoneMode;
+    const m = zm?.charges;
+    if (!zm || !m || !this.player.alive || !this.deployed) return false;
+    const c = zm.chargeNear(this.player.feet);
+    if (!c || !c.live) return false;
+    const plant = c.state === 'idle';
+    if ((plant && this.myTeam !== m.attacker) || (!plant && this.myTeam !== m.defender)) return false;
+    this.interact = { kind: 'charge', charge: c, plant };
+    this.me.using = input.interact;
+    return true;
   }
 
   /**
@@ -3110,6 +3135,13 @@ export class Game {
       touchLabel = t('act.giveMedkit');
     } else if (act?.kind === 'fort') {
       ({ prompt, touchLabel } = this.fortPrompt(act.job, act.station, act.note, key));
+    } else if (act?.kind === 'charge') {
+      const c = act.charge;
+      const times = this.zoneMode!.charges!.times;
+      const label = t(act.plant ? 'charge.plant' : 'charge.defuse');
+      const mine = c.by === this.myId;
+      prompt = { text: `${key(true)}${label} ${c.id}`, progress: mine && c.work > 0 ? c.work / (act.plant ? times.plant : times.defuse) : null };
+      touchLabel = label;
     }
     if (onField && this.ride) {
       const { v, seat } = this.ride;
@@ -3243,6 +3275,11 @@ export class Game {
     teamSize[otherTeam(this.myTeam)] = b?.enemies ?? 1;
     const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize, passive: !!this.options.net });
     if (zm.match instanceof KillConfirmRules) this.tagVisuals = new TagVisuals(this.renderer.scene);
+    if (zm.charges) {
+      // On walkable ground (a browser in a match on the game server gets the server's spots with the rules).
+      zm.snapCharges(this.nav);
+      this.chargeVisuals = new ChargeVisuals(this.renderer.scene);
+    }
     this.zoneMode = zm;
     if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
@@ -3486,6 +3523,17 @@ export class Game {
     ds.show();
     this.touch?.setVisible(false);
     if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /**
+   * S&D: a new round. Every bot is back at its side's start; the player too
+   * (alive: moved there with a fresh life; dead or not deployed: may deploy now).
+   */
+  private newRound(): void {
+    this.bots?.respawnAll();
+    if (this.ride) this.leaveVehicle();
+    if (this.deployed && this.player.alive && !this.playerDowned) this.respawn('base');
+    else this.respawnTimer = 0;
   }
 
   private deploy(): void {
@@ -3745,10 +3793,13 @@ export class Game {
     const zm = this.zoneMode;
     const tone = (team: Team | null) => (team === null ? 'neutral' : team === this.myTeam ? 'ally' : 'enemy') as 'ally' | 'enemy' | 'neutral';
     const squad = this.squadHud();
+    // One life a round (S&D): no countdown, the next round lets you back in.
+    const roundWait = !Number.isFinite(this.respawnTimer);
     return {
       options,
       selected: sel,
-      wait: Math.max(0, this.respawnTimer),
+      wait: roundWait ? 999 : Math.max(0, this.respawnTimer),
+      waitText: roundWait ? t('snd.waitRound') : undefined,
       note: this.squadWiped ? t('squad.wiped') : null,
       title: this.mapName,
       matchLine: zm ? this.deployMatchLine() : null,
@@ -3816,6 +3867,7 @@ export class Game {
   /** How full a side's score gauge is: points toward the target, or tickets left (free-for-all: me vs the best other). */
   private modeFill(team: Team): number {
     const m = this.zoneMode!.match;
+    if (m instanceof SearchDestroyRules) return m.wins[team] / SND.win;
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       return (team === this.myTeam ? s.mine : s.best) / m.target;
@@ -3830,6 +3882,7 @@ export class Game {
   /** The number beside the zone bar: domination points, tickets, or ∞ for a side without tickets. */
   private modeScore(team: Team): string {
     const m = this.zoneMode!.match;
+    if (m instanceof SearchDestroyRules) return String(m.wins[team]);
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       return String(team === this.myTeam ? s.mine : s.best);
@@ -3843,6 +3896,7 @@ export class Game {
   private modeScoreLine(team: Team): string | null {
     const m = this.zoneMode!.match;
     if (m instanceof SoloRules) return null;
+    if (m instanceof SearchDestroyRules) return `${t('snd.rounds')} ${m.wins[team]}`;
     if (m instanceof PointsRules) return `${t('hud.points')} ${Math.floor(m.points[team])}`;
     const tk = m.tickets[team];
     return tk === null ? null : `${t('hud.tickets')} ${tk}`;
@@ -3866,6 +3920,25 @@ export class Game {
       }
       const target = t('mode.killTarget').replace('{n}', String(m.target));
       return { text: `${mode} · ${place} · ${target} · ${clock}`, tone, urgent: m.timeLeft < 60 };
+    }
+    if (m instanceof RushRules) {
+      const ours = m.attacker === this.myTeam;
+      const sector = t('mode.sector').replace('{n}', String(Math.min(m.active + 1, m.sectors.length))).replace('{total}', String(m.sectors.length));
+      if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${sector}`, tone: 'neutral', urgent: false };
+      const armed = m.charges.filter((c) => c.state === 'armed');
+      const fuse = armed.length ? ` · ${t('charge.armedLine').replace('{t}', clockText(Math.min(...armed.map((c) => c.fuse))))}` : '';
+      return { text: `${mode} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${sector}${fuse}`, tone: ours ? 'ally' : 'enemy', urgent: armed.length > 0 };
+    }
+    if (m instanceof SearchDestroyRules) {
+      const ours = m.attacker === this.myTeam;
+      const round = t('snd.round').replace('{n}', String(m.round));
+      const armed = m.charges.find((c) => c.state === 'armed');
+      const clock =
+        m.phase === 'pre' ? `${t('snd.pre')} ${clockText(m.phaseLeft)}`
+        : m.phase === 'post' ? t('snd.next').replace('{t}', clockText(m.phaseLeft))
+        : armed ? t('charge.armedLine').replace('{t}', clockText(armed.fuse))
+        : t('mode.clock').replace('{t}', clockText(m.phaseLeft));
+      return { text: `${mode} · ${round} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${clock}`, tone: ours ? 'ally' : 'enemy', urgent: !!armed || (m.phase === 'live' && m.phaseLeft < 30) };
     }
     if (m instanceof HardpointRules) {
       const moves = t('mode.hillMoves').replace('{z}', m.zoneId).replace('{t}', clockText(m.moveIn));
@@ -3933,6 +4006,29 @@ export class Game {
       }
       return;
     }
+    if (e.type === 'charge') {
+      const c = zm.charges?.charges.find((x) => x.id === e.id);
+      const key = e.state === 'armed' ? (ours(e.team) ? 'charge.weArmed' : 'charge.theyArmed') : e.state === 'defused' ? (ours(e.team) ? 'charge.weDefused' : 'charge.theyDefused') : ours(e.team) ? 'charge.weBlew' : 'charge.theyBlew';
+      this.hud.notify(t(key).replace('{id}', e.id), ours(e.team) ? 'ally' : 'enemy');
+      this.audio.zoneCue(ours(e.team));
+      // Solo: the charge goes off here (on the game server the server's blast and its boom come instead).
+      if (e.state === 'blown' && c && !this.net) this.blast('charge', new THREE.Vector3(c.x, c.y + 0.4, c.z), { id: -1, name: t('charge.name'), team: e.team }, t('charge.name'));
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
+      return;
+    }
+    if (e.type === 'roundEnd') {
+      this.hud.notify(t(ours(e.winner) ? 'snd.won' : 'snd.lost').replace('{why}', t(`snd.why.${e.why}`)), ours(e.winner) ? 'ally' : 'enemy');
+      this.audio.zoneCue(ours(e.winner));
+      return;
+    }
+    if (e.type === 'round') {
+      this.hud.notify(`${t('snd.round').replace('{n}', String(e.n))} · ${t(ours(e.attacker) ? 'mode.attack' : 'mode.defend')}`, ours(e.attacker) ? 'ally' : 'enemy');
+      // Everyone back for the new round (on the game server the server moves people's soldiers and says so).
+      if (!this.net) this.newRound();
+      else if (!this.deployed || !this.player.alive) this.respawnTimer = 0;
+      return;
+    }
     if (e.type === 'tag') {
       // Points on the scoreboard for whoever picked it up; the popup is the player's own.
       this.scores.award(e.by, e.confirmed ? 50 : 30);
@@ -3947,11 +4043,11 @@ export class Game {
       this.bots?.replan('red');
       return;
     }
-    if (e.type === 'attack' && m instanceof ConquestRules && e.reason === 'opening') {
+    if (e.type === 'attack' && (m instanceof ConquestRules || m instanceof RushRules) && e.reason === 'opening') {
       this.hud.notify(t(ours(e.attacker) ? 'mode.goAttack' : 'mode.goDefend'), ours(e.attacker) ? 'ally' : 'enemy');
       this.audio.zoneCue(ours(e.attacker));
     } else if (e.type === 'sector') {
-      if (m instanceof ConquestRules) {
+      if (m instanceof ConquestRules || m instanceof RushRules) {
         const n = String(e.sector + 1);
         this.hud.notify(t(ours(e.team) ? 'mode.breakthrough' : 'mode.breached').replace('{n}', n), ours(e.team) ? 'ally' : 'enemy');
         this.audio.zoneCue(ours(e.team));
@@ -3977,6 +4073,7 @@ export class Game {
     const us = this.myTeam;
     const them = otherTeam(us);
     const reason = t(`match.reason.${m.reason ?? 'tickets'}`);
+    if (m instanceof SearchDestroyRules) return `${reason} · ${t('snd.rounds')} ${m.wins[us]} : ${m.wins[them]}`;
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       const who = m.winnerId === this.myId ? playerName(t('feed.you')) : (this.scores.get(m.winnerId ?? -1)?.name ?? '?');
@@ -4216,7 +4313,7 @@ export class Game {
         case 'died':
           if (e.id === this.myId && (me.downed || me.alive)) {
             me.die('bullet');
-            this.respawnTimer = e.respawn;
+            this.respawnTimer = e.respawn < 0 ? Infinity : e.respawn;
           }
           break;
         case 'revived':

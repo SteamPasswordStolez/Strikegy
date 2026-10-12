@@ -271,6 +271,8 @@ export interface BotObjective {
   front?: THREE.Vector3;
   /** Held by the other side (attackers gather before going in). */
   enemyHeld?: boolean;
+  /** A charge to stand on holding E (Rush, S&D: plant or defuse). */
+  use?: boolean;
 }
 
 /** Game-mode hooks: where squads go and where bots respawn. */
@@ -1218,6 +1220,24 @@ export class BotManager implements BotServices {
   /** Everyone alive back onto a spawn the mode picks (once at the start, when the mode's hooks are in). */
   redeployAll(): void {
     for (const e of this.entries) if (e.bot.alive && !e.bot.riding) this.respawn(e.bot);
+  }
+
+  /** Every bot, dead or alive, back with a fresh life (S&D: a new round). Bots a browser runs come back here too. */
+  respawnAll(): void {
+    for (const e of this.entries) {
+      const b = e.bot;
+      if (b.benched) continue;
+      if (b.riding) this.alightBot(e);
+      this.release(e);
+      this.releaseCover(b);
+      this.releaseSpot(e);
+      this.releaseRevive(b);
+      this.releaseWork(b);
+      this.respawn(b);
+      e.simAlive = true;
+      e.simDead = false;
+      this.putBot(e);
+    }
   }
 
   /** New model on respawn (the bot may carry a different weapon). */
@@ -2848,6 +2868,15 @@ export class BotManager implements BotServices {
       t.sighting.pos.copy(pos);
       t.sighting.time = this.time;
     }
+  }
+
+  /** Bots this close to a charge their objective says to work go and stand on it holding E. */
+  private static readonly USE_REACH = 9;
+
+  useSpot(bot: Bot): THREE.Vector3 | null {
+    const o = this.byBot.get(bot)?.objective;
+    if (!o?.use || !bot.alive || bot.riding) return null;
+    return bot.feet.distanceToSquared(o.pos) < BotManager.USE_REACH ** 2 ? o.pos : null;
   }
 
   /** A bot patched itself up (see BotServices). */
