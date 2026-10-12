@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MATCH, foes, type Sided } from './matchFlags';
 import { StaticBatch } from '@/render/staticBatch';
 import type { HitPart } from '@/core/events';
 import type { Damageable, DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
@@ -186,8 +187,9 @@ export class GadgetWorld {
   }
 
   /** Beacons a squad can deploy on. */
-  beaconsFor(team: Team, squad: string | null): Beacon[] {
-    return this.beacons.filter((b) => b.owner.team === team && b.uses > 0 && (squad === null || b.owner.squad === squad));
+  beaconsFor(of: Sided & { team: Team }, squad: string | null): Beacon[] {
+    // Free-for-all: only one's own.
+    return this.beacons.filter((b) => (MATCH.ffa ? b.owner.id === of.id : b.owner.team === of.team) && b.uses > 0 && (squad === null || b.owner.squad === squad));
   }
 
   /** Someone deployed on the beacon. */
@@ -195,14 +197,14 @@ export class GadgetWorld {
     if (--b.uses <= 0) this.removeBeacon(b);
   }
 
-  /** Enemy mines (of `team`) that `team` knows about within `r` of `p`. */
-  knownMinesNear(p: THREE.Vector3, r: number, team: Team): Mine[] {
-    return this.mines.filter((m) => m.owner.team !== team && m.seenBy.has(team) && m.pos.distanceToSquared(p) < r * r);
+  /** Enemy mines (of `of`) that its side knows about within `r` of `p`. */
+  knownMinesNear(p: THREE.Vector3, r: number, of: Sided & { team: Team }): Mine[] {
+    return this.mines.filter((m) => foes(m.owner, of) && m.seenBy.has(of.team) && m.pos.distanceToSquared(p) < r * r);
   }
 
   /** Enemy mines within `r` (whether seen or not), for spotting checks. */
-  minesNear(p: THREE.Vector3, r: number, team: Team): Mine[] {
-    return this.mines.filter((m) => m.owner.team !== team && m.pos.distanceToSquared(p) < r * r);
+  minesNear(p: THREE.Vector3, r: number, of: Sided): Mine[] {
+    return this.mines.filter((m) => foes(m.owner, of) && m.pos.distanceToSquared(p) < r * r);
   }
 
   /** A blast: mines in it go off too, beacons break. */
@@ -257,7 +259,7 @@ export class GadgetWorld {
     for (const m of [...this.mines]) {
       if (m.fuse < 0) {
         for (const w of list) {
-          if (!w.alive || w.downed || w.team === m.owner.team) continue;
+          if (!w.alive || w.downed || !foes(w, m.owner)) continue;
           const dx = w.feet.x - m.pos.x;
           const dz = w.feet.z - m.pos.z;
           if (dx * dx + dz * dz > MINE.radius * MINE.radius || Math.abs(w.feet.y - m.pos.y) > 1.2) continue;

@@ -446,7 +446,7 @@ export class MatchVehicles {
       this.sim.blast('cannon', to, shooter, name);
       this.onBoom('cannon', to);
     }
-    this.sim.bots?.nearMiss(muzzle, to, shooter.team, target?.owner.id ?? -1, 1);
+    this.sim.bots?.nearMiss(muzzle, to, shooter, target?.owner.id ?? -1, 1);
   }
 
   /** A shell came down: a direct hit kills people outright (no going down) and hurts vehicles a lot; then the blast. */

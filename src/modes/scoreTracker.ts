@@ -1,4 +1,5 @@
 import type { Team } from '@/world/mapTypes';
+import { friends } from './matchFlags';
 
 /** Points per action (BF-style score column). */
 export const POINTS = { kill: 100, headshot: 25, capture: 150, neutralize: 75, revive: 100, reviveMedic: 150, resupply: 20 } as const;
@@ -42,7 +43,7 @@ export class ScoreTracker {
     const a = attackerId === undefined ? undefined : this.rows.get(attackerId);
     if (!a) return;
     const v = victimId === undefined ? undefined : this.rows.get(victimId);
-    if (v && (v === a || v.team === a.team)) return;
+    if (v && (v === a || friends(v, a))) return;
     a.kills++;
     a.score += POINTS.kill + (headshot ? POINTS.headshot : 0);
     this.onPoints?.(a.id, POINTS.kill, 'kill');
@@ -95,10 +96,10 @@ export class ScoreTracker {
     }
   }
 
-  /** A team's rows, best first (score, then kills, then fewer deaths). */
-  table(team: Team): ScoreRow[] {
+  /** A team's rows (everyone's when null: free-for-all), best first (score, then kills, then fewer deaths). */
+  table(team: Team | null): ScoreRow[] {
     return [...this.rows.values()]
-      .filter((r) => r.team === team)
+      .filter((r) => team === null || r.team === team)
       .sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths || a.id - b.id);
   }
 

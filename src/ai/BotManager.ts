@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MATCH, foes, friends, lookTeam } from '@/modes/matchFlags';
 import { GRENADES } from '@/combat/explosions';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
@@ -9,6 +10,7 @@ import type { Effects } from '@/render/Effects';
 import { LAYER_FX } from '@/render/layers';
 import type { Flora, SpawnPoint, Team } from '@/world/mapTypes';
 import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { WeaponState } from '@/weapons/WeaponState';
 import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
@@ -80,6 +82,9 @@ const SPOT_TAKEN = 0.75;
 const BLOB_SIZE = 1.1;
 /** Cover searches allowed per sim step across all bots (each is ~0.1-0.3 ms). */
 const squadKey = (team: Team, squad: number): string => `${team}:${squad}`;
+
+/** Whoever a question is about: a combatant, or a whole side (no id). */
+type Side = { readonly id?: number; readonly team: Team };
 /** Neighbour grid cell (m); at least the separation radius. */
 const CELL = 2;
 /** How long one pair's line-of-sight result is reused by the other side. */
@@ -525,9 +530,9 @@ export class BotManager implements BotServices {
         const style = rollPersonality(Math.random, cls);
         const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(cls, style)], physics, registry, cls, style);
         this.respawn(bot);
-        const model = new SoldierModel(team, bot.def);
+        const model = new SoldierModel(lookTeam(team), bot.def);
         scene.add(model.root);
-        const marker = team === mine ? this.makeMarker('#4d8cff') : null;
+        const marker = team === mine && !MATCH.ffa ? this.makeMarker('#4d8cff') : null;
         if (marker) scene.add(marker);
         this.entries.push({
           bot,
@@ -670,7 +675,7 @@ export class BotManager implements BotServices {
         this.releaseWork(b);
       }
       if (!e.simDead && b.dead) this.bus.emit('combatant:died', { team: b.team, id: b.id });
-      if (b.dead && b.deadTime > RESPAWN_SEC + b.respawnPenalty) this.respawn(b);
+      if (b.dead && b.deadTime > (MATCH.respawn ?? RESPAWN_SEC) + b.respawnPenalty) this.respawn(b);
       e.simAlive = b.alive;
       e.simDead = b.dead;
       this.putBot(e);
@@ -687,7 +692,7 @@ export class BotManager implements BotServices {
       if (medic.cls !== 'medic' || !medic.alive || medic.target) continue;
       for (const o of this.entries) {
         const b = o.bot;
-        if (b === medic || b.team !== medic.team || !b.alive || b.medkits > 0 || b.feet.distanceTo(medic.feet) > GIVE_RANGE) continue;
+        if (b === medic || !friends(b, medic) || !b.alive || b.medkits > 0 || b.feet.distanceTo(medic.feet) > GIVE_RANGE) continue;
         const key = medic.id * 4096 + b.id;
         if ((this.kitGiven.get(key) ?? -Infinity) > this.time) continue;
         b.medkits = MEDKIT.carried;
@@ -704,12 +709,12 @@ export class BotManager implements BotServices {
     let best: Combatant | null = null;
     let bestD = radius;
     const consider = (c: Combatant) => {
-      if (c === bot || c.team !== bot.team || !c.downed) return;
+      if (c === bot || !friends(c, bot) || !c.downed) return;
       const taken = this.revivers.get(c.id);
       if (taken && taken.bot !== bot) return;
       const d = c.feet.distanceTo(bot.feet);
       // Don't walk into a crossfire for it.
-      if (d >= bestD || this.enemiesNear(bot.team, c.feet, 12) > 0) return;
+      if (d >= bestD || this.enemiesNear(bot, c.feet, 12) > 0) return;
       best = c;
       bestD = d;
     };
@@ -756,7 +761,7 @@ export class BotManager implements BotServices {
       if (taken && taken !== bot) return;
       const d = stand.distanceTo(bot.feet);
       if (d > radius || d * weight >= bestScore) return;
-      if (this.enemiesNear(bot.team, stand, 22) > 0) return;
+      if (this.enemiesNear(bot, stand, 22) > 0) return;
       best = { key, job, stand, look };
       bestScore = d * weight;
     };
@@ -854,16 +859,16 @@ export class BotManager implements BotServices {
     const r2 = KILL_INTEL_RANGE * KILL_INTEL_RANGE;
     for (const e of this.entries) {
       const b = e.bot;
-      if (b !== victim && b.team === victim.team && b.alive && b.feet.distanceToSquared(victim.feet) < r2) b.mateKilled(killer, this.time);
+      if (b !== victim && friends(b, victim) && b.alive && b.feet.distanceToSquared(victim.feet) < r2) b.mateKilled(killer, this.time);
     }
   }
 
   /**
-   * A round flew from `from` to `to` (the shooter's team is `team`): bots of
-   * the other side it passed close to are suppressed. `hitId` is who it hit
+   * A round flew from `from` to `to` (fired by `shooter`): bots of the other
+   * side (free-for-all: anyone else) it passed close to are suppressed. `hitId` is who it hit
    * (already hurt, not counted twice). `weight` scales pellets down.
    */
-  nearMiss(from: THREE.Vector3, to: THREE.Vector3, team: Team, hitId: number, weight = 1): void {
+  nearMiss(from: THREE.Vector3, to: THREE.Vector3, shooter: Side, hitId: number, weight = 1): void {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const dz = to.z - from.z;
@@ -871,7 +876,7 @@ export class BotManager implements BotServices {
     if (len2 < 1) return;
     for (const e of this.entries) {
       const b = e.bot;
-      if (!b.alive || b.team === team || b.id === hitId) continue;
+      if (!b.alive || !foes(b, shooter) || b.id === hitId) continue;
       const hx = b.feet.x - from.x;
       const hy = b.feet.y + 1.4 - from.y;
       const hz = b.feet.z - from.z;
@@ -1154,7 +1159,8 @@ export class BotManager implements BotServices {
     if (this.hooks) {
       const e = this.entryOf(bot);
       const at = this.hooks.spawnAt(bot, e.objective?.pos ?? null);
-      bot.spawn(at.pos, at.yaw, loadout(bot));
+      bot.spawn(at.pos, at.yaw, this.armsOf(bot));
+      this.afterArms(bot);
       e.via = e.objective ? this.approach(bot.feet, e.objective.pos, Math.floor(Math.random() * 3) - 1) : null;
       return;
     }
@@ -1171,7 +1177,42 @@ export class BotManager implements BotServices {
     }
     const [ex, , ez] = [t.base.x - this.teams[otherTeam(bot.team)].base.x, 0, t.base.z - this.teams[otherTeam(bot.team)].base.z];
     // Face the enemy base.
-    bot.spawn(pos, Math.atan2(ex, ez), loadout(bot));
+    bot.spawn(pos, Math.atan2(ex, ez), this.armsOf(bot));
+    this.afterArms(bot);
+  }
+
+  /**
+   * The gun a bot must carry instead of its class's (gun game: its step's;
+   * `empty`: no rounds at all, only the butt), or null for its own.
+   */
+  weaponOverride: ((bot: Bot) => { id: WeaponId; empty: boolean } | null) | null = null;
+
+  /** The weapon `bot` spawns with: the mode's pick, else its class's. */
+  private armsOf(bot: Bot): WeaponDef {
+    const o = this.weaponOverride?.(bot);
+    return o ? WEAPONS[o.id] : loadout(bot);
+  }
+
+  /** After `spawn`: an empty override leaves the gun without rounds. */
+  private afterArms(bot: Bot): void {
+    const o = this.weaponOverride?.(bot);
+    bot.meleeOnly = !!o?.empty;
+    if (o?.empty) {
+      bot.weapon.ammo = 0;
+      bot.weapon.reserve = 0;
+    }
+  }
+
+  /** The mode changed the gun a living bot carries (gun game: a kill, or a blow from the butt). */
+  rearm(bot: Bot): void {
+    const e = this.byBot.get(bot);
+    if (!e || !bot.alive) return;
+    const def = this.armsOf(bot);
+    bot.def = def;
+    bot.weapon = new WeaponState(def);
+    bot.weapon.reserve = Infinity;
+    this.afterArms(bot);
+    this.refreshModel(e);
   }
 
   /** Everyone alive back onto a spawn the mode picks (once at the start, when the mode's hooks are in). */
@@ -1182,7 +1223,7 @@ export class BotManager implements BotServices {
   /** New model on respawn (the bot may carry a different weapon). */
   private refreshModel(e: BotEntry): void {
     e.model.dispose();
-    e.model = new SoldierModel(e.bot.team, e.bot.def);
+    e.model = new SoldierModel(lookTeam(e.bot.team), e.bot.def);
     this.scene.add(e.model.root);
   }
 
@@ -1192,6 +1233,10 @@ export class BotManager implements BotServices {
     if (this.time < t.planAt) return;
     t.planAt = this.time + 7 + Math.random() * 4;
     const goals = this.hooks?.objectives(team) ?? [];
+    if (MATCH.ffa && goals.length > 0) {
+      this.planSolo(team, goals);
+      return;
+    }
     if (goals.length > 0) {
       // Whole squads go for an objective together, spread over the map (see `assignSquads`).
       const squads = [...new Set(this.entries.filter((e) => e.bot.team === team).map((e) => e.squad))].sort((a, b) => a - b);
@@ -1259,6 +1304,36 @@ export class BotManager implements BotServices {
       if (e.bot.team !== team) continue;
       e.offset.set((Math.random() - 0.5) * 10, 0, (Math.random() - 0.5) * 10);
     }
+  }
+
+  /**
+   * Free-for-all: no squads, every bot roams on its own from zone to zone
+   * (nearer ones likelier), moving on once there or now and then on the way.
+   */
+  private planSolo(team: Team, goals: BotObjective[]): void {
+    for (const e of this.entries) {
+      const b = e.bot;
+      if (b.team !== team) continue;
+      const cur = e.objective;
+      const there = !!cur && b.feet.distanceTo(cur.pos) < cur.radius;
+      if (cur && !there && Math.random() < 0.75) continue;
+      const others = goals.filter((g) => !cur || g.pos.distanceToSquared(cur.pos) > 1);
+      const list = others.length ? others : goals;
+      const w = list.map((g) => 1 / (1 + g.pos.distanceTo(b.feet) / 120));
+      let r = Math.random() * w.reduce((a, x) => a + x, 0);
+      let g = list[list.length - 1]!;
+      for (let i = 0; i < list.length; i++) if ((r -= w[i]!) <= 0) {
+        g = list[i]!;
+        break;
+      }
+      e.objective = { ...g, defend: false, guard: false };
+      e.watch = null;
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.sqrt(Math.random()) * g.radius * 0.8;
+      e.offset.set(Math.cos(a) * rr, 0, Math.sin(a) * rr);
+      e.via = b.alive ? this.approach(b.feet, g.pos, Math.floor(Math.random() * 3) - 1) : null;
+    }
+    this.teams[team].objective.copy(goals[0]!.pos);
   }
 
   /**
@@ -1452,8 +1527,9 @@ export class BotManager implements BotServices {
     for (const team of ['blue', 'red'] as const) {
       const out = this.enemies[team];
       out.length = 0;
-      for (const e of this.entries) if (e.bot.team !== team && !e.bot.benched) out.push(e.bot);
-      for (const h of this.humans()) if (h.team !== team) out.push(h);
+      // Free-for-all: everyone (whoever asks skips themselves through `foes`).
+      for (const e of this.entries) if ((MATCH.ffa || e.bot.team !== team) && !e.bot.benched) out.push(e.bot);
+      for (const h of this.humans()) if (MATCH.ffa || h.team !== team) out.push(h);
     }
   }
 
@@ -1566,11 +1642,12 @@ export class BotManager implements BotServices {
    * Enemies of `team` its side currently knows about: noticed by one of its
    * bots in the last couple of seconds, or firing within earshot of `near`.
    */
-  spottedEnemies(team: Team, near: THREE.Vector3, out: Combatant[] = []): Combatant[] {
+  spottedEnemies(of: Side, near: THREE.Vector3, out: Combatant[] = []): Combatant[] {
     out.length = 0;
-    for (const e of this.enemies[team]) {
-      if (!e.alive) continue;
-      const seen = this.time - (this.spottedAt.get(e.id) ?? -Infinity) < SPOT_SEC;
+    for (const e of this.enemies[of.team]) {
+      if (!e.alive || !foes(e, of)) continue;
+      // Free-for-all: nobody shares what they saw, only the loud ones show.
+      const seen = !MATCH.ffa && this.time - (this.spottedAt.get(e.id) ?? -Infinity) < SPOT_SEC;
       const loud = e.firingUntil > this.time && e.feet.distanceToSquared(near) < SPOT_FIRING_RANGE * SPOT_FIRING_RANGE;
       if (seen || loud) out.push(e);
     }
@@ -1763,14 +1840,14 @@ export class BotManager implements BotServices {
     dir.divideScalar(dist);
     const hit = this.physics.raycast(eye, dir, TACTIC.melee + 0.4, Layer.WORLD | Layer.HITBOX, undefined, undefined, undefined, bot.hitboxes.slot);
     const t = hit ? this.registry.lookup(hit.collider.handle) : undefined;
-    if (!t || !t.owner.alive || t.owner.team === bot.team) return false;
+    if (!t || !t.owner.alive || !foes(t.owner, bot)) return false;
     const dmg = (t.part === 'head' ? MELEE_DAMAGE.head : MELEE_DAMAGE.body) * this.damageScale;
     const name = tr('weapon.melee');
     const source: DamageSource = { pos: eye, name: bot.name, team: bot.team, weapon: name, id: bot.id };
     const killed = t.owner.applyDamage(dmg, t.part, source);
     this.bus.emit('combat:hit', { targetId: t.owner.id, part: t.part, damage: dmg, killed, point: new THREE.Vector3(hit!.point.x, hit!.point.y, hit!.point.z), byPlayer: false });
     if (killed) {
-      this.bus.emit('combat:kill', { attacker: bot.name, victim: t.owner.name, weapon: name, headshot: t.part === 'head', byPlayer: false, attackerTeam: bot.team, victimTeam: t.owner.team ?? null, attackerId: bot.id, victimId: t.owner.id });
+      this.bus.emit('combat:kill', { attacker: bot.name, victim: t.owner.name, weapon: name, headshot: t.part === 'head', byPlayer: false, attackerTeam: bot.team, victimTeam: t.owner.team ?? null, attackerId: bot.id, victimId: t.owner.id, melee: true });
     }
     this.audio.gadget('place', bot.feet);
     return true;
@@ -1913,16 +1990,16 @@ export class BotManager implements BotServices {
     return true;
   }
 
-  alliesNear(team: Team, pos: THREE.Vector3, radius: number): number {
+  alliesNear(of: Side, pos: THREE.Vector3, radius: number): number {
     let n = 0;
-    for (const e of this.entries) if (e.bot.team === team && e.bot.alive && e.bot.feet.distanceTo(pos) < radius) n++;
-    for (const h of this.humans()) if (h.team === team && h.alive && h.feet.distanceTo(pos) < radius) n++;
+    for (const e of this.entries) if (friends(e.bot, of) && e.bot.alive && e.bot.feet.distanceTo(pos) < radius) n++;
+    for (const h of this.humans()) if (friends(h, of) && h.alive && h.feet.distanceTo(pos) < radius) n++;
     return n;
   }
 
-  enemiesNear(team: Team, pos: THREE.Vector3, radius: number): number {
+  enemiesNear(of: Side, pos: THREE.Vector3, radius: number): number {
     let n = 0;
-    for (const c of this.enemies[team]) if (c.alive && c.feet.distanceTo(pos) < radius) n++;
+    for (const c of this.enemies[of.team]) if (c.alive && foes(c, of) && c.feet.distanceTo(pos) < radius) n++;
     return n;
   }
 
@@ -1933,7 +2010,7 @@ export class BotManager implements BotServices {
       if (g.fuse > 2.8) continue;
       for (const e of this.entries) {
         const b = e.bot;
-        if (!b.alive || b.team === g.team) continue;
+        if (!b.alive || (!MATCH.ffa && b.team === g.team)) continue;
         const d = b.feet.distanceTo(g.pos);
         if (d > 7) continue;
         if (d < 3 || this.lineOfSight(b.eyePos(new THREE.Vector3()), g.pos.clone().setY(g.pos.y + 0.2))) b.dodge(g.pos, this);
@@ -2166,10 +2243,10 @@ export class BotManager implements BotServices {
           }
         }
         if (!p.target) {
-          const seen = this.spottedEnemies(bot.team, v.pos);
+          const seen = this.spottedEnemies(bot, v.pos);
           let bestN = 0;
           for (const c of seen) {
-            const n = this.enemiesNear(bot.team, c.feet, 15);
+            const n = this.enemiesNear(bot, c.feet, 15);
             if (n > bestN && c.feet.distanceTo(v.pos) < 1500) {
               bestN = n;
               p.target = c;
@@ -2683,16 +2760,16 @@ export class BotManager implements BotServices {
       if (st && !st.go) {
         let seen = 0;
         for (const o of this.enemies[team]) if (o.alive && o.feet.distanceTo(st.zone) < PREP.radius && this.time - (this.spottedAt.get(o.id) ?? -Infinity) < PREP.fresh) seen++;
-        if (seen >= 3 && can('artillery') && this.alliesNear(team, st.zone, 28) === 0 && call('artillery', st.zone)) return;
-        if (seen >= 2 && can('mortar') && this.alliesNear(team, st.zone, 18) === 0 && call('mortar', st.zone)) return;
+        if (seen >= 3 && can('artillery') && this.alliesNear({ team }, st.zone, 28) === 0 && call('artillery', st.zone)) return;
+        if (seen >= 2 && can('mortar') && this.alliesNear({ team }, st.zone, 18) === 0 && call('mortar', st.zone)) return;
       }
       const c = this.contacts.get(key);
       if (c && this.time - c.last < 6) {
         const d = c.pos.distanceTo(bot.feet);
-        const enemies = this.enemiesNear(team, c.pos, 18);
+        const enemies = this.enemiesNear({ team }, c.pos, 18);
         if (d > 30 && d < 300) {
-          if (enemies >= 3 && can('artillery') && this.alliesNear(team, c.pos, 26) === 0 && call('artillery', c.pos)) return;
-          if (enemies >= 2 && can('mortar') && this.alliesNear(team, c.pos, 16) === 0 && call('mortar', c.pos)) return;
+          if (enemies >= 3 && can('artillery') && this.alliesNear({ team }, c.pos, 26) === 0 && call('artillery', c.pos)) return;
+          if (enemies >= 2 && can('mortar') && this.alliesNear({ team }, c.pos, 16) === 0 && call('mortar', c.pos)) return;
         }
         if (d > 20 && can('smoke') && Math.random() < 0.25) {
           const p = bot.feet.clone().lerp(c.pos, 0.45);
@@ -2742,8 +2819,9 @@ export class BotManager implements BotServices {
     return !!spot && spot.distanceTo(current) > 3;
   }
 
-  teamSighting(team: Team): { pos: THREE.Vector3; time: number } | null {
-    return this.teams[team].sighting;
+  teamSighting(of: Side): { pos: THREE.Vector3; time: number } | null {
+    // Free-for-all: no side to share sightings with.
+    return MATCH.ffa ? null : this.teams[of.team].sighting;
   }
 
   reportSighting(bot: Bot, pos: THREE.Vector3): void {
@@ -2763,6 +2841,7 @@ export class BotManager implements BotServices {
   }
 
   private noteSighting(team: Team, pos: THREE.Vector3): void {
+    if (MATCH.ffa) return;
     const t = this.teams[team];
     if (!t.sighting) t.sighting = { pos: pos.clone(), time: this.time };
     else {
@@ -2787,7 +2866,7 @@ export class BotManager implements BotServices {
     bot.health.value = o.health;
     bot.medkits = o.medkits;
     bot.grenadeCounts = o.grenades;
-    const model = new SoldierModel(o.team, bot.def);
+    const model = new SoldierModel(lookTeam(o.team), bot.def);
     this.scene.add(model.root);
     const e: BotEntry = {
       bot,
@@ -2866,11 +2945,11 @@ export class BotManager implements BotServices {
       const to = point ? new THREE.Vector3(point.x, point.y, point.z) : eye.clone().addScaledVector(d, max);
       const target = judged ? (judged.target ?? undefined) : hit ? this.registry.lookup(hit.collider.handle) : undefined;
       const distance = judged ? judged.distance : (hit?.distance ?? max);
-      this.nearMiss(eye, to, bot.team, target?.owner.id ?? -1, pellets > 1 ? 0.35 : 1);
+      this.nearMiss(eye, to, bot, target?.owner.id ?? -1, pellets > 1 ? 0.35 : 1);
       if (point && target) {
         const owner = target.owner;
         // No friendly fire: the round is simply stopped.
-        if (owner.alive && owner.team !== bot.team) {
+        if (owner.alive && foes(owner, bot)) {
           const dmg = computeDamage(damageAtDistance(def, distance), target.part, def.headshotMult) * this.damageScale;
           const killed = owner.applyDamage(dmg, target.part, source);
           this.bus.emit('combat:hit', { targetId: owner.id, part: target.part, damage: dmg, killed, point: to, byPlayer: false, attackerId: bot.id });
@@ -3031,13 +3110,13 @@ export class BotManager implements BotServices {
     const g = this.gadgets;
     if (!g || !g.mines.length) return false;
     const eye = bot.eyePos(new THREE.Vector3());
-    for (const m of g.minesNear(bot.feet, 8, bot.team)) {
+    for (const m of g.minesNear(bot.feet, 8, bot)) {
       if (m.seenBy.has(bot.team)) continue;
       // Close by it's hard to miss; farther it needs a look and some luck.
       const d = m.pos.distanceTo(bot.feet);
       if (d < 3.5 || (Math.random() < 0.3 && this.lineOfSight(eye, m.pos.clone().setY(m.pos.y + 0.1)))) m.seenBy.add(bot.team);
     }
-    return g.knownMinesNear(bot.feet, 3, bot.team).length > 0;
+    return g.knownMinesNear(bot.feet, 3, bot).length > 0;
   }
 
   ownMinesNear(bot: Bot, p: THREE.Vector3, r: number): number {
@@ -3135,7 +3214,7 @@ export class BotManager implements BotServices {
           this.farScale.set(1, 1, 1);
           this.farMatrix.compose(lying ? pos.clone().setY(pos.y + 0.2) : pos, this.farQuat, this.farScale);
           const pose = lying ? 0 : b.crouching ? 2 : b.horizontalSpeed > 1.2 ? 1 : 0;
-          this.far[b.team]![pose]!.setMatrixAt(farCount[b.team][pose]!++, this.farMatrix);
+          this.far[lookTeam(b.team)]![pose]!.setMatrixAt(farCount[lookTeam(b.team)][pose]!++, this.farMatrix);
         }
         continue;
       }

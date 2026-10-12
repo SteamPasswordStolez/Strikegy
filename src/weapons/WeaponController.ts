@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { foes } from '@/modes/matchFlags';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { t } from '@/i18n';
 import type { Team } from '@/world/mapTypes';
@@ -309,8 +310,8 @@ export class WeaponController {
       const point = new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
       const target = hit.target;
       if (target) {
-        if (!target.owner.alive || target.owner.team === this.owner.team) continue;
-        this.hurt(target.owner, target.part, MELEE_DAMAGE[target.part], point, t('weapon.melee'), eye, false);
+        if (!target.owner.alive || !foes(target.owner, this.owner)) continue;
+        this.hurt(target.owner, target.part, MELEE_DAMAGE[target.part], point, t('weapon.melee'), eye, false, true);
         this.bus.emit('weapon:melee', { weaponId: d.id, hit: 'body' });
         return;
       }
@@ -323,7 +324,7 @@ export class WeaponController {
   }
 
   /** Damage from this gun (or the swing): hit and kill events in the owner's name. */
-  private hurt(victim: Damageable, part: HitPart, dmg: number, point: THREE.Vector3, weapon: string, from: THREE.Vector3, headshot: boolean): void {
+  private hurt(victim: Damageable, part: HitPart, dmg: number, point: THREE.Vector3, weapon: string, from: THREE.Vector3, headshot: boolean, melee = false): void {
     const o = this.owner;
     const source = { pos: from.clone(), name: o.name(), team: o.team, weapon, id: o.id };
     const killed = victim.applyDamage(dmg, part, source);
@@ -339,6 +340,7 @@ export class WeaponController {
       victimTeam: victim.team ?? null,
       attackerId: o.id,
       victimId: victim.id,
+      melee,
     });
   }
 
@@ -439,7 +441,7 @@ export class WeaponController {
 
     if (hit && target) {
       // Friendly fire is off: teammates simply stop the round.
-      if (target.owner.alive && target.owner.team !== this.owner.team) {
+      if (target.owner.alive && foes(target.owner, this.owner)) {
         const dmg = computeDamage(damageAtDistance(d, hit.distance), target.part, d.headshotMult);
         this.hurt(target.owner, target.part, dmg, to, d.name, this.eye, target.part === 'head');
       }

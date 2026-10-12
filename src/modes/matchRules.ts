@@ -22,12 +22,15 @@ import { ZoneRules, type ZoneEvent, type ZoneState } from './zoneRules';
  *   when those run out.
  */
 
-export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm';
+export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame';
 
-export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm'];
+export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame'];
 
 /** Modes where the zones are no front: soldiers spawn at any zone with no enemy near it (owner, 2026-10-12). */
 export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killconfirm'];
+
+/** Every soldier for themselves: no sides, no squads, no vehicles or call-ins, a down is a death (see `matchFlags`). */
+export const SOLO_MODES: readonly ModeKind[] = ['ffa', 'gungame'];
 
 /** How a match ended. */
 export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors';
@@ -45,7 +48,9 @@ export type ModeEvent =
   /** The hardpoint moved to `zone`. */
   | { type: 'hill'; zone: string }
   /** A dog tag was picked up: `by` (combatant id, team `team`) confirmed a kill or denied one. */
-  | { type: 'tag'; team: Team; confirmed: boolean; by: number };
+  | { type: 'tag'; team: Team; confirmed: boolean; by: number }
+  /** Gun game: soldier `id` moved to step `level` of the lineup (`up`: by a kill; else knocked back by a melee kill). */
+  | { type: 'level'; id: number; level: number; up: boolean };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
 
@@ -61,6 +66,8 @@ const other = (t: Team): Team => (t === 'blue' ? 'red' : 'blue');
 export abstract class MatchRules {
   abstract readonly kind: ModeKind;
   winner: Team | null = null;
+  /** Free-for-all: the soldier who won (`winner` is then only their nominal side). */
+  winnerId: number | null = null;
   reason: EndReason | null = null;
   /** Tickets per side; null for a side that has none. */
   readonly tickets: Record<Team, number | null> = { blue: null, red: null };
@@ -83,10 +90,15 @@ export abstract class MatchRules {
     if (this.tickets[team] === 0) this.end(other(team), 'tickets');
   }
 
-  /** A member of `team` went down (frontline: part of how the attack is going); `victimId` when known. */
-  onDown(team: Team, victimId?: number): void {
+  /**
+   * A member of `team` went down (frontline: part of how the attack is going);
+   * `victimId` / `attackerId` when known, `melee` for a blow with the butt.
+   */
+  onDown(team: Team, victimId?: number, attackerId?: number, melee?: boolean): void {
     void team;
     void victimId;
+    void attackerId;
+    void melee;
   }
 
   /** Everyone's place before each step (modes that care where people are, beyond the zones). */
@@ -398,6 +410,163 @@ export function hardpointRoute(zones: readonly { id: string; x: number; z: numbe
     if (b) route.push(b.id);
   }
   return route;
+}
+
+// ---------------------------------------------------------------------------
+// Free-for-all (owner, 2026-10-12): every soldier their own side
+
+/**
+ * Numbers [제안]. Free-for-all deathmatch: first to `target` kills, or the
+ * leader after `time` s; respawn after `respawn` s anywhere away from
+ * everyone. Gun game: a kill moves you to the next weapon of `GUN_GAME_STEPS`
+ * (all 23, the hardest to win with last), then the rifle butt (the last
+ * pistol with no rounds); a kill with that wins; being killed with a melee
+ * blow sends you back a step. `time` s, then the furthest along wins.
+ */
+export const FFA = { target: 20, time: 600, respawn: 2 };
+export const GUN_GAME = { time: 900, respawn: 2 };
+
+/** Gun game's lineup: rifles and SMGs first, then heavier and slower guns, pistols last (one step more is the butt). */
+export const GUN_GAME_STEPS = [
+  'ar4', 'ar1', 'smg2', 'smg1', 'ar2', 'smg4', 'lmg3', 'lmg1', 'ar3', 'smg3', 'lmg2',
+  'sg3', 'sg1', 'sg2', 'dmr1', 'dmr2', 'dmr3', 'sr3', 'sr1', 'sr2', 'pistol3', 'pistol1', 'pistol2',
+] as const;
+
+/**
+ * Modes where each soldier scores for themselves (`score` by combatant id).
+ * Zones are hidden: spawns are anywhere away from everyone, bots roam them.
+ */
+export abstract class SoloRules extends MatchRules {
+  /** Points per combatant id (kills; gun game: the step reached). */
+  readonly score: Record<string, number> = {};
+  /** Each soldier's nominal side (the match end names one). */
+  readonly sides: Record<string, Team> = {};
+  /** Seconds played. */
+  clock = 0;
+  private ids: string[] = [];
+
+  constructor(
+    readonly target: number,
+    readonly timeLimit: number,
+  ) {
+    super();
+  }
+
+  get timeLeft(): number {
+    return Math.max(0, this.timeLimit - this.clock);
+  }
+
+  scoreOf(id: number): number {
+    return this.score[id] ?? 0;
+  }
+
+  /** Everyone with a score, best first. */
+  standings(): { id: number; n: number }[] {
+    return Object.entries(this.score)
+      .map(([id, n]) => ({ id: Number(id), n }))
+      .sort((a, b) => b.n - a.n || a.id - b.id);
+  }
+
+  start(zr: ZoneRules): void {
+    for (const z of zr.zones) {
+      z.locked = true;
+      z.hidden = true;
+      ZoneRules.force(z, null);
+    }
+    this.ids = zr.zones.map((z) => z.id);
+  }
+
+  step(dt: number): ModeEvent[] {
+    if (this.ended) return [];
+    this.clock += dt;
+    this.judge();
+    return [];
+  }
+
+  override observe(list: readonly Presence[]): ModeEvent[] {
+    for (const s of list) {
+      this.sides[s.id] = s.team;
+      this.score[s.id] ??= 0;
+    }
+    return [];
+  }
+
+  protected award(id: number, n: number): void {
+    if (this.ended) return;
+    this.score[id] = Math.max(0, (this.score[id] ?? 0) + n);
+    this.judge();
+  }
+
+  /** Over the line, or out of time with one soldier ahead (level: the next point decides). */
+  protected judge(): void {
+    if (this.ended) return;
+    const [a, b] = this.standings();
+    if (!a) return;
+    if (a.n >= this.target) this.endSolo(a.id, 'points');
+    else if (this.clock >= this.timeLimit && (!b || a.n > b.n)) this.endSolo(a.id, 'time');
+  }
+
+  protected endSolo(id: number, reason: EndReason): void {
+    if (this.ended) return;
+    this.winnerId = id;
+    this.end(this.sides[id] ?? 'blue', reason);
+  }
+
+  /** Bots roam the zones (where the map's fights are). */
+  override focus(): readonly string[] {
+    return this.ids;
+  }
+
+  order(): string[] {
+    return [];
+  }
+}
+
+export class FreeForAllRules extends SoloRules {
+  readonly kind = 'ffa';
+
+  constructor(target: number = FFA.target, time: number = FFA.time) {
+    super(target, time);
+  }
+
+  override onDown(_team: Team, victimId?: number, attackerId?: number): void {
+    if (attackerId === undefined || attackerId === victimId || attackerId < 0) return;
+    this.award(attackerId, 1);
+  }
+}
+
+/** Gun game: `score` is the step each soldier is on (0 = the first gun); `target` = the steps, the butt last. */
+export class GunGameRules extends SoloRules {
+  readonly kind = 'gungame';
+  private pending: ModeEvent[] = [];
+
+  constructor(time: number = GUN_GAME.time) {
+    super(GUN_GAME_STEPS.length + 1, time);
+  }
+
+  /** The weapon for step `level`, or null on the last step (the butt: the last pistol, empty). */
+  static weaponAt(level: number): (typeof GUN_GAME_STEPS)[number] | null {
+    return level < GUN_GAME_STEPS.length ? GUN_GAME_STEPS[Math.max(0, level)]! : null;
+  }
+
+  override onDown(_team: Team, victimId?: number, attackerId?: number, melee?: boolean): void {
+    if (this.ended || attackerId === undefined || attackerId === victimId || attackerId < 0) return;
+    const before = this.scoreOf(attackerId);
+    // On the last step only the butt counts.
+    if (before >= GUN_GAME_STEPS.length && !melee) return;
+    this.award(attackerId, 1);
+    if (!this.ended) this.pending.push({ type: 'level', id: attackerId, level: this.scoreOf(attackerId), up: true });
+    if (melee && victimId !== undefined && this.scoreOf(victimId) > 0) {
+      this.score[victimId] = this.scoreOf(victimId) - 1;
+      this.pending.push({ type: 'level', id: victimId, level: this.scoreOf(victimId), up: false });
+    }
+  }
+
+  override step(dt: number): ModeEvent[] {
+    const out = this.pending;
+    this.pending = [];
+    return [...out, ...super.step(dt)];
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,9 @@ import { consumePulses, createInputState, type InputState } from '@/input/InputS
 import { ZoneMode } from '@/modes/ZoneMode';
 import { Fortifications } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
-import type { ModeKind } from '@/modes/matchRules';
+import { GunGameRules, type ModeKind } from '@/modes/matchRules';
+import { MATCH, foes, friends } from '@/modes/matchFlags';
+import { armForLevel, gunGameKit } from '@/modes/gunGame';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { SQUAD_SIZE, Squad, WIPE_PENALTY, mateSpawnBlock, squadName, type SquadMember } from '@/modes/squads';
 import { SupportWorld } from '@/modes/supportWorld';
@@ -224,7 +226,7 @@ export class MatchSim {
     if (this.bots) this.bots.vehicleNav = vehicleNav;
     this.botDifficulty = opts.bots?.difficulty ?? 'normal';
     const size = (opts.teamSize?.blue ?? 12) + (opts.teamSize?.red ?? 12);
-    this.vehicles = this.zoneMode ? new MatchVehicles(this, map, size) : null;
+    this.vehicles = this.zoneMode && MATCH.vehicles ? new MatchVehicles(this, map, size) : null;
     if (this.vehicles) this.vehicles.onBoom = (kind, point) => this.onBoom(kind, point);
     this.wire();
     // Colliders into the broadphase before the first query.
@@ -299,8 +301,17 @@ export class MatchSim {
       dangers: () => this.support.dangers(),
     };
     for (const b of bots.bots) this.scores.add(b.id, b.name, b.team);
-    // Squads of four from the bots, in order; people take bots' places as they join.
-    for (const team of ['blue', 'red'] as const) {
+    // Gun game: every bot carries its step's gun.
+    const gg = zm?.match;
+    if (gg instanceof GunGameRules) {
+      bots.weaponOverride = (bot) => {
+        const k = gunGameKit(gg.scoreOf(bot.id));
+        return { id: k.weapon, empty: k.empty };
+      };
+      for (const b of bots.bots) bots.rearm(b);
+    }
+    // Squads of four from the bots, in order; people take bots' places as they join (none in free-for-all).
+    for (const team of MATCH.squads ? (['blue', 'red'] as const) : []) {
       const list = bots.bots.filter((b) => b.team === team);
       for (let i = 0; i < list.length; i += SQUAD_SIZE) {
         const index = i / SQUAD_SIZE;
@@ -357,7 +368,7 @@ export class MatchSim {
       cands.push({ key: `zone:${o.id}`, x: z.x, z: z.z });
     }
     for (const m of mates) cands.push({ key: `mate:${m.id}`, x: m.feet.x, z: m.feet.z });
-    for (const b of this.gadgets.beaconsFor(bot.team, this.squadKey(bot.id))) cands.push({ key: `beacon:${b.id}`, x: b.pos.x, z: b.pos.z });
+    for (const b of this.gadgets.beaconsFor(bot, this.squadKey(bot.id))) cands.push({ key: `beacon:${b.id}`, x: b.pos.x, z: b.pos.z });
     let best = cands[0]!;
     let bestD = Infinity;
     for (const c of cands) {
@@ -405,6 +416,17 @@ export class MatchSim {
       }
     });
     bus.on('match:ended', (e) => (this.winner = e.winner));
+    // Gun game: a new step's gun in hand at once.
+    bus.on('mode:event', (e) => {
+      if (e.type !== 'level' || !(zm?.match instanceof GunGameRules)) return;
+      const s = this.soldiers.get(e.id);
+      if (s) {
+        if (s.deployed && s.alive) armForLevel(s.weapons, e.level);
+        return;
+      }
+      const bot = this.bots?.bots.find((b) => b.id === e.id);
+      if (bot) this.bots!.rearm(bot);
+    });
     bus.on('grenade:detonate', (e) => {
       if (e.type === 'frag') this.blast('frag', e.point, e.owner, t('grenade.frag'));
       else if (e.type === 'flash') this.flashBots(e.point);
@@ -472,7 +494,7 @@ export class MatchSim {
     s.boxes.setEnabled(false);
     // Rounds flying past bots suppress them; shots are heard (a suppressed gun only close by).
     const bots = this.bots;
-    if (bots) s.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, team, hitId, pellet ? 0.35 : 1);
+    if (bots) s.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, { id: s.id, team }, hitId, pellet ? 0.35 : 1);
     this.soldiers.set(id, s);
     this.scores.add(id, name, team);
     this.joinSquad(s);
@@ -481,6 +503,15 @@ export class MatchSim {
 
   /** Into a squad: in the place of a bot (the squad with the fewest people first), else the first with room, else a new one. */
   private joinSquad(s: Soldier): void {
+    // Free-for-all: no squads (a joining person still takes a bot's place).
+    if (!MATCH.squads) {
+      const bot = this.bots?.bots.find((b) => b.team === s.team && !b.benched);
+      if (bot) {
+        this.bots!.bench(bot);
+        this.onRoster();
+      }
+      return;
+    }
     const team = s.team;
     const human = (m: SquadMember) => !(m instanceof Bot);
     let swap: { q: Squad; i: number } | null = null;
@@ -573,7 +604,15 @@ export class MatchSim {
     this.soldiers.delete(id);
     this.poses.delete(id);
     const sq = this.squadOf(id);
-    if (!sq) return;
+    if (!sq) {
+      // Free-for-all (no squads): a benched bot comes back all the same.
+      const back = MATCH.squads ? undefined : this.bots?.bots.find((b) => b.benched && b.team === s.team);
+      if (back) {
+        this.bots!.unbench(back);
+        this.onRoster();
+      }
+      return;
+    }
     const i = sq.members.findIndex((m) => m.id === id);
     const back = this.bots?.bots.find((b) => b.benched && b.team === s.team);
     if (back && this.bots) {
@@ -594,8 +633,8 @@ export class MatchSim {
   spawnAt(team: Team, key: string, selfId: number): { pos: THREE.Vector3; yaw: number } {
     const [kind, ref] = key.split(':');
     const nav = this.bots?.nav ?? null;
-    let at = this.zoneMode ? this.zoneMode.spawnPoint(team, kind === 'zone' ? ref! : 'base', nav) : this.base(team);
-    const beacon = kind === 'beacon' ? this.gadgets.beaconsFor(team, this.squadKey(selfId)).find((b) => String(b.id) === ref) : undefined;
+    let at = this.zoneMode ? this.zoneMode.spawnPoint(team, kind === 'zone' ? ref! : 'base', nav, Math.random, selfId) : this.base(team);
+    const beacon = kind === 'beacon' ? this.gadgets.beaconsFor({ id: selfId, team }, this.squadKey(selfId)).find((b) => String(b.id) === ref) : undefined;
     if (beacon) {
       this.gadgets.useBeacon(beacon);
       at = { pos: nav?.randomAround(beacon.pos, 1.5) ?? beacon.pos.clone(), yaw: beacon.mesh.rotation.y };
@@ -621,6 +660,9 @@ export class MatchSim {
     const at = this.spawnAt(s.team, key, id);
     s.deployed = true;
     s.spawn(this.clearSpot(at.pos, s), at.yaw, kit);
+    // Gun game: the step's gun, nothing else.
+    const gg = this.zoneMode?.match;
+    if (gg instanceof GunGameRules) armForLevel(s.weapons, gg.scoreOf(id));
     s.weapons.rand = seeded(seed);
     return { pos: s.player.feet.clone(), yaw: at.yaw, seed };
   }
@@ -769,7 +811,7 @@ export class MatchSim {
 
   /** A rocket striking someone: a kill (or down) for anyone but a teammate. */
   private rocketHit(target: Damageable, part: HitPart, point: THREE.Vector3, owner: GadgetOwner): void {
-    if (target.team === owner.team || target.id < 0) return;
+    if (!foes(target, owner) || target.id < 0) return;
     const weapon = t('gadget.assault');
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
     const killed = target.applyDamage(ROCKET.directDamage, part, source, 'at');
@@ -789,7 +831,7 @@ export class MatchSim {
     let best: Soldier | Bot | null = null;
     let bestD = REVIVE_RANGE;
     for (const o of this.soldiers.values()) {
-      if (o === s || o.team !== s.team || !o.downed || !o.deployed) continue;
+      if (o === s || !friends(o, s) || !o.downed || !o.deployed) continue;
       const d = o.player.feet.distanceTo(s.player.feet);
       if (d < bestD) {
         best = o;
@@ -797,7 +839,7 @@ export class MatchSim {
       }
     }
     for (const b of this.bots?.bots ?? []) {
-      if (b.team !== s.team || !b.downed) continue;
+      if (!friends(b, s) || !b.downed) continue;
       const d = b.feet.distanceTo(s.player.feet);
       if (d < bestD) {
         best = b;
@@ -858,7 +900,7 @@ export class MatchSim {
     for (const s of this.soldiers.values()) {
       if (!s.deployed || !s.alive || s.downed || !this.exposed(s)) continue;
       const self = s.id === owner.id;
-      if (!self && s.team === owner.team) continue;
+      if (!self && !foes(s, owner)) continue;
       const chest = this.v1.set(s.player.feet.x, s.player.feet.y + 1.1, s.player.feet.z);
       if (self) {
         const dmg = fragDamage(spec, chest.distanceTo(point), this.physics.blocked(probe, chest, Layer.WORLD));
@@ -873,7 +915,7 @@ export class MatchSim {
       }
     }
     for (const b of this.bots?.bots ?? []) {
-      if (!b.alive || b.team === owner.team) continue;
+      if (!b.alive || !foes(b, owner)) continue;
       hurt(b, this.v1.set(b.feet.x, b.feet.y + b.eyeHeight * 0.65, b.feet.z), false);
     }
   }

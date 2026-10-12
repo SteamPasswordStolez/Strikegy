@@ -1,3 +1,4 @@
+import { MATCH } from '@/modes/matchFlags';
 import * as THREE from 'three';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { HitPart } from '@/core/events';
@@ -55,6 +56,9 @@ const OVERWATCH_COVER = 8;
 /** Preferred fighting distance per weapon class (meters). */
 const PREFERRED_RANGE: Record<WeaponDef['class'], number> = { ar: 20, smg: 10, lmg: 24, sg: 6, dmr: 32, sr: 40, pistol: 10 };
 
+/** Whoever a question is about: a soldier, or a whole side (no id; free-for-all counts ids). */
+export type BotSide = { readonly id?: number; readonly team: Team };
+
 /** Services the bot needs from the world (implemented by BotManager). */
 export interface BotServices {
   readonly time: number;
@@ -71,7 +75,7 @@ export interface BotServices {
   /** Where this bot should head when nothing is going on (squad objective / flank). */
   squadGoal(bot: Bot): THREE.Vector3;
   /** The team's most recent sighting of any enemy. */
-  teamSighting(team: Team): { pos: THREE.Vector3; time: number } | null;
+  teamSighting(of: BotSide): { pos: THREE.Vector3; time: number } | null;
   reportSighting(bot: Bot, pos: THREE.Vector3): void;
   /** The bot's squad's current fight (shared over any distance), if recent. */
   squadContact(bot: Bot): { pos: THREE.Vector3; time: number } | null;
@@ -96,10 +100,10 @@ export interface BotServices {
   inSmoke(p: THREE.Vector3): boolean;
   /** This bot has noticed enemy `e` (shown on its team's minimap). */
   spot(bot: Bot, e: Combatant): void;
-  /** Living members of `team` within `radius` of `pos` (the player included). */
-  alliesNear(team: Team, pos: THREE.Vector3, radius: number): number;
-  /** Living enemies of `team` within `radius` of `pos`. */
-  enemiesNear(team: Team, pos: THREE.Vector3, radius: number): number;
+  /** Living friends of `of` within `radius` of `pos` (the player included; `of` itself too). */
+  alliesNear(of: BotSide, pos: THREE.Vector3, radius: number): number;
+  /** Living enemies of `of` within `radius` of `pos`. */
+  enemiesNear(of: BotSide, pos: THREE.Vector3, radius: number): number;
   /** The window this bot holds, when standing at it. */
   postHere(bot: Bot): THREE.Vector3 | null;
   /** Has a window assigned (standing at it or not). */
@@ -272,6 +276,8 @@ export class Bot implements Damageable, Combatant {
   private kit: [number, number, number] = [0, 0, 0];
   /** Extra respawn wait (squad wiped out); cleared on spawn. */
   respawnPenalty = 0;
+  /** Only the rifle butt can kill (gun game's last step): run at the target instead of shooting. */
+  meleeOnly = false;
   /** Rounds fired, counting up (the game server sends it: shots heard and seen). */
   shots = 0;
   /** Off the field for a person who took this bot's place (game server rooms with bots). */
@@ -749,8 +755,9 @@ export class Bot implements Damageable, Combatant {
     if (this.downed) {
       this.downTime += dt;
       // Bleed out, or give up early when nobody is around to help.
-      const alone = this.downTime > 4 && !s.reviverFor(this) && s.alliesNear(this.team, this.feet, 25) === 0;
-      if (this.downTime >= DOWN_RULES.bleedOut || alone) this.finish();
+      const alone = this.downTime > 4 && !s.reviverFor(this) && s.alliesNear(this, this.feet, 25) === 0;
+      // No reviving in this match (free-for-all, one-life rounds): a down is a death.
+      if (this.downTime >= DOWN_RULES.bleedOut || alone || !MATCH.revive) this.finish();
       return;
     }
     if (!this.alive) {
@@ -969,14 +976,14 @@ export class Bot implements Damageable, Combatant {
     const inCover = !!this.cover && this.cover.distanceTo(this.feet) < 0.8;
     // Teammates' sightings only matter nearby; otherwise the whole team converges on one fight.
     // Squadmates share their fight over any distance.
-    const sighting = s.teamSighting(this.team);
+    const sighting = s.teamSighting(this);
     const squad = s.squadContact(this);
     const team = squad ?? (sighting && sighting.pos.distanceTo(this.feet) < TEAM_INTEL_RANGE ? sighting : null);
     const ownAge = s.time - this.lastSeen.time;
     const teamAge = team ? s.time - team.time : Infinity;
     // Local odds: friends around us vs the enemies we know are near.
     const known = this.knownEnemies(s, ODDS_RANGE);
-    const odds = known > 0 ? s.alliesNear(this.team, this.feet, ODDS_RANGE * 0.6) / known : 1;
+    const odds = known > 0 ? s.alliesNear(this, this.feet, ODDS_RANGE * 0.6) / known : 1;
     this.action = chooseAction(
       {
         health: this.health.value / 100,
@@ -1062,6 +1069,12 @@ export class Bot implements Damageable, Combatant {
     }
     // Where to look while walking: the dangerous side, not just the path.
     this.scan = smart && !this.target && this.hasGoal && this.path.length > 0 ? s.scanYaw(this, this.pathYaw()) : null;
+    // Only the butt left (gun game's last step): straight at whoever it is after, sprinting.
+    if (this.meleeOnly && this.target) {
+      this.action = 'cover';
+      this.cover = null;
+      this.setGoal(this.target.feet, s);
+    }
     // Up close with an empty (or reloading) gun, or right on top of them: the rifle butt.
     const t = this.target;
     if (t && s.time >= this.meleeAt) {
@@ -1276,7 +1289,7 @@ export class Bot implements Damageable, Combatant {
         const t = this.target;
         if (!t) return;
         const d = this.feet.distanceTo(t.feet);
-        if (d < 10 || d > 70 || s.alliesNear(this.team, t.feet, 5) > 0) return;
+        if (d < 10 || d > 70 || s.alliesNear(this, t.feet, 5) > 0) return;
         // Vehicles and fortifications: that is what it is for. Someone in a building: now and
         // then, from 15 m on, checked about once a second (with every building enterable it had
         // become the bots' main anti-infantry weapon); anyone else very rarely.
@@ -1311,7 +1324,7 @@ export class Bot implements Damageable, Combatant {
         // On the way to the objective, well clear of where this life started.
         if (!calm || this.feet.distanceTo(this.spawnPos) < 50) return;
         const d = this.feet.distanceTo(s.squadGoal(this));
-        if (d > 20 && d < 90 && s.enemiesNear(this.team, this.feet, 30) === 0) use('beacon', this.feet, 60);
+        if (d > 20 && d < 90 && s.enemiesNear(this, this.feet, 30) === 0) use('beacon', this.feet, 60);
         return;
       }
       case 'mine': {
@@ -1395,7 +1408,7 @@ export class Bot implements Damageable, Combatant {
       const age = s.time - this.lastSeen.time;
       const d = this.feet.distanceTo(this.lastSeen.pos);
       const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1);
-      if (age > 0.5 && age < 6 && d > 6 && d < 24 && !s.lineOfSight(eye, spot) && s.alliesNear(this.team, this.lastSeen.pos, 10) === 0) {
+      if (age > 0.5 && age < 6 && d > 6 && d < 24 && !s.lineOfSight(eye, spot) && s.alliesNear(this, this.lastSeen.pos, 10) === 0) {
         const at = this.tmp2.copy(this.lastSeen.pos);
         if (s.throwGrenade(this, 'flash', at)) {
           this.flashes--;
@@ -1418,14 +1431,14 @@ export class Bot implements Damageable, Combatant {
       if (t) {
         const d = this.feet.distanceTo(t.feet);
         const holding = s.fortifiedAt(t.feet) || s.insideBuilding(t.feet) || Math.hypot(t.velocity.x, t.velocity.z) < 0.4;
-        if (d > 10 && d < 32 && (s.enemiesNear(this.team, t.feet, 5) >= 2 || (holding && Math.random() < 0.5))) at = t.feet;
+        if (d > 10 && d < 32 && (s.enemiesNear(this, t.feet, 5) >= 2 || (holding && Math.random() < 0.5))) at = t.feet;
       } else if (age > 0.8 && age < 6) {
         const d = this.feet.distanceTo(this.lastSeen.pos);
         const spot = this.tmp.copy(this.lastSeen.pos).setY(this.lastSeen.pos.y + 1);
         const dug = s.insideBuilding(this.lastSeen.pos) || s.fortifiedAt(this.lastSeen.pos);
         if (dug && d > 7 && d < 28 && !s.lineOfSight(eye, spot)) at = this.lastSeen.pos;
       }
-      if (at && s.alliesNear(this.team, at, 8) === 0 && s.throwGrenade(this, 'frag', at)) {
+      if (at && s.alliesNear(this, at, 8) === 0 && s.throwGrenade(this, 'frag', at)) {
         this.frags--;
         this.afterThrow(at, s);
         return;

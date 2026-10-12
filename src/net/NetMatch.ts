@@ -15,6 +15,7 @@
  *   itself and sends where it has it with the inputs.
  */
 import * as THREE from 'three';
+import { MATCH, lookTeam } from '@/modes/matchFlags';
 import { SoldierModel } from '@/ai/SoldierModel';
 import type { AudioSystem } from '@/audio/AudioSystem';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
@@ -301,7 +302,7 @@ class Remote {
     }
     if (!this.model || weapon !== this.weapon) {
       this.model?.dispose();
-      this.model = new SoldierModel(this.team, WEAPONS[weapon]);
+      this.model = new SoldierModel(lookTeam(this.team), WEAPONS[weapon]);
       this.weapon = weapon;
       this.view.scene.add(this.model.root);
     } else if (!this.model.root.parent) this.view.scene.add(this.model.root);
@@ -612,7 +613,7 @@ export class NetMatch {
         const info = this.roster.get(s.id);
         r = new Remote(s.id, info?.team ?? 'red', info?.name ?? '?', this.view);
         r.human = !!info && !info.bot;
-        r.ally = r.team === this.myTeam;
+        r.ally = !MATCH.ffa && r.team === this.myTeam;
         this.remotes.set(s.id, r);
       }
       r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots });

@@ -102,9 +102,9 @@ describe('class gadgets', () => {
   it('beacons serve their squad a few times and break when shot', async () => {
     const { registry, world, log } = await setup();
     const b = world.placeBeacon(new THREE.Vector3(0, 0, 3), 0, blue);
-    expect(world.beaconsFor('blue', 'blue:0')).toEqual([b]);
-    expect(world.beaconsFor('blue', 'blue:1')).toEqual([]);
-    expect(world.beaconsFor('red', null)).toEqual([]);
+    expect(world.beaconsFor({ team: 'blue' }, 'blue:0')).toEqual([b]);
+    expect(world.beaconsFor({ team: 'blue' }, 'blue:1')).toEqual([]);
+    expect(world.beaconsFor({ team: 'red' }, null)).toEqual([]);
     for (let i = 0; i < BEACON.uses - 1; i++) world.useBeacon(b);
     expect(world.beacons.length).toBe(1);
     world.useBeacon(b);

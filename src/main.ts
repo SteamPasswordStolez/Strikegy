@@ -116,9 +116,9 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void, n
   const bots = botMatch
     ? { allies: Number(botMatch[1]), enemies: Number(botMatch[2]), difficulty, plain }
     : null;
-  // ?mode=zone|frontline|conquest|hardpoint|tdm|killconfirm|skirmish (default: the map's own mode on maps with zones); ?tickets=300
+  // ?mode=zone|frontline|conquest|hardpoint|tdm|killconfirm|ffa|gungame|skirmish (default: the map's own mode on maps with zones); ?tickets=300
   const mode =
-    (['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'skirmish'] as const).find(
+    (['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'skirmish'] as const).find(
       (m) => m === params.get('mode'),
     ) ?? 'auto';
   const tickets = Number(params.get('tickets')) || undefined;

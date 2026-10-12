@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import type { CoreExports } from '@/wasm/core';
+import { MATCH } from '@/modes/matchFlags';
 import type { Combatant } from './types';
 
 /** Slot flags (match `wasm/core/src/crowd.rs`). */
@@ -115,8 +116,24 @@ export class Crowd {
     this.flags[slot] =
       (c.alive ? CROWD_ALIVE : 0) |
       (c.downed ? CROWD_DOWNED : 0) |
-      (c.team === 'red' ? CROWD_RED : 0) |
+      (c.team === 'red' && !MATCH.ffa ? CROWD_RED : 0) |
       extra;
+  }
+
+  /**
+   * Free-for-all: every slot is written as one side (blue), and the slot asking
+   * a question is turned red for the length of it, so the core's "the other
+   * side" test means "everyone else" (the core knows only two sides). Returns
+   * the flags to put back with `endAsk`.
+   */
+  private ask(slot: number): number {
+    const f = this.flags[slot]!;
+    if (MATCH.ffa) this.flags[slot] = f | CROWD_RED;
+    return f;
+  }
+
+  private endAsk(slot: number, f: number): void {
+    this.flags[slot] = f;
   }
 
   noticeOf(row: number, col: number): number {
@@ -129,7 +146,10 @@ export class Crowd {
 
   /** Living enemies of `slot` within `range` it has noticed. */
   known(slot: number, range: number): number {
-    return this.k.crowd_known(slot, range);
+    const f = this.ask(slot);
+    const n = this.k.crowd_known(slot, range);
+    this.endAsk(slot, f);
+    return n;
   }
 
   clearNotice(row: number): void {
@@ -158,7 +178,8 @@ export class Crowd {
     maxLook: number,
   ): number {
     const rad = Math.PI / 180;
-    return this.k.crowd_perceive(
+    const f = this.ask(slot);
+    const n = this.k.crowd_perceive(
       slot,
       sight,
       airSight,
@@ -175,6 +196,8 @@ export class Crowd {
       airOk ? 1 : 0,
       maxLook,
     );
+    this.endAsk(slot, f);
+    return n;
   }
 
   /** Living bots into the neighbour grid (after the slots are written). */
@@ -214,7 +237,8 @@ export class Crowd {
   ): number {
     const rad = Math.PI / 180;
     const up = viewUpDeg ?? 0;
-    return this.k.crowd_view(
+    const f = this.ask(slot);
+    const n = this.k.crowd_view(
       slot,
       sight,
       airSight,
@@ -224,5 +248,7 @@ export class Crowd {
       yaw,
       pitch,
     );
+    this.endAsk(slot, f);
+    return n;
   }
 }

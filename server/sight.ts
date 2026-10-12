@@ -13,6 +13,7 @@
  * Allies are always sent. The cost is capped per tick (`RAYS_PER_TICK`).
  */
 import * as THREE from 'three';
+import { foes } from '../src/modes/matchFlags.ts';
 import { Layer } from '../src/physics/PhysicsWorld.ts';
 import type { MatchSim } from '../src/sim/MatchSim.ts';
 import type { Team } from '../src/world/mapTypes.ts';
@@ -100,7 +101,7 @@ export class Sight {
       const fx = -Math.sin(v.yaw);
       const fz = -Math.cos(v.yaw);
       for (const e of bodies) {
-        if (e.team === v.team || !e.on) continue;
+        if (!foes(e, v) || !e.on) continue;
         const f = e.feet;
         const d2 = eye ? eye.distanceToSquared(f) : Infinity;
         let ok = d2 < NEAR * NEAR;

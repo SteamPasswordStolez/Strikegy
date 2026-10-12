@@ -1,3 +1,4 @@
+import { MATCH } from '@/modes/matchFlags';
 import * as THREE from 'three';
 import type { Combatant } from '@/ai/types';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
@@ -306,7 +307,8 @@ export class Soldier {
     this.downTime += dt;
     this.giveUpHold = holdingGiveUp ? this.giveUpHold + dt : 0;
     if (!this.authority) return;
-    if (this.giveUpHold >= DOWN.giveUpHold || this.downTime >= DOWN.bleedOut) this.die(this.downCause, this.downSource);
+    // No reviving in this match (free-for-all, one-life rounds): a down is a death.
+    if (this.giveUpHold >= DOWN.giveUpHold || this.downTime >= DOWN.bleedOut || !MATCH.revive) this.die(this.downCause, this.downSource);
   }
 
   // ---------------------------------------------------------------------------
@@ -368,7 +370,7 @@ export class Soldier {
     void source;
     this.downed = false;
     // The time spent down already counts toward the respawn wait.
-    this.respawnTimer = Math.max(0, RESPAWN_SEC - this.downTime);
+    this.respawnTimer = Math.max(0, (MATCH.respawn ?? RESPAWN_SEC) - this.downTime);
     this.weapons.adsBlend = 0;
     if (this.deployFlow) this.deployed = false;
     this.boxes.setEnabled(false);

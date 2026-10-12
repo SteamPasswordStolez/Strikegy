@@ -39,6 +39,7 @@ import {
   type NetVehicle,
 } from '../src/net/matchProtocol.ts';
 import { MODE_KINDS, type ModeKind } from '../src/modes/matchRules.ts';
+import { MATCH } from '../src/modes/matchFlags.ts';
 import { MatchSim, SIM_DT, seeded } from '../src/sim/MatchSim.ts';
 import type { Soldier } from '../src/sim/Soldier.ts';
 import type { Vehicle } from '../src/vehicles/Vehicle.ts';
@@ -590,7 +591,8 @@ export class MatchRoom {
       const team = s.team;
       const mine: NetSoldier[] = [];
       for (const x of all) {
-        if (x.team === team) mine.push(x.n);
+        // Free-for-all: only oneself is a friend.
+        if (x.n.id === s.id || (!MATCH.ffa && x.team === team)) mine.push(x.n);
         // An enemy: only when known, and without its health or what it is short of.
         else if (this.sight.knows(s.id, x.n.id)) mine.push({ ...x.n, health: 0, flags: x.n.flags & ~ENEMY_HIDDEN });
       }
@@ -750,7 +752,7 @@ export class MatchRoom {
     bus.on('match:ended', (e) => {
       if (this.over) return;
       this.over = true;
-      this.broadcastEvents.push({ k: 'end', winner: e.winner });
+      this.broadcastEvents.push({ k: 'end', winner: e.winner, winnerId: e.winnerId });
       this.opts.log?.(`match in room ${this.opts.room} ended: ${e.winner}`);
       this.opts.ended?.(e.winner);
     });

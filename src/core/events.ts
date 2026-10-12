@@ -55,6 +55,8 @@ export interface GameEvents {
     /** Combatant ids (scoreboard); absent for practice targets. */
     attackerId?: number;
     victimId?: number;
+    /** A blow with the rifle butt (gun game knocks the victim back a step). */
+    melee?: boolean;
   };
   'grenade:thrown': { type: GrenadeType; remaining: number };
   'grenade:bounce': { type: GrenadeType; point: THREE.Vector3; speed: number };
@@ -78,7 +80,8 @@ export interface GameEvents {
   'zone:neutralized': { zone: string; team: Team };
   /** Mode news: a sector taken, a new attack, the attack timer moved, tickets added. */
   'mode:event': ModeEvent;
-  'match:ended': { winner: Team };
+  /** `winnerId`: free-for-all, the soldier who won (`winner` is their nominal side). */
+  'match:ended': { winner: Team; winnerId?: number };
 }
 
 export type GameBus = EventBus<GameEvents>;

@@ -191,7 +191,7 @@ export type MatchEvent =
   | { k: 'spotted'; ids: number[]; sec: number }
   /** To the earner: points popping up under the crosshair. */
   | { k: 'points'; points: number; reason: string }
-  | { k: 'end'; winner: Side };
+  | { k: 'end'; winner: Side; winnerId?: number };
 
 export type ClientMsg =
   | { t: 'hello'; v: number; name: string; uid: string; device: Device }

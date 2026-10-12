@@ -1,4 +1,5 @@
 import { disposeTree } from '@/render/dispose';
+import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
 import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
 import { EventBus } from './EventBus';
@@ -73,8 +74,9 @@ import { Overlay } from '@/ui/Overlay';
 import { SettingsPanel } from '@/ui/SettingsPanel';
 import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
-import { ZoneMode } from '@/modes/ZoneMode';
-import { ConquestRules, FrontlineRules, HardpointRules, KillConfirmRules, PointsRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
+import { armForLevel, gunGameKit } from '@/modes/gunGame';
+import { ConquestRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, SoloRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
@@ -167,6 +169,10 @@ export class Game {
   /** The soldier this browser plays: id and side (fixed solo; the server's in a match there). */
   private readonly myId: number;
   private readonly myTeam: Team;
+  /** This soldier as a side (free-for-all: just them). */
+  private get meSide(): { id: number; team: Team } {
+    return { id: this.myId, team: this.myTeam };
+  }
   /** A match on the game server, or null (solo). */
   private net: NetMatch | null = null;
   /** Asked the server to deploy; waiting for the spawn. */
@@ -591,6 +597,10 @@ export class Game {
     r.scene.add(this.support.group);
     r.scene.add(this.airMarkers.group);
     this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
+    // What this match allows (free-for-all: no sides, squads or vehicles), before the soldiers and bots are made.
+    const asked = this.options.mode ?? 'auto';
+    const zoned = asked !== 'skirmish' && (asked !== 'auto' || !!this.options.bots) && (map.zones?.length ?? 0) > 0;
+    setMatchFlags(zoned ? matchFlagsFor(pickMode(map, asked === 'auto' ? undefined : (asked as ModeKind), true)) : {});
     const ownSpawn = (s: SpawnPoint) => s.team === this.myTeam || (this.myTeam === 'blue' && s.team === 'player');
     this.spawn = (this.myTeam === 'blue' ? map.spawns.find((s) => s.team === 'player') : undefined) ?? map.spawns.find(ownSpawn) ?? map.spawns[0]!;
     const firstKit = this.loadouts.current;
@@ -660,7 +670,7 @@ export class Game {
         if (map.trees) this.bots.setForest(map.trees, map.world.size, (x, z) => terrain.heightAt(x, z), map.world.flora);
         if (water) this.bots.setWater(water);
         const bots = this.bots;
-        this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, this.myTeam, hitId, pellet ? 0.35 : 1);
+        this.weapons.onRound = (from, to, hitId, pellet) => bots.nearMiss(from, to, { id: this.myId, team: this.myTeam }, hitId, pellet ? 0.35 : 1);
         // Vehicles come with zone matches: their drivers route on a mesh as wide as a tank.
         if ((map.zones?.length ?? 0) > 0 && !this.options.sandbox) {
           await this.loadStep(0.8, 'load.vehicleNav');
@@ -677,7 +687,7 @@ export class Game {
     if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
       this.setupFortifications(map, terrain, water, built);
-      if (this.bots && !this.options.sandbox) this.setupVehicles(map);
+      if (this.bots && !this.options.sandbox && MATCH.vehicles) this.setupVehicles(map);
     }
     if (this.options.net) await this.setupNet(map, terrain, built, water);
     if (this.bots) {
@@ -889,7 +899,8 @@ export class Game {
         else this.effects.targetHit(e.point);
       }
     });
-    bus.on('combat:kill', (e) => this.hud.addKill(e));
+    // Free-for-all: everyone else is an enemy in the feed.
+    bus.on('combat:kill', (e) => this.hud.addKill(MATCH.ffa ? { ...e, attackerTeam: 'red', victimTeam: 'red' } : e));
     bus.on('grenade:thrown', () => {
       this.audio.pinAndThrow();
       this.viewModel.onThrow();
@@ -1535,7 +1546,7 @@ export class Game {
     let mate: { id: number; name: string } | null = null;
     let best = REVIVE_RANGE;
     for (const o of net.others()) {
-      if (o.team !== this.myTeam || !o.downed) continue;
+      if (!friends(o, this.meSide) || !o.downed) continue;
       const d = o.feet.distanceTo(feet);
       if (d < best) {
         best = d;
@@ -1547,7 +1558,7 @@ export class Game {
     if (!mate && (this.cls === 'medic' || this.cls === 'support')) {
       const need = this.cls === 'medic' ? SF.needMedkit : SF.needAmmo;
       for (const o of net.others()) {
-        if (o.team === this.myTeam && o.alive && o.flags & need && o.feet.distanceTo(feet) < GIVE_RANGE) {
+        if (friends(o, this.meSide) && o.alive && o.flags & need && o.feet.distanceTo(feet) < GIVE_RANGE) {
           this.interact = { kind: 'giveMate', name: o.name, what: this.cls === 'medic' ? 'medkit' : 'ammo' };
           break;
         }
@@ -2121,7 +2132,7 @@ export class Game {
     const hit = this.physics.raycast(muzzle, dir, gun.range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
     const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, gun.range);
     const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
-    if (target && target.owner.alive && target.owner.team !== shooter.team) {
+    if (target && target.owner.alive && foes(target.owner, shooter)) {
       const isVehicle = !!this.vehicles?.get(target.owner.id);
       const dmg = isVehicle ? gun.vsVehicle : computeDamage(gun.damage, target.part, 1.5);
       const source: DamageSource = { pos: muzzle.clone(), name: shooter.name, team: shooter.team, weapon: name, id: shooter.id };
@@ -2134,7 +2145,7 @@ export class Game {
     if (hit && gun.blast > 0) this.blast('cannon', to, shooter, name);
     this.effects.spawnShots([{ from: muzzle, to }], muzzle);
     this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, byPlayer ? 0 : listenerDist);
-    this.bots?.nearMiss(muzzle, to, shooter.team, target?.owner.id ?? -1, 1);
+    this.bots?.nearMiss(muzzle, to, shooter, target?.owner.id ?? -1, 1);
     if (byPlayer) this.shake = Math.min(0.03, this.shake + (gun.blast > 0 ? 0.012 : 0.004));
   }
 
@@ -2147,7 +2158,7 @@ export class Game {
     if (!spec) return;
     const name = t(`vehicleGun.${gun as VehicleGunId}`);
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon: name, id: owner.id };
-    if (target && target.team !== owner.team && target.id >= 0) {
+    if (target && foes(target, owner) && target.id >= 0) {
       if (this.vehicles?.get(target.id)) target.applyDamage(spec.vsVehicle, part, source, 'at');
       else if (target.id === this.myId) {
         if (this.damagePlayer(999, point, 'explosion', source)) {
@@ -2471,7 +2482,7 @@ export class Game {
       if (killed) this.bus.emit('combat:kill', { attacker: 'You', victim: tg.name, weapon, headshot: false, byPlayer: true });
     }
     for (const b of this.bots?.bots ?? []) {
-      if (!b.alive || b.team === owner.team) continue;
+      if (!b.alive || !foes(b, owner)) continue;
       const c = b.feet.clone().setY(b.feet.y + b.eyeHeight * 0.65);
       const dmg = fragDamage(spec, c.distanceTo(point), this.occluded(probe, c));
       if (dmg <= 0) continue;
@@ -2480,7 +2491,7 @@ export class Game {
       if (killed) this.reportKill(owner, b.id, b.name, b.team, weapon);
     }
     // Your own blast hurts you; teammates' don't.
-    if (byPlayer || owner.team !== this.myTeam) {
+    if (byPlayer || foes(owner, this.meSide)) {
       const chest = this.player.feet.clone().setY(this.player.feet.y + 1.1);
       const dmg = fragDamage(spec, chest.distanceTo(point), this.occluded(probe, chest));
       const killed = dmg > 0 && this.damagePlayer(dmg, point, 'explosion', byPlayer ? undefined : source);
@@ -2491,7 +2502,7 @@ export class Game {
 
   /** A panzerfaust rocket striking someone: a kill (or down) for anyone but a teammate. */
   private rocketHit(target: Damageable, part: HitPart, point: THREE.Vector3, owner: GadgetOwner): void {
-    if (target.team === owner.team || target.id < 0) return;
+    if (!foes(target, owner) || target.id < 0) return;
     const weapon = t('gadget.assault');
     const byPlayer = owner.id === this.myId;
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
@@ -2581,7 +2592,7 @@ export class Game {
     let give: Bot | null = null;
     let giveD = GIVE_RANGE;
     for (const b of bots.bots) {
-      if (b.team !== this.myTeam) continue;
+      if (!friends(b, this.meSide)) continue;
       const d = b.feet.distanceTo(feet);
       if (b.downed && d < reviveD) {
         revive = b;
@@ -2716,7 +2727,7 @@ export class Game {
     const needAmmo = this.weapons.needsAmmo;
     if (!needKit && !needAmmo) return;
     for (const b of bots.bots) {
-      if (b.team !== this.myTeam || !b.alive || b.target || b.feet.distanceTo(feet) > GIVE_RANGE) continue;
+      if (!friends(b, this.meSide) || !b.alive || b.target || b.feet.distanceTo(feet) > GIVE_RANGE) continue;
       if (needKit && b.cls === 'medic' && this.giveOk(`${b.id}>${this.myId}:kit`)) {
         this.medkits = MEDKIT.carried;
         this.giveReady.set(`${b.id}>${this.myId}:kit`, this.simTime + MEDKIT.giveCooldown);
@@ -2763,6 +2774,9 @@ export class Game {
     this.flashLeft = 0;
     this.breath = createBreath();
     this.me.spawn(at.pos, at.yaw, kit, this.options.sandbox ? this.options.loadout : null);
+    // Gun game: the step's gun, nothing else.
+    const gg = this.zoneMode?.match;
+    if (gg instanceof GunGameRules) armForLevel(this.weapons, gg.scoreOf(this.myId));
     // Deployed in a tank: it comes out at the base with the player at the controls.
     if (key.startsWith('tank:') && this.vehicles) {
       const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, this.myTeam);
@@ -2994,7 +3008,7 @@ export class Game {
     let bestOff = cone;
     let bestPos: THREE.Vector3 | null = null;
     for (const e of this.bots.enemiesOf(this.myTeam)) {
-      if (!e.alive) continue;
+      if (!e.alive || e.id === this.myId) continue;
       const dx = e.feet.x - eye.x;
       const dz = e.feet.z - eye.z;
       const dist = Math.hypot(dx, dz);
@@ -3035,15 +3049,15 @@ export class Game {
     if (this.bots) {
       const squad = this.playerSquad;
       for (const b of this.bots.bots) {
-        if (b.alive && b.team === this.myTeam) f.allies.push({ x: b.feet.x, z: b.feet.z, squad: !!squad?.has(b.id) });
+        if (b.alive && friends(b, this.meSide)) f.allies.push({ x: b.feet.x, z: b.feet.z, squad: !!squad?.has(b.id) });
       }
-      for (const e of this.bots.spottedEnemies(this.myTeam, p.feet)) f.enemies.push({ x: e.feet.x, z: e.feet.z });
+      for (const e of this.bots.spottedEnemies({ id: this.myId, team: this.myTeam }, p.feet)) f.enemies.push({ x: e.feet.x, z: e.feet.z });
     }
     if (this.net) {
       const squad = this.playerSquad;
       for (const o of this.net.others()) {
         if (!o.alive) continue;
-        if (o.team === this.myTeam) f.allies.push({ x: o.feet.x, z: o.feet.z, squad: !!squad?.has(o.id) });
+        if (friends(o, this.meSide)) f.allies.push({ x: o.feet.x, z: o.feet.z, squad: !!squad?.has(o.id) });
         else if ((this.netSpotted.get(o.id) ?? 0) > this.elapsed) f.enemies.push({ x: o.feet.x, z: o.feet.z });
       }
     }
@@ -3250,7 +3264,7 @@ export class Game {
       this.bots?.replan('red');
     });
     this.bus.on('mode:event', (e) => this.onModeEvent(e));
-    this.bus.on('match:ended', (e) => this.endMatch(e.winner));
+    this.bus.on('match:ended', (e) => this.endMatch(e.winner, e.winnerId));
 
     // Scoreboard stats; the player's own points pop up under the crosshair.
     this.scores.onPoints = (id, points, reason) => {
@@ -3348,6 +3362,20 @@ export class Game {
         alive.set(info.id, info.team !== this.myTeam || (r?.alive ?? false));
       }
     }
+    const m = zm?.match;
+    if (m instanceof SoloRules) {
+      // Free-for-all: everyone in one ranking, the top half on the left.
+      const all = this.scores.table(null).sort((a, b) => m.scoreOf(b.id) - m.scoreOf(a.id) || b.score - a.score || a.id - b.id);
+      const half = Math.ceil(all.length / 2);
+      const rows = (list: typeof all) =>
+        list.map((r) => ({ name: r.name, squad: null, kills: r.kills, deaths: r.deaths, captures: m.scoreOf(r.id), score: r.score, alive: alive.get(r.id) ?? false, you: r.id === this.myId, mate: false }));
+      const label = (from: number, to: number) => t('score.ranks').replace('{a}', String(from)).replace('{b}', String(Math.max(from, to)));
+      this.scoreboard.update(
+        { label: label(1, half), stat: null, kills: all.slice(0, half).reduce((a, r) => a + r.kills, 0), rows: rows(all.slice(0, half)) },
+        { label: label(half + 1, all.length), stat: null, kills: all.slice(half).reduce((a, r) => a + r.kills, 0), rows: rows(all.slice(half)) },
+      );
+      return;
+    }
     const side = (team: Team): ScoreboardSide => ({
       label: t(team === this.myTeam ? 'hud.allies' : 'hud.enemies'),
       stat: zm ? this.modeScoreLine(team) : null,
@@ -3376,7 +3404,8 @@ export class Game {
     const them = otherTeam(us);
     const ours = bots.bots.filter((b) => b.team === us);
     const theirs = bots.bots.filter((b) => b.team === them);
-    this.squads = [...formSquads(us, [this.playerCombatant, ...ours]), ...formSquads(them, theirs)];
+    // Free-for-all: nobody has a squad.
+    this.squads = MATCH.squads ? [...formSquads(us, [this.playerCombatant, ...ours]), ...formSquads(them, theirs)] : [];
     for (const c of [this.playerCombatant, ...ours, ...theirs]) this.scores.add(c.id, c.id === this.myId ? playerName(t('feed.you')) : c.name, c.team);
     this.playerSquad = this.squads.find((s) => s.has(this.myId)) ?? null;
     bots.setSquads(
@@ -3400,6 +3429,15 @@ export class Game {
       spawnAt: (bot, objective) => this.spawnFor(bot.team, this.botSpawnKey(bot, objective), bot.id),
       revivePlayer: (by, health) => this.revivePlayer(by.name, health),
     };
+    // Gun game: every bot carries its step's gun.
+    const gg = zm?.match;
+    if (gg instanceof GunGameRules) {
+      bots.weaponOverride = (bot) => {
+        const k = gunGameKit(gg.scoreOf(bot.id));
+        return { id: k.weapon, empty: k.empty };
+      };
+      for (const b of bots.bots) bots.rearm(b);
+    }
     // One sector open: start on what each side holds nearest the fight (the base can be far from it).
     if (zm && zm.kind !== 'zone') bots.redeployAll();
     this.bus.on('combatant:resupplied', (e) => this.scores.resupply(e.byId));
@@ -3509,7 +3547,7 @@ export class Game {
       }
     }
     if (kind === 'beacon') {
-      const b = this.gadgets.beaconsFor(team, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
+      const b = this.gadgets.beaconsFor({ id: selfId, team }, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
       if (b) {
         this.gadgets.useBeacon(b);
         const pos = this.nav?.randomAround(b.pos, 1.5) ?? b.pos.clone();
@@ -3522,7 +3560,7 @@ export class Game {
       if (mate && !mateSpawnBlock(mate, this.bots!.time, this.riding(mate.id))) return this.besideMate(mate);
     }
     const zm = this.zoneMode;
-    if (zm) return zm.spawnPoint(team, kind === 'zone' ? id! : 'base', this.nav);
+    if (zm) return zm.spawnPoint(team, kind === 'zone' ? id! : 'base', this.nav, Math.random, selfId);
     const list = this.mapSpawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
     const sp = list[Math.floor(Math.random() * list.length)];
     const pos = sp ? new THREE.Vector3(...sp.pos) : this.baseCenter(team);
@@ -3569,7 +3607,7 @@ export class Game {
       cands.push({ key: `zone:${o.id}`, x: z.x, z: z.z });
     }
     for (const m of mates) cands.push({ key: `mate:${m.id}`, x: m.feet.x, z: m.feet.z });
-    for (const b of this.gadgets.beaconsFor(bot.team, this.squadKeyOf(bot.team, bot.id))) cands.push({ key: `beacon:${b.id}`, x: b.pos.x, z: b.pos.z });
+    for (const b of this.gadgets.beaconsFor(bot, this.squadKeyOf(bot.team, bot.id))) cands.push({ key: `beacon:${b.id}`, x: b.pos.x, z: b.pos.z });
     // Now and then straight into a free seat in one of the side's tanks or jets.
     if (Math.random() < 0.3) {
       for (const v of this.vehicles?.vehicles ?? []) {
@@ -3591,8 +3629,8 @@ export class Game {
   private deployOptions(): DeployOption[] {
     const out: DeployOption[] = [];
     const base = this.baseCenter(this.myTeam);
-    out.push({ key: 'base', kind: 'base', label: t('spawn.base'), x: base.x, z: base.z, blocked: null, warn: null });
     const zm = this.zoneMode;
+    out.push({ key: 'base', kind: 'base', label: t(zm?.solo ? 'spawn.anywhere' : 'spawn.base'), x: base.x, z: base.z, blocked: null, warn: null });
     for (const o of zm?.spawnOptions(this.myTeam) ?? []) {
       if (o.id === 'base') continue;
       const z = zm!.zone(o.id)!;
@@ -3605,7 +3643,7 @@ export class Game {
       out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${b.owner}) ×${b.uses}`, x: b.pos[0], z: b.pos[2], blocked: null, warn: null });
     }
     // Spawn beacons the squad's recons put down.
-    for (const b of this.gadgets.beaconsFor(this.myTeam, this.squadKeyOf(this.myTeam, this.myId))) {
+    for (const b of this.gadgets.beaconsFor(this.meSide, this.squadKeyOf(this.myTeam, this.myId))) {
       const who = b.owner.id === this.myId ? playerName(t('feed.you')) : b.owner.name;
       out.push({ key: `beacon:${b.id}`, kind: 'beacon', label: `${t('spawn.beacon')} (${who}) ×${b.uses}`, x: b.pos.x, z: b.pos.z, blocked: null, warn: null });
     }
@@ -3767,9 +3805,21 @@ export class Game {
   /** Most tickets each side has had (the gauge's full mark; Conquest refills can raise it). */
   private readonly ticketPeak: Record<Team, number> = { blue: 1, red: 1 };
 
-  /** How full a side's score gauge is: points toward the target, or tickets left. */
+  /** Free-for-all: this soldier's score and the best of everyone else's. */
+  private soloScores(m: SoloRules): { mine: number; best: number; place: number; total: number } {
+    const list = m.standings();
+    const mine = m.scoreOf(this.myId);
+    const best = list.find((s) => s.id !== this.myId)?.n ?? 0;
+    return { mine, best, place: 1 + list.filter((s) => s.id !== this.myId && s.n > mine).length, total: Math.max(1, list.length) };
+  }
+
+  /** How full a side's score gauge is: points toward the target, or tickets left (free-for-all: me vs the best other). */
   private modeFill(team: Team): number {
     const m = this.zoneMode!.match;
+    if (m instanceof SoloRules) {
+      const s = this.soloScores(m);
+      return (team === this.myTeam ? s.mine : s.best) / m.target;
+    }
     if (m instanceof PointsRules) return m.points[team] / m.target;
     const tk = m.tickets[team];
     if (tk === null) return 1;
@@ -3780,6 +3830,10 @@ export class Game {
   /** The number beside the zone bar: domination points, tickets, or ∞ for a side without tickets. */
   private modeScore(team: Team): string {
     const m = this.zoneMode!.match;
+    if (m instanceof SoloRules) {
+      const s = this.soloScores(m);
+      return String(team === this.myTeam ? s.mine : s.best);
+    }
     if (m instanceof PointsRules) return String(Math.floor(m.points[team]));
     const tk = m.tickets[team];
     return tk === null ? '∞' : String(tk);
@@ -3788,6 +3842,7 @@ export class Game {
   /** "Tickets 312" / "Points 240" for the scoreboard. */
   private modeScoreLine(team: Team): string | null {
     const m = this.zoneMode!.match;
+    if (m instanceof SoloRules) return null;
     if (m instanceof PointsRules) return `${t('hud.points')} ${Math.floor(m.points[team])}`;
     const tk = m.tickets[team];
     return tk === null ? null : `${t('hud.tickets')} ${tk}`;
@@ -3798,6 +3853,20 @@ export class Game {
     const m = this.zoneMode!.match;
     const mode = t(`mode.${m.kind}`);
     const target = t('mode.target').replace('{n}', String(m instanceof PointsRules ? m.target : 0));
+    if (m instanceof SoloRules) {
+      const s = this.soloScores(m);
+      const clock = t('mode.clock').replace('{t}', clockText(m.timeLeft));
+      const place = t('mode.place').replace('{n}', String(s.place)).replace('{total}', String(s.total));
+      const tone = s.place === 1 ? 'ally' : 'enemy';
+      if (m instanceof GunGameRules) {
+        const w = GunGameRules.weaponAt(s.mine);
+        const gun = w ? WEAPONS[w].name : t('weapon.melee');
+        const step = t('mode.step').replace('{n}', String(s.mine + 1)).replace('{total}', String(GUN_GAME_STEPS.length + 1));
+        return { text: `${mode} · ${step} ${gun} · ${place} · ${clock}`, tone, urgent: !w };
+      }
+      const target = t('mode.killTarget').replace('{n}', String(m.target));
+      return { text: `${mode} · ${place} · ${target} · ${clock}`, tone, urgent: m.timeLeft < 60 };
+    }
     if (m instanceof HardpointRules) {
       const moves = t('mode.hillMoves').replace('{z}', m.zoneId).replace('{t}', clockText(m.moveIn));
       const tone = m.holder ? (m.holder === this.myTeam ? 'ally' : 'enemy') : 'neutral';
@@ -3829,6 +3898,7 @@ export class Game {
   /** The deploy screen's line: mode and score both sides. */
   private deployMatchLine(): string {
     const s = this.modeStatus();
+    if (this.zoneMode?.match instanceof SoloRules) return s?.text ?? '';
     const score = `${t('hud.allies')} ${this.modeScore(this.myTeam)}  ·  ${this.modeScore(otherTeam(this.myTeam))} ${t('hud.enemies')}`;
     return s ? `${s.text}  ·  ${score}` : score;
   }
@@ -3847,6 +3917,20 @@ export class Game {
     }
     if (e.type === 'refill') {
       this.hud.notify(t('mode.refill').replace('{n}', String(e.tickets)), ours(e.team) ? 'ally' : 'enemy');
+      return;
+    }
+    if (e.type === 'level') {
+      if (!(m instanceof GunGameRules)) return;
+      const kit = gunGameKit(e.level);
+      const name = kit.empty ? t('weapon.melee') : WEAPONS[kit.weapon].name;
+      if (e.id === this.myId) {
+        if (this.player.alive && this.deployed) armForLevel(this.weapons, e.level);
+        this.hud.notify(kit.empty ? t('mode.lastStep') : t(e.up ? 'mode.nextGun' : 'mode.demoted').replace('{w}', name), e.up ? 'ally' : 'enemy');
+        if (e.up) this.audio.zoneCue(true);
+      } else {
+        const bot = this.bots?.bots.find((b) => b.id === e.id);
+        if (bot) this.bots!.rearm(bot);
+      }
       return;
     }
     if (e.type === 'tag') {
@@ -3893,16 +3977,23 @@ export class Game {
     const us = this.myTeam;
     const them = otherTeam(us);
     const reason = t(`match.reason.${m.reason ?? 'tickets'}`);
+    if (m instanceof SoloRules) {
+      const s = this.soloScores(m);
+      const who = m.winnerId === this.myId ? playerName(t('feed.you')) : (this.scores.get(m.winnerId ?? -1)?.name ?? '?');
+      return `${reason} · ${t('match.winnerIs').replace('{name}', who)} · ${t('mode.place').replace('{n}', String(s.place)).replace('{total}', String(s.total))}`;
+    }
     if (m instanceof PointsRules) return `${reason} · ${t('hud.points')} ${Math.floor(m.points[us])} : ${Math.floor(m.points[them])}`;
     const tk = (team: Team) => (m.tickets[team] === null ? '∞' : String(m.tickets[team]));
     return `${reason} · ${t('match.tickets')} ${tk(us)} : ${tk(them)}`;
   }
 
-  private endMatch(winner: Team): void {
+  private endMatch(winner: Team, winnerId?: number): void {
     if (this.matchOver) return;
     this.matchOver = true;
     this.touch?.setVisible(false);
-    const won = winner === this.myTeam;
+    // Free-for-all: whoever came first (the server's copy of the rules says who on a client).
+    const solo = this.zoneMode?.match instanceof SoloRules;
+    const won = solo ? (winnerId ?? this.zoneMode?.match.winnerId) === this.myId : winner === this.myTeam;
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
@@ -4194,7 +4285,7 @@ export class Game {
           this.hud.notify(t('support.rocketArrived').replace('{zone}', e.zone).replace('{who}', e.id === this.myId ? playerName(t('feed.you')) : e.who), 'ally');
           break;
         case 'end':
-          this.bus.emit('match:ended', { winner: e.winner });
+          this.bus.emit('match:ended', { winner: e.winner, winnerId: e.winnerId });
           break;
       }
     }
