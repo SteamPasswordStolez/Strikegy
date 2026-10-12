@@ -27,7 +27,7 @@ export const TEAM_SIZES = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 100
 /** From this many a side the lobby warns that it needs a strong PC. */
 export const BIG_TEAM = 48;
 
-export type LobbyMode = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'skirmish';
+export type LobbyMode = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'lastman' | 'skirmish';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 /** The side the player fights on; random is settled when the match starts. */
 export type LobbySide = 'random' | 'blue' | 'red';

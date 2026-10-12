@@ -218,3 +218,41 @@ describe('free-for-all on the game server', () => {
     expect(b.respawnTimer).toBeLessThanOrEqual(MATCH.respawn!);
   }, 60000);
 });
+
+describe('last soldier standing', () => {
+  it('one life; the circle hurts outside after the grace and closes in by stages; crates arm whoever walks up; the last one up wins', async () => {
+    const { LAST_STAND } = await import('@/modes/matchRules');
+    const bus = new EventBus<GameEvents>();
+    const ended: { winner: string; winnerId?: number }[] = [];
+    const loot: string[] = [];
+    bus.on('match:ended', (e) => ended.push(e));
+    bus.on('mode:event', (e) => {
+      if (e.type === 'loot') loot.push(`${e.by}:${e.weapon}`);
+    });
+    const zm = new ZoneMode(map, bus, { mode: 'lastman', teamSize: { blue: 2, red: 2 } });
+    const m = zm.match as import('@/modes/matchRules').LastStandRules;
+    expect(MATCH).toMatchObject({ ffa: true, revive: false, respawn: Infinity });
+    // The first circle takes in every zone and spawn point.
+    expect(m.circle.r).toBeGreaterThan(120);
+    expect(zm.stormDps(new THREE.Vector3(500, 0, 0))).toBe(0);
+    m.crates.push({ id: 1, x: 10, y: 0, z: 0, weapon: 'ar1', taken: false });
+    const list = [at('blue', 10, 1), at('red', 50, 2), at('blue', -50, 3)];
+    zm.step(0.1, list);
+    expect(loot).toEqual(['1:ar1']);
+    expect(m.armed[1]).toBe('ar1');
+    for (let i = 0; i < (LAST_STAND.grace + 1) * 10; i++) zm.step(0.1, list);
+    expect(zm.stormDps(new THREE.Vector3(500, 0, 0))).toBe(LAST_STAND.dps[0]);
+    expect(zm.stormDps(new THREE.Vector3(m.circle.x, 0, m.circle.z))).toBe(0);
+    const r0 = m.circle.r;
+    for (let i = 0; i < (LAST_STAND.wait[0]! + LAST_STAND.shrink[0]!) * 10; i++) zm.step(0.1, list);
+    expect(m.circle.r).toBeCloseTo(Math.max(LAST_STAND.minR, r0 * LAST_STAND.factor), 0);
+    expect(m.stage).toBe(1);
+    // Two down: the one left wins.
+    kill(bus, 2, 1);
+    zm.step(0.1, [at('red', 50, 2), at('blue', -50, 3)]);
+    expect(ended).toHaveLength(0);
+    zm.step(0.1, [at('red', 50, 2)]);
+    expect(ended).toEqual([{ winner: 'red', winnerId: 2 }]);
+    expect(m.reason).toBe('survived');
+  });
+});

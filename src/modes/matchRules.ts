@@ -22,18 +22,18 @@ import { ZoneRules, type ZoneEvent, type ZoneState } from './zoneRules';
  *   when those run out.
  */
 
-export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress';
+export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'lastman';
 
-export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress'];
+export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress', 'lastman'];
 
 /** Modes where the zones are no front: soldiers spawn at any zone with no enemy near it (owner, 2026-10-12). */
 export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killconfirm'];
 
 /** Every soldier for themselves: no sides, no squads, no vehicles or call-ins, a down is a death (see `matchFlags`). */
-export const SOLO_MODES: readonly ModeKind[] = ['ffa', 'gungame'];
+export const SOLO_MODES: readonly ModeKind[] = ['ffa', 'gungame', 'lastman'];
 
 /** How a match ended. */
-export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds' | 'delivered';
+export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds' | 'delivered' | 'survived';
 
 /** Something worth announcing. */
 export type ModeEvent =
@@ -59,7 +59,11 @@ export type ModeEvent =
   /** Escort: the payload reached checkpoint `zone` (`n` from 1); `bonus` s added to the clock. */
   | { type: 'checkpoint'; zone: string; n: number; bonus: number }
   /** Fortress: the build phase is over, the fight begins. */
-  | { type: 'built' };
+  | { type: 'built' }
+  /** Last soldier standing: soldier `by` opened crate `id` and now carries `weapon`. */
+  | { type: 'loot'; id: number; by: number; weapon: string }
+  /** Last soldier standing: the circle starts closing in on `r` m round (x, z). */
+  | { type: 'shrink'; stage: number; x: number; z: number; r: number };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
 
@@ -583,6 +587,157 @@ export class GunGameRules extends SoloRules {
     const out = this.pending;
     this.pending = [];
     return [...out, ...super.step(dt)];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Last soldier standing (owner, 2026-10-12)
+
+/**
+ * Last soldier standing [제안]: free-for-all with one life. Everyone starts
+ * with a pistol; crates on the ground (`perSoldier` a soldier, at least
+ * `minCrates`) hold a primary, ammo and a medkit, opened by walking up to
+ * them (`reach` m). A circle that starts round the whole map closes in by
+ * stages: it holds `wait[i]` s, then shrinks over `shrink[i]` s to `factor`
+ * of its radius (not under `minR`) round a new middle inside it; outside it
+ * a soldier loses `dps[i]` health a second (nothing in the first `grace` s).
+ * The last one alive wins (all gone at once: the most kills).
+ */
+export const LAST_STAND = {
+  grace: 20,
+  wait: [60, 45, 40, 30, 25, 20],
+  shrink: [40, 35, 30, 25, 20, 20],
+  factor: 0.6,
+  minR: 12,
+  dps: [2, 3, 5, 8, 12, 16, 20],
+  perSoldier: 1.5,
+  minCrates: 8,
+  reach: 1.6,
+};
+
+/** Primaries a crate can hold (any gun but the pistols). */
+export const LOOT_WEAPONS = [
+  'ar1', 'ar2', 'ar3', 'ar4', 'smg1', 'smg2', 'smg3', 'smg4', 'lmg1', 'lmg2', 'lmg3',
+  'sg1', 'sg2', 'sg3', 'dmr1', 'dmr2', 'dmr3', 'sr1', 'sr2', 'sr3',
+] as const;
+
+export interface Crate {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  weapon: string;
+  taken: boolean;
+}
+
+export interface Circle {
+  x: number;
+  z: number;
+  r: number;
+}
+
+export class LastStandRules extends SoloRules {
+  readonly kind = 'lastman';
+  /** The circle now, where it closes in to, and where it was when this shrink began. */
+  readonly circle: Circle;
+  readonly next: Circle;
+  private readonly from: Circle;
+  stage = 0;
+  phase: 'wait' | 'shrink' = 'wait';
+  phaseLeft: number = LAST_STAND.wait[0]!;
+  readonly crates: Crate[] = [];
+  /** The primary each soldier carries (from a crate). */
+  readonly armed: Record<string, string> = {};
+  /** Soldiers alive at the last step, and everyone who has been. */
+  aliveCount = 0;
+  readonly seen: Record<string, boolean> = {};
+  private alive: number[] = [];
+  private pending: ModeEvent[] = [];
+
+  constructor(
+    start: Circle,
+    private readonly rand: () => number = Math.random,
+  ) {
+    super(Infinity, Infinity);
+    this.circle = { ...start };
+    this.next = { ...start };
+    this.from = { ...start };
+  }
+
+  /** Health a second lost at (x, z) now (0 inside the circle or during the grace). */
+  dpsAt(x: number, z: number): number {
+    if (this.ended || this.clock < LAST_STAND.grace) return 0;
+    const out = Math.hypot(x - this.circle.x, z - this.circle.z) > this.circle.r;
+    return out ? LAST_STAND.dps[Math.min(this.stage, LAST_STAND.dps.length - 1)]! : 0;
+  }
+
+  override observe(list: readonly Presence[]): ModeEvent[] {
+    super.observe(list);
+    const out: ModeEvent[] = [];
+    this.alive = [];
+    for (const s of list) {
+      if (!s.alive) continue;
+      this.alive.push(s.id);
+      this.seen[s.id] = true;
+      for (const c of this.crates) {
+        if (c.taken || (s.feet.x - c.x) ** 2 + (s.feet.z - c.z) ** 2 > LAST_STAND.reach ** 2 || Math.abs(s.feet.y - c.y) > 2) continue;
+        c.taken = true;
+        this.armed[s.id] = c.weapon;
+        out.push({ type: 'loot', id: c.id, by: s.id, weapon: c.weapon });
+      }
+    }
+    this.aliveCount = this.alive.length;
+    return out;
+  }
+
+  override onDown(_team: Team, victimId?: number, attackerId?: number): void {
+    if (attackerId === undefined || attackerId === victimId || attackerId < 0) return;
+    this.award(attackerId, 1);
+  }
+
+  /** Nobody wins by points: the last one alive does. */
+  protected override judge(): void {
+    if (this.ended || this.clock < 5) return;
+    const everyone = Object.keys(this.seen).length;
+    if (everyone < 2) return;
+    if (this.alive.length === 1) this.endSolo(this.alive[0]!, 'survived');
+    else if (this.alive.length === 0) {
+      const best = this.standings().find((s) => this.seen[s.id]);
+      if (best) this.endSolo(best.id, 'survived');
+    }
+  }
+
+  override step(dt: number): ModeEvent[] {
+    if (this.ended) return [];
+    const out = this.pending;
+    this.pending = [];
+    this.clock += dt;
+    this.phaseLeft -= dt;
+    const L = LAST_STAND;
+    if (this.phase === 'wait' && this.phaseLeft <= 0 && this.circle.r > L.minR + 0.5) {
+      // A new, smaller circle somewhere inside this one.
+      const r = Math.max(L.minR, this.circle.r * L.factor);
+      const a = this.rand() * Math.PI * 2;
+      const d = Math.sqrt(this.rand()) * Math.max(0, this.circle.r - r);
+      Object.assign(this.from, this.circle);
+      Object.assign(this.next, { x: this.circle.x + Math.cos(a) * d, z: this.circle.z + Math.sin(a) * d, r });
+      this.phase = 'shrink';
+      this.phaseLeft = L.shrink[Math.min(this.stage, L.shrink.length - 1)]!;
+      out.push({ type: 'shrink', stage: this.stage + 1, x: this.next.x, z: this.next.z, r });
+    } else if (this.phase === 'shrink') {
+      const total = L.shrink[Math.min(this.stage, L.shrink.length - 1)]!;
+      const f = Math.min(1, 1 - this.phaseLeft / total);
+      this.circle.x = this.from.x + (this.next.x - this.from.x) * f;
+      this.circle.z = this.from.z + (this.next.z - this.from.z) * f;
+      this.circle.r = this.from.r + (this.next.r - this.from.r) * f;
+      if (this.phaseLeft <= 0) {
+        this.stage++;
+        this.phase = 'wait';
+        this.phaseLeft = L.wait[Math.min(this.stage, L.wait.length - 1)]!;
+      }
+    }
+    this.judge();
+    return out;
   }
 }
 

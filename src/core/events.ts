@@ -14,7 +14,8 @@ export interface GrenadeOwner {
 
 export type HitPart = 'head' | 'body' | 'limb';
 export type ReloadCue = 'magOut' | 'magIn' | 'chamber' | 'shell';
-export type DamageCause = 'bullet' | 'explosion' | 'fall';
+/** `storm`: outside last soldier standing's circle. */
+export type DamageCause = 'bullet' | 'explosion' | 'fall' | 'storm';
 
 export interface GameEvents {
   'weapon:fired': { weaponId: string; ads: boolean };

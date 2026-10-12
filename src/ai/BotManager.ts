@@ -283,6 +283,8 @@ export interface BotModeHooks {
   spawnAt(bot: Bot, objective: THREE.Vector3 | null): { pos: THREE.Vector3; yaw: number };
   /** A bot revived the downed player. */
   revivePlayer?(by: Bot, health: number, who: Combatant): void;
+  /** Free-for-all: a place this bot must go to now (last soldier standing: a crate, into the circle), or null to roam. */
+  goalFor?(bot: Bot): BotObjective | null;
 }
 
 /** A squad as the bots see it: members and, for the player's squad, the leader to follow. */
@@ -1336,6 +1338,16 @@ export class BotManager implements BotServices {
       const b = e.bot;
       if (b.team !== team) continue;
       const cur = e.objective;
+      const must = b.alive ? this.hooks?.goalFor?.(b) : null;
+      if (must) {
+        if (!cur || cur.pos.distanceToSquared(must.pos) > 1) {
+          e.objective = must;
+          e.offset.set(0, 0, 0);
+          e.watch = null;
+          e.via = null;
+        }
+        continue;
+      }
       const there = !!cur && b.feet.distanceTo(cur.pos) < cur.radius;
       if (cur && !there && Math.random() < 0.75) continue;
       const others = goals.filter((g) => !cur || g.pos.distanceToSquared(cur.pos) > 1);

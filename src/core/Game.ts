@@ -75,9 +75,10 @@ import { SettingsPanel } from '@/ui/SettingsPanel';
 import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
 import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
-import { armForLevel, gunGameKit } from '@/modes/gunGame';
-import { ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
+import { LastStandRules, ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
+import { LastStandVisuals } from '@/modes/lastStandVisuals';
 import { ChargeVisuals } from '@/modes/chargeVisuals';
 import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
@@ -229,6 +230,8 @@ export class Game {
   private chargeVisuals: ChargeVisuals | null = null;
   /** Escort: the payload in the world. */
   private escort: EscortWorld | null = null;
+  /** Last soldier standing: the circle and the crates. */
+  private lastStandVisuals: LastStandVisuals | null = null;
   private matchOver = false;
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
@@ -1205,6 +1208,7 @@ export class Game {
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.tagVisuals && this.zoneMode?.match instanceof KillConfirmRules) this.tagVisuals.update(this.zoneMode.match.tags, this.myTeam, this.elapsed);
     if (this.chargeVisuals && this.zoneMode?.charges) this.chargeVisuals.update(this.zoneMode.charges.charges, this.elapsed);
+    if (this.lastStandVisuals && this.zoneMode?.lastStand) this.lastStandVisuals.update(this.zoneMode.lastStand, this.elapsed);
     if (this.deployScreen && this.running && !this.showcaseCam) {
       if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver && !this.netDeploying) this.openDeploy();
       this.deployRefresh -= dt;
@@ -1652,6 +1656,7 @@ export class Game {
     this.botsResupplyPlayer();
     if (!this.net) this.zoneMode?.step(dt, this.combatants());
     this.stepEscort();
+    if (!this.net) this.stepStorm(dt);
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
@@ -2810,6 +2815,8 @@ export class Game {
     // Gun game: the step's gun, nothing else.
     const gg = this.zoneMode?.match;
     if (gg instanceof GunGameRules) armForLevel(this.weapons, gg.scoreOf(this.myId));
+    // Last soldier standing: a pistol, and whatever a crate gave.
+    if (gg instanceof LastStandRules) armLoot(this.weapons, gg.armed[this.myId] ?? null);
     // Deployed in a tank: it comes out at the base with the player at the controls.
     if (key.startsWith('tank:') && this.vehicles) {
       const v = this.vehicles.spawnTank(key.slice(5) as VehicleKind, this.myTeam);
@@ -3288,6 +3295,13 @@ export class Game {
       zm.snapCharges(this.nav);
       this.chargeVisuals = new ChargeVisuals(this.renderer.scene);
     }
+    if (zm.lastStand) {
+      // Crates on walkable ground (a browser in a match on the game server gets the server's).
+      const b = this.options.bots;
+      zm.placeLoot(this.nav, (b?.allies ?? 0) + (b?.enemies ?? 0) + 1);
+      const zs = zm.zones;
+      this.lastStandVisuals = new LastStandVisuals(this.renderer.scene, zs.reduce((a, z) => a + z.y, 0) / Math.max(1, zs.length));
+    }
     if (zm.match instanceof EscortRules) {
       // On the roads (a browser in a match on the game server gets the server's route with the rules).
       zm.planRoute(this.bots?.vehicleNav ?? null, this.nav);
@@ -3479,6 +3493,13 @@ export class Game {
       spawnAt: (bot, objective) => this.spawnFor(bot.team, this.botSpawnKey(bot, objective), bot.id),
       revivePlayer: (by, health) => this.revivePlayer(by.name, health),
     };
+    // Last soldier standing: a pistol until a crate; bots go for crates and into the circle.
+    const ls = zm?.lastStand;
+    if (ls) {
+      bots.weaponOverride = (bot) => ({ id: (ls.armed[bot.id] ?? 'pistol1') as WeaponId, empty: false });
+      bots.hooks.goalFor = (bot) => zm!.lastStandGoal(bot.id, bot.feet);
+      for (const b of bots.bots) bots.rearm(b);
+    }
     // Gun game: every bot carries its step's gun.
     const gg = zm?.match;
     if (gg instanceof GunGameRules) {
@@ -3536,6 +3557,22 @@ export class Game {
     ds.show();
     this.touch?.setVisible(false);
     if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /** Last soldier standing: outside the circle it hurts, the player and the bots alike. */
+  private stepStorm(dt: number): void {
+    const zm = this.zoneMode;
+    if (!zm?.lastStand) return;
+    const p = this.player;
+    if (p.alive && this.deployed && !this.playerDowned) {
+      const d = zm.stormDps(p.feet);
+      if (d > 0) this.damagePlayer(d * dt, null, 'storm');
+    }
+    for (const b of this.bots?.bots ?? []) {
+      if (!b.alive) continue;
+      const d = zm.stormDps(b.feet);
+      if (d > 0) b.applyDamage(d * dt, 'body');
+    }
   }
 
   /** Escort: the payload's hull and model to where the rules have it (after the rules stepped). */
@@ -3818,7 +3855,7 @@ export class Game {
       options,
       selected: sel,
       wait: roundWait ? 999 : Math.max(0, this.respawnTimer),
-      waitText: roundWait ? t('snd.waitRound') : undefined,
+      waitText: roundWait ? t(this.zoneMode?.lastStand ? 'lms.out' : 'snd.waitRound') : undefined,
       note: this.squadWiped ? t('squad.wiped') : null,
       title: this.mapName,
       matchLine: zm ? this.deployMatchLine() : null,
@@ -3889,6 +3926,8 @@ export class Game {
     if (m instanceof SearchDestroyRules) return m.wins[team] / SND.win;
     // Escort: how far the payload has come, against the clock (the defenders' side).
     if (m instanceof EscortRules) return team === m.attacker ? m.progress / Math.max(1, m.length) : Math.min(1, m.timeLeft / ESCORT.start);
+    // Last soldier standing: my kills (no target), and how many are still up.
+    if (m instanceof LastStandRules) return team === this.myTeam ? 0 : m.aliveCount / Math.max(1, Object.keys(m.seen).length);
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       return (team === this.myTeam ? s.mine : s.best) / m.target;
@@ -3905,6 +3944,7 @@ export class Game {
     const m = this.zoneMode!.match;
     if (m instanceof SearchDestroyRules) return String(m.wins[team]);
     if (m instanceof EscortRules) return team === m.attacker ? `${Math.round((100 * m.progress) / Math.max(1, m.length))}%` : clockText(m.timeLeft);
+    if (m instanceof LastStandRules) return String(team === this.myTeam ? m.scoreOf(this.myId) : m.aliveCount);
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       return String(team === this.myTeam ? s.mine : s.best);
@@ -3929,6 +3969,12 @@ export class Game {
     const m = this.zoneMode!.match;
     const mode = t(`mode.${m.kind}`);
     const target = t('mode.target').replace('{n}', String(m instanceof PointsRules ? m.target : 0));
+    if (m instanceof LastStandRules) {
+      const out = this.player.alive && this.zoneMode!.stormDps(this.player.feet) > 0;
+      const phase = m.phase === 'shrink' ? t('lms.shrinking') : m.next.r < m.circle.r - 0.5 || m.circle.r > 13 ? t('lms.nextShrink').replace('{t}', clockText(m.phaseLeft)) : t('lms.final');
+      const text = `${mode} · ${t('lms.alive').replace('{n}', String(m.aliveCount))} · ${phase} · ${t('lms.kills').replace('{n}', String(m.scoreOf(this.myId)))}${out ? ` · ${t('lms.outside')}` : ''}`;
+      return { text, tone: out ? 'enemy' : 'neutral', urgent: out || m.phase === 'shrink' };
+    }
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       const clock = t('mode.clock').replace('{t}', clockText(m.timeLeft));
@@ -4027,6 +4073,28 @@ export class Game {
     }
     if (e.type === 'refill') {
       this.hud.notify(t('mode.refill').replace('{n}', String(e.tickets)), ours(e.team) ? 'ally' : 'enemy');
+      return;
+    }
+    if (e.type === 'loot') {
+      const name = WEAPONS[e.weapon as keyof typeof WEAPONS]?.name ?? e.weapon;
+      if (e.by === this.myId) {
+        if (this.player.alive && this.deployed) {
+          armLoot(this.weapons, e.weapon);
+          this.me.medkits = Math.max(this.me.medkits, MEDKIT.carried);
+        }
+        this.hud.notify(t('lms.loot').replace('{w}', name), 'ally');
+        this.audio.resupply();
+      } else {
+        const bot = this.bots?.bots.find((b) => b.id === e.by);
+        if (bot) this.bots!.rearm(bot);
+      }
+      return;
+    }
+    if (e.type === 'shrink') {
+      this.hud.notify(t('lms.shrink'), 'enemy');
+      this.audio.zoneCue(false);
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
       return;
     }
     if (e.type === 'level') {

@@ -3,7 +3,7 @@ import type { GameBus } from '@/core/events';
 import type { NavWorld } from '@/ai/NavWorld';
 import type { MapDef, SpawnPoint, Team } from '@/world/mapTypes';
 import { ZoneRules, type ZoneRulesOptions, type ZoneState } from './zoneRules';
-import { ChargeRules, ConquestRules, DOMINATION, DominationRules, DeathmatchRules, ESCORT, EscortRules, FFA, FORTRESS, FREE_SPAWN_MODES, FortressRules, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, halfOwners, hardpointRoute, killTarget, polyline, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
+import { ChargeRules, ConquestRules, LAST_STAND, LOOT_WEAPONS, LastStandRules, type Crate, DOMINATION, DominationRules, DeathmatchRules, ESCORT, EscortRules, FFA, FORTRESS, FREE_SPAWN_MODES, FortressRules, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, halfOwners, hardpointRoute, killTarget, polyline, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
 import { MATCH, setMatchFlags, type MatchFlags } from './matchFlags';
 import type { VehicleNav } from '@/ai/NavWorld';
 
@@ -40,6 +40,8 @@ export function matchFlagsFor(kind: ModeKind): Partial<MatchFlags> {
   if (kind === 'ffa' || kind === 'gungame') {
     return { ffa: true, revive: false, respawn: kind === 'ffa' ? FFA.respawn : GUN_GAME.respawn, squads: false, vehicles: false, callIns: false };
   }
+  // One life for the whole match.
+  if (kind === 'lastman') return { ffa: true, revive: false, respawn: Infinity, squads: false, vehicles: false, callIns: false };
   // One life a round: back only when the next round starts (Game / MatchSim respawn everyone then).
   if (kind === 'snd') return { revive: false, respawn: Infinity, vehicles: false, callIns: false };
   return {};
@@ -52,7 +54,7 @@ export function modesOf(map: MapDef): ModeKind[] {
   if (map.modes?.conquest) out.push('conquest');
   const n = map.zones?.length ?? 0;
   if (n >= 2) out.push('hardpoint');
-  if (n >= 1) out.push('tdm', 'killconfirm', 'ffa', 'gungame');
+  if (n >= 1) out.push('tdm', 'killconfirm', 'ffa', 'gungame', 'lastman');
   if (n >= 2) out.push('rush', 'snd', 'escort', 'fortress');
   return out;
 }
@@ -103,6 +105,15 @@ function createMatch(kind: ModeKind, map: MapDef, opts: ZoneModeOptions): MatchR
   if (kind === 'tdm' || kind === 'killconfirm') {
     const target = killTarget(kind, (size.blue + size.red) / 2);
     return kind === 'tdm' ? new DeathmatchRules(target) : new KillConfirmRules(target);
+  }
+  if (kind === 'lastman') {
+    // The first circle takes in every zone and spawn point.
+    const pts = [...(map.zones ?? []).map((z) => ({ x: z.pos[0], z: z.pos[2], r: z.radius })), ...map.spawns.map((s) => ({ x: s.pos[0], z: s.pos[2], r: 0 }))];
+    const zs = map.zones?.length ? map.zones : map.spawns;
+    const cx = zs.reduce((a, z) => a + z.pos[0], 0) / Math.max(1, zs.length);
+    const cz = zs.reduce((a, z) => a + z.pos[2], 0) / Math.max(1, zs.length);
+    const r = Math.max(60, ...pts.map((p) => Math.hypot(p.x - cx, p.z - cz) + p.r + 20));
+    return new LastStandRules({ x: cx, z: cz, r }, opts.rand);
   }
   if (kind === 'ffa') return new FreeForAllRules();
   if (kind === 'gungame') return new GunGameRules();
@@ -249,6 +260,69 @@ export class ZoneMode {
     MATCH.truce = building;
     MATCH.buildBoost = building ? FORTRESS.boost : 1;
   }
+
+  /** Last soldier standing: the rules, or null. */
+  get lastStand(): LastStandRules | null {
+    return this.match instanceof LastStandRules ? this.match : null;
+  }
+
+  /** Health a second the circle takes from someone standing at `p` (0 inside it, or in other modes). */
+  stormDps(p: THREE.Vector3): number {
+    return this.lastStand?.dpsAt(p.x, p.z) ?? 0;
+  }
+
+  /**
+   * Last soldier standing: crates on walkable ground round the zones (and
+   * between them), `perSoldier` a soldier, each with a random primary. The
+   * game server's crates are what a browser in a match there gets.
+   */
+  placeLoot(nav: NavWorld | null, soldiers: number, rand = Math.random): void {
+    const m = this.lastStand;
+    this.nav = nav;
+    if (!m || !nav || m.crates.length) return;
+    const zones = this.rules.zones;
+    const n = Math.max(LAST_STAND.minCrates, Math.round(soldiers * LAST_STAND.perSoldier));
+    for (let i = 0; i < n * 3 && m.crates.length < n; i++) {
+      const z = zones[i % zones.length];
+      if (!z) break;
+      const p = nav.randomAround(new THREE.Vector3(z.x, z.y, z.z), z.radius * 1.8);
+      if (!p || m.crates.some((c) => (c.x - p.x) ** 2 + (c.z - p.z) ** 2 < 64)) continue;
+      const crate: Crate = { id: m.crates.length + 1, x: p.x, y: p.y, z: p.z, weapon: LOOT_WEAPONS[Math.floor(rand() * LOOT_WEAPONS.length)]!, taken: false };
+      m.crates.push(crate);
+    }
+  }
+
+  /**
+   * Last soldier standing, for a bot: with no primary yet, the nearest crate
+   * nobody has opened (inside the coming circle if there is one); outside the
+   * coming circle, its middle; else null (roam the zones inside it).
+   */
+  lastStandGoal(id: number, feet: THREE.Vector3): Objective | null {
+    const m = this.lastStand;
+    if (!m) return null;
+    const inNext = (x: number, z: number) => Math.hypot(x - m.next.x, z - m.next.z) < m.next.r;
+    if (!m.armed[id]) {
+      let best: Crate | null = null;
+      let bestD = Infinity;
+      for (const c of m.crates) {
+        if (c.taken) continue;
+        const d = Math.hypot(c.x - feet.x, c.z - feet.z) * (inNext(c.x, c.z) ? 1 : 2.5);
+        if (d < bestD) {
+          bestD = d;
+          best = c;
+        }
+      }
+      if (best && bestD < 260) return { pos: new THREE.Vector3(best.x, best.y, best.z), radius: 1 };
+    }
+    if (!inNext(feet.x, feet.z)) {
+      const c = new THREE.Vector3(m.next.x, feet.y, m.next.z);
+      return { pos: this.nav?.closest(c) ?? c, radius: Math.max(4, m.next.r * 0.4) };
+    }
+    return null;
+  }
+
+  /** The navmesh the last-stand goals snap to (set by `placeLoot`). */
+  private nav: NavWorld | null = null;
 
   /** Escort: where the payload is (one vector, kept up to date: bots' objectives follow it). */
   readonly payload = new THREE.Vector3();
@@ -537,6 +611,16 @@ export class ZoneMode {
       const enemy = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
       const front = new THREE.Vector3(enemy.x - this.payload.x, 0, enemy.z - this.payload.z).normalize();
       return [att ? { pos: this.payload, radius: 7, enemyHeld: true } : { pos: this.payload, radius: 12, defend: true, front }];
+    }
+    // Last soldier standing: the zones inside the coming circle (bots go for crates and the middle first, `lastStandGoal`).
+    if (m instanceof LastStandRules) {
+      const inside = this.rules.zones.filter((z) => Math.hypot(z.x - m.next.x, z.z - m.next.z) < m.next.r + z.radius * 0.5);
+      const list = inside.map((z) => ({ pos: new THREE.Vector3(z.x, z.y, z.z), radius: Math.min(z.radius, m.next.r) }));
+      if (!list.length) {
+        const c = new THREE.Vector3(m.next.x, this.rules.zones[0]?.y ?? 0, m.next.z);
+        list.push({ pos: this.nav?.closest(c) ?? c, radius: Math.max(4, m.next.r * 0.5) });
+      }
+      return list;
     }
     // Fortress, building: each side at its own zones (the middle waits for the fight).
     if (m instanceof FortressRules && m.building) {

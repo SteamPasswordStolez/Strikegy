@@ -20,10 +20,10 @@ import { consumePulses, createInputState, type InputState } from '@/input/InputS
 import { ZoneMode, pickMode } from '@/modes/ZoneMode';
 import { Fortifications } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
-import { EscortRules, GunGameRules, type ModeKind } from '@/modes/matchRules';
+import { EscortRules, GunGameRules, LastStandRules, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
 import { MATCH, foes, friends } from '@/modes/matchFlags';
-import { armForLevel, gunGameKit } from '@/modes/gunGame';
+import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { SQUAD_SIZE, Squad, WIPE_PENALTY, mateSpawnBlock, squadName, type SquadMember } from '@/modes/squads';
 import { SupportWorld } from '@/modes/supportWorld';
@@ -181,6 +181,8 @@ export class MatchSim {
     const map = world.map;
     this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize }) : null;
     this.zoneMode?.snapCharges(nav);
+    // Last soldier standing: crates on walkable ground.
+    this.zoneMode?.placeLoot(nav, (opts.teamSize?.blue ?? 12) + (opts.teamSize?.red ?? 12));
     // Escort: the payload's route on the roads, and its hull.
     this.zoneMode?.planRoute(vehicleNav, nav);
     const em = this.zoneMode?.match;
@@ -251,7 +253,7 @@ export class MatchSim {
     let nav: NavWorld | null = null;
     let vehicleNav: VehicleNav | null = null;
     // Charges (Rush, S&D) go on walkable ground: those modes need the navmesh even without bots.
-    const charges = ['rush', 'snd', 'escort'].includes(pickMode(map, opts.mode, true));
+    const charges = ['rush', 'snd', 'escort', 'lastman'].includes(pickMode(map, opts.mode, true));
     if ((opts.bots && opts.bots.blue + opts.bots.red > 0) || charges) {
       // Colliders into the broadphase before the navmesh reads them.
       physics.step();
@@ -311,6 +313,13 @@ export class MatchSim {
       dangers: () => this.support.dangers(),
     };
     for (const b of bots.bots) this.scores.add(b.id, b.name, b.team);
+    // Last soldier standing: a pistol until a crate; bots go for crates and into the circle.
+    const ls = zm?.lastStand;
+    if (ls) {
+      bots.weaponOverride = (bot) => ({ id: (ls.armed[bot.id] ?? 'pistol1') as WeaponId, empty: false });
+      bots.hooks.goalFor = (bot) => zm!.lastStandGoal(bot.id, bot.feet);
+      for (const b of bots.bots) bots.rearm(b);
+    }
     // Gun game: every bot carries its step's gun.
     const gg = zm?.match;
     if (gg instanceof GunGameRules) {
@@ -439,6 +448,23 @@ export class MatchSim {
       if (e.type === 'charge' || e.type === 'sector' || e.type === 'round' || e.type === 'hill' || e.type === 'attack') {
         this.bots?.replan('blue');
         this.bots?.replan('red');
+      }
+    });
+    // Last soldier standing: a crate's gun in hand at once.
+    bus.on('mode:event', (e) => {
+      if (e.type !== 'loot') return;
+      const s = this.soldiers.get(e.by);
+      if (s) {
+        if (s.deployed && s.alive) {
+          armLoot(s.weapons, e.weapon);
+          s.medkits = Math.max(s.medkits, MEDKIT.carried);
+        }
+        return;
+      }
+      const bot = this.bots?.bots.find((b) => b.id === e.by);
+      if (bot) {
+        this.bots!.rearm(bot);
+        bot.medkits = Math.max(bot.medkits, MEDKIT.carried);
       }
     });
     // Gun game: a new step's gun in hand at once.
@@ -688,6 +714,7 @@ export class MatchSim {
     // Gun game: the step's gun, nothing else.
     const gg = this.zoneMode?.match;
     if (gg instanceof GunGameRules) armForLevel(s.weapons, gg.scoreOf(id));
+    if (gg instanceof LastStandRules) armLoot(s.weapons, gg.armed[id] ?? null);
     s.weapons.rand = seeded(seed);
     return { pos: s.player.feet.clone(), yaw: at.yaw, seed };
   }
@@ -841,6 +868,20 @@ export class MatchSim {
     this.zoneMode?.step(dt, [...this.fighters()]);
     const em = this.zoneMode?.match;
     if (this.escort && em instanceof EscortRules) this.escort.step(em);
+    // Last soldier standing: outside the circle it hurts.
+    if (this.zoneMode?.lastStand) {
+      const zm = this.zoneMode;
+      for (const s of this.soldiers.values()) {
+        if (!s.deployed || !s.alive || s.downed) continue;
+        const d = zm.stormDps(s.player.feet);
+        if (d > 0) s.damage(d * dt, null, 'storm');
+      }
+      for (const b of this.bots?.bots ?? []) {
+        if (!b.alive) continue;
+        const d = zm.stormDps(b.feet);
+        if (d > 0) b.applyDamage(d * dt, 'body');
+      }
+    }
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);

@@ -155,10 +155,10 @@ export type MatchEvent =
   /** To the shooter: a hit marker. */
   | { k: 'hit'; head: boolean; killed: boolean }
   /** To whoever was hurt: the damage indicator. */
-  | { k: 'hurt'; amount: number; from: [number, number, number] | null; cause: 'bullet' | 'explosion' | 'fall' }
+  | { k: 'hurt'; amount: number; from: [number, number, number] | null; cause: 'bullet' | 'explosion' | 'fall' | 'storm' }
   /** To the soldier's player: on the field at `pos`, spread drawn from `seed`. */
   | { k: 'spawn'; id: number; pos: [number, number, number]; yaw: number; seed: number; kit: unknown }
-  | { k: 'down'; id: number; by: string | null; cause: 'bullet' | 'explosion' | 'fall' }
+  | { k: 'down'; id: number; by: string | null; cause: 'bullet' | 'explosion' | 'fall' | 'storm' }
   /** `respawn`: seconds before deploying again; -1: not before the next round (S&D). */
   | { k: 'died'; id: number; respawn: number }
   | { k: 'revived'; id: number; by: string; byId?: number }
