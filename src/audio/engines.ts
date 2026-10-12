@@ -54,6 +54,12 @@ const VOICE: Record<EngineKind, EngineVoice> = {
 const ENGINE_LIMIT = { ground: 6, air: 4 };
 /** Farther than this an engine is never started (m). */
 const ENGINE_RANGE = { ground: 260, air: 1600 };
+/**
+ * On foot aircraft are heard only close by (owner, 2026-10-12: far-off jets
+ * were part of the sound dropping out): within `range` m, at most `limit`,
+ * fading out over the last `fade` m. Aboard a vehicle or a plane as before.
+ */
+export const AIR_ON_FOOT = { range: 250, fade: 60, limit: 2 };
 /** A jet passing closer than this plays the recorded pass. */
 const JET_PASS_M = 160;
 const SOUND_SPEED = 343;
@@ -106,21 +112,28 @@ interface Engine {
 export class EngineSounds {
   private readonly engines = new Map<number, Engine>();
   private readonly rel = new THREE.Vector3();
+  /** Aircraft heard on foot near the edge of their range: how loud still (0..1). */
+  private readonly fade = new Map<number, number>();
 
   constructor(private readonly host: EngineHost) {}
 
   /** Once a frame: starts, retunes and stops engines for `list` heard from `ear` (moving at `earVel`). */
-  update(list: readonly EngineSource[], ear: THREE.Vector3, earVel: THREE.Vector3): void {
+  update(list: readonly EngineSource[], ear: THREE.Vector3, earVel: THREE.Vector3, onFoot = false): void {
     const t = this.host.ctx.currentTime;
     const want = new Set<number>();
+    this.fade.clear();
     for (const air of [false, true]) {
+      const range = air ? (onFoot ? AIR_ON_FOOT.range : ENGINE_RANGE.air) : ENGINE_RANGE.ground;
       const near = list
         .filter((s) => !s.wrecked && !!(VOICE[s.kind].jet || s.kind === 'recon') === air && (s.crewed || s.velocity.lengthSq() > 1))
         .map((s) => ({ s, d: s.pos.distanceTo(ear) }))
-        .filter((x) => x.d < (air ? ENGINE_RANGE.air : ENGINE_RANGE.ground))
+        .filter((x) => x.d < range)
         .sort((a, b) => a.d - b.d)
-        .slice(0, air ? ENGINE_LIMIT.air : ENGINE_LIMIT.ground);
-      for (const { s } of near) want.add(s.id);
+        .slice(0, air ? (onFoot ? AIR_ON_FOOT.limit : ENGINE_LIMIT.air) : ENGINE_LIMIT.ground);
+      for (const { s, d } of near) {
+        want.add(s.id);
+        if (air && onFoot) this.fade.set(s.id, Math.min(1, (range - d) / AIR_ON_FOOT.fade));
+      }
     }
     for (const e of this.engines.values()) e.seen = false;
     for (const s of list) {
@@ -257,7 +270,7 @@ export class EngineSounds {
       e.noiseFilter!.frequency.setTargetAtTime(v.rumble * (0.6 + 0.4 * thr) * doppler, t, 0.1);
       e.noise!.playbackRate.setTargetAtTime(0.7 + 0.5 * thr * doppler, t, 0.1);
       e.whine!.frequency.setTargetAtTime((1800 + 1600 * thr) * doppler, t, 0.1);
-      e.out.gain.setTargetAtTime(v.gain * (0.55 + 0.45 * thr), t, 0.2);
+      e.out.gain.setTargetAtTime(Math.max(0.0001, v.gain * (0.55 + 0.45 * thr) * (this.fade.get(s.id) ?? 1)), t, 0.2);
       // The recorded pass as it goes by close: closing turns to opening.
       if (e.closing > 8 && closing <= 8 && d < JET_PASS_M) this.host.oneShot('jet_pass', s.pos, 1, THREE.MathUtils.clamp(speed / 100, 0.85, 1.15), 40);
       e.closing = closing;
@@ -273,7 +286,7 @@ export class EngineSounds {
       e.oscs[2]!.frequency.setTargetAtTime(note * 1.01, t, 0.15);
     }
     e.body.frequency.setTargetAtTime(v.rumble * (0.8 + 1.4 * load), t, 0.15);
-    e.out.gain.setTargetAtTime(v.gain * (0.55 + 0.45 * load) * (s.crewed ? 1 : 0.6), t, 0.2);
+    e.out.gain.setTargetAtTime(Math.max(0.0001, v.gain * (0.55 + 0.45 * load) * (s.crewed ? 1 : 0.6) * (this.fade.get(s.id) ?? 1)), t, 0.2);
     if (e.clatter) {
       e.clatter.lfo.frequency.setTargetAtTime(Math.max(0.5, speed * 2.2), t, 0.1);
       e.clatter.gate.gain.setTargetAtTime(Math.min(0.6, speed * 0.09), t, 0.1);

@@ -3,7 +3,7 @@ import type { Game } from '@/core/Game';
 import type { NetOptions } from '@/net/NetMatch';
 import { Lobby } from '@/ui/Lobby';
 import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
-import { isTouchDevice, loadSettings } from '@/core/Settings';
+import { loadSettings } from '@/core/Settings';
 import { MAPS } from '@/data/maps';
 
 const container = document.getElementById('app')!;
@@ -15,7 +15,9 @@ const loadGame = () => import('@/core/Game');
 // (its code was fetched while the menu was up); the menu stays until the
 // game's loading screen covers it. ?map=... still starts a match directly (links, testing).
 const replay = recallMatch();
-if (new URLSearchParams(location.search).has('map')) void startGame(new URLSearchParams(location.search));
+const devShowcase = import.meta.env.DEV ? new URLSearchParams(location.search).get('showcase') : null;
+if (devShowcase) recordingShowcase(devShowcase);
+else if (new URLSearchParams(location.search).has('map')) void startGame(new URLSearchParams(location.search));
 else if (replay) startSolo(replay);
 else {
   const menu: Lobby = new Lobby(
@@ -35,29 +37,62 @@ else {
     },
     (key) => {
       if (key !== 'menuScene') return;
-      if (loadSettings().menuScene) startShowcase(menu.backdropMap);
+      if (loadSettings().menuScene) startShowcase();
       else stopShowcase();
     },
   );
-  // The menu paints first; the battle behind it loads after.
-  setTimeout(() => startShowcase(menu.backdropMap), 400);
+  // The menu paints first; the film behind it starts after.
+  setTimeout(() => startShowcase(), 200);
 }
 
 /**
- * The main menu's background: a bot match on the last picked map, the camera
- * drifting over the fighting (Game's `showcase`). Desktop only, and only while
- * the menu is up: it is thrown away before a match loads.
+ * The main menu's background (owner, 2026-10-12: the live bot match behind
+ * the menu was heavy and slow to load): a short film of real bot battles on
+ * every map, recorded from the game itself (`?showcase=<map>` in a dev
+ * build, docs/menu-film.md), looping muted. Nothing to load but the
+ * video; off in the settings (화면 → 메뉴 배경 전투).
  */
-let showcase: { host: HTMLDivElement; game: Promise<Game | null> } | null = null;
+let showcase: HTMLDivElement | null = null;
 
-function startShowcase(map: string): void {
-  if (showcase || isTouchDevice() || !loadSettings().menuScene) return;
+function startShowcase(): void {
+  if (showcase || !loadSettings().menuScene) return;
   const host = document.createElement('div');
-  host.className = 'showcase';
+  host.className = 'showcase video';
+  const video = document.createElement('video');
+  video.src = `${import.meta.env.BASE_URL}menu/battle.mp4`;
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.autoplay = true;
+  video.preload = 'auto';
+  video.setAttribute('aria-hidden', 'true');
+  video.addEventListener('playing', () => host.classList.add('ready'), { once: true });
+  video.addEventListener('error', () => host.remove(), { once: true });
+  host.appendChild(video);
+  container.prepend(host);
+  void video.play().catch(() => {});
+  showcase = host;
+}
+
+function stopShowcase(): void {
+  const s = showcase;
+  if (!s) return;
+  showcase = null;
+  s.querySelector('video')?.pause();
+  s.remove();
+}
+
+/**
+ * Dev only: the menu film's source, a bot match on `map` with the showcase
+ * camera, full screen; `window.__showcase` is the game, for recording it frame
+ * by frame (docs/menu-film.md).
+ */
+function recordingShowcase(map: string): void {
+  const host = document.createElement('div');
+  host.className = 'showcase ready';
   container.prepend(host);
   const n = Math.min(10, MAPS.find((m) => m.id === map)?.team ?? 8);
-  const entry = { host, game: Promise.resolve<Game | null>(null) };
-  entry.game = loadGame()
+  void loadGame()
     .then(({ Game }) =>
       Game.create(host, {
         mapUrl: `${import.meta.env.BASE_URL}maps/${encodeURIComponent(map)}.json`,
@@ -67,29 +102,7 @@ function startShowcase(map: string): void {
         showcase: true,
       }),
     )
-    .then((game) => {
-      // Left the menu while it loaded.
-      if (showcase !== entry) {
-        game.dispose();
-        return null;
-      }
-      host.classList.add('ready');
-      return game;
-    })
-    .catch((err: unknown) => {
-      console.warn('menu background:', err);
-      host.remove();
-      return null;
-    });
-  showcase = entry;
-}
-
-function stopShowcase(): void {
-  const s = showcase;
-  if (!s) return;
-  showcase = null;
-  s.host.remove();
-  void s.game.then((g) => g?.dispose());
+    .then((game) => ((window as unknown as { __showcase: Game }).__showcase = game));
 }
 
 /** A solo match; "back" in the browser returns to the menu. */

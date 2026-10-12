@@ -2710,11 +2710,12 @@ export class BotManager implements BotServices {
     const dist = dir.length();
     const yaw = Math.atan2(-dir.x, -dir.z);
     const pitch = Math.atan2(dir.y, Math.hypot(dir.x, dir.z));
-    v.aimMount(seat, yaw, pitch);
+    v.aimMount(seat, yaw, pitch, STEP);
     bot.aimYaw = bot.yaw = yaw;
-    // Out of its traverse (casemate guns): not this time.
+    // Out of its traverse (casemate guns), or still turning / elevating there: not this time.
     const rel = Math.atan2(Math.sin(yaw - v.yaw), Math.cos(yaw - v.yaw));
-    if (Math.abs(rel - m.yaw) > 0.05) {
+    const [lo, hi] = v.spec.seats[seat]!.pitch ?? [-0.2, 0.6];
+    if (Math.abs(Math.atan2(Math.sin(rel - m.yaw), Math.cos(rel - m.yaw))) > 0.05 || Math.abs(THREE.MathUtils.clamp(pitch, lo, hi) - m.pitch) > 0.05) {
       v.pullTrigger(seat, false, this.time, STEP);
       return;
     }

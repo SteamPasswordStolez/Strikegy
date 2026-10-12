@@ -12,13 +12,11 @@ import { loadIdentity } from '@/net/identity';
 import { inRoom } from '@/core/session';
 import type { MatchStart } from '@/net/lobbyProtocol';
 import { CREDITS } from '@/data/credits';
+import { SOLO_LOBBY_MODES, renderMatchSetup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
-type Row = 'mode' | 'map' | 'side' | 'team' | 'difficulty';
-const ROWS: readonly Row[] = ['mode', 'map', 'side', 'team', 'difficulty'];
-const ROW_LABEL: Record<Row, MessageKey> = { mode: 'lobby.mode', map: 'lobby.map', side: 'lobby.side', team: 'lobby.team', difficulty: 'lobby.difficulty' };
 
 /** The main menu's entries, top to bottom. */
 const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'credits'] as const;
@@ -74,7 +72,6 @@ export class Lobby {
   readonly root: HTMLDivElement;
   private screen: Screen = 'main';
   private entry = 0;
-  private focus = 0;
   private pick: LobbyPick;
   private readonly settings: Settings = loadSettings();
   private readonly maps = new Map<string, MapDef>();
@@ -173,6 +170,7 @@ export class Lobby {
     if (screen === 'multi')
       this.multi ??= new MultiplayerMenu({
         modesFor: (map) => modesOf(this.maps.get(map)),
+        setupMaps: () => this.setupMaps(),
         redraw: () => {
           if (this.screen === 'multi' && this.multi) this.render();
         },
@@ -212,11 +210,17 @@ export class Lobby {
       return;
     }
     if (key === 'Escape' || key === 'Backspace') return this.back();
+    if (this.screen === 'multi' && this.multi?.key(key)) return;
     if (this.screen !== 'play') return;
-    if (key === 'ArrowUp' || key === 'ArrowDown') this.select((this.focus + (key === 'ArrowUp' ? -1 : 1) + ROWS.length) % ROWS.length);
-    else if (key === 'ArrowLeft' || key === 'ArrowRight') this.change(ROWS[this.focus]!, key === 'ArrowLeft' ? -1 : 1);
+    // The setup page: ↑ ↓ mode, ← → map, Enter start.
+    if (key === 'ArrowUp' || key === 'ArrowDown') this.setMode(stepMode(this.pick.mode, modesOf(this.maps.get(this.pick.map)), key === 'ArrowUp' ? -1 : 1));
+    else if (key === 'ArrowLeft' || key === 'ArrowRight') this.setMap(this.step(MAPS.map((m) => m.id), this.pick.map, key === 'ArrowLeft' ? -1 : 1));
     else if (key === 'Enter') this.finish(this.pick);
   };
+
+  private step<T>(list: readonly T[], cur: T, d: number): T {
+    return step(list, cur, d);
+  }
 
   /** Fetches a map's JSON once (modes, size, picture), then redraws. */
   private async load(id: string): Promise<void> {
@@ -234,22 +238,17 @@ export class Lobby {
     if (id === this.pick.map) {
       this.fixMode();
       this.updateBackground();
-      if (this.screen === 'play') this.render();
     }
+    // The setup pages show every map's picture.
+    if (this.screen === 'play' || this.screen === 'multi') this.render();
   }
 
-  /** Moves the highlight (main entries or setup rows) in place: the logo's entrance doesn't replay. */
+  /** Moves the highlight of the main entries in place: the logo's entrance doesn't replay. */
   private select(i: number): void {
-    if (this.screen === 'main') this.entry = i;
-    else this.focus = i;
-    this.picks.forEach((e, k) => e.classList.toggle(this.screen === 'main' ? 'sel' : 'focus', k === i));
-    if (!this.pickDesc) return;
-    if (this.screen === 'main') this.pickDesc.textContent = t(`menu.${ENTRIES[i]!}Desc`);
-    else {
-      const warn = ROWS[i] === 'team' && this.pick.team >= BIG_TEAM;
-      this.pickDesc.textContent = this.describe(ROWS[i]!);
-      this.pickDesc.classList.toggle('warn', warn);
-    }
+    if (this.screen !== 'main') return;
+    this.entry = i;
+    this.picks.forEach((e, k) => e.classList.toggle('sel', k === i));
+    if (this.pickDesc) this.pickDesc.textContent = t(`menu.${ENTRIES[i]!}Desc`);
   }
 
   private render(): void {
@@ -346,48 +345,95 @@ export class Lobby {
   // Play: the setup rows and the map's card
 
   private renderPlay(body: HTMLElement): void {
-    body.classList.add('lb-play');
     const p = this.pick;
-    const setup = el('div', 'lb-setup', body);
-    const rows = el('div', 'lb-rows', setup);
-    const value: Record<Row, string> = {
-      mode: modeName(p.mode),
-      map: t(`map.${p.map}` as MessageKey),
-      team: `${p.team} vs ${p.team}`,
-      side: t(`lobby.side.${p.side}` as MessageKey),
-      difficulty: t(`lobby.diff.${p.difficulty}` as MessageKey),
-    };
-    ROWS.forEach((id, i) => {
-      const r = el('div', `lb-srow${i === this.focus ? ' focus' : ''}${id === 'team' && p.team >= BIG_TEAM ? ' warn' : ''}`, rows);
-      el('span', 'lb-srow-label', r).textContent = t(ROW_LABEL[id]);
-      const left = el('button', 'lb-arrow', r);
-      left.textContent = '◀';
-      el('span', 'lb-srow-val', r).textContent = value[id];
-      const right = el('button', 'lb-arrow', r);
-      right.textContent = '▶';
-      r.addEventListener('pointerenter', () => {
-        if (!this.touch) this.select(i);
+    const fields: SetupField[] = [
+      {
+        kind: 'stepper',
+        id: 'team',
+        label: t('lobby.team'),
+        value: `${p.team} vs ${p.team}`,
+        warn: p.team >= BIG_TEAM,
+        note: p.team >= BIG_TEAM ? t('lobby.bigTeam') : t('lobby.teamHint').replace('{n}', String(MAPS.find((m) => m.id === p.map)?.team ?? 12)),
+        change: (d) => {
+          const i = TEAM_SIZES.indexOf(p.team as (typeof TEAM_SIZES)[number]);
+          p.team = TEAM_SIZES[Math.max(0, Math.min(TEAM_SIZES.length - 1, i + d))]!;
+          this.saveAndRender();
+        },
+      },
+    ];
+    // Free-for-all has no sides to pick.
+    if (!SOLO_LOBBY_MODES.includes(p.mode)) {
+      fields.push({
+        kind: 'choice',
+        id: 'side',
+        label: t('lobby.side'),
+        note: t('lobby.sideDesc'),
+        options: SIDES.map((s) => ({ value: s, label: t(`lobby.side.${s}` as MessageKey) })),
+        value: p.side,
+        pick: (v) => {
+          p.side = v as LobbyPick['side'];
+          this.saveAndRender();
+        },
       });
-      left.addEventListener('click', () => this.change(id, -1));
-      right.addEventListener('click', () => this.change(id, 1));
-      this.picks.push(r);
+    }
+    fields.push({
+      kind: 'choice',
+      id: 'difficulty',
+      label: t('lobby.difficulty'),
+      note: t(`lobby.diffDesc.${p.difficulty}` as MessageKey),
+      options: DIFFICULTIES.map((d) => ({ value: d, label: t(`lobby.diff.${d}` as MessageKey) })),
+      value: p.difficulty,
+      pick: (v) => {
+        p.difficulty = v as Difficulty;
+        this.saveAndRender();
+      },
     });
-    this.pickDesc = el('div', `lb-desc${ROWS[this.focus] === 'team' && p.team >= BIG_TEAM ? ' warn' : ''}`, setup);
-    this.pickDesc.textContent = this.describe(ROWS[this.focus]!);
-    const go = el('button', 'lb-start', setup);
-    el('span', 'lb-start-text', go).textContent = t('lobby.start');
-    if (!this.touch) el('span', 'keycap', go).textContent = 'Enter';
-    go.addEventListener('click', () => this.finish(this.pick));
-    this.mapCard(body, p.map, modeName(p.mode));
+    renderMatchSetup(body, {
+      mode: p.mode,
+      map: p.map,
+      offered: modesOf(this.maps.get(p.map)),
+      maps: this.setupMaps(),
+      fields,
+      start: t('lobby.start'),
+      summary: t('lobby.summary')
+        .replace('{mode}', modeName(p.mode))
+        .replace('{map}', t(`map.${p.map}` as MessageKey))
+        .replaceAll('{n}', String(p.team))
+        .replace('{diff}', t(`lobby.diff.${p.difficulty}` as MessageKey)),
+      touch: this.touch,
+      onMode: (m) => this.setMode(m),
+      onMap: (id) => this.setMap(id),
+      onStart: () => this.finish(this.pick),
+    });
   }
 
-  private describe(row: Row): string {
+  /** Every map for the setup page: picture (once loaded), facts, its team size, blurb. */
+  setupMaps(): SetupMap[] {
+    return MAPS.map((m) => {
+      const def = this.maps.get(m.id);
+      return { id: m.id, name: t(`map.${m.id}` as MessageKey), picture: this.picture(m.id), facts: def ? this.mapFacts(def) : '', team: m.team, blurb: t(`mapDesc.${m.id}` as MessageKey) };
+    });
+  }
+
+  private setMode(m: LobbyMode): void {
+    this.pick.mode = m;
+    this.saveAndRender();
+  }
+
+  private setMap(id: string): void {
     const p = this.pick;
-    if (row === 'mode') return t(`modeDesc.${p.mode}` as MessageKey);
-    if (row === 'map') return t(`mapDesc.${p.map}` as MessageKey);
-    if (row === 'side') return t('lobby.sideDesc');
-    if (row === 'team') return p.team >= BIG_TEAM ? t('lobby.bigTeam') : t('lobby.teamHint').replace('{n}', String(MAPS.find((m) => m.id === p.map)?.team ?? 12));
-    return t(`lobby.diffDesc.${p.difficulty}` as MessageKey);
+    if (p.map === id) return;
+    p.map = id;
+    p.team = MAPS.find((m) => m.id === id)!.team;
+    // Keep the mode when the new map has it.
+    if (!modesOf(this.maps.get(id)).includes(p.mode)) p.mode = this.maps.get(id)?.modes?.default ?? 'zone';
+    this.fixMode();
+    this.saveAndRender();
+  }
+
+  private saveAndRender(): void {
+    this.save();
+    this.render();
   }
 
   /** Keeps the mode to one the picked map offers (its own default when the old one isn't). */
@@ -398,27 +444,6 @@ export class Lobby {
     if (!offered.includes(this.pick.mode)) this.pick.mode = map.modes?.default ?? offered[0]!;
   }
 
-  private change(row: Row, d: number): void {
-    const p = this.pick;
-    if (row === 'mode') p.mode = step(modesOf(this.maps.get(p.map)), p.mode, d);
-    else if (row === 'map') {
-      p.map = step(
-        MAPS.map((m) => m.id),
-        p.map,
-        d,
-      );
-      p.team = MAPS.find((m) => m.id === p.map)!.team;
-      p.mode = this.maps.get(p.map)?.modes?.default ?? 'zone';
-      this.fixMode();
-    } else if (row === 'team') {
-      const i = TEAM_SIZES.indexOf(p.team as (typeof TEAM_SIZES)[number]);
-      p.team = TEAM_SIZES[Math.max(0, Math.min(TEAM_SIZES.length - 1, i + d))]!;
-    } else if (row === 'side') p.side = step(SIDES, p.side, d);
-    else p.difficulty = step(DIFFICULTIES, p.difficulty, d);
-    this.focus = ROWS.indexOf(row);
-    this.save();
-    this.render();
-  }
 
   /** A map's picture, name, facts and blurb. */
   private mapCard(body: HTMLElement, id: string, badge: string): void {
@@ -458,8 +483,8 @@ export class Lobby {
       return;
     }
     if (this.screen === 'play') {
-      hint('↑ ↓', 'lobby.hint.select');
-      hint('← →', 'lobby.hint.change');
+      hint('↑ ↓', 'lobby.mode');
+      hint('← →', 'lobby.map');
       hint('Enter', 'lobby.start');
     }
     hint('Esc', 'lobby.hint.back');

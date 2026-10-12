@@ -78,6 +78,7 @@ import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
 import { LastStandRules, ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
+import { VehicleView, type VehicleViewKind, type VehicleViewState } from '@/ui/VehicleView';
 import { LastStandVisuals } from '@/modes/lastStandVisuals';
 import { ChargeVisuals } from '@/modes/chargeVisuals';
 import { TagVisuals } from '@/modes/tagVisuals';
@@ -317,6 +318,17 @@ export class Game {
   private rideCamDist = 6;
   /** Vehicle view: first person by default, C switches to third person. */
   private rideThird = false;
+  /** The first-person view from the seat (BFV-like overlays, see ui/VehicleView). */
+  private vehicleView!: VehicleView;
+  /** Zoom in a vehicle sight now (eased) and the vehicle whose model the first-person view hides. */
+  private rideZoom = 1;
+  private hiddenRide: Vehicle | null = null;
+  /** First person in a vehicle: where the eye was (smoothed over bumps) and how much the view rolls (aircraft). */
+  private readonly rideEye = new THREE.Vector3();
+  private rideEyeSet = false;
+  private camRoll = 0;
+  /** A driver's sight fixed to the gun: the view is where the gun points (it follows the look with a delay). */
+  private gunView: { yaw: number; pitch: number } | null = null;
   /** When fullscreen was last asked for (phones; see `enterFullscreen`). */
   private fullscreenAskedAt = -Infinity;
   /** Scenery outside the map (its clutter is culled by distance each frame). */
@@ -440,6 +452,7 @@ export class Game {
     this.renderer = new Renderer(container, quality, this.settings.fov);
     this.renderer.setRenderScale(this.settings.renderScale);
     this.hud = new HUD(container);
+    this.vehicleView = new VehicleView(this.hud.root);
     this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
     this.renderer.instrument(this.perf.section);
     this.overlay = new Overlay(container);
@@ -1166,7 +1179,8 @@ export class Game {
     if (this.running) {
       const adsFov = this.aimFov() * (this.settings.fov / AUTHORED_FOV);
       const adsScale = this.settings.adsSensitivity * (adsFov / this.settings.fov);
-      const sens = 1 + (adsScale - 1) * w.adsBlend;
+      // In a zoomed vehicle sight the look slows with the zoom.
+      const sens = (1 + (adsScale - 1) * w.adsBlend) / (this.ride ? this.rideZoom : 1);
       if (p.alive || this.playerDowned) {
         lookYaw = input.lookYaw * sens;
         lookPitch = input.lookPitch * sens;
@@ -1480,7 +1494,8 @@ export class Game {
     const spec = v.spec.seats[seat]!;
     if (spec.role === 'driver' && net.drive === v) v.drive(dt, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
     if (spec.gun) {
-      v.aimMount(seat, p.yaw, p.pitch);
+      v.aimMount(seat, p.yaw, p.pitch, dt);
+      this.keepLookInReach(v, seat);
       if (v.pullTrigger(seat, input.fire, this.simTime, dt)) {
         net.mountFired(v, seat, 1);
         this.shake = Math.min(0.03, this.shake + (v.mounts[seat]!.gun.blast > 0 ? 0.012 : 0.004));
@@ -2084,7 +2099,8 @@ export class Game {
   /** The player's seat gun: follows the view; the trigger fires it (MGs overheat, shell guns reload). */
   private stepVehicleGun(v: Vehicle, seat: number, trigger: boolean, dt: number): void {
     const p = this.player;
-    v.aimMount(seat, p.yaw, p.pitch);
+    v.aimMount(seat, p.yaw, p.pitch, dt);
+    this.keepLookInReach(v, seat);
     if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
     // Aircraft guns (the pilot's seat): where the crosshair points, near the nose.
     if (v.flight && v.spec.seats[seat]!.role === 'driver') {
@@ -2098,6 +2114,23 @@ export class Game {
     const look = this.physics.raycast(cam.position, fwd, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
     const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, range);
     this.fireMount(v, seat, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, aim);
+  }
+
+  /**
+   * A gun with a turn rate only reaches so far (the tank destroyer's few
+   * degrees either way, every gun's elevation): the look stays inside that,
+   * so the sight and what it can fire at are the same.
+   */
+  private keepLookInReach(v: Vehicle, seat: number): void {
+    const s = v.spec.seats[seat]!;
+    if (!s.turn) return;
+    const p = this.player;
+    const [lo, hi] = s.pitch ?? [-0.2, 0.6];
+    p.pitch = THREE.MathUtils.clamp(p.pitch, lo, hi);
+    if (s.traverse !== undefined && s.traverse < Math.PI) {
+      const rel = Math.atan2(Math.sin(p.yaw - v.yaw), Math.cos(p.yaw - v.yaw));
+      p.yaw = v.yaw + THREE.MathUtils.clamp(rel, -s.traverse, s.traverse);
+    }
   }
 
   /**
@@ -2843,14 +2876,20 @@ export class Game {
     this.deathBlend += ((p.alive ? 0 : gone ? 1 : 0.7) - this.deathBlend) * (1 - Math.exp(-4 * dt));
     this.tmpEye.y -= this.deathBlend * (p.eyeHeight - 0.35);
     cam.position.copy(this.tmpEye);
+    this.camRoll = 0;
+    this.gunView = null;
     if (this.ride && p.alive) this.rideCamera(alpha, dt);
+    else this.showRideModel(null);
 
     this.shake *= Math.exp(-7 * dt);
     const sx = (Math.random() - 0.5) * this.shake;
     const sy = (Math.random() - 0.5) * this.shake;
     // Scope sway (breath.ts) is part of the aim, so the view follows it too.
-    cam.rotation.set(p.pitch + w.recoil.pitch + w.sway.pitch + sx, p.yaw + w.recoil.yaw + w.sway.yaw + sy, this.deathBlend * (gone ? 0.7 : 0.25), 'YXZ');
-    const fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend;
+    // (set by rideCamera above)
+    const gv = this.gunView as { yaw: number; pitch: number } | null;
+    cam.rotation.set((gv ? gv.pitch : p.pitch + w.recoil.pitch + w.sway.pitch) + sx, (gv ? gv.yaw : p.yaw + w.recoil.yaw + w.sway.yaw) + sy, this.deathBlend * (gone ? 0.7 : 0.25) + this.camRoll, 'YXZ');
+    let fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend;
+    if (this.ride && p.alive && !this.rideThird) fov = this.rideFov(this.ride.v, dt);
     if (Math.abs(cam.fov - fov) > 0.01) {
       cam.fov = fov;
       cam.updateProjectionMatrix();
@@ -2934,7 +2973,8 @@ export class Game {
     if (this.earVel.lengthSq() > 200 * 200) this.earVel.set(0, 0, 0);
     this.earPrev.copy(ear);
     this.earAt = this.elapsed;
-    this.engines.update(list, ear, this.earVel);
+    // On foot aircraft are heard only close by (see AIR_ON_FOOT).
+    this.engines.update(list, ear, this.earVel, !this.ride && !this.chute);
   }
   private engines: EngineSounds | null = null;
   private readonly engineList: EngineSource[] = [];
@@ -2948,12 +2988,76 @@ export class Game {
    * behind the gun); C switches to a third-person view orbiting the vehicle
    * with the view, pulled in by walls.
    */
+  /**
+   * What the first-person view from a seat is (owner, 2026-10-12: every
+   * vehicle's, after BFV): a pilot's cockpit; an open seat as it is (the
+   * vehicle in sight); inside the hull a cannon's sight, a machine gun's
+   * ring sight, or a vision block for seats without a gun.
+   */
+  private rideViewKind(v: Vehicle, seat: number): VehicleViewKind {
+    const s = v.spec.seats[seat]!;
+    if (v.flight && s.role === 'driver') return 'cockpit';
+    if (s.exposed) return 'open';
+    const gun = v.mounts[seat]?.gun;
+    if (!gun) return 'port';
+    return gun.shell || gun.blast > 0 ? 'sight' : 'mg';
+  }
+
+  /** Shows the ridden vehicle's model again, or hides `v`'s (from inside it the hull would fill the view). */
+  private showRideModel(hide: Vehicle | null): void {
+    if (this.hiddenRide && this.hiddenRide !== hide) this.hiddenRide.model.root.visible = true;
+    this.hiddenRide = hide;
+    if (hide) hide.model.root.visible = false;
+  }
+
+  /** The first-person field of view in a vehicle: zoomed sights, a little wider with speed in open ones. */
+  private rideFov(v: Vehicle, dt: number): number {
+    const kind = this.rideViewKind(v, this.ride!.seat);
+    const base = this.settings.fov;
+    // The aim button zooms the sights (seats with a second weapon on it don't: jets fire missiles with it).
+    const zoomable = (kind === 'sight' || kind === 'mg') && !v.altMounts[this.ride!.seat];
+    const want = zoomable && this.input.ads ? (kind === 'sight' ? RIDE_ZOOM.sight : RIDE_ZOOM.mg) : 1;
+    this.rideZoom += (want - this.rideZoom) * (1 - Math.exp(-12 * dt));
+    if (Math.abs(this.rideZoom - want) < 0.01) this.rideZoom = want;
+    let fov = zoomedFov(base, this.rideZoom);
+    if (kind === 'open' || kind === 'cockpit') fov += Math.min(1, v.velocity.length() / (v.flight ? 160 : 25)) * RIDE_ZOOM.speedFov;
+    return fov;
+  }
+
   private rideCamera(alpha: number, dt: number): void {
     const { v, seat } = this.ride!;
     const cam = this.renderer.camera;
     const p = this.player;
     const role = v.spec.seats[seat]!.role;
     const fwd = this.tmpFwd.set(0, 0, -1).applyEuler(new THREE.Euler(p.pitch, p.yaw, 0, 'YXZ'));
+    this.showRideModel(this.rideThird || this.rideViewKind(v, seat) === 'open' ? null : v);
+    if (!this.rideThird) {
+      const kind = this.rideViewKind(v, seat);
+      const eye = this.tmpRideEye;
+      if (kind === 'sight') {
+        // At the sight beside the gun's trunnion (the turret is posed for this frame already).
+        const gun = v.model.mounts[seat]?.gun;
+        if (gun) gun.getWorldPosition(eye).y += 0.3;
+        else v.seatEye(seat, eye, alpha);
+      } else {
+        v.seatEye(seat, eye, alpha);
+        if (role === 'gunner') eye.addScaledVector(fwd, -0.35).y += 0.15;
+      }
+      // Open seats ride the bumps a little softer than the hull does (the head isn't bolted to it).
+      if (kind === 'open' && this.rideEyeSet && this.rideEye.distanceTo(eye) < 3) {
+        this.rideEye.x = eye.x;
+        this.rideEye.z = eye.z;
+        this.rideEye.y += (eye.y - this.rideEye.y) * (1 - Math.exp(-14 * dt));
+      } else this.rideEye.copy(eye);
+      this.rideEyeSet = true;
+      cam.position.copy(this.rideEye);
+      // A pilot's view banks with the plane.
+      if (kind === 'cockpit' && v.flight) this.camRoll = v.flight.roll;
+      // A driver working the main gun sees through its sight: where the gun points, which follows the look at its turn rate.
+      if (v.spec.seats[seat]!.turn) this.gunView = v.mountAim(seat);
+      return;
+    }
+    this.rideEyeSet = false;
     if (this.rideThird) {
       const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + 1.1, 0), new THREE.Vector3(), alpha);
       const want = v.flight ? 20 : v.kind === 'apc' || v.kind === 'rocket' ? 10 : v.kind === 'bike' ? 4.5 : TANK_KINDS.includes(v.kind) ? 11 : 6.5;
@@ -2962,11 +3066,58 @@ export class Game {
       // Pull in at once, ease back out.
       this.rideCamDist = dist < this.rideCamDist ? dist : this.rideCamDist + (dist - this.rideCamDist) * (1 - Math.exp(-3 * dt));
       cam.position.copy(target).addScaledVector(fwd, -this.rideCamDist);
-    } else {
-      v.seatEye(seat, cam.position, alpha);
-      // Gunner: a little behind and above the gun.
-      if (role === 'gunner') cam.position.addScaledVector(fwd, -0.35).y += 0.15;
     }
+  }
+  private readonly tmpRideEye = new THREE.Vector3();
+
+  /** The seat's first-person overlay (sights, cockpit), or none. */
+  private rideViewState(): VehicleViewState | null {
+    const r = this.ride;
+    if (!r || this.rideThird || !this.player.alive) return null;
+    const { v, seat } = r;
+    const kind = this.rideViewKind(v, seat);
+    if (kind === 'open') return null;
+    const m = v.mounts[seat];
+    const cam = this.renderer.camera;
+    // Hull heading against the view, for the turret compass (+ = the hull points to the right of the view).
+    let hull = v.yaw - (this.gunView?.yaw ?? this.player.yaw);
+    hull = Math.atan2(Math.sin(hull), Math.cos(hull));
+    let range: number | null = null;
+    if (kind === 'sight') {
+      const fwd = this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
+      const hit = this.physics.raycast(cam.position, fwd, 1500, Layer.WORLD | Layer.HITBOX, undefined, v.body);
+      range = hit ? hit.distance : null;
+    }
+    const f = v.flight;
+    let alt = 0;
+    if (f) {
+      const below = this.physics.raycast(v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
+      alt = below ? below.distance : v.pos.y;
+    }
+    return {
+      kind,
+      zoom: this.rideZoom,
+      reload: m ? v.reloadLeft(seat, this.simTime) : 0,
+      heat: m?.heat ?? 0,
+      overheated: m?.overheated ?? false,
+      health: v.health / v.spec.health,
+      hullYaw: -hull,
+      aimYaw: this.gunView ? Math.atan2(Math.sin(this.player.yaw - this.gunView.yaw), Math.cos(this.player.yaw - this.gunView.yaw)) : 0,
+      aimPitch: this.gunView ? this.player.pitch - this.gunView.pitch : 0,
+      range,
+      lobbed: !!m?.gun.shell?.lob,
+      pitch: f ? f.pitch : this.player.pitch,
+      roll: f ? f.roll : 0,
+      heading: f ? f.yaw : v.yaw,
+      speed: f ? f.speed * 3.6 : v.velocity.length() * 3.6,
+      alt,
+      throttle: f?.throttle ?? 0,
+      locked: !!(f && v.altMounts[seat]?.gun.homing && this.lockTarget(v, this.myTeam)),
+      warning: f?.turningBack ? t('jet.airspace') : null,
+      fovY: cam.fov,
+      gunName: m ? t(`vehicleGun.${m.id}`) : '',
+      vehicleName: t(`vehicle.${v.kind}`),
+    };
   }
 
   /** The player's body in the seat, for the third-person driving view (seen ones only). */
@@ -3170,13 +3321,14 @@ export class Game {
       if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{keys}', `${actionKey('slot1')}–${actionKey(`slot${Math.min(9, n)}` as Action)}`));
       if (!this.touch) parts.push(t('vehicle.view'));
       const f = v.flight;
-      if (f) {
+      // In the cockpit the instruments say it; from outside the line does.
+      if (f && this.rideThird) {
         const below = this.physics.raycast(v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
         parts.splice(1, 0, t('jet.hud').replace('{alt}', String(Math.round(below ? below.distance : v.pos.y))).replace('{spd}', String(Math.round(f.speed * 3.6))).replace('{thr}', String(Math.round(f.throttle * 100))));
         if (v.altMounts[seat]?.gun.homing && this.lockTarget(v, this.myTeam)) parts.splice(2, 0, t('jet.locked'));
         if (f.turningBack) parts.splice(2, 0, t('jet.airspace'));
-        if (!this.touch) parts.push(t('jet.controls'));
       }
+      if (f && !this.touch) parts.push(t('jet.controls'));
       prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
       touchLabel = t('touch.exitVehicle');
     } else if (onField && !prompt && !this.buildMode) {
@@ -3221,6 +3373,11 @@ export class Game {
       support: supportState && !this.ride ? this.supportMenu.open || !!this.supportAim : null,
       ride: this.ride ? (this.ride.v.spec.seats[this.ride.seat]!.role === 'driver' ? (this.ride.v.flight ? 'fly' : 'drive') : 'seat') : null,
     });
+    // First person in a vehicle: its sight or cockpit over the view, and no infantry crosshair under it.
+    const rideView = this.rideViewState();
+    this.vehicleView.update(rideView);
+    this.hud.root.classList.toggle('in-sight', !!rideView);
+    this.hud.root.classList.toggle('in-vehicle', !!this.ride && this.player.alive);
     this.hud.update(
       {
         weaponName: w.def.name,
@@ -4655,6 +4812,13 @@ function clockText(sec: number): string {
 
 /** Seconds a jet that just came in can't be locked by missiles. */
 const JET_LOCK_GRACE = 10;
+/**
+ * First-person vehicle views: the aim button zooms a cannon sight `sight`x
+ * and a machine gun's `mg`x; open seats and cockpits widen the view up to
+ * `speedFov` degrees at speed.
+ */
+const RIDE_ZOOM = { sight: 3, mg: 1.6, speedFov: 6 };
+
 /** Player jet cannon: fires at the crosshair within this angle of the nose (rad), onto an enemy aircraft this close to the crosshair. */
 const JET_GUN = { cone: 0.21, assist: 0.031 };
 /** Parachute: falling speed and how fast it can be steered sideways (m/s). */

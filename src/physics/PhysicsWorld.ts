@@ -19,6 +19,8 @@ export const Layer = {
   BOT: 0x0010,
   /** Invisible walls at the edge of the playable area: block characters only. */
   BOUNDS: 0x0020,
+  /** Stops vehicles only (anti-tank hedgehogs, barbed wire): soldiers, rounds and sight lines pass. */
+  VEHICLE_BLOCK: 0x0040,
 } as const;
 
 /** Packs Rapier interaction groups: upper 16 bits membership, lower 16 bits filter. */

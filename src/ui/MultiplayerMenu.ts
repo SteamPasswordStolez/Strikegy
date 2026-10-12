@@ -5,6 +5,7 @@ import { loadIdentity, seatId } from '@/net/identity';
 import { ServerLink, ServerError } from '@/net/ServerLink';
 import { serverUrls } from '@/net/servers';
 import type { Device, Lineup, InputRule, MatchStart, Room, RoomInfo, RoomSettings } from '@/net/lobbyProtocol';
+import { renderMatchSetup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
@@ -16,8 +17,6 @@ const SIZES = TEAM_SIZES.map((n) => n * 2);
 const PING_EVERY = 2000;
 
 type View = 'connecting' | 'offline' | 'list' | 'create' | 'room';
-type FormRow = 'map' | 'mode' | 'size' | 'lineup' | 'difficulty' | 'input' | 'botShare';
-const FORM_ROWS: readonly FormRow[] = ['map', 'mode', 'size', 'lineup', 'difficulty', 'input', 'botShare'];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -33,6 +32,8 @@ const modeName = (m: string): string => t(m === 'skirmish' ? 'lobby.skirmish' : 
 export interface MultiplayerHost {
   /** Modes the map offers (from its JSON, once loaded). */
   modesFor(map: string): LobbyMode[];
+  /** Every map with its picture and facts (the setup page). */
+  setupMaps(): SetupMap[];
   /** Redraws the menu (the multiplayer page is drawn by `render`). */
   redraw(): void;
   device: Device;
@@ -287,73 +288,125 @@ export class MultiplayerMenu {
     return `${t('mp.ping')} ${this.ping === null ? '…' : `${Math.round(this.ping)} ms`}`;
   }
 
-  private formValue(row: FormRow): string {
+  /** The create page's map: its team size sets the room size, and the mode stays if the map has it. */
+  private setFormMap(id: string): void {
     const f = this.form;
-    switch (row) {
-      case 'map':
-        return t(`map.${f.map}` as MessageKey);
-      case 'mode':
-        return modeName(f.mode);
-      case 'size':
-        return t('mp.sizeValue').replace('{n}', String(f.size)).replaceAll('{a}', String(f.size / 2));
-      case 'lineup':
-        return t(`mp.lineup.${f.lineup}` as MessageKey);
-      case 'difficulty':
-        return t(`lobby.diff.${f.difficulty}` as MessageKey);
-      case 'input':
-        return t(`mp.input.${f.input}` as MessageKey);
-      case 'botShare':
-        return t(f.botShare ? 'lobby.on' : 'lobby.off');
-    }
-  }
-
-  private changeForm(row: FormRow, d: number): void {
-    const f = this.form;
-    if (row === 'map') {
-      f.map = step(
-        MAPS.map((m) => m.id),
-        f.map,
-        d,
-      );
-      f.size = Math.min(300, (MAPS.find((m) => m.id === f.map)?.team ?? 12) * 2);
-    } else if (row === 'mode') f.mode = step(this.host.modesFor(f.map), f.mode as LobbyMode, d);
-    else if (row === 'size') f.size = SIZES[Math.max(0, Math.min(SIZES.length - 1, SIZES.indexOf(f.size as (typeof SIZES)[number]) + d))]!;
-    else if (row === 'lineup') f.lineup = step(LINEUPS, f.lineup, d);
-    else if (row === 'difficulty') f.difficulty = step(DIFFS, f.difficulty, d);
-    else if (row === 'input') f.input = step(INPUTS, f.input, d);
-    else f.botShare = !f.botShare;
-    const modes = this.host.modesFor(f.map);
+    if (f.map === id) return;
+    f.map = id;
+    f.size = Math.min(300, (MAPS.find((m) => m.id === id)?.team ?? 12) * 2);
+    const modes = this.host.modesFor(id);
     if (!modes.includes(f.mode as LobbyMode)) f.mode = modes[0]!;
     this.host.redraw();
   }
 
+  /** Keys on the create page (↑ ↓ mode, ← → map, Enter create); true when used. */
+  key(code: string): boolean {
+    if (this.view !== 'create') return false;
+    const f = this.form;
+    if (code === 'ArrowUp' || code === 'ArrowDown') {
+      f.mode = stepMode(f.mode as LobbyMode, this.host.modesFor(f.map), code === 'ArrowUp' ? -1 : 1);
+      this.host.redraw();
+    } else if (code === 'ArrowLeft' || code === 'ArrowRight') {
+      this.setFormMap(step(
+        MAPS.map((m) => m.id),
+        f.map,
+        code === 'ArrowLeft' ? -1 : 1,
+      ));
+    } else if (code === 'Enter') this.create();
+    else return false;
+    return true;
+  }
+
   private renderCreate(body: HTMLElement): void {
-    const setup = el('div', 'lb-setup', body);
-    const rows = el('div', 'lb-rows', setup);
-    const text = (label: MessageKey, value: string, set: (v: string) => void, type = 'text'): void => {
-      const r = el('label', 'lb-srow mp-text', rows);
-      el('span', 'lb-srow-label', r, t(label));
-      const input = el('input', 'lb-input', r);
-      input.type = type;
-      input.maxLength = 32;
-      input.value = value;
-      input.addEventListener('input', () => set(input.value));
-    };
-    text('mp.roomName', this.form.name, (v) => (this.form.name = v));
-    for (const id of FORM_ROWS) {
-      const r = el('div', 'lb-srow', rows);
-      el('span', 'lb-srow-label', r, t(`mp.row.${id}` as MessageKey));
-      const left = el('button', 'lb-arrow', r, '◀');
-      el('span', 'lb-srow-val', r, this.formValue(id));
-      const right = el('button', 'lb-arrow', r, '▶');
-      left.addEventListener('click', () => this.changeForm(id, -1));
-      right.addEventListener('click', () => this.changeForm(id, 1));
+    const f = this.form;
+    const redraw = () => this.host.redraw();
+    const bots = f.lineup !== 'users';
+    const fields: SetupField[] = [
+      { kind: 'text', id: 'name', label: t('mp.roomName'), value: f.name, set: (v) => (f.name = v) },
+      {
+        kind: 'stepper',
+        id: 'size',
+        label: t('mp.row.size'),
+        value: t('mp.sizeValue').replace('{n}', String(f.size)).replaceAll('{a}', String(f.size / 2)),
+        note: t('mp.note.size').replace('{n}', String((MAPS.find((m) => m.id === f.map)?.team ?? 12) * 2)),
+        change: (d) => {
+          f.size = SIZES[Math.max(0, Math.min(SIZES.length - 1, SIZES.indexOf(f.size as (typeof SIZES)[number]) + d))]!;
+          redraw();
+        },
+      },
+      {
+        kind: 'choice',
+        id: 'lineup',
+        label: t('mp.row.lineup'),
+        note: t(`mp.note.lineup.${f.lineup}` as MessageKey),
+        options: LINEUPS.map((l) => ({ value: l, label: t(`mp.lineup.${l}` as MessageKey) })),
+        value: f.lineup,
+        pick: (v) => {
+          f.lineup = v as Lineup;
+          redraw();
+        },
+      },
+    ];
+    if (bots) {
+      fields.push(
+        {
+          kind: 'choice',
+          id: 'difficulty',
+          label: t('mp.row.difficulty'),
+          options: DIFFS.map((d) => ({ value: d, label: t(`lobby.diff.${d}` as MessageKey) })),
+          value: f.difficulty,
+          pick: (v) => {
+            f.difficulty = v as (typeof DIFFS)[number];
+            redraw();
+          },
+        },
+        {
+          kind: 'choice',
+          id: 'botShare',
+          label: t('mp.row.botShare'),
+          note: t('mp.note.botShare'),
+          options: [
+            { value: 'on', label: t('lobby.on') },
+            { value: 'off', label: t('lobby.off') },
+          ],
+          value: f.botShare ? 'on' : 'off',
+          pick: (v) => {
+            f.botShare = v === 'on';
+            redraw();
+          },
+        },
+      );
     }
-    text('mp.password', this.form.password, (v) => (this.form.password = v), 'password');
-    el('div', 'lb-desc', setup, t('mp.createHint'));
-    const go = el('button', 'lb-start', setup);
-    el('span', 'lb-start-text', go, t('mp.createGo'));
-    go.addEventListener('click', () => this.create());
+    fields.push(
+      {
+        kind: 'choice',
+        id: 'input',
+        label: t('mp.row.input'),
+        options: INPUTS.map((i) => ({ value: i, label: t(`mp.input.${i}` as MessageKey) })),
+        value: f.input,
+        pick: (v) => {
+          f.input = v as InputRule;
+          redraw();
+        },
+      },
+      { kind: 'text', id: 'password', label: t('mp.password'), value: f.password, secret: true, set: (v) => (f.password = v) },
+    );
+    renderMatchSetup(body, {
+      mode: f.mode as LobbyMode,
+      map: f.map,
+      offered: this.host.modesFor(f.map),
+      maps: this.host.setupMaps(),
+      fields,
+      start: t('mp.createGo'),
+      summary: t('mp.createHint'),
+      touch: this.host.device === 'mobile',
+      onMode: (m) => {
+        f.mode = m;
+        redraw();
+      },
+      onMap: (id) => this.setFormMap(id),
+      onStart: () => this.create(),
+    });
   }
 
   private renderRoom(body: HTMLElement): void {

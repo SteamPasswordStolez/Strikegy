@@ -48,9 +48,20 @@ export interface FortPart {
 }
 
 /**
- * What stops soldiers and bullets once a spot is built. Hedgehogs (vehicles
- * only, none yet) and wire (slows, doesn't stop) have no solid parts.
+ * What stops soldiers and bullets once a spot is built. Hedgehogs and wire
+ * have none: they stop vehicles only (`vehicleParts`), and wire slows walkers.
  */
+/**
+ * What stops vehicles once a spot is built, besides the solid parts (owner,
+ * 2026-10-12: tanks drove straight through hedgehogs and wire): the whole
+ * hedgehog, a waist-high box over the wire.
+ */
+export function vehicleParts(kind: FortKind, [w, h, d]: readonly [number, number, number]): FortPart[] {
+  if (kind === 'hedgehog') return [{ c: [0, h / 2, 0], s: [w, h, d] }];
+  if (kind === 'wire') return [{ c: [0, 0.6, 0], s: [w, 1.2, Math.max(0.6, d)] }];
+  return [];
+}
+
 export function fortParts(kind: FortKind, [w, h, d]: readonly [number, number, number]): FortPart[] {
   const t = 0.7;
   switch (kind) {
@@ -718,7 +729,12 @@ export class Fortifications {
       const ob = this.nav.addBox({ x: center.x, y: (ground - 0.4 + top) / 2, z: center.z }, { x: sx / 2, y: (top - ground + 0.4) / 2, z: sz / 2 }, slot.yaw);
       if (ob) slot.obstacles.push(ob);
     }
-    // Hedgehogs only stop vehicles (none yet) and wire only slows: nothing solid.
+    // Hedgehogs and wire: nothing solid for soldiers, a wall for vehicles.
+    for (const part of vehicleParts(slot.kind, slot.size)) {
+      const [lx, ly, lz] = part.c;
+      const center = { x: slot.pos.x + lx * c + lz * sn, y: slot.pos.y + ly, z: slot.pos.z - lx * sn + lz * c };
+      slot.colliders.push(this.physics.addStaticBox(center, { x: part.s[0] / 2, y: part.s[1] / 2, z: part.s[2] / 2 }, q, Layer.VEHICLE_BLOCK));
+    }
     this.onChange?.();
   }
 

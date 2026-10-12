@@ -326,9 +326,11 @@ export class MatchVehicles {
     const p = s.player;
     const shooter: Shooter = { id: s.id, name: s.combatant.name, team: s.team };
     if (spec.gun) {
-      v.aimMount(at, p.yaw, p.pitch);
+      v.aimMount(at, p.yaw, p.pitch, dt);
       if (v.pullTrigger(at, input.fire, this.sim.time, dt)) {
-        const view = viewDir(p.yaw, p.pitch, this.tmp2);
+        // A gun with a turn rate fires where it points (it follows the look with a delay), others where the view is.
+        const gun = spec.turn ? v.mountAim(at) : null;
+        const view = viewDir(gun ? gun.yaw : p.yaw, gun ? gun.pitch : p.pitch, this.tmp2);
         if (v.flight && spec.role === 'driver') {
           v.syncModel(1);
           this.fireMount(v, at, shooter, jetGunAim(v, at, view, s.team, this.world.vehicles, this.sim.support.planes()));

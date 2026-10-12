@@ -160,7 +160,7 @@ export class Vehicle implements Damageable {
           { x: 0, y: 0, z: 0, w: 1 },
         )
         .setFriction(0.5)
-        .setCollisionGroups(groups(Layer.WORLD | Layer.HITBOX, Layer.WORLD | Layer.BOUNDS)),
+        .setCollisionGroups(groups(Layer.WORLD | Layer.HITBOX, Layer.WORLD | Layer.BOUNDS | Layer.VEHICLE_BLOCK)),
       this.body,
     );
     // The hull blocks sight lines (bots' line-of-sight checks don't go through Rapier).
@@ -499,20 +499,45 @@ export class Vehicle implements Damageable {
    * Points a seat's gun at a world direction (yaw / pitch, as the view uses
    * them), within its traverse and elevation.
    */
-  aimMount(seat: number, worldYaw: number, worldPitch: number): void {
+  /**
+   * Points a seat's gun toward a world yaw / pitch, within its traverse and
+   * elevation; seats with a turn rate get there at that rate over `dt` s
+   * (Infinity: at once).
+   */
+  aimMount(seat: number, worldYaw: number, worldPitch: number, dt = Infinity): void {
     const m = this.mounts[seat];
     const am = this.altMounts[seat];
     if (!m) return;
     const s = this.spec.seats[seat]!;
     const rel = Math.atan2(Math.sin(worldYaw - this.yaw), Math.cos(worldYaw - this.yaw));
     const tr = s.traverse ?? Math.PI;
-    m.yaw = THREE.MathUtils.clamp(rel, -tr, tr);
     const [lo, hi] = s.pitch ?? [-0.2, 0.6];
-    m.pitch = THREE.MathUtils.clamp(worldPitch, lo, hi);
+    const wantYaw = THREE.MathUtils.clamp(rel, -tr, tr);
+    const wantPitch = THREE.MathUtils.clamp(worldPitch, lo, hi);
+    if (s.turn && Number.isFinite(dt)) {
+      // The short way round (a gun with all-round traverse), at the turn rate.
+      let d = wantYaw - m.yaw;
+      if (tr >= Math.PI) d = Math.atan2(Math.sin(d), Math.cos(d));
+      const maxY = s.turn * dt;
+      m.yaw += THREE.MathUtils.clamp(d, -maxY, maxY);
+      if (tr >= Math.PI) m.yaw = Math.atan2(Math.sin(m.yaw), Math.cos(m.yaw));
+      else m.yaw = THREE.MathUtils.clamp(m.yaw, -tr, tr);
+      const maxP = (s.elevate ?? s.turn) * dt;
+      m.pitch += THREE.MathUtils.clamp(wantPitch - m.pitch, -maxP, maxP);
+    } else {
+      m.yaw = wantYaw;
+      m.pitch = wantPitch;
+    }
     if (am) {
       am.yaw = m.yaw;
       am.pitch = m.pitch;
     }
+  }
+
+  /** Where a seat's gun points in the world: yaw (0 = -z) and pitch, or null without one. */
+  mountAim(seat: number): { yaw: number; pitch: number } | null {
+    const m = this.mounts[seat];
+    return m ? { yaw: this.yaw + m.yaw, pitch: m.pitch } : null;
   }
 
   /** World position of a seat's muzzle (after the last render), or its eye. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { PhysicsWorld } from '@/physics/PhysicsWorld';
+import { Layer, PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SurfaceRegistry } from '@/physics/surfaces';
 import { NavWorld } from '@/ai/NavWorld';
 import { FORT, FORT_WEIGHT, Fortifications, STATION, buildSpeed, canRefill, planFortifications, worldProbe, zoneWeight, type PlanProbe } from '@/modes/fortify';
@@ -157,7 +157,9 @@ describe('fortifications at runtime', () => {
     expect(fort.occupies(nest, nest.pos)).toBe(false);
     const front = new THREE.Vector3(-Math.sin(nest.yaw), 0, -Math.cos(nest.yaw));
     expect(fort.occupies(nest, nest.pos.clone().addScaledVector(front, nest.size[2] / 2 - 0.3))).toBe(true);
-    expect(wire.colliders).toHaveLength(0);
+    // Wire stops vehicles only: one box nobody else collides with.
+    expect(wire.colliders).toHaveLength(1);
+    expect(wire.colliders[0]!.collisionGroups() >>> 16).toBe(Layer.VEHICLE_BLOCK);
     expect(fort.slowAt(wire.pos)).toBeLessThan(1);
     expect(fort.slowAt(wire.stand)).toBe(1);
     // Knocked down: nothing to wade through.
