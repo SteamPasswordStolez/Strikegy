@@ -197,9 +197,11 @@ export class DominationRules extends PointsRules {
 // Hardpoint, team deathmatch, kill confirmed (owner, 2026-10-12: "all of them")
 
 /**
- * Numbers [제안]. Hardpoint: one zone in play at a time, moving every `rotate`
- * s round the map; a side standing in it alone scores a point a second; first
- * to `target` or ahead after `time` s. Team deathmatch: a point for every
+ * Numbers (owner accepted TDM / kill confirmed, 2026-10-12). Hardpoint [제안]: one
+ * zone in play at a time, moving every `rotate` s round the map; the side with
+ * more soldiers in it scores a point a second (level: nobody; owner: with many
+ * players a side is never alone in it, so "alone" would stall big matches);
+ * first to `target` or ahead after `time` s. Team deathmatch: a point for every
  * enemy downed, first to `perSoldier` x the team size (about 10 minutes at
  * a 6v6 bot match on Iron Gate: ~11 downs a minute in all) or ahead after `time` s. Kill
  * confirmed: a downed enemy drops a tag that lasts `tagLife` s; the side that
@@ -219,7 +221,7 @@ export class HardpointRules extends PointsRules {
   active = 0;
   /** Seconds until the point moves. */
   moveIn: number;
-  /** Who stands in the point alone (scoring), or null. */
+  /** The side with more soldiers in the point (scoring), or null when level / empty. */
   holder: Team | null = null;
   contested = false;
   readonly rotate: number;
@@ -262,7 +264,7 @@ export class HardpointRules extends PointsRules {
     const z = zr.zones.find((q) => q.id === this.zoneId);
     if (z) {
       this.contested = z.blue > 0 && z.red > 0;
-      this.holder = z.blue > 0 && z.red === 0 ? 'blue' : z.red > 0 && z.blue === 0 ? 'red' : null;
+      this.holder = z.blue > z.red ? 'blue' : z.red > z.blue ? 'red' : null;
       // Shown as owned by whoever is scoring, pulsing while they are.
       ZoneRules.force(z, this.holder);
       z.pushing = this.holder;

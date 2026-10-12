@@ -337,7 +337,7 @@
   "modeDesc.zone": "Every zone you hold scores a point every 5 s. First side to the target wins.",
   "modeDesc.frontline": "A front pushed one sector at a time. Losing a sector makes you the attacker; run out of attack time and the roles swap.",
   "modeDesc.conquest": "The defenders start with every zone; the attackers break through one sector at a time. Only the attackers have tickets.",
-  "modeDesc.hardpoint": "One live point that moves every 60 s. Stand in it with no enemy there and score a point a second. First to 200, or ahead after 10 minutes.",
+  "modeDesc.hardpoint": "One live point that moves every 60 s. Have more soldiers in it than the enemy and score a point a second (level: nobody). First to 200, or ahead after 10 minutes.",
   "modeDesc.tdm": "A point for every enemy downed. First to the target (team size × 7), or ahead after 10 minutes. Zones are spawn points only.",
   "modeDesc.killconfirm": "Downed enemies drop tags: pick them up to score. Pick up your own side's to deny the enemy.",
   "modeDesc.skirmish": "Just the fight, no zones.",

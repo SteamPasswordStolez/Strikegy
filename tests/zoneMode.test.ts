@@ -131,6 +131,10 @@ describe('Hardpoint, team deathmatch, kill confirmed', () => {
     for (let i = 0; i < 20; i++) zm.step(0.1, [at('blue', 0, 1), at('red', 1, 2)]);
     expect(m.points.blue).toBeCloseTo(before);
     expect(zm.zone('B')!.owner).toBeNull();
+    // More soldiers in it than the enemy still scores (big matches are never alone in it).
+    const level = m.points.blue!;
+    for (let i = 0; i < 20; i++) zm.step(0.1, [at('blue', 0, 1), at('blue', 2, 3), at('red', 1, 2)]);
+    expect(m.points.blue).toBeGreaterThan(level + 1.5);
     for (let i = 0; i < 500; i++) zm.step(0.1, []);
     expect(events.some((e) => e.startsWith('hill '))).toBe(true);
     expect(zm.zones.filter((z) => !z.hidden)).toHaveLength(1);
