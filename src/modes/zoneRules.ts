@@ -29,6 +29,10 @@ export interface ZoneState {
   red: number;
   /** Can't be taken right now. */
   locked: boolean;
+  /** Not shown at all (hardpoint: the zones not in play; deathmatch modes: every zone, they are only spawn points). */
+  hidden: boolean;
+  /** In play but never captured (the hardpoint: whoever stands in it alone scores). */
+  noCapture?: boolean;
 }
 
 export interface ZoneEvent {
@@ -73,6 +77,7 @@ export class ZoneRules {
         blue: 0,
         red: 0,
         locked: false,
+        hidden: false,
       }));
   }
 
@@ -102,7 +107,7 @@ export class ZoneRules {
       z.red = red;
       z.contested = !z.locked && blue > 0 && blue === red;
       z.pushing = null;
-      if (blue === red || z.locked) continue;
+      if (blue === red || z.locked || z.noCapture) continue;
       const adv: Team = blue > red ? 'blue' : 'red';
       // Where this team is taking the zone: neutral first if an enemy owns it.
       const target = z.owner === null || z.owner === adv ? SIGN[adv] : 0;

@@ -20,7 +20,8 @@ const map: MapDef = {
   objects: [],
 };
 
-const at = (team: 'blue' | 'red', x: number) => ({ team, alive: true, feet: new THREE.Vector3(x, 0, 0) });
+let nextId = 1;
+const at = (team: 'blue' | 'red', x: number, id = nextId++) => ({ id, team, alive: true, feet: new THREE.Vector3(x, 0, 0) });
 
 function setup() {
   const bus = new EventBus<GameEvents>();
@@ -103,5 +104,66 @@ describe('ZoneMode', () => {
     // Nobody spawns in the sector being fought over.
     expect(zm.spawnOptions('blue').map((o) => o.id)).toEqual(['base', 'A', 'B']);
     expect(zm.spawnPoint('blue', 'C', null).pos.x).toBe(-120);
+  });
+});
+
+describe('Hardpoint, team deathmatch, kill confirmed', () => {
+  const make = (mode: 'hardpoint' | 'tdm' | 'killconfirm') => {
+    const bus = new EventBus<GameEvents>();
+    const events: string[] = [];
+    bus.on('mode:event', (e) => events.push(e.type === 'hill' ? `hill ${e.zone}` : e.type === 'tag' ? `tag ${e.team} ${e.confirmed}` : e.type));
+    bus.on('match:ended', (e) => events.push(`end ${e.winner}`));
+    return { zm: new ZoneMode(map, bus, { mode, teamSize: { blue: 4, red: 4 } }), bus, events };
+  };
+
+  it('hardpoint: one zone in play, scored by whoever stands in it alone, moving on', () => {
+    const { zm, events } = make('hardpoint');
+    expect(zm.kind).toBe('hardpoint');
+    // The middle zone first, then side to side.
+    expect(zm.order('blue')).toEqual(['B']);
+    expect(zm.zones.filter((z) => !z.hidden).map((z) => z.id)).toEqual(['B']);
+    for (let i = 0; i < 100; i++) zm.step(0.1, [at('blue', 0, 1)]);
+    const m = zm.match as unknown as { points: Record<string, number>; holder: string | null };
+    expect(m.points.blue).toBeGreaterThan(9.5);
+    expect(m.holder).toBe('blue');
+    // Contested: nobody scores, nobody captures.
+    const before = m.points.blue!;
+    for (let i = 0; i < 20; i++) zm.step(0.1, [at('blue', 0, 1), at('red', 1, 2)]);
+    expect(m.points.blue).toBeCloseTo(before);
+    expect(zm.zone('B')!.owner).toBeNull();
+    for (let i = 0; i < 500; i++) zm.step(0.1, []);
+    expect(events.some((e) => e.startsWith('hill '))).toBe(true);
+    expect(zm.zones.filter((z) => !z.hidden)).toHaveLength(1);
+  });
+
+  it('team deathmatch: downs score, the zones are hidden spawn points away from enemies', () => {
+    const { zm, bus, events } = make('tdm');
+    expect(zm.order('blue')).toEqual([]);
+    for (let i = 0; i < 40; i++) bus.emit('combat:kill', { attacker: 'a', victim: 'b', weapon: 'ar1', headshot: false, byPlayer: false, attackerTeam: 'blue', victimTeam: 'red', victimId: 9 });
+    zm.step(0.1, []);
+    expect(events).toContain('end blue');
+    const fresh = make('tdm').zm;
+    fresh.step(0.1, [at('red', -55, 3)]);
+    // A has a red soldier in it: not offered to blue; B and C are, C only to red (blue's far half).
+    const blue = fresh.spawnOptions('blue').map((o) => o.id);
+    expect(blue).not.toContain('A');
+    expect(blue).toContain('B');
+  });
+
+  it('kill confirmed: a down drops a tag, the enemy scores it, the victim side denies it', () => {
+    const { zm, bus, events } = make('killconfirm');
+    zm.step(0.1, [at('red', 20, 7), at('blue', -50, 8)]);
+    bus.emit('combat:kill', { attacker: 'a', victim: 'b', weapon: 'ar1', headshot: false, byPlayer: false, attackerTeam: 'blue', victimTeam: 'red', victimId: 7 });
+    const m = zm.match as unknown as { tags: unknown[]; points: Record<string, number> };
+    expect(m.tags).toHaveLength(1);
+    zm.step(0.1, [at('blue', 20, 8)]);
+    expect(m.tags).toHaveLength(0);
+    expect(m.points.blue).toBe(1);
+    expect(events).toContain('tag blue true');
+    zm.step(0.1, [at('blue', -30, 8)]);
+    bus.emit('combat:kill', { attacker: 'a', victim: 'b', weapon: 'ar1', headshot: false, byPlayer: false, attackerTeam: 'red', victimTeam: 'blue', victimId: 8 });
+    zm.step(0.1, [at('blue', -30, 11)]);
+    expect(events).toContain('tag blue false');
+    expect(m.points.red).toBe(0);
   });
 });

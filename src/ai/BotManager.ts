@@ -438,7 +438,7 @@ export class BotManager implements BotServices {
   hooks: BotModeHooks | null = null;
   /** Set by the game (zone mode): stations and build spots, who holds a zone, and whether someone stands where a build goes. */
   fort: Fortifications | null = null;
-  zoneOwner: ((zone: string) => Team | null) | null = null;
+  zoneOwner: ((zone: string, team: Team) => Team | null) | null = null;
   fortBlocked: ((slot: FortSlot) => boolean) | null = null;
   /** Class gadgets in the world, and each bot's squad key (for beacons); set by the game. */
   gadgets: GadgetWorld | null = null;
@@ -761,7 +761,7 @@ export class BotManager implements BotServices {
       bestScore = d * weight;
     };
     for (const st of fort.stations) {
-      if (owner(st.zone) !== bot.team) continue;
+      if (owner(st.zone, bot.team) !== bot.team) continue;
       const stand = fort.stationStand(st);
       const look = st.pos.clone().setY(st.pos.y + 0.5);
       const need = st.kind === 'ammo' ? bot.needsGrenades : bot.cls !== 'medic' && bot.medkits === 0;
@@ -773,7 +773,7 @@ export class BotManager implements BotServices {
     // Building at zones their side holds: guards anywhere around their zone,
     // anyone else only right by it (a bot that just helped take it, passing through).
     for (const sl of fort.slots) {
-      if (sl.built || owner(sl.zone) !== bot.team) continue;
+      if (sl.built || owner(sl.zone, bot.team) !== bot.team) continue;
       if (goal?.defend ? goal.pos.distanceTo(sl.pos) > goal.radius + 14 : sl.stand.distanceTo(bot.feet) > 18) continue;
       const look = sl.kind === 'barricade' ? sl.pos : sl.pos.clone().setY(sl.pos.y + 0.3);
       // Anti-tank hedgehogs matter little until there are vehicles.
@@ -804,7 +804,7 @@ export class BotManager implements BotServices {
       return !r.done;
     }
     const st = job.station;
-    if (this.zoneOwner?.(st.zone) !== bot.team) return false;
+    if (this.zoneOwner?.(st.zone, bot.team) !== bot.team) return false;
     if (job.type === 'use') {
       if (fort.use(st)) {
         if (st.kind === 'ammo') bot.restockGrenades();
@@ -3047,7 +3047,7 @@ export class BotManager implements BotServices {
   nearOwnedZone(bot: Bot, r: number): boolean {
     // Stations stand at the zones: close to one of a zone we hold.
     for (const st of this.fort?.stations ?? []) {
-      if (this.zoneOwner?.(st.zone) === bot.team && st.pos.distanceTo(bot.feet) < r) return true;
+      if (this.zoneOwner?.(st.zone, bot.team) === bot.team && st.pos.distanceTo(bot.feet) < r) return true;
     }
     return false;
   }

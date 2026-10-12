@@ -38,7 +38,7 @@ import {
   type NetSoldier,
   type NetVehicle,
 } from '../src/net/matchProtocol.ts';
-import type { ModeKind } from '../src/modes/matchRules.ts';
+import { MODE_KINDS, type ModeKind } from '../src/modes/matchRules.ts';
 import { MatchSim, SIM_DT, seeded } from '../src/sim/MatchSim.ts';
 import type { Soldier } from '../src/sim/Soldier.ts';
 import type { Vehicle } from '../src/vehicles/Vehicle.ts';
@@ -194,7 +194,7 @@ export class MatchRoom {
     const dir = opts.mapsDir ?? 'public/maps';
     if (!/^[\w-]+$/.test(opts.map)) throw new Error(`bad map id ${opts.map}`);
     const map: MapDef = parseMap(JSON.parse(readFileSync(`${dir}/${opts.map}.json`, 'utf8')));
-    const mode = (['zone', 'frontline', 'conquest'] as const).find((m) => m === opts.mode) as ModeKind | undefined;
+    const mode = MODE_KINDS.find((m) => m === opts.mode) as ModeKind | undefined;
     const lineup = opts.lineup ?? 'users';
     const side = Math.max(1, Math.floor((opts.size ?? 24) / 2));
     const bots = lineup === 'users' ? null : { blue: side, red: side, difficulty: opts.difficulty ?? 'normal' };

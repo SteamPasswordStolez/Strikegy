@@ -40,6 +40,8 @@ function modesOf(map: MapDef | undefined): LobbyMode[] {
     out.push('zone');
     if (map?.modes?.frontline) out.push('frontline');
     if (map?.modes?.conquest) out.push('conquest');
+    if (!map || (map.zones?.length ?? 0) >= 2) out.push('hardpoint');
+    out.push('tdm', 'killconfirm');
   }
   out.push('skirmish');
   return out;

@@ -24,7 +24,8 @@ export interface KitWorld {
   fort: Fortifications | null;
   /** Fires and places gadgets; null for a browser predicting (the server does it). */
   gadgets: GadgetWorld | null;
-  zoneOwner(zone: string): Team | null;
+  /** Who may use the zone's supply stations / build there (`team` asking): its owner; in the free-spawn modes anyone. */
+  zoneOwner(zone: string, team: Team): Team | null;
   /** Someone stands where a structure would go (it can't finish then). */
   inTheWay(slot: FortSlot): boolean;
   owner(s: Soldier): GadgetOwner;
@@ -150,7 +151,7 @@ export function stepFort(s: Soldier, input: InputState, dt: number, w: KitWorld)
   const station = fort.stationAt(s.player.feet);
   if (!station) return view;
   view.station = station;
-  const owned = w.zoneOwner(station.zone) === s.team;
+  const owned = w.zoneOwner(station.zone, s.team) === s.team;
   const need = needsStation(s, station.kind);
   if (!owned) view.note = 'fort.notOwned';
   else if (need && station.uses > 0) view.job = { type: 'use', station };

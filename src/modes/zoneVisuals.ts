@@ -9,6 +9,7 @@ const POLE_H = 7;
 interface Marker {
   zone: ZoneState;
   ring: THREE.Mesh;
+  pole: THREE.Mesh;
   flag: THREE.Mesh;
   label: THREE.Sprite;
   labelCanvas: HTMLCanvasElement;
@@ -49,7 +50,7 @@ export class ZoneVisuals {
       label.renderOrder = 11;
       label.layers.set(LAYER_FX);
       this.group.add(ring, pole, flag, label);
-      this.markers.push({ zone, ring, flag, label, labelCanvas, key: '' });
+      this.markers.push({ zone, ring, pole, flag, label, labelCanvas, key: '' });
     }
     scene.add(this.group);
   }
@@ -62,6 +63,9 @@ export class ZoneVisuals {
       // The flag rises with control; neutral zones fly a pale flag at the bottom.
       const leaning: Team | null = z.control > 0.001 ? 'blue' : z.control < -0.001 ? 'red' : null;
       const colorTeam = z.owner ?? leaning;
+      const shown = !z.hidden;
+      m.ring.visible = m.pole.visible = m.flag.visible = m.label.visible = shown;
+      if (!shown) continue;
       const key = `${z.owner}|${leaning}|${Math.round(progress * 40)}|${z.contested}|${z.locked}`;
       if (key !== m.key) {
         m.key = key;

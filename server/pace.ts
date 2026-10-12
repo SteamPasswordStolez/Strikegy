@@ -10,13 +10,13 @@
 import { readFileSync } from 'node:fs';
 import { MAPS } from '../src/data/maps.ts';
 import { MatchSim, SIM_DT } from '../src/sim/MatchSim.ts';
-import type { ModeKind } from '../src/modes/matchRules.ts';
+import { MODE_KINDS, type ModeKind } from '../src/modes/matchRules.ts';
 import { parseMap } from '../src/world/validateMap.ts';
 
 const [mapsArg = MAPS.map((m) => m.id).join(','), secondsArg = '300', runsArg = '2', modeArg = 'zone', sideArg = ''] = process.argv.slice(2);
 const seconds = Math.max(60, Number(secondsArg) || 300);
 const runs = Math.max(1, Number(runsArg) || 2);
-const mode = (['zone', 'frontline', 'conquest'] as const).find((m) => m === modeArg) as ModeKind | undefined;
+const mode = MODE_KINDS.find((m) => m === modeArg) as ModeKind | undefined;
 
 const median = (v: number[]) => {
   if (!v.length) return NaN;

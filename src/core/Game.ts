@@ -74,7 +74,8 @@ import { SettingsPanel } from '@/ui/SettingsPanel';
 import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
 import { ZoneMode } from '@/modes/ZoneMode';
-import { ConquestRules, DominationRules, FrontlineRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { ConquestRules, FrontlineRules, HardpointRules, KillConfirmRules, PointsRules, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
 import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
@@ -216,6 +217,7 @@ export class Game {
   private snowfall: Snowfall | null = null;
   private zoneMode: ZoneMode | null = null;
   private zoneVisuals: ZoneVisuals | null = null;
+  private tagVisuals: TagVisuals | null = null;
   private matchOver = false;
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
@@ -1182,6 +1184,7 @@ export class Game {
       this.net.render(dt);
     }
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
+    if (this.tagVisuals && this.zoneMode?.match instanceof KillConfirmRules) this.tagVisuals.update(this.zoneMode.match.tags, this.myTeam, this.elapsed);
     if (this.deployScreen && this.running && !this.showcaseCam) {
       if (!this.deployed && !this.deployScreen.visible && this.elapsed >= this.deployAt && !this.matchOver && !this.netDeploying) this.openDeploy();
       this.deployRefresh -= dt;
@@ -1575,7 +1578,7 @@ export class Game {
       fort: this.fort,
       // The server fires and places gadgets, judges who is in the way and keeps the score.
       gadgets: null,
-      zoneOwner: (id) => this.zoneMode?.zone(id)?.owner ?? null,
+      zoneOwner: (id, team) => this.zoneMode?.stationOwner(id, team) ?? null,
       inTheWay: () => false,
       owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: null }),
       points: () => {},
@@ -3025,7 +3028,7 @@ export class Game {
     f.yaw = p.yaw;
     const zm = this.zoneMode;
     f.zones = zm
-      ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: z.owner === null ? null : z.owner === this.myTeam ? 'ally' : 'enemy', contested: z.contested }))
+      ? zm.zones.filter((z) => !z.hidden).map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: z.owner === null ? null : z.owner === this.myTeam ? 'ally' : 'enemy', contested: z.contested }))
       : [];
     f.allies.length = 0;
     f.enemies.length = 0;
@@ -3224,7 +3227,8 @@ export class Game {
     const teamSize = { blue: 0, red: 0 };
     teamSize[this.myTeam] = (b?.allies ?? 0) + 1;
     teamSize[otherTeam(this.myTeam)] = b?.enemies ?? 1;
-    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize });
+    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize, passive: !!this.options.net });
+    if (zm.match instanceof KillConfirmRules) this.tagVisuals = new TagVisuals(this.renderer.scene);
     this.zoneMode = zm;
     if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
@@ -3303,7 +3307,7 @@ export class Game {
     if (this.bots) {
       this.bots.fort = fort;
       this.bots.fortBlocked = (s) => this.inTheWay(s);
-      this.bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;
+      this.bots.zoneOwner = (id, team) => this.zoneMode?.stationOwner(id, team) ?? null;
     }
     if (import.meta.env.DEV) {
       const kinds = new Map<string, number>();
@@ -3710,7 +3714,7 @@ export class Game {
       note: this.squadWiped ? t('squad.wiped') : null,
       title: this.mapName,
       matchLine: zm ? this.deployMatchLine() : null,
-      zones: zm ? zm.zones.map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: tone(z.owner), pushing: z.pushing !== null })) : [],
+      zones: zm ? zm.zones.filter((z) => !z.hidden || (zm.freeSpawns && options.some((o) => o.key === `zone:${z.id}`))).map((z) => ({ id: z.id, x: z.x, z: z.z, r: z.radius, owner: tone(z.owner), pushing: z.pushing !== null })) : [],
       enemyBase: (() => {
         const b = this.baseCenter(otherTeam(this.myTeam));
         return { x: b.x, z: b.z };
@@ -3766,7 +3770,7 @@ export class Game {
   /** How full a side's score gauge is: points toward the target, or tickets left. */
   private modeFill(team: Team): number {
     const m = this.zoneMode!.match;
-    if (m instanceof DominationRules) return m.points[team] / m.target;
+    if (m instanceof PointsRules) return m.points[team] / m.target;
     const tk = m.tickets[team];
     if (tk === null) return 1;
     this.ticketPeak[team] = Math.max(this.ticketPeak[team], tk);
@@ -3776,7 +3780,7 @@ export class Game {
   /** The number beside the zone bar: domination points, tickets, or ∞ for a side without tickets. */
   private modeScore(team: Team): string {
     const m = this.zoneMode!.match;
-    if (m instanceof DominationRules) return String(m.points[team]);
+    if (m instanceof PointsRules) return String(Math.floor(m.points[team]));
     const tk = m.tickets[team];
     return tk === null ? '∞' : String(tk);
   }
@@ -3784,7 +3788,7 @@ export class Game {
   /** "Tickets 312" / "Points 240" for the scoreboard. */
   private modeScoreLine(team: Team): string | null {
     const m = this.zoneMode!.match;
-    if (m instanceof DominationRules) return `${t('hud.points')} ${m.points[team]}`;
+    if (m instanceof PointsRules) return `${t('hud.points')} ${Math.floor(m.points[team])}`;
     const tk = m.tickets[team];
     return tk === null ? null : `${t('hud.tickets')} ${tk}`;
   }
@@ -3793,7 +3797,16 @@ export class Game {
   private modeStatus(): ZoneHud['status'] {
     const m = this.zoneMode!.match;
     const mode = t(`mode.${m.kind}`);
-    if (m instanceof DominationRules) return { text: `${mode} · ${t('mode.target').replace('{n}', String(m.target))}`, tone: 'neutral', urgent: false };
+    const target = t('mode.target').replace('{n}', String(m instanceof PointsRules ? m.target : 0));
+    if (m instanceof HardpointRules) {
+      const moves = t('mode.hillMoves').replace('{z}', m.zoneId).replace('{t}', clockText(m.moveIn));
+      const tone = m.holder ? (m.holder === this.myTeam ? 'ally' : 'enemy') : 'neutral';
+      return { text: `${mode} · ${moves} · ${target} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`, tone, urgent: m.moveIn < 10 };
+    }
+    if (m instanceof PointsRules && Number.isFinite(m.timeLimit)) {
+      return { text: `${mode} · ${target} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`, tone: 'neutral', urgent: m.timeLeft < 60 };
+    }
+    if (m instanceof PointsRules) return { text: `${mode} · ${target}`, tone: 'neutral', urgent: false };
     if (m instanceof FrontlineRules) {
       const clock = t('mode.clock').replace('{t}', clockText(m.clock));
       if (!m.attacker) return { text: `${mode} · ${t('mode.opening')} ${clockText(m.timeLeft)} · ${clock}`, tone: 'neutral', urgent: false };
@@ -3836,6 +3849,20 @@ export class Game {
       this.hud.notify(t('mode.refill').replace('{n}', String(e.tickets)), ours(e.team) ? 'ally' : 'enemy');
       return;
     }
+    if (e.type === 'tag') {
+      // Points on the scoreboard for whoever picked it up; the popup is the player's own.
+      this.scores.award(e.by, e.confirmed ? 50 : 30);
+      if (e.by === this.myId) this.hud.scorePopup(e.confirmed ? 50 : 30, t(e.confirmed ? 'points.confirm' : 'points.deny'));
+      return;
+    }
+    if (e.type === 'hill') {
+      this.hud.notify(t('mode.hillMoved').replace('{z}', e.zone), 'neutral');
+      this.audio.zoneCue(true);
+      if (this.spawnKey === `zone:${e.zone}`) this.spawnKey = 'base';
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
+      return;
+    }
     if (e.type === 'attack' && m instanceof ConquestRules && e.reason === 'opening') {
       this.hud.notify(t(ours(e.attacker) ? 'mode.goAttack' : 'mode.goDefend'), ours(e.attacker) ? 'ally' : 'enemy');
       this.audio.zoneCue(ours(e.attacker));
@@ -3855,7 +3882,7 @@ export class Game {
       this.hud.notify(t(key), weAttack === (e.reason === 'held') ? 'ally' : 'enemy');
       this.audio.zoneCue(weAttack === (e.reason === 'held'));
     }
-    if (this.spawnKey.startsWith('zone:') && zm.zone(this.spawnKey.slice(5))?.owner !== this.myTeam) this.spawnKey = 'base';
+    if (this.spawnKey.startsWith('zone:') && !zm.freeSpawns && zm.zone(this.spawnKey.slice(5))?.owner !== this.myTeam) this.spawnKey = 'base';
     this.bots?.replan('blue');
     this.bots?.replan('red');
   }
@@ -3866,7 +3893,7 @@ export class Game {
     const us = this.myTeam;
     const them = otherTeam(us);
     const reason = t(`match.reason.${m.reason ?? 'tickets'}`);
-    if (m instanceof DominationRules) return `${reason} · ${t('hud.points')} ${m.points[us]} : ${m.points[them]}`;
+    if (m instanceof PointsRules) return `${reason} · ${t('hud.points')} ${Math.floor(m.points[us])} : ${Math.floor(m.points[them])}`;
     const tk = (team: Team) => (m.tickets[team] === null ? '∞' : String(m.tickets[team]));
     return `${reason} · ${t('match.tickets')} ${tk(us)} : ${tk(them)}`;
   }
@@ -4008,7 +4035,7 @@ export class Game {
     if (map.trees) bots.setForest(map.trees, map.world.size, (x, z) => terrain.heightAt(x, z), map.world.flora);
     if (water) bots.setWater(water);
     bots.viewers = () => [this.player.feet];
-    bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;
+    bots.zoneOwner = (id, team) => this.zoneMode?.stationOwner(id, team) ?? null;
     bots.hooks = {
       objectives: (team) => this.zoneMode?.objectives(team) ?? [],
       // Down or dead they go back to the server, which respawns them.

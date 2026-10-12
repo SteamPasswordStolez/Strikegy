@@ -22,9 +22,12 @@ import { ZoneRules, type ZoneEvent, type ZoneState } from './zoneRules';
  *   when those run out.
  */
 
-export type ModeKind = 'zone' | 'frontline' | 'conquest';
+export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm';
 
-export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest'];
+export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm'];
+
+/** Modes where the zones are no front: soldiers spawn at any zone with no enemy near it (owner, 2026-10-12). */
+export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killconfirm'];
 
 /** How a match ended. */
 export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors';
@@ -38,9 +41,21 @@ export type ModeEvent =
   /** The attack timer moved by `delta` seconds (frontline). */
   | { type: 'time'; delta: number; attacker: Team }
   /** Tickets added to `team` (conquest: a sector taken). */
-  | { type: 'refill'; team: Team; tickets: number };
+  | { type: 'refill'; team: Team; tickets: number }
+  /** The hardpoint moved to `zone`. */
+  | { type: 'hill'; zone: string }
+  /** A dog tag was picked up: `by` (combatant id, team `team`) confirmed a kill or denied one. */
+  | { type: 'tag'; team: Team; confirmed: boolean; by: number };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
+
+/** A soldier as the rules see them. */
+export interface Presence {
+  readonly id: number;
+  readonly team: Team;
+  readonly alive: boolean;
+  readonly feet: { readonly x: number; readonly y: number; readonly z: number };
+}
 const other = (t: Team): Team => (t === 'blue' ? 'red' : 'blue');
 
 export abstract class MatchRules {
@@ -68,9 +83,16 @@ export abstract class MatchRules {
     if (this.tickets[team] === 0) this.end(other(team), 'tickets');
   }
 
-  /** A member of `team` went down (frontline: part of how the attack is going). */
-  onDown(team: Team): void {
+  /** A member of `team` went down (frontline: part of how the attack is going); `victimId` when known. */
+  onDown(team: Team, victimId?: number): void {
     void team;
+    void victimId;
+  }
+
+  /** Everyone's place before each step (modes that care where people are, beyond the zones). */
+  observe(list: readonly Presence[]): ModeEvent[] {
+    void list;
+    return [];
   }
 
   /** Zone ids from `team`'s side of the map to the far side (the HUD's left to right). */
@@ -94,35 +116,74 @@ export abstract class MatchRules {
 /** A point per held zone every `tick` seconds; `target` when the map gives none. */
 export const DOMINATION = { tick: 5, target: 400 };
 
-export class DominationRules extends MatchRules {
-  readonly kind = 'zone';
+/**
+ * Modes scored in points to a target, with an optional match clock: when the
+ * clock runs out the side ahead wins (level: the next point decides).
+ */
+export abstract class PointsRules extends MatchRules {
   readonly points: Record<Team, number> = { blue: 0, red: 0 };
-  private clock = 0;
+  /** Seconds played. */
+  clock = 0;
 
   constructor(
-    readonly target: number = DOMINATION.target,
-    readonly tick: number = DOMINATION.tick,
+    readonly target: number,
+    /** Match length in seconds (Infinity: none). */
+    readonly timeLimit: number = Infinity,
   ) {
     super();
   }
 
+  get timeLeft(): number {
+    return Math.max(0, this.timeLimit - this.clock);
+  }
+
+  /** Adds points and ends the match when someone is over the line (or the clock is out and someone leads). */
+  protected score(team: Team, n: number): void {
+    if (this.ended || n <= 0) return;
+    this.points[team] = Math.min(this.target, this.points[team] + n);
+    this.judge();
+  }
+
+  protected tickClock(dt: number): void {
+    this.clock += dt;
+    this.judge();
+  }
+
+  protected judge(): void {
+    if (this.ended) return;
+    const { blue, red } = this.points;
+    if ((blue >= this.target || red >= this.target) && blue !== red) this.end(blue > red ? 'blue' : 'red', 'points');
+    else if (this.clock >= this.timeLimit && Math.floor(blue) !== Math.floor(red)) this.end(blue > red ? 'blue' : 'red', 'time');
+  }
+}
+
+export class DominationRules extends PointsRules {
+  readonly kind = 'zone';
+  private tickTime = 0;
+
+  constructor(
+    target: number = DOMINATION.target,
+    readonly tick: number = DOMINATION.tick,
+  ) {
+    super(target);
+  }
+
   /** Seconds to the next scoring tick. */
   get nextTick(): number {
-    return this.tick - this.clock;
+    return this.tick - this.tickTime;
   }
 
   start(): void {}
 
   step(dt: number, zones: ZoneRules): ModeEvent[] {
     if (this.ended) return [];
-    this.clock += dt;
-    while (this.clock >= this.tick) {
-      this.clock -= this.tick;
+    this.tickTime += dt;
+    while (this.tickTime >= this.tick) {
+      this.tickTime -= this.tick;
+      // Both sides score in the same tick; a tie over the line plays on to the next.
       for (const t of ['blue', 'red'] as const) this.points[t] = Math.min(this.target, this.points[t] + zones.owned(t).length);
+      this.judge();
     }
-    const { blue, red } = this.points;
-    // Both over the line in the same tick: the one further ahead (a tie plays on to the next).
-    if ((blue >= this.target || red >= this.target) && blue !== red) this.end(blue > red ? 'blue' : 'red', 'points');
     return [];
   }
 
@@ -130,6 +191,211 @@ export class DominationRules extends MatchRules {
     void team;
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Hardpoint, team deathmatch, kill confirmed (owner, 2026-10-12: "all of them")
+
+/**
+ * Numbers [제안]. Hardpoint: one zone in play at a time, moving every `rotate`
+ * s round the map; a side standing in it alone scores a point a second; first
+ * to `target` or ahead after `time` s. Team deathmatch: a point for every
+ * enemy downed, first to `perSoldier` x the team size (about 10 minutes at
+ * a 6v6 bot match on Iron Gate: ~11 downs a minute in all) or ahead after `time` s. Kill
+ * confirmed: a downed enemy drops a tag that lasts `tagLife` s; the side that
+ * downed them scores by picking it up (`reach` m), the victim's side denies it.
+ */
+export const HARDPOINT = { target: 200, rotate: 60, time: 600 };
+export const TDM = { perSoldier: 7, min: 10, max: 150, time: 600 };
+export const KILL_CONFIRMED = { perSoldier: 5, min: 8, max: 120, time: 600, tagLife: 30, reach: 1.6 };
+
+const round5 = (n: number) => Math.max(5, Math.round(n / 5) * 5);
+
+export class HardpointRules extends PointsRules {
+  readonly kind = 'hardpoint';
+  /** Zone ids in the order the point visits them. */
+  readonly route: string[];
+  /** Index into `route` of the zone in play. */
+  active = 0;
+  /** Seconds until the point moves. */
+  moveIn: number;
+  /** Who stands in the point alone (scoring), or null. */
+  holder: Team | null = null;
+  contested = false;
+  readonly rotate: number;
+
+  constructor(route: readonly string[], opts: { target?: number; rotate?: number; time?: number } = {}) {
+    super(opts.target ?? HARDPOINT.target, opts.time ?? HARDPOINT.time);
+    this.route = [...route];
+    this.rotate = opts.rotate ?? HARDPOINT.rotate;
+    this.moveIn = this.rotate;
+  }
+
+  get zoneId(): string {
+    return this.route[this.active % Math.max(1, this.route.length)] ?? '';
+  }
+
+  start(zr: ZoneRules): void {
+    this.show(zr);
+  }
+
+  private show(zr: ZoneRules): void {
+    for (const z of zr.zones) {
+      const live = z.id === this.zoneId;
+      z.locked = !live;
+      z.noCapture = live;
+      z.hidden = !live;
+      ZoneRules.force(z, null);
+    }
+  }
+
+  step(dt: number, zr: ZoneRules): ModeEvent[] {
+    if (this.ended || !this.route.length) return [];
+    const out: ModeEvent[] = [];
+    this.moveIn -= dt;
+    if (this.moveIn <= 0) {
+      this.active = (this.active + 1) % this.route.length;
+      this.moveIn += this.rotate;
+      this.show(zr);
+      out.push({ type: 'hill', zone: this.zoneId });
+    }
+    const z = zr.zones.find((q) => q.id === this.zoneId);
+    if (z) {
+      this.contested = z.blue > 0 && z.red > 0;
+      this.holder = z.blue > 0 && z.red === 0 ? 'blue' : z.red > 0 && z.blue === 0 ? 'red' : null;
+      // Shown as owned by whoever is scoring, pulsing while they are.
+      ZoneRules.force(z, this.holder);
+      z.pushing = this.holder;
+      z.contested = this.contested;
+      if (this.holder) this.score(this.holder, dt);
+    }
+    this.tickClock(dt);
+    return out;
+  }
+
+  override focus(): readonly string[] {
+    return [this.zoneId];
+  }
+
+  order(): string[] {
+    return [this.zoneId];
+  }
+}
+
+/** Team deathmatch: the zones are only spawn points and places to go; downs score. */
+export class DeathmatchRules extends PointsRules {
+  readonly kind: ModeKind = 'tdm';
+  private ids: string[] = [];
+
+  constructor(target: number, time: number = TDM.time) {
+    super(target, time);
+  }
+
+  start(zr: ZoneRules): void {
+    for (const z of zr.zones) {
+      z.locked = true;
+      z.hidden = true;
+      ZoneRules.force(z, null);
+    }
+    this.ids = zr.zones.map((z) => z.id);
+  }
+
+  step(dt: number): ModeEvent[] {
+    if (this.ended) return [];
+    this.tickClock(dt);
+    return [];
+  }
+
+  override onDown(team: Team): void {
+    this.score(other(team), 1);
+  }
+
+  /** Bots roam the zones (they are where the map's fights are). */
+  override focus(): readonly string[] {
+    return this.ids;
+  }
+
+  order(): string[] {
+    return [];
+  }
+}
+
+export interface DogTag {
+  id: number;
+  /** The side of the soldier who dropped it. */
+  team: Team;
+  x: number;
+  y: number;
+  z: number;
+  /** Seconds left before it fades. */
+  life: number;
+}
+
+/** Kill confirmed: downs drop tags; picking up the enemy's scores, picking up your side's denies. */
+export class KillConfirmRules extends DeathmatchRules {
+  override readonly kind: ModeKind = 'killconfirm';
+  readonly tags: DogTag[] = [];
+  private nextTag = 1;
+  /** Where each soldier was at the last step (a down drops the tag there). */
+  private readonly where = new Map<number, { x: number; y: number; z: number }>();
+
+  override onDown(team: Team, victimId?: number): void {
+    if (this.ended || victimId === undefined) return;
+    const p = this.where.get(victimId);
+    if (!p) return;
+    this.tags.push({ id: this.nextTag++, team, x: p.x, y: p.y, z: p.z, life: KILL_CONFIRMED.tagLife });
+  }
+
+  override observe(list: readonly Presence[]): ModeEvent[] {
+    const out: ModeEvent[] = [];
+    for (const s of list) if (s.alive) this.where.set(s.id, { x: s.feet.x, y: s.feet.y, z: s.feet.z });
+    if (this.ended) return out;
+    const r2 = KILL_CONFIRMED.reach * KILL_CONFIRMED.reach;
+    for (let i = this.tags.length - 1; i >= 0; i--) {
+      const tag = this.tags[i]!;
+      const by = list.find((s) => s.alive && (s.feet.x - tag.x) ** 2 + (s.feet.z - tag.z) ** 2 < r2 && Math.abs(s.feet.y - tag.y) < 2.5);
+      if (!by) continue;
+      this.tags.splice(i, 1);
+      const confirmed = by.team !== tag.team;
+      if (confirmed) this.score(by.team, 1);
+      out.push({ type: 'tag', team: by.team, confirmed, by: by.id });
+    }
+    return out;
+  }
+
+  override step(dt: number): ModeEvent[] {
+    for (let i = this.tags.length - 1; i >= 0; i--) {
+      this.tags[i]!.life -= dt;
+      if (this.tags[i]!.life <= 0) this.tags.splice(i, 1);
+    }
+    return super.step(dt);
+  }
+}
+
+/** Kill target for a team deathmatch / kill confirmed match of `teamSize` a side. */
+export function killTarget(kind: 'tdm' | 'killconfirm', teamSize: number): number {
+  const c = kind === 'tdm' ? TDM : KILL_CONFIRMED;
+  return Math.min(c.max, Math.max(c.min, round5(teamSize * c.perSoldier)));
+}
+
+/**
+ * The hardpoint's route: starts at the zone in the middle (as far from one base
+ * as from the other), then swings from side to side, nearest first.
+ */
+export function hardpointRoute(zones: readonly { id: string; x: number; z: number }[], blue: { x: number; z: number }, red: { x: number; z: number }): string[] {
+  const lean = (z: { x: number; z: number }) => Math.hypot(z.x - blue.x, z.z - blue.z) - Math.hypot(z.x - red.x, z.z - red.z);
+  const sorted = [...zones].sort((a, b) => Math.abs(lean(a)) - Math.abs(lean(b)));
+  const route: string[] = [];
+  const left = sorted.slice(1).filter((z) => lean(z) < 0);
+  const right = sorted.slice(1).filter((z) => lean(z) >= 0);
+  if (sorted[0]) route.push(sorted[0].id);
+  while (left.length || right.length) {
+    const a = right.shift();
+    if (a) route.push(a.id);
+    const b = left.shift();
+    if (b) route.push(b.id);
+  }
+  return route;
 }
 
 // ---------------------------------------------------------------------------

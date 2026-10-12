@@ -212,7 +212,7 @@ export class MatchSim {
       physics,
       fort,
       gadgets: this.gadgets,
-      zoneOwner: (id) => this.zoneMode?.zone(id)?.owner ?? null,
+      zoneOwner: (id, team) => this.zoneMode?.stationOwner(id, team) ?? null,
       inTheWay: (slot) => {
         for (const c of this.fighters()) if ((c.alive || c.downed) && fort?.occupies(slot, c.feet)) return true;
         return false;
@@ -274,7 +274,7 @@ export class MatchSim {
     if (this.world.water) bots.setWater(this.world.water);
     bots.fort = this.fort;
     bots.fortBlocked = (slot) => this.kit.inTheWay(slot);
-    bots.zoneOwner = (id) => this.zoneMode?.zone(id)?.owner ?? null;
+    bots.zoneOwner = (id, team) => this.zoneMode?.stationOwner(id, team) ?? null;
     bots.viewers = () => this.humanFeet();
     const zm = this.zoneMode;
     bots.hooks = {
