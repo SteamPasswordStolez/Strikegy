@@ -116,7 +116,8 @@ export class Crowd {
     this.flags[slot] =
       (c.alive ? CROWD_ALIVE : 0) |
       (c.downed ? CROWD_DOWNED : 0) |
-      (c.team === 'red' && !MATCH.ffa ? CROWD_RED : 0) |
+      // A truce (fortress build phase): everyone one side, nobody an enemy.
+      (c.team === 'red' && !MATCH.ffa && !MATCH.truce ? CROWD_RED : 0) |
       extra;
   }
 
@@ -128,7 +129,7 @@ export class Crowd {
    */
   private ask(slot: number): number {
     const f = this.flags[slot]!;
-    if (MATCH.ffa) this.flags[slot] = f | CROWD_RED;
+    if (MATCH.ffa && !MATCH.truce) this.flags[slot] = f | CROWD_RED;
     return f;
   }
 

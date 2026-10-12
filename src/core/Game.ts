@@ -76,7 +76,8 @@ import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
 import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { armForLevel, gunGameKit } from '@/modes/gunGame';
-import { ConquestRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { EscortWorld } from '@/modes/escortWorld';
 import { ChargeVisuals } from '@/modes/chargeVisuals';
 import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
@@ -226,6 +227,8 @@ export class Game {
   private zoneVisuals: ZoneVisuals | null = null;
   private tagVisuals: TagVisuals | null = null;
   private chargeVisuals: ChargeVisuals | null = null;
+  /** Escort: the payload in the world. */
+  private escort: EscortWorld | null = null;
   private matchOver = false;
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
@@ -1175,6 +1178,7 @@ export class Game {
       simMs = performance.now() - tSim;
       this.net?.placeVehicles();
       this.vehicles?.render(alpha, this.renderer.camera.position);
+      this.escort?.render(alpha);
       this.updateAirMarkers();
       if (this.net) this.syncNetChute();
       this.renderRider(alpha, dt);
@@ -1449,6 +1453,9 @@ export class Game {
     this.netBots?.step(dt);
     this.throwables.step(dt);
     this.support.step(dt);
+    // Following the server: the fortress truce comes and goes with its copy of the rules.
+    this.zoneMode?.syncFlags();
+    this.stepEscort();
     this.physics.step();
     this.vehicles?.afterStep();
     consumePulses(input);
@@ -1644,6 +1651,7 @@ export class Game {
     this.fort?.step();
     this.botsResupplyPlayer();
     if (!this.net) this.zoneMode?.step(dt, this.combatants());
+    this.stepEscort();
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
@@ -3280,6 +3288,11 @@ export class Game {
       zm.snapCharges(this.nav);
       this.chargeVisuals = new ChargeVisuals(this.renderer.scene);
     }
+    if (zm.match instanceof EscortRules) {
+      // On the roads (a browser in a match on the game server gets the server's route with the rules).
+      zm.planRoute(this.bots?.vehicleNav ?? null, this.nav);
+      this.escort = new EscortWorld(this.physics, this.renderer.scene, zm.match.attacker);
+    }
     this.zoneMode = zm;
     if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
@@ -3523,6 +3536,12 @@ export class Game {
     ds.show();
     this.touch?.setVisible(false);
     if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /** Escort: the payload's hull and model to where the rules have it (after the rules stepped). */
+  private stepEscort(): void {
+    const m = this.zoneMode?.match;
+    if (this.escort && m instanceof EscortRules) this.escort.step(m);
   }
 
   /**
@@ -3868,6 +3887,8 @@ export class Game {
   private modeFill(team: Team): number {
     const m = this.zoneMode!.match;
     if (m instanceof SearchDestroyRules) return m.wins[team] / SND.win;
+    // Escort: how far the payload has come, against the clock (the defenders' side).
+    if (m instanceof EscortRules) return team === m.attacker ? m.progress / Math.max(1, m.length) : Math.min(1, m.timeLeft / ESCORT.start);
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       return (team === this.myTeam ? s.mine : s.best) / m.target;
@@ -3883,6 +3904,7 @@ export class Game {
   private modeScore(team: Team): string {
     const m = this.zoneMode!.match;
     if (m instanceof SearchDestroyRules) return String(m.wins[team]);
+    if (m instanceof EscortRules) return team === m.attacker ? `${Math.round((100 * m.progress) / Math.max(1, m.length))}%` : clockText(m.timeLeft);
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       return String(team === this.myTeam ? s.mine : s.best);
@@ -3920,6 +3942,21 @@ export class Game {
       }
       const target = t('mode.killTarget').replace('{n}', String(m.target));
       return { text: `${mode} · ${place} · ${target} · ${clock}`, tone, urgent: m.timeLeft < 60 };
+    }
+    if (m instanceof EscortRules) {
+      const ours = m.attacker === this.myTeam;
+      const cp = t('escort.cp').replace('{n}', String(Math.min(m.passed + 1, m.checkpoints.length))).replace('{total}', String(m.checkpoints.length));
+      if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${cp}`, tone: 'neutral', urgent: false };
+      const left = Math.max(0, (m.at[m.passed] ?? m.length) - m.progress);
+      const state = t(m.moving ? 'escort.moving' : m.contested ? 'escort.contested' : 'escort.stopped');
+      return {
+        text: `${t(ours ? 'mode.attack' : 'mode.defend')} · ${cp} ${Math.round(left)} m · ${state} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`,
+        tone: ours ? 'ally' : 'enemy',
+        urgent: m.timeLeft < 60,
+      };
+    }
+    if (m instanceof FortressRules && m.building) {
+      return { text: `${mode} · ${t('fortress.build')} ${clockText(m.buildLeft)} · ${t('mode.target').replace('{n}', String(m.target))}`, tone: 'neutral', urgent: m.buildLeft < 15 };
     }
     if (m instanceof RushRules) {
       const ours = m.attacker === this.myTeam;
@@ -4043,7 +4080,24 @@ export class Game {
       this.bots?.replan('red');
       return;
     }
-    if (e.type === 'attack' && (m instanceof ConquestRules || m instanceof RushRules) && e.reason === 'opening') {
+    if (e.type === 'checkpoint') {
+      const att = m instanceof EscortRules && ours(m.attacker);
+      const text = e.bonus > 0 ? t('escort.checkpoint').replace('{z}', e.zone).replace('{n}', String(e.bonus)) : t('escort.delivered');
+      this.hud.notify(text, att ? 'ally' : 'enemy');
+      this.audio.zoneCue(att);
+      if (this.spawnKey.startsWith('zone:') && !zm.match.spawnZones(this.myTeam)?.includes(this.spawnKey.slice(5))) this.spawnKey = 'base';
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
+      return;
+    }
+    if (e.type === 'built') {
+      this.hud.notify(t('fortress.fight'), 'neutral');
+      this.audio.zoneCue(true);
+      this.bots?.replan('blue');
+      this.bots?.replan('red');
+      return;
+    }
+    if (e.type === 'attack' && (m instanceof ConquestRules || m instanceof RushRules || m instanceof EscortRules) && e.reason === 'opening') {
       this.hud.notify(t(ours(e.attacker) ? 'mode.goAttack' : 'mode.goDefend'), ours(e.attacker) ? 'ally' : 'enemy');
       this.audio.zoneCue(ours(e.attacker));
     } else if (e.type === 'sector') {
@@ -4052,7 +4106,7 @@ export class Game {
         this.hud.notify(t(ours(e.team) ? 'mode.breakthrough' : 'mode.breached').replace('{n}', n), ours(e.team) ? 'ally' : 'enemy');
         this.audio.zoneCue(ours(e.team));
       }
-    } else if (m instanceof FrontlineRules) {
+    } else if (m instanceof FrontlineRules && e.type === 'attack') {
       // A new attack: say who attacks and why.
       const weAttack = ours(e.attacker);
       const key =
@@ -4074,6 +4128,7 @@ export class Game {
     const them = otherTeam(us);
     const reason = t(`match.reason.${m.reason ?? 'tickets'}`);
     if (m instanceof SearchDestroyRules) return `${reason} · ${t('snd.rounds')} ${m.wins[us]} : ${m.wins[them]}`;
+    if (m instanceof EscortRules) return `${reason} · ${t('escort.cp').replace('{n}', String(m.passed)).replace('{total}', String(m.checkpoints.length))} · ${Math.round((100 * m.progress) / Math.max(1, m.length))}%`;
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
       const who = m.winnerId === this.myId ? playerName(t('feed.you')) : (this.scores.get(m.winnerId ?? -1)?.name ?? '?');

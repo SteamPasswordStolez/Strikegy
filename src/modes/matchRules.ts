@@ -22,9 +22,9 @@ import { ZoneRules, type ZoneEvent, type ZoneState } from './zoneRules';
  *   when those run out.
  */
 
-export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd';
+export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress';
 
-export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd'];
+export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress'];
 
 /** Modes where the zones are no front: soldiers spawn at any zone with no enemy near it (owner, 2026-10-12). */
 export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killconfirm'];
@@ -33,7 +33,7 @@ export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killc
 export const SOLO_MODES: readonly ModeKind[] = ['ffa', 'gungame'];
 
 /** How a match ended. */
-export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds';
+export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds' | 'delivered';
 
 /** Something worth announcing. */
 export type ModeEvent =
@@ -55,7 +55,11 @@ export type ModeEvent =
   | { type: 'charge'; id: string; zone: string; state: 'armed' | 'defused' | 'blown'; team: Team; by: number }
   /** S&D: round `n` begins (`attacker` attacks it), or ended (`winner`, why). */
   | { type: 'round'; n: number; attacker: Team }
-  | { type: 'roundEnd'; n: number; winner: Team; why: 'eliminated' | 'blown' | 'defused' | 'time' };
+  | { type: 'roundEnd'; n: number; winner: Team; why: 'eliminated' | 'blown' | 'defused' | 'time' }
+  /** Escort: the payload reached checkpoint `zone` (`n` from 1); `bonus` s added to the clock. */
+  | { type: 'checkpoint'; zone: string; n: number; bonus: number }
+  /** Fortress: the build phase is over, the fight begins. */
+  | { type: 'built' };
 
 const SIGN: Record<Team, number> = { blue: 1, red: -1 };
 
@@ -119,6 +123,12 @@ export abstract class MatchRules {
 
   /** Zones the fight is about now (or about to be), null for all: what bots go for. */
   focus(): readonly string[] | null {
+    return null;
+  }
+
+  /** Zones a side may spawn at besides its base (null: the usual rule, its own zones). */
+  spawnZones(team: Team): string[] | null {
+    void team;
     return null;
   }
 
@@ -691,12 +701,6 @@ export abstract class ChargeRules extends MatchRules {
   liveCharges(): Charge[] {
     return this.charges.filter((c) => c.live && c.state !== 'gone');
   }
-
-  /** Zones a side may spawn at besides its base (null: the usual rule). */
-  spawnZones(team: Team): string[] | null {
-    void team;
-    return null;
-  }
 }
 
 /**
@@ -1030,6 +1034,252 @@ export function sndHalves(zones: readonly { id: string; x: number; y: number; z:
     return { attacker, sites: sites.map((s) => newCharge(s.id, s.id, s.x, s.y, s.z)), attackerStart: { x: start.x, y: start.y, z: start.z }, defenderStart: mid };
   };
   return [half(first), half(other(first))];
+}
+
+// ---------------------------------------------------------------------------
+// Escort and fortress (owner, 2026-10-12)
+
+/**
+ * Escort [제안]: the attackers move a payload (an APC) along a route from
+ * near their base through the zones in attack order (checkpoints) to the
+ * last one. It rolls at `speed` m/s (+ `extra` for each attacker more than
+ * the defenders within `reach` m, up to `maxSpeed`) while the attackers there
+ * outnumber the defenders, and stands still otherwise. The attackers have
+ * `start` s to the first checkpoint, each adds `perCheckpoint` s; the last
+ * one wins, out of time loses. It starts `lead` m of road before the first
+ * checkpoint, after `setup` s.
+ */
+export const ESCORT = { speed: 1.6, extra: 0.25, maxSpeed: 2.6, reach: 10, start: 300, perCheckpoint: 180, setup: 15, lead: 90 };
+
+export interface EscortOptions {
+  attacker: Team;
+  /** Zone ids in the order the payload passes them; the last is the goal. */
+  checkpoints: string[];
+  /** The route as corner points (x, y, z), from the start to the last checkpoint. */
+  route: [number, number, number][];
+  /** Distance along the route of each checkpoint. */
+  at: number[];
+}
+
+export class EscortRules extends MatchRules {
+  readonly kind = 'escort';
+  readonly attacker: Team;
+  checkpoints: string[];
+  route: [number, number, number][];
+  at: number[];
+  /** Metres along the route. */
+  progress = 0;
+  /** Checkpoints passed. */
+  passed = 0;
+  timeLeft: number = ESCORT.start;
+  setupLeft: number = ESCORT.setup;
+  /** Moving this step / both sides at it with the attackers not ahead. */
+  moving = false;
+  contested = false;
+  /** Where the payload is (and which way it faces, yaw 0 = -z). */
+  readonly pos = { x: 0, y: 0, z: 0 };
+  yaw = 0;
+  private present: readonly Presence[] = [];
+
+  constructor(opts: EscortOptions) {
+    super();
+    this.attacker = opts.attacker;
+    this.checkpoints = [...opts.checkpoints];
+    this.route = opts.route.map((p) => [...p] as [number, number, number]);
+    this.at = [...opts.at];
+    this.place();
+  }
+
+  get defender(): Team {
+    return other(this.attacker);
+  }
+
+  get length(): number {
+    return this.at[this.at.length - 1] ?? 0;
+  }
+
+  /** A new route (on the navmesh): checkpoints keep their order, progress starts over. */
+  setRoute(route: [number, number, number][], at: number[]): void {
+    this.route = route;
+    this.at = at;
+    this.progress = 0;
+    this.place();
+  }
+
+  /** The payload's place and heading at `progress` along the route. */
+  private place(): void {
+    const r = this.route;
+    let left = this.progress;
+    for (let i = 1; i < r.length; i++) {
+      const a = r[i - 1]!;
+      const b = r[i]!;
+      const seg = Math.hypot(b[0] - a[0], b[2] - a[2]);
+      if (left <= seg || i === r.length - 1) {
+        const f = seg > 0 ? Math.min(1, left / seg) : 0;
+        this.pos.x = a[0] + (b[0] - a[0]) * f;
+        this.pos.y = a[1] + (b[1] - a[1]) * f;
+        this.pos.z = a[2] + (b[2] - a[2]) * f;
+        if (seg > 0.01) this.yaw = Math.atan2(-(b[0] - a[0]), -(b[2] - a[2]));
+        return;
+      }
+      left -= seg;
+    }
+    if (r[0]) [this.pos.x, this.pos.y, this.pos.z] = r[0];
+  }
+
+  start(zr: ZoneRules): void {
+    this.show(zr);
+  }
+
+  private show(zr: ZoneRules): void {
+    for (const z of zr.zones) {
+      const i = this.checkpoints.indexOf(z.id);
+      z.locked = true;
+      z.noCapture = true;
+      z.hidden = i < 0;
+      ZoneRules.force(z, i >= 0 && i < this.passed ? this.attacker : this.defender);
+      z.pushing = i === this.passed && this.moving ? this.attacker : null;
+      z.contested = i === this.passed && this.contested;
+    }
+  }
+
+  override observe(list: readonly Presence[]): ModeEvent[] {
+    this.present = list;
+    return [];
+  }
+
+  /** Living soldiers of each side within reach of the payload. */
+  near(): Record<Team, number> {
+    const out = { blue: 0, red: 0 };
+    const r2 = ESCORT.reach * ESCORT.reach;
+    for (const s of this.present) if (s.alive && (s.feet.x - this.pos.x) ** 2 + (s.feet.z - this.pos.z) ** 2 < r2 && Math.abs(s.feet.y - this.pos.y) < 5) out[s.team]++;
+    return out;
+  }
+
+  step(dt: number, zr: ZoneRules): ModeEvent[] {
+    if (this.ended) return [];
+    const out: ModeEvent[] = [];
+    if (this.setupLeft > 0) {
+      this.setupLeft = Math.max(0, this.setupLeft - dt);
+      if (this.setupLeft === 0) out.push({ type: 'attack', attacker: this.attacker, reason: 'opening' });
+      this.show(zr);
+      return out;
+    }
+    const n = this.near();
+    const a = n[this.attacker];
+    const d = n[this.defender];
+    this.moving = a > d;
+    this.contested = a > 0 && d > 0 && !this.moving;
+    if (this.moving) {
+      const speed = Math.min(ESCORT.maxSpeed, ESCORT.speed + ESCORT.extra * (a - d - 1));
+      this.progress = Math.min(this.length, this.progress + speed * dt);
+      this.place();
+    }
+    while (this.passed < this.at.length && this.progress >= this.at[this.passed]! - 0.01) {
+      const last = this.passed === this.at.length - 1;
+      this.passed++;
+      const bonus = last ? 0 : ESCORT.perCheckpoint;
+      this.timeLeft += bonus;
+      out.push({ type: 'checkpoint', zone: this.checkpoints[this.passed - 1]!, n: this.passed, bonus });
+      if (last) this.end(this.attacker, 'delivered');
+    }
+    this.timeLeft = Math.max(0, this.timeLeft - dt);
+    if (!this.ended && this.timeLeft <= 0) this.end(this.defender, 'time');
+    this.show(zr);
+    return out;
+  }
+
+  override focus(): readonly string[] {
+    const z = this.checkpoints[this.passed];
+    return z ? [z] : [];
+  }
+
+  /** Attackers spawn at checkpoints passed, defenders at the ones still ahead (not the next). */
+  override spawnZones(team: Team): string[] {
+    return this.checkpoints.filter((_, i) => (team === this.attacker ? i < this.passed : i > this.passed));
+  }
+
+  order(team: Team): string[] {
+    return team === this.attacker ? [...this.checkpoints] : [...this.checkpoints].reverse();
+  }
+}
+
+/** Corner points through `points` (straight lines), with the distance along it of each point after the first. */
+export function polyline(points: readonly [number, number, number][]): { route: [number, number, number][]; at: number[] } {
+  const route = points.map((p) => [...p] as [number, number, number]);
+  const at: number[] = [];
+  let d = 0;
+  for (let i = 1; i < route.length; i++) {
+    d += Math.hypot(route[i]![0] - route[i - 1]![0], route[i]![2] - route[i - 1]![2]);
+    at.push(d);
+  }
+  return { route, at };
+}
+
+/**
+ * Fortress [제안]: `build` s of building first (a truce: nobody can hurt
+ * anybody, building goes `boost` x as fast, each side's half of the zones is
+ * already its own, the middle neutral), then zone domination: a point per
+ * held zone every `tick` s, first to `target` or ahead after `time` s.
+ */
+export const FORTRESS = { build: 90, boost: 3, target: 300, time: 720, tick: 5 };
+
+export class FortressRules extends PointsRules {
+  readonly kind = 'fortress';
+  buildLeft: number = FORTRESS.build;
+  private tickTime = 0;
+
+  constructor(
+    /** Each zone's first owner (null: neutral). */
+    private readonly firstOwner: Record<string, Team | null>,
+    target: number = FORTRESS.target,
+    time: number = FORTRESS.time,
+  ) {
+    super(target, time);
+  }
+
+  get building(): boolean {
+    return this.buildLeft > 0;
+  }
+
+  start(zr: ZoneRules): void {
+    for (const z of zr.zones) {
+      ZoneRules.force(z, this.firstOwner[z.id] ?? null);
+      z.locked = true;
+    }
+  }
+
+  step(dt: number, zr: ZoneRules): ModeEvent[] {
+    if (this.ended) return [];
+    if (this.buildLeft > 0) {
+      this.buildLeft = Math.max(0, this.buildLeft - dt);
+      if (this.buildLeft > 0) return [];
+      for (const z of zr.zones) z.locked = false;
+      return [{ type: 'built' }];
+    }
+    this.tickTime += dt;
+    while (this.tickTime >= FORTRESS.tick) {
+      this.tickTime -= FORTRESS.tick;
+      for (const t of ['blue', 'red'] as const) this.points[t] = Math.min(this.target, this.points[t] + zr.owned(t).length);
+      this.judge();
+    }
+    this.tickClock(dt);
+    return [];
+  }
+
+  order(): string[] {
+    return [];
+  }
+}
+
+/** Each side's half of the zones (nearer its base by more than `margin` m); the rest neutral. */
+export function halfOwners(zones: readonly { id: string; x: number; z: number }[], bases: Record<Team, { x: number; z: number }>, margin = 15): Record<string, Team | null> {
+  const out: Record<string, Team | null> = {};
+  for (const z of zones) {
+    const lean = Math.hypot(z.x - bases.blue.x, z.z - bases.blue.z) - Math.hypot(z.x - bases.red.x, z.z - bases.red.z);
+    out[z.id] = lean < -margin ? 'blue' : lean > margin ? 'red' : null;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -3,8 +3,9 @@ import type { GameBus } from '@/core/events';
 import type { NavWorld } from '@/ai/NavWorld';
 import type { MapDef, SpawnPoint, Team } from '@/world/mapTypes';
 import { ZoneRules, type ZoneRulesOptions, type ZoneState } from './zoneRules';
-import { ChargeRules, ConquestRules, DOMINATION, DominationRules, DeathmatchRules, FFA, FREE_SPAWN_MODES, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, hardpointRoute, killTarget, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
-import { setMatchFlags, type MatchFlags } from './matchFlags';
+import { ChargeRules, ConquestRules, DOMINATION, DominationRules, DeathmatchRules, ESCORT, EscortRules, FFA, FORTRESS, FREE_SPAWN_MODES, FortressRules, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, halfOwners, hardpointRoute, killTarget, polyline, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
+import { MATCH, setMatchFlags, type MatchFlags } from './matchFlags';
+import type { VehicleNav } from '@/ai/NavWorld';
 
 const DEG = Math.PI / 180;
 /** Spawning at an owned zone that is being captured puts you this far out from its edge. */
@@ -52,7 +53,7 @@ export function modesOf(map: MapDef): ModeKind[] {
   const n = map.zones?.length ?? 0;
   if (n >= 2) out.push('hardpoint');
   if (n >= 1) out.push('tdm', 'killconfirm', 'ffa', 'gungame');
-  if (n >= 2) out.push('rush', 'snd');
+  if (n >= 2) out.push('rush', 'snd', 'escort', 'fortress');
   return out;
 }
 
@@ -105,7 +106,11 @@ function createMatch(kind: ModeKind, map: MapDef, opts: ZoneModeOptions): MatchR
   }
   if (kind === 'ffa') return new FreeForAllRules();
   if (kind === 'gungame') return new GunGameRules();
-  if (kind === 'rush' || kind === 'snd') {
+  if (kind === 'fortress') {
+    const zones = (map.zones ?? []).map((z) => ({ id: z.id, x: z.pos[0], z: z.pos[2] }));
+    return new FortressRules(halfOwners(zones, { blue: spawnCenter(map, 'blue'), red: spawnCenter(map, 'red') }), m?.zone?.target ? Math.round(m.zone.target * 0.75) : FORTRESS.target);
+  }
+  if (kind === 'rush' || kind === 'snd' || kind === 'escort') {
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, x: z.pos[0], y: z.pos[1], z: z.pos[2], radius: z.radius }));
     const center = (team: Team) => {
       const c = spawnCenter(map, team);
@@ -119,6 +124,18 @@ function createMatch(kind: ModeKind, map: MapDef, opts: ZoneModeOptions): MatchR
     const front = m?.frontline?.sectors;
     const sectors = m?.conquest?.sectors ?? (front && (attacker === 'blue' ? front : [...front].reverse()));
     const plan = rushPlan(zones, center(attacker), center(attacker === 'blue' ? 'red' : 'blue'), sectors);
+    if (kind === 'escort') {
+      // Through every zone in attack order, starting a little before the first (straight lines until `planRoute` puts it on the roads).
+      const checkpoints = plan.sectors.flat();
+      const pts = checkpoints.map((id) => zones.find((z) => z.id === id)!).map((z) => [z.x, z.y, z.z] as [number, number, number]);
+      const base = center(attacker);
+      const first = pts[0] ?? [base.x, base.y, base.z];
+      const d = Math.hypot(base.x - first[0], base.z - first[2]);
+      const f = d > 0 ? Math.min(1, ESCORT.lead / d) : 0;
+      const start: [number, number, number] = [first[0] + (base.x - first[0]) * f, first[1] + (base.y - first[1]) * f, first[2] + (base.z - first[2]) * f];
+      const line = polyline([start, ...pts]);
+      return new EscortRules({ attacker, checkpoints, route: line.route, at: line.at });
+    }
     return new RushRules({
       attacker,
       sectors: plan.sectors,
@@ -186,6 +203,8 @@ export class ZoneMode {
     setMatchFlags(matchFlagsFor(this.kind));
     this.match = createMatch(this.kind, map, opts);
     this.match.start(this.rules);
+    this.syncFlags();
+    if (this.match instanceof EscortRules) this.payload.set(this.match.pos.x, this.match.pos.y, this.match.pos.z);
     // Who went down: the Frontline attack timer, deathmatch scores, kill-confirmed tags.
     if (!opts.passive)
       bus.on('combat:kill', (e) => {
@@ -224,6 +243,47 @@ export class ZoneMode {
     this.bus.emit('match:ended', { winner: this.match.winner, winnerId: this.match.winnerId ?? undefined });
   }
 
+  /** Flags that follow the match as it goes (fortress: the build phase's truce). Clients following a server call it each frame. */
+  syncFlags(): void {
+    const building = this.match instanceof FortressRules && this.match.building;
+    MATCH.truce = building;
+    MATCH.buildBoost = building ? FORTRESS.boost : 1;
+  }
+
+  /** Escort: where the payload is (one vector, kept up to date: bots' objectives follow it). */
+  readonly payload = new THREE.Vector3();
+
+  /**
+   * Escort: the payload's route on the roads (the vehicle navmesh, else the
+   * soldiers', else straight lines) through each checkpoint, once there is a
+   * navmesh. The game server's route is what a browser in a match there gets.
+   */
+  planRoute(vehicles: VehicleNav | null, nav: NavWorld | null): void {
+    const m = this.match;
+    if (!(m instanceof EscortRules) || (!vehicles && !nav) || m.route.length < 2) return;
+    const out: [number, number, number][] = [m.route[0]!];
+    const at: number[] = [];
+    const leg: THREE.Vector3[] = [];
+    let d = 0;
+    for (let i = 1; i < m.route.length; i++) {
+      const a = out[out.length - 1]!;
+      const b = m.route[i]!;
+      const from = new THREE.Vector3(...a);
+      const to = new THREE.Vector3(...b);
+      const ok = (vehicles?.path(from, to, leg) || nav?.path(from, to, leg)) && leg.length > 0;
+      const pts = ok ? leg.slice(1) : [to];
+      // The leg may end short of the checkpoint (no hull fits there): close the gap straight.
+      if (ok && pts.length && pts[pts.length - 1]!.distanceTo(to) > 3) pts.push(to);
+      for (const p of pts) {
+        const q = out[out.length - 1]!;
+        d += Math.hypot(p.x - q[0], p.z - q[2]);
+        out.push([p.x, p.y, p.z]);
+      }
+      at.push(d);
+    }
+    m.setRoute(out, at);
+  }
+
   step(dt: number, everyone: Iterable<Presence>): void {
     if (this.match.ended) return;
     const list = [...everyone].filter((p) => p.alive);
@@ -241,6 +301,8 @@ export class ZoneMode {
       else this.bus.emit('zone:neutralized', { zone: e.zone, team: e.team });
     }
     for (const e of this.match.step(dt, this.rules, events)) this.bus.emit('mode:event', e);
+    this.syncFlags();
+    if (this.match instanceof EscortRules) this.payload.set(this.match.pos.x, this.match.pos.y, this.match.pos.z);
     this.announce();
   }
 
@@ -387,10 +449,10 @@ export class ZoneMode {
    */
   spawnOptions(team: Team): SpawnOption[] {
     if (this.solo) return [{ id: 'base', underAttack: false }];
-    const allowed = this.charges?.spawnZones(team);
+    const allowed = this.match.spawnZones(team);
     if (allowed) return [{ id: 'base', underAttack: false }, ...allowed.map((id) => ({ id, underAttack: false }))];
     if (this.freeSpawns) return [{ id: 'base', underAttack: false }, ...this.rules.zones.filter((z) => this.freeSpawnOk(team, z)).map((z) => ({ id: z.id, underAttack: false }))];
-    const zones = this.rules.owned(team).filter((z) => this.kind === 'zone' || z.locked);
+    const zones = this.rules.owned(team).filter((z) => this.domination || z.locked);
     return [{ id: 'base', underAttack: false }, ...zones.map((z) => ({ id: z.id, underAttack: ZoneRules.underAttack(z) }))];
   }
 
@@ -408,11 +470,11 @@ export class ZoneMode {
       const pos = (nav && groundAround(nav, c, 9)) || c;
       return { pos, yaw: this.faceYaw(team, pos) };
     }
-    const allowed = this.charges?.spawnZones(team);
+    const allowed = this.match.spawnZones(team);
     if (allowed && choice !== 'base' && !allowed.includes(choice)) choice = 'base';
     const z = choice === 'base' ? undefined : this.zone(choice);
     let pos: THREE.Vector3;
-    const usable = z && (allowed ? true : this.freeSpawns ? this.freeSpawnOk(team, z) : z.owner === team && (this.kind === 'zone' || z.locked));
+    const usable = z && (allowed ? true : this.freeSpawns ? this.freeSpawnOk(team, z) : z.owner === team && (this.domination || z.locked));
     if (!z || !usable) {
       const list = this.bases[team];
       const sp = list[Math.floor(rand() * list.length)];
@@ -461,8 +523,26 @@ export class ZoneMode {
    * then enemy zones; nearer to this team's base ranks higher. Locked zones
    * (frontline / conquest: everything but the sector fought over) are not.
    */
+  /** Held zones score (zone, fortress): every zone is open and one's own are spawn points. */
+  get domination(): boolean {
+    return this.kind === 'zone' || this.kind === 'fortress';
+  }
+
   objectives(team: Team): Objective[] {
     if (this.charges) return this.chargeObjectives(team, this.charges);
+    const m = this.match;
+    if (m instanceof EscortRules) {
+      // Everyone at the payload: the attackers to push it, the defenders to stop it.
+      const att = team === m.attacker;
+      const enemy = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
+      const front = new THREE.Vector3(enemy.x - this.payload.x, 0, enemy.z - this.payload.z).normalize();
+      return [att ? { pos: this.payload, radius: 7, enemyHeld: true } : { pos: this.payload, radius: 12, defend: true, front }];
+    }
+    // Fortress, building: each side at its own zones (the middle waits for the fight).
+    if (m instanceof FortressRules && m.building) {
+      const enemy = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
+      return this.rules.owned(team).map((z) => ({ pos: new THREE.Vector3(z.x, z.y, z.z), radius: z.radius, defend: true, guard: false, front: new THREE.Vector3(enemy.x - z.x, 0, enemy.z - z.z).normalize() }));
+    }
     const base = this.baseCenter[team];
     const enemyBase = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
     // With one sector in play, its zones (also while it waits to open).
@@ -486,7 +566,7 @@ export class ZoneMode {
         return { z, s: s - d / 400 };
       })
       // Zone mode drops far-off quiet held zones; with one sector open, every open zone counts.
-      .filter((e) => e.s > -0.5 || this.kind !== 'zone')
+      .filter((e) => e.s > -0.5 || !this.domination)
       .sort((a, b) => b.s - a.s);
     const enemy = this.baseCenter[team === 'blue' ? 'red' : 'blue'];
     return scored.map(({ z }) => ({
@@ -534,5 +614,13 @@ function groundAround(nav: NavWorld, at: THREE.Vector3, r: number): THREE.Vector
     if (Math.abs(p.y - at.y) < 2.5) return p;
     any ??= p;
   }
-  return any;
+  if (any) return any;
+  // Nothing walkable at the very middle (a monument, a fountain: Iron Gate's B): round it.
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const d = Math.max(3, r * (i < 6 ? 0.4 : 0.8));
+    const p = nav.closest(new THREE.Vector3(at.x + Math.cos(a) * d, at.y, at.z + Math.sin(a) * d));
+    if (p && Math.abs(p.y - at.y) < 4) return p;
+  }
+  return null;
 }

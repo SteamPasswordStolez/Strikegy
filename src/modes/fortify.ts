@@ -1,4 +1,5 @@
 import { StaticBatch } from '@/render/staticBatch';
+import { MATCH } from './matchFlags';
 import * as THREE from 'three';
 import type { Obstacle } from 'recast-navigation';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
@@ -93,9 +94,9 @@ export const STATION = {
 /** How close to a build spot or station a soldier has to stand. */
 export const WORK_RANGE = 2.3;
 
-/** Build speed multiplier: supports build twice as fast. */
+/** Build speed multiplier: supports build twice as fast (a fortress build phase: everyone faster still). */
 export function buildSpeed(cls: ClassId): number {
-  return cls === 'support' ? 2 : 1;
+  return (cls === 'support' ? 2 : 1) * MATCH.buildBoost;
 }
 
 /** Points per second of building (supports earn five times as much). */

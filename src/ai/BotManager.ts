@@ -755,7 +755,8 @@ export class BotManager implements BotServices {
     // Only a few per side at a time: the rest keep fighting.
     let busy = 0;
     for (const b of this.workers.values()) if (b.team === bot.team && b !== bot) busy++;
-    if (busy >= 4) return null;
+    // A fortress build phase: everybody builds.
+    if (busy >= (MATCH.buildBoost > 1 ? Infinity : 4)) return null;
     let best: { key: string; job: FortJob; stand: THREE.Vector3; look: THREE.Vector3 } | null = null;
     let bestScore = Infinity;
     const consider = (key: string, job: FortJob, stand: THREE.Vector3, look: THREE.Vector3, weight: number) => {

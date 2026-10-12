@@ -22,9 +22,13 @@ export interface MatchFlags {
   squads: boolean;
   vehicles: boolean;
   callIns: boolean;
+  /** Nobody may hurt anybody and bots see no enemies (fortress: the build phase). Set by `ZoneMode` as the match goes. */
+  truce: boolean;
+  /** Building goes this many times as fast (fortress: the build phase), and bots don't hold back from it. */
+  buildBoost: number;
 }
 
-const TEAM_PLAY: MatchFlags = { ffa: false, revive: true, respawn: null, squads: true, vehicles: true, callIns: true };
+const TEAM_PLAY: MatchFlags = { ffa: false, revive: true, respawn: null, squads: true, vehicles: true, callIns: true, truce: false, buildBoost: 1 };
 
 export const MATCH: MatchFlags = { ...TEAM_PLAY };
 
@@ -40,6 +44,7 @@ export interface Sided {
 
 /** May `a` and `b` hurt each other / do bots fight them? In free-for-all everyone but oneself. */
 export function foes(a: Sided, b: Sided): boolean {
+  if (MATCH.truce) return false;
   if (MATCH.ffa) return a.id === undefined || b.id === undefined || a.id !== b.id;
   return a.team !== b.team;
 }

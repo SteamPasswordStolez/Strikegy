@@ -20,7 +20,8 @@ import { consumePulses, createInputState, type InputState } from '@/input/InputS
 import { ZoneMode, pickMode } from '@/modes/ZoneMode';
 import { Fortifications } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
-import { GunGameRules, type ModeKind } from '@/modes/matchRules';
+import { EscortRules, GunGameRules, type ModeKind } from '@/modes/matchRules';
+import { EscortWorld } from '@/modes/escortWorld';
 import { MATCH, foes, friends } from '@/modes/matchFlags';
 import { armForLevel, gunGameKit } from '@/modes/gunGame';
 import { ScoreTracker } from '@/modes/scoreTracker';
@@ -124,6 +125,8 @@ export class MatchSim {
   readonly throwables: Throwables;
   /** Zone supply stations and build spots (zone matches). */
   readonly fort: Fortifications | null;
+  /** Escort: the payload's hull. */
+  private readonly escort: EscortWorld | null;
   /** Rockets, rifle grenades, beacons and mines. */
   readonly gadgets: GadgetWorld;
   /** Call-ins in the world: barrages, recon planes, supply crates. */
@@ -178,6 +181,10 @@ export class MatchSim {
     const map = world.map;
     this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize }) : null;
     this.zoneMode?.snapCharges(nav);
+    // Escort: the payload's route on the roads, and its hull.
+    this.zoneMode?.planRoute(vehicleNav, nav);
+    const em = this.zoneMode?.match;
+    this.escort = em instanceof EscortRules ? new EscortWorld(physics, null, em.attacker) : null;
     this.fort = this.zoneMode ? new Fortifications(fortPlanFor(world, physics), new FortModels(null), physics, impacts, nav) : null;
     this.gadgets = new GadgetWorld(physics, this.registry, {
       explode: (kind, point, owner) => {
@@ -244,13 +251,13 @@ export class MatchSim {
     let nav: NavWorld | null = null;
     let vehicleNav: VehicleNav | null = null;
     // Charges (Rush, S&D) go on walkable ground: those modes need the navmesh even without bots.
-    const charges = ['rush', 'snd'].includes(pickMode(map, opts.mode, true));
+    const charges = ['rush', 'snd', 'escort'].includes(pickMode(map, opts.mode, true));
     if ((opts.bots && opts.bots.blue + opts.bots.red > 0) || charges) {
       // Colliders into the broadphase before the navmesh reads them.
       physics.step();
       nav = await NavWorld.build(physics, world.built.navExtra ?? undefined);
       // Bot drivers route on a mesh as wide as a tank.
-      if ((map.zones?.length ?? 0) > 0) vehicleNav = await VehicleNav.build(physics, world.built.navExtra ?? undefined);
+      if ((map.zones?.length ?? 0) > 0 && (opts.bots || pickMode(map, opts.mode, true) === 'escort')) vehicleNav = await VehicleNav.build(physics, world.built.navExtra ?? undefined);
     }
     const sim = new MatchSim(physics, impacts, world, opts, nav, vehicleNav);
     // Cover, peek spots and zone positions for the bots (baked with the navmesh).
@@ -832,6 +839,8 @@ export class MatchSim {
     this.bots?.step(dt);
     this.fort?.step();
     this.zoneMode?.step(dt, [...this.fighters()]);
+    const em = this.zoneMode?.match;
+    if (this.escort && em instanceof EscortRules) this.escort.step(em);
     this.throwables.step(dt);
     this.gadgets.step(dt, this.mineWalkers());
     this.support.step(dt);
