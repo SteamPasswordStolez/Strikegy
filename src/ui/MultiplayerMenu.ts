@@ -93,6 +93,7 @@ export class MultiplayerMenu {
       input: INPUTS.includes(saved.input as InputRule) ? saved.input! : 'all',
       botShare: saved.botShare ?? true,
       teamPick: PICKS.includes(saved.teamPick as TeamPick) ? saved.teamPick! : 'random',
+      chat: saved.chat !== false,
       password: '',
     };
     void this.connect();
@@ -121,6 +122,7 @@ export class MultiplayerMenu {
         teamOk: () => !!this.room && hasSides(this.room.settings) && this.room.settings.teamPick !== 'random',
         myTeam: () => this.me()?.team ?? null,
         touch: this.host.device === 'mobile',
+        blocked: () => (this.room && !this.room.settings.chat ? t('chat.off') : this.me()?.muted ? t('chat.youMuted') : null),
       });
       const offs = this.offs;
       offs.push(link.on('match', (m) => this.host.startMatch(m.match, link)));
@@ -143,6 +145,7 @@ export class MultiplayerMenu {
       offs.push(link.on('left', (m) => {
         this.room = null;
         if (m.reason === 'kicked') this.notice = t('mp.kicked');
+        if (m.reason === 'admin') this.notice = t('mp.closedByAdmin');
         if (this.view === 'room' || this.view === 'edit') this.showList();
       }));
       offs.push(link.on('error', (m) => {
@@ -480,6 +483,7 @@ export class MultiplayerMenu {
     if (hasSides(s)) row('mp.row.teamPick', t(`mp.pick.${s.teamPick}` as MessageKey));
     if (s.lineup !== 'users') row('mp.row.difficulty', t(`lobby.diff.${s.difficulty}` as MessageKey));
     row('mp.row.input', t(`mp.input.${s.input}` as MessageKey));
+    row('mp.row.chat', t(s.chat ? 'lobby.on' : 'lobby.off'));
   }
 
   private renderDetail(side: HTMLElement, r: RoomInfo): void {
@@ -642,6 +646,21 @@ export class MultiplayerMenu {
     }
     fields.push({
       kind: 'choice',
+      id: 'chat',
+      label: t('mp.row.chat'),
+      note: t(f.chat ? 'mp.note.chatOn' : 'mp.note.chatOff'),
+      options: [
+        { value: 'on', label: t('lobby.on') },
+        { value: 'off', label: t('lobby.off') },
+      ],
+      value: f.chat ? 'on' : 'off',
+      pick: (v) => {
+        f.chat = v === 'on';
+        redraw();
+      },
+    });
+    fields.push({
+      kind: 'choice',
       id: 'input',
       label: t('mp.row.input'),
       options: INPUTS.map((i) => ({ value: i, label: t(`mp.input.${i}` as MessageKey) })),
@@ -765,6 +784,7 @@ export class MultiplayerMenu {
     if (self) el('span', 'mpr-tag me', tags, t('mp.meBadge'));
     if (m.away) el('span', 'mpr-tag', tags, t('mp.away'));
     if (isMuted(m.tag) && !self) el('span', 'mpr-tag muted', tags, t('mp.muted'));
+    if (m.muted) el('span', 'mpr-tag muted', tags, t('mp.chatBanned'));
     const acts = el('span', 'mpr-acts', card);
     // The owner moves people between sides (rooms where the owner picks).
     if (owner && team && room.settings.teamPick === 'host' && room.state === 'lobby') {
@@ -782,6 +802,12 @@ export class MultiplayerMenu {
         this.chat?.refresh();
         this.host.redraw();
       });
+    }
+    // The owner takes someone's chat away in this room (or gives it back).
+    if (owner && !self) {
+      const cb = el('button', 'lb-btn small', acts, t(m.muted ? 'mp.chatUnban' : 'mp.chatBan'));
+      cb.title = t('mp.chatBanHint');
+      cb.addEventListener('click', () => this.link?.send({ t: 'mute', member: m.id, on: !m.muted }));
     }
     if (owner && !self) {
       el('button', 'lb-btn small danger', acts, t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));

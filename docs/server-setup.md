@@ -111,6 +111,8 @@ Cloudflare 무료 플랜은 한국 접속을 LAX(로스앤젤레스)로 보내 �
 
 ## 7. 업데이트
 
+운영자 페이지(https://strikegy.xyz/admin/)의 키는 처음 켤 때 `~/strikegy/.strikegy-admin-key`에 만들어집니다(`cat ~/strikegy/.strikegy-admin-key`로 확인, git에 안 올라감). 바꾸려면 파일을 지우고 서버를 재시작하거나 `STRIKEGY_ADMIN_KEY` 환경 변수를 주세요. 차단·채금·금칙어는 `~/strikegy/.strikegy-admin.json`에 저장됩니다.
+
 이름 태그(`이름#K7Q2M`)를 만드는 서버 비밀키는 처음 켤 때 작업 폴더의 `.strikegy-tag-secret`(git에 안 올라감)에 저장됩니다. 지우거나 바꾸면 모든 사람의 태그가 바뀌니 그대로 두세요(`STRIKEGY_TAG_SECRET` 환경 변수로 줄 수도 있음).
 
 ```bash

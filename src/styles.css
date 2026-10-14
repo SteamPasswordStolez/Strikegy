@@ -4979,6 +4979,25 @@ body:has(.deploy.on) .chat-hud:not(.touch) {
   width: min(380px, 30vw);
   max-height: 30vh;
 }
+/* The server's staff: a notice line nobody's chat can look like. */
+.chat-line.notice {
+  font-weight: 700;
+  color: #ffd24a;
+}
+.chat-notice-badge {
+  margin-right: 6px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  background: #ffd24a;
+  color: #1a1400;
+}
+.chat-hud .chat-line.notice {
+  background: rgb(40 30 0 / 0.6);
+}
+.chat.blocked .chat-input,
+.chat.blocked .chat-send {
+  opacity: 0.5;
+}
 /* Tags on the scoreboard (multiplayer). */
 .sb-tag {
   margin-left: 3px;

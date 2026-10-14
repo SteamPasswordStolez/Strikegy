@@ -11,7 +11,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
-import { LobbyCore, type MatchHost } from './lobby.ts';
+import { LobbyCore, type AdminData, type AdminStore, type MatchHost } from './lobby.ts';
 import { Matches } from './matches.ts';
 import { WorkerMatches } from './workerMatches.ts';
 import { ServerRtc, localRtcSetup, parseRtc } from './rtc.ts';
@@ -32,6 +32,50 @@ export interface GatewayOptions {
   mapsDir?: string;
   /** The key name tags are made with (default: `tagSecret()`). */
   tagSecret?: string;
+  /** The admin page's key (default: `adminKey()`; null: no admin page). */
+  adminKey?: string | null;
+  /** Where the staff's bans, mutes and words are kept (default: `.strikegy-admin.json`; null: memory only). */
+  adminStore?: AdminStore | null;
+}
+
+/** The admin page's key between restarts (git-ignored). */
+const ADMIN_KEY_FILE = '.strikegy-admin-key';
+/** The staff's bans, mutes and words (git-ignored). */
+const ADMIN_FILE = '.strikegy-admin.json';
+
+/** The admin key: `STRIKEGY_ADMIN_KEY`, else the file, else a new one written to the file (read it there: never logged). */
+export function adminKey(log: (line: string) => void = () => {}): string | null {
+  const env = process.env.STRIKEGY_ADMIN_KEY;
+  if (env) return env.length >= 16 ? env : null;
+  try {
+    const saved = readFileSync(ADMIN_KEY_FILE, 'utf8').trim();
+    if (saved.length >= 16) return saved;
+  } catch {
+    /* none yet */
+  }
+  const fresh = randomBytes(24).toString('base64url');
+  try {
+    writeFileSync(ADMIN_KEY_FILE, fresh, { mode: 0o600 });
+    log(`admin: a new key is in ${ADMIN_KEY_FILE}`);
+    return fresh;
+  } catch {
+    // Nowhere to keep it: no admin page rather than one with a key nobody can read.
+    return null;
+  }
+}
+
+/** The staff's data in a file next to the server. */
+export function fileAdminStore(path = ADMIN_FILE): AdminStore {
+  return {
+    load: () => {
+      try {
+        return JSON.parse(readFileSync(path, 'utf8')) as AdminData;
+      } catch {
+        return null;
+      }
+    },
+    save: (data) => writeFileSync(path, JSON.stringify(data), { mode: 0o600 }),
+  };
 }
 
 /** Where the tag key is kept between restarts (git-ignored; a new key gives everyone new tags). */
@@ -68,7 +112,22 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const hostOpts = { log, mapsDir: opts.mapsDir, ended: (room: string) => lobby?.matchOver(room), kick: (room: string, uid: string, reason: string) => lobby?.kick(room, uid, reason) };
   const own = opts.matches === undefined ? (opts.workers ? new WorkerMatches(hostOpts) : new Matches(hostOpts)) : null;
   const matches = opts.matches === undefined ? own : opts.matches;
-  lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches, tagSecret: opts.tagSecret ?? tagSecret() });
+  const stats = () => ({
+    matches: own?.running ?? 0,
+    stepMs: own ? Math.round(own.stepMs * 100) / 100 : 0,
+    cpu: own instanceof WorkerMatches ? Math.round(own.cpu * 100) / 100 : undefined,
+    uptime: Math.round(process.uptime()),
+    memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+  });
+  lobby = new LobbyCore({
+    log,
+    serverMax: opts.serverMax,
+    matches,
+    tagSecret: opts.tagSecret ?? tagSecret(),
+    adminKey: opts.adminKey === undefined ? adminKey(log) : opts.adminKey,
+    store: opts.adminStore === undefined ? fileAdminStore() : (opts.adminStore ?? undefined),
+    stats,
+  });
   const core = lobby;
   const sweep = setInterval(() => core.sweep(), 5000);
   // UDP data channels end here only for local testing; in production on the Oracle relay (edge.ts).

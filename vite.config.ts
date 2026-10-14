@@ -43,6 +43,13 @@ export default defineConfig({
     // Cleaning is done by scripts/clean.mjs (see comment there).
     emptyOutDir: false,
     chunkSizeWarningLimit: 2500,
+    // The game, and the staff's page at /admin/ (strikegy.xyz/admin).
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        admin: fileURLToPath(new URL('./admin/index.html', import.meta.url)),
+      },
+    },
   },
   test: {
     include: ['tests/**/*.test.ts'],

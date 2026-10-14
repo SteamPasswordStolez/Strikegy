@@ -4508,7 +4508,12 @@ export class Game {
     this.chat = new ChatPanel({
       store: chatOf(link),
       kind: 'hud',
-      send: (text, team) => link.send({ t: 'chat', text, team }),
+      send: (text, team) => {
+        // The room's owner: "/채금 name" takes someone's chat away, "/채금해제 name" gives it back.
+        const cmd = /^\/(채금해제|채금|unmute|mute)\s+(.+)$/i.exec(text.trim());
+        if (cmd) link.send({ t: 'mute', name: cmd[2]!.trim(), on: !/해제|unmute/i.test(cmd[1]!) });
+        else link.send({ t: 'chat', text, team });
+      },
       teamOk: () => !MATCH.ffa,
       myTeam: () => (MATCH.ffa ? null : this.myTeam),
       canOpen: () => this.running && !this.overlay.visible && !this.matchOver,

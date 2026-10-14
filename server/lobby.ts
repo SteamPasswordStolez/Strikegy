@@ -5,6 +5,12 @@
  * keeping a seat for a minute when a connection drops mid-match so the same
  * browser (its hidden id) comes back to the same soldier.
  *
+ * Chat is filtered for swearing and abuse (`wordFilter.ts` plus the staff's
+ * own words), rooms may have no chat, and their owner may take someone's
+ * chat away. The admin page (strikegy.xyz/admin) logs in with the server's
+ * admin key and sees every room, person and chat, closes rooms, kicks, bans
+ * and mutes server-wide (kept on disk through `AdminStore`), and posts notices.
+ *
  * People are shown as `name#TAG`: the tag comes from the browser's hidden id
  * and a key only the server holds (`tagOf`), so nobody can take on someone
  * else's (owner, 2026-10-14: no posing as others). Rooms have a chat (the
@@ -16,7 +22,8 @@
  * signalling core for P2P; host picking, WebRTC set-up and TURN went when the
  * owner chose a server-authoritative design (2026-10-04).
  */
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { filterText, profane } from '../src/net/wordFilter.ts';
 import {
   CHAT_MAX,
   HUMAN_CAP,
@@ -29,7 +36,12 @@ import {
   cleanSettings,
   hasSides,
   parseClientMsg,
+  reservedText,
   roomLoad,
+  type AdminMark,
+  type AdminOp,
+  type AdminPerson,
+  type AdminState,
   type ChatLine,
   type ClientMsg,
   type Device,
@@ -98,7 +110,44 @@ export interface LobbyOptions {
   now?: () => number;
   /** The key people's tags are made with (keep it: a new one gives everyone new tags). Default: a fresh one. */
   tagSecret?: string;
+  /** The admin page's key (none: no admin page). */
+  adminKey?: string | null;
+  /** Where the staff's bans, mutes and words are kept between restarts (default: memory only). */
+  store?: AdminStore;
+  /** The server's numbers for the admin page (load, matches, step time...). */
+  stats?: () => Record<string, number | string | undefined>;
 }
+
+/** A ban or mute the staff set: by the browser's hidden id and its address. */
+export interface StaffMark {
+  id: string;
+  /** The browser's hidden id (before the tab's part). */
+  uid: string;
+  /** The address it came from (kept on the server only; the admin page sees a hash). */
+  addr: string;
+  name: string;
+  tag: string;
+  reason: string;
+  at: number;
+  /** Until when (ms); 0: for good. */
+  until: number;
+}
+
+export interface AdminData {
+  bans: StaffMark[];
+  mutes: StaffMark[];
+  words: string[];
+}
+
+export interface AdminStore {
+  load(): AdminData | null;
+  save(data: AdminData): void;
+}
+
+/** Wrong admin keys: a few an address and some from everyone in ten minutes, then the door stays shut. */
+const ADMIN_TRIES = { addr: 5, all: 30, windowMs: 10 * 60_000 } as const;
+/** Staff words at most. */
+const WORDS_MAX = 300;
 
 /**
  * A browser's tag from its hidden id (the part before the tab's) and the
@@ -143,6 +192,8 @@ interface Client {
   /** Its last line and how often in a row (no flooding one line). */
   chatText: string;
   chatRepeats: number;
+  /** Logged in on the admin page. */
+  admin: boolean;
 }
 
 /** Chat: lines in a burst, refilled per second; the same line in a row at most this often. */
@@ -179,6 +230,8 @@ interface RoomRec {
   banned: Map<string, number>;
   /** Recent chat (for people joining). */
   chat: ChatLine[];
+  /** Browsers (hidden ids) whose chat the owner took away. */
+  muted: Set<string>;
 }
 
 const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -205,6 +258,8 @@ function sameHex(a: string, b: string): boolean {
 }
 
 const humanCap = (s: RoomSettings): number => Math.min(HUMAN_CAP, s.size);
+/** A browser's hidden id without the tab's part (the same person in every tab). */
+const uidBase = (uid: string): string => uid.split('-')[0] ?? uid;
 
 export class LobbyCore {
   private readonly clients = new Map<string, Client>();
@@ -216,10 +271,16 @@ export class LobbyCore {
   private readonly matches: MatchHost | null;
   private readonly now: () => number;
   private readonly tagSecret: string;
+  private readonly staff: AdminData;
+  /** Wrong admin keys lately: by address, and from everyone (ms timestamps). */
+  private readonly adminTries = new Map<string, number[]>();
+  private adminTriesAll: number[] = [];
 
   constructor(private readonly opts: LobbyOptions = {}) {
     this.log = opts.log ?? (() => {});
     this.tagSecret = opts.tagSecret ?? randomBytes(32).toString('hex');
+    const saved = opts.store?.load();
+    this.staff = { bans: saved?.bans ?? [], mutes: saved?.mutes ?? [], words: saved?.words ?? [] };
     this.serverMax = opts.serverMax ?? SERVER_MAX;
     this.matches = opts.matches ?? null;
     this.now = opts.now ?? Date.now;
@@ -231,7 +292,7 @@ export class LobbyCore {
 
   get clientCount(): number {
     let n = 0;
-    for (const c of this.clients.values()) if (c.awayUntil === null) n++;
+    for (const c of this.clients.values()) if (c.awayUntil === null && !c.admin) n++;
     return n;
   }
 
@@ -248,7 +309,7 @@ export class LobbyCore {
   /** A new connection; returns its client id. */
   open(conn: Conn, id = randomHex(4), addr = ''): string {
     const now = this.now();
-    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [], tag: '', team: null, chatTokens: CHAT_RATE.burst, lastChat: now, chatText: '', chatRepeats: 0 });
+    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [], tag: '', team: null, chatTokens: CHAT_RATE.burst, lastChat: now, chatText: '', chatRepeats: 0, admin: false });
     return id;
   }
 
@@ -409,6 +470,8 @@ export class LobbyCore {
     const c = this.clients.get(id);
     const m: Member = { id, name: c?.name ?? '?', tag: c?.tag ?? '', team: c?.team ?? null, device: c?.device ?? 'desktop' };
     if (c?.awayUntil != null) m.away = true;
+    const r = c?.room ? this.rooms.get(c.room) : undefined;
+    if (c && r?.muted.has(uidBase(c.uid))) m.muted = true;
     return m;
   }
 
@@ -562,8 +625,12 @@ export class LobbyCore {
     const now = this.now();
     c.chatTokens = Math.min(CHAT_RATE.burst, c.chatTokens + ((now - c.lastChat) / 1000) * CHAT_RATE.perSecond);
     c.lastChat = now;
-    const text = cleanChat(raw);
-    if (!text) return;
+    const clean = cleanChat(raw);
+    if (!clean) return;
+    if (!r.settings.chat) return this.send(c, { t: 'chat', line: { at: now, from: null, sys: 'chatOff' } });
+    if (r.muted.has(uidBase(c.uid)) || this.marked(this.staff.mutes, c)) return this.send(c, { t: 'chat', line: { at: now, from: null, sys: 'youMuted' } });
+    // Swearing and abuse masked (the built-in list and the staff's words).
+    const text = filterText(clean, this.staff.words).text;
     const repeat = text === c.chatText;
     if (c.chatTokens < 1 || (repeat && c.chatRepeats >= CHAT_RATE.repeats)) {
       this.send(c, { t: 'chat', line: { at: now, from: null, sys: 'slow' } });
@@ -637,6 +704,13 @@ export class LobbyCore {
       if (msg.v !== PROTOCOL_VERSION) return this.fail(c, 'version', String(PROTOCOL_VERSION));
       const name = cleanName(msg.name);
       if (!name) return this.fail(c, 'name');
+      if (profane(name, this.staff.words)) return this.fail(c, 'words', 'name');
+      const ban = this.marked(this.staff.bans, { uid: msg.uid, addr: c.addr });
+      if (ban) {
+        this.fail(c, 'banned', ban.reason);
+        c.conn.close();
+        return;
+      }
       if (c.name) return this.fail(c, 'bad', 'hello again');
       c.name = name;
       c.uid = msg.uid;
@@ -647,6 +721,11 @@ export class LobbyCore {
       return;
     }
     if (msg.t === 'ping') return this.send(c, { t: 'pong', at: msg.at });
+    if (msg.t === 'adminAuth') return this.adminAuth(c, msg.key);
+    if (msg.t === 'adm') {
+      if (!c.admin) return this.strike(c, 'notOwner');
+      return this.adminOp(c, msg.op);
+    }
     if (!c.name) return this.fail(c, 'bad', 'hello first');
     const r = c.room ? this.rooms.get(c.room) : undefined;
     switch (msg.t) {
@@ -655,8 +734,11 @@ export class LobbyCore {
         return this.send(c, { t: 'rooms', rooms: this.roomList() });
       case 'create': {
         if (r) return this.fail(c, 'busy');
+        // A title passing for staff or the server: said as such (cleanSettings refuses it).
+        if (typeof msg.settings.name === 'string' && reservedText(msg.settings.name)) return this.fail(c, 'words', 'title');
         const settings = cleanSettings(msg.settings);
         if (!settings) return this.fail(c, 'bad', 'settings');
+        if (profane(settings.name, this.staff.words)) return this.fail(c, 'words', 'title');
         // A few rooms per address: each one started builds a whole map on the server.
         let mine = 0;
         for (const x of this.rooms.values()) if (c.addr && this.clients.get(x.owner)?.addr === c.addr) mine++;
@@ -668,7 +750,7 @@ export class LobbyCore {
           password = { salt, hash: await pbkdf2(msg.password, salt) };
           if (!this.still(c)) return;
         }
-        const rec: RoomRec = { id: randomHex(3), settings, password, state: 'lobby', owner: c.id, members: [], passwordTries: [], startedAt: -Infinity, banned: new Map(), chat: [] };
+        const rec: RoomRec = { id: randomHex(3), settings, password, state: 'lobby', owner: c.id, members: [], passwordTries: [], startedAt: -Infinity, banned: new Map(), chat: [], muted: new Set() };
         this.rooms.set(rec.id, rec);
         this.log(`room ${rec.id} "${settings.name}" by ${c.name}`);
         return this.joinRoom(c, rec);
@@ -703,8 +785,11 @@ export class LobbyCore {
         if (!r) return this.fail(c, 'notInRoom');
         if (r.owner !== c.id) return this.fail(c, 'notOwner');
         if (r.state !== 'lobby') return this.fail(c, 'busy');
+        // A title passing for staff or the server: said as such (cleanSettings refuses it).
+        if (typeof msg.settings.name === 'string' && reservedText(msg.settings.name)) return this.fail(c, 'words', 'title');
         const settings = cleanSettings(msg.settings);
         if (!settings || settings.size < r.members.length) return this.fail(c, 'bad', 'settings');
+        if (profane(settings.name, this.staff.words)) return this.fail(c, 'words', 'title');
         const n = r.members.length;
         if (!this.fits(roomLoad(settings, n) - roomLoad(r.settings, n))) return this.fail(c, 'serverFull');
         r.settings = settings;
@@ -728,6 +813,18 @@ export class LobbyCore {
       case 'chat':
         if (!r) return this.fail(c, 'notInRoom');
         return this.chat(c, r, msg.text, msg.team === true);
+      case 'mute': {
+        if (!r) return this.fail(c, 'notInRoom');
+        // By id (the waiting room) or by name (`/채금 name` in a match); the owner only, never oneself.
+        const target = msg.member ? this.clients.get(msg.member) : r.members.map((id) => this.clients.get(id)).find((m) => m?.name === msg.name?.trim());
+        if (r.owner !== c.id || !target || target.room !== r.id || target === c) return this.send(c, { t: 'chat', line: { at: this.now(), from: null, sys: 'muteFail' } });
+        const key = uidBase(target.uid);
+        if (msg.on === r.muted.has(key)) return;
+        if (msg.on) r.muted.add(key);
+        else r.muted.delete(key);
+        this.note(r, msg.on ? 'muted' : 'unmuted', target);
+        return this.broadcast(r);
+      }
       case 'start': {
         if (!r) return this.fail(c, 'notInRoom');
         if (r.owner !== c.id) return this.fail(c, 'notOwner');
@@ -792,6 +889,192 @@ export class LobbyCore {
     if (!c.room) return true;
     this.fail(c, 'busy');
     return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // The staff: bans, mutes, words, the admin page
+
+  /** A live ban / mute matching this browser or address (expired ones are dropped). */
+  private marked(list: StaffMark[], who: { uid: string; addr: string }): StaffMark | null {
+    const now = this.now();
+    const live = list.filter((m) => m.until === 0 || m.until > now);
+    if (live.length !== list.length) {
+      list.splice(0, list.length, ...live);
+      this.saveStaff();
+    }
+    const uid = uidBase(who.uid);
+    return list.find((m) => (uid && m.uid === uid) || (!!who.addr && m.addr === who.addr)) ?? null;
+  }
+
+  private saveStaff(): void {
+    try {
+      this.opts.store?.save(this.staff);
+    } catch (err) {
+      this.log(`admin: could not save: ${String(err)}`);
+    }
+  }
+
+  /** An address as the admin page sees it: a short keyed hash (the same address, the same hash). */
+  private addrHash(addr: string): string {
+    return addr ? createHmac('sha256', this.tagSecret).update(`addr:${addr}`).digest('hex').slice(0, 8) : '-';
+  }
+
+  private adminAuth(c: Client, key: string): void {
+    const now = this.now();
+    const fresh = (l: number[]) => l.filter((t) => now - t < ADMIN_TRIES.windowMs);
+    const mine = fresh(this.adminTries.get(c.addr) ?? []);
+    this.adminTriesAll = fresh(this.adminTriesAll);
+    const real = this.opts.adminKey;
+    if (!real || mine.length >= ADMIN_TRIES.addr || this.adminTriesAll.length >= ADMIN_TRIES.all) {
+      this.adminTries.set(c.addr, mine);
+      return this.strike(c, 'rate');
+    }
+    // Compared as hashes, in constant time.
+    const a = createHash('sha256').update(key).digest();
+    const b = createHash('sha256').update(real).digest();
+    if (!timingSafeEqual(a, b)) {
+      mine.push(now);
+      this.adminTriesAll.push(now);
+      this.adminTries.set(c.addr, mine);
+      this.log(`admin: wrong key from ${this.addrHash(c.addr)}`);
+      return this.fail(c, 'password');
+    }
+    c.admin = true;
+    this.log(`admin: logged in from ${this.addrHash(c.addr)}`);
+    this.send(c, { t: 'adminOk' });
+    this.send(c, { t: 'admState', state: this.adminState() });
+  }
+
+  private person(c: Client): AdminPerson {
+    const r = c.room ? this.rooms.get(c.room) : undefined;
+    return {
+      id: c.id,
+      name: c.name ?? '?',
+      tag: c.tag,
+      device: c.device,
+      addr: this.addrHash(c.addr),
+      room: c.room,
+      team: c.team,
+      away: c.awayUntil !== null,
+      muted: !!this.marked(this.staff.mutes, c) || !!r?.muted.has(uidBase(c.uid)),
+    };
+  }
+
+  private mark(m: StaffMark): AdminMark {
+    return { id: m.id, name: m.name, tag: m.tag, addr: this.addrHash(m.addr), reason: m.reason, at: m.at, until: m.until };
+  }
+
+  private adminState(): AdminState {
+    // (Dropping expired marks on the way.)
+    this.marked(this.staff.bans, { uid: '', addr: '' });
+    this.marked(this.staff.mutes, { uid: '', addr: '' });
+    return {
+      now: this.now(),
+      server: { rooms: this.rooms.size, clients: this.clientCount, load: this.load, max: this.serverMax, protocol: PROTOCOL_VERSION, ...(this.opts.stats?.() ?? {}) },
+      rooms: [...this.rooms.values()].map((r) => ({
+        id: r.id,
+        settings: r.settings,
+        state: r.state,
+        locked: r.password !== null,
+        owner: r.owner,
+        members: r.members.map((id) => this.clients.get(id)).filter((m): m is Client => !!m).map((m) => this.person(m)),
+        chat: r.chat,
+      })),
+      lobby: [...this.clients.values()].filter((m) => !m.admin && !m.room && m.name).map((m) => this.person(m)),
+      bans: this.staff.bans.map((m) => this.mark(m)),
+      mutes: this.staff.mutes.map((m) => this.mark(m)),
+      words: this.staff.words,
+    };
+  }
+
+  /** Every connection of a browser or address. */
+  private connsOf(uid: string, addr: string): Client[] {
+    const base = uidBase(uid);
+    return [...this.clients.values()].filter((m) => !m.admin && ((base && uidBase(m.uid) === base) || (!!addr && m.addr === addr)));
+  }
+
+  private closeRoom(r: RoomRec): void {
+    for (const id of r.members) {
+      const m = this.clients.get(id);
+      if (!m) continue;
+      m.room = null;
+      m.team = null;
+      if (m.awayUntil !== null) this.clients.delete(id);
+      else this.send(m, { t: 'left', reason: 'admin' });
+    }
+    r.members = [];
+    this.rooms.delete(r.id);
+    if (r.state === 'playing') this.matches?.stop(r.id);
+    this.log(`admin: room ${r.id} closed`);
+  }
+
+  private adminOp(c: Client, op: AdminOp): void {
+    const now = this.now();
+    const target = 'client' in op ? this.clients.get(op.client) : undefined;
+    const until = 'minutes' in op && op.minutes > 0 ? now + op.minutes * 60_000 : 0;
+    switch (op.op) {
+      case 'refresh':
+        break;
+      case 'close': {
+        const r = this.rooms.get(op.room);
+        if (r) this.closeRoom(r);
+        break;
+      }
+      case 'end':
+        this.matchOver(op.room);
+        break;
+      case 'kick':
+        if (target?.room) this.leaveRoom(target, 'kicked');
+        break;
+      case 'ban': {
+        if (!target || target.admin) break;
+        this.staff.bans.push({ id: randomHex(4), uid: uidBase(target.uid), addr: target.addr, name: target.name ?? '?', tag: target.tag, reason: op.reason.trim().slice(0, 120), at: now, until });
+        this.saveStaff();
+        this.log(`admin: banned ${target.name ?? '?'}#${target.tag} (${op.minutes || 'for good'} min)`);
+        for (const m of this.connsOf(target.uid, target.addr)) {
+          this.send(m, { t: 'error', code: 'banned', detail: op.reason });
+          if (m.room) this.leaveRoom(m, 'kicked');
+          if (m.awayUntil !== null) this.clients.delete(m.id);
+          else m.conn.close();
+        }
+        break;
+      }
+      case 'mute':
+        if (!target || target.admin) break;
+        this.staff.mutes.push({ id: randomHex(4), uid: uidBase(target.uid), addr: '', name: target.name ?? '?', tag: target.tag, reason: '', at: now, until });
+        this.saveStaff();
+        break;
+      case 'unban':
+      case 'unmute': {
+        const list = op.op === 'unban' ? this.staff.bans : this.staff.mutes;
+        const i = list.findIndex((m) => m.id === op.id);
+        if (i >= 0) list.splice(i, 1);
+        this.saveStaff();
+        break;
+      }
+      case 'notice': {
+        const text = cleanChat(op.text);
+        if (!text) break;
+        const line: ChatLine = { at: now, from: null, sys: 'notice', text };
+        for (const r of this.rooms.values()) {
+          r.chat.push(line);
+          if (r.chat.length > CHAT_KEEP) r.chat.shift();
+        }
+        for (const m of this.clients.values()) if (m.name && !m.admin) this.send(m, { t: 'chat', line });
+        this.log(`admin: notice "${text}"`);
+        break;
+      }
+      case 'word': {
+        const w = op.word.normalize('NFC').toLowerCase().replace(/\s+/g, '');
+        const i = this.staff.words.indexOf(w);
+        if (op.on && w && i < 0 && this.staff.words.length < WORDS_MAX) this.staff.words.push(w);
+        if (!op.on && i >= 0) this.staff.words.splice(i, 1);
+        this.saveStaff();
+        break;
+      }
+    }
+    this.pushList();
+    this.send(c, { t: 'admState', state: this.adminState() });
   }
 
   private roomList(): RoomInfo[] {

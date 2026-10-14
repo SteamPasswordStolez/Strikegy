@@ -1,0 +1,363 @@
+/* The staff's page (strikegy.xyz/admin): the game's BF2042 colours, plain and dense. */
+:root {
+  --accent: #00e5ff;
+  --navy: #060e1c;
+  --panel: rgb(10 24 44 / 0.7);
+  --line: rgb(150 225 255 / 0.14);
+  --fg: #f2f7fb;
+  --dim: rgb(226 238 248 / 0.62);
+  --danger: #ff5a4f;
+  --warn: #ffd24a;
+  --blue: #7fb6ff;
+  --red: #ff8f82;
+  --font: 'Bahnschrift', 'DIN Alternate', 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', system-ui, sans-serif;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(ellipse at top, #0b1d36, var(--navy) 60%) fixed;
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+}
+#admin {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 18px 16px 60px;
+}
+.ad-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+}
+.ad-login {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 420px;
+  margin: 12vh auto 0;
+  padding: 24px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line), inset 3px 0 0 var(--accent);
+}
+.ad-title {
+  margin: 0 0 4px;
+  font-size: 28px;
+}
+.ad-desc {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+.ad-label {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--dim);
+}
+.ad-input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
+  color: var(--fg);
+  font: inherit;
+}
+.ad-input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+textarea.ad-input {
+  resize: vertical;
+}
+.ad-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.ad-error {
+  padding: 8px 10px;
+  background: rgb(255 90 79 / 0.15);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.ad-btn {
+  padding: 8px 16px;
+  border: 0;
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ad-btn:hover {
+  box-shadow: inset 0 0 0 1px var(--fg);
+}
+.ad-btn.primary {
+  background: var(--accent);
+  box-shadow: none;
+  color: #03141f;
+}
+.ad-btn.small {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.ad-btn.danger:hover {
+  background: rgb(255 90 79 / 0.2);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.ad-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+select.ad-btn {
+  appearance: auto;
+}
+.ad-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.ad-brand {
+  display: flex;
+  flex-direction: column;
+}
+.ad-brand-title {
+  font-size: 22px;
+  font-weight: 700;
+}
+.ad-conn {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dim);
+}
+.ad-conn.off {
+  color: var(--danger);
+  font-weight: 700;
+}
+.ad-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+.ad-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ad-tile-v {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ad-tile-k {
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.ad-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.ad-tab {
+  padding: 9px 16px;
+  border: 0;
+  background: none;
+  box-shadow: inset 0 -2px 0 transparent;
+  color: var(--dim);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ad-tab.sel {
+  color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.ad-empty {
+  padding: 18px;
+  color: var(--dim);
+}
+.ad-room {
+  margin-bottom: 8px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ad-room[open] {
+  box-shadow: inset 0 0 0 1px var(--line), inset 3px 0 0 var(--accent);
+}
+.ad-room-sum {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  cursor: pointer;
+}
+.ad-room-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+.ad-room > .ad-acts,
+.ad-room > .ad-table,
+.ad-room > .ad-sub,
+.ad-room > .ad-chat {
+  width: calc(100% - 28px);
+  margin: 0 14px 10px;
+}
+.ad-sub {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+}
+.ad-chat {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 8px;
+  background: rgb(0 0 0 / 0.25);
+  font-size: 13px;
+}
+.ad-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+.ad-line.sys {
+  color: var(--dim);
+  font-style: italic;
+}
+.side-blue {
+  color: var(--blue);
+}
+.side-red {
+  color: var(--red);
+}
+.ad-dim {
+  color: var(--dim);
+}
+.ad-mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--dim);
+}
+.ad-badge {
+  padding: 1px 7px;
+  margin-right: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgb(255 255 255 / 0.1);
+}
+.ad-badge.playing {
+  background: rgb(0 229 255 / 0.18);
+  color: var(--accent);
+}
+.ad-badge.host {
+  background: rgb(255 210 74 / 0.18);
+  color: var(--warn);
+}
+.ad-badge.warn {
+  background: rgb(255 90 79 / 0.18);
+  color: var(--red);
+}
+.ad-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ad-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ad-table th {
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--dim);
+  border-bottom: 1px solid var(--line);
+}
+.ad-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.05);
+  vertical-align: middle;
+}
+.ad-table > tbody > tr:hover {
+  background: rgb(255 255 255 / 0.04);
+}
+.ad-who {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ad-h2 {
+  margin: 18px 0 8px;
+  font-size: 16px;
+}
+.ad-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+}
+.ad-tools[hidden] {
+  display: none;
+}
+.ad-row .ad-btn {
+  white-space: nowrap;
+}
+.ad-tools .ad-btn.primary {
+  align-self: flex-start;
+}
+.ad-row {
+  display: flex;
+  gap: 6px;
+}
+.ad-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ad-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+}
+.ad-chip button {
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  cursor: pointer;
+}
+.ad-chip button:hover {
+  color: var(--danger);
+}
+@media (max-width: 700px) {
+  .ad-table th:nth-child(3),
+  .ad-table td:nth-child(3),
+  .ad-table th:nth-child(4),
+  .ad-table td:nth-child(4) {
+    display: none;
+  }
+}

@@ -1,6 +1,7 @@
 import { t } from '@/i18n';
 import { saveName } from '@/net/identity';
 import { NAME_MAX, reservedText } from '@/net/lobbyProtocol';
+import { profane } from '@/net/wordFilter';
 
 /**
  * "Pick your name": shown over the main menu on the first visit, and when the
@@ -66,11 +67,13 @@ export function askName(parent: HTMLElement, current: string | null, required: b
   };
   box.addEventListener('submit', (e) => {
     e.preventDefault();
-    const name = saveName(input.value);
+    // No swearing in names (the server refuses them too).
+    const bad = profane(input.value);
+    const name = bad ? null : saveName(input.value);
     if (name) close(name);
     else {
-      // Names passing for staff or the server (owner, 2026-10-14) get their own reason.
-      note.textContent = t(reservedText(input.value) ? 'name.reserved' : 'name.rule');
+      // Names passing for staff or the server, or swearing (owner, 2026-10-14), get their own reason.
+      note.textContent = t(bad ? 'name.words' : reservedText(input.value) ? 'name.reserved' : 'name.rule');
       note.classList.add('warn');
       input.focus();
     }

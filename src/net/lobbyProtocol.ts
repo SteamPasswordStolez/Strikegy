@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -90,7 +90,13 @@ export interface ChatLine {
   text?: string;
   /** To the sender's side only. */
   team?: boolean;
-  sys?: 'join' | 'leave' | 'kicked' | 'host' | 'team' | 'slow' | 'start';
+  /**
+   * `muted` / `unmuted`: the owner took `who`'s chat away or gave it back;
+   * to the sender only: `slow` (flooding), `chatOff` (the room has no chat),
+   * `youMuted` (muted here or by the server's staff), `muteFail` (only the
+   * owner mutes, someone in the room); `notice`: the server's staff to everyone (`text`).
+   */
+  sys?: 'join' | 'leave' | 'kicked' | 'host' | 'team' | 'slow' | 'start' | 'muted' | 'unmuted' | 'chatOff' | 'youMuted' | 'muteFail' | 'notice';
   who?: { name: string; tag: string };
   side?: Side;
 }
@@ -109,6 +115,8 @@ export interface RoomSettings {
   botShare: boolean;
   /** Who picks the sides. */
   teamPick: TeamPick;
+  /** People may chat in the room (owner, 2026-10-14: set when made, changeable while waiting). */
+  chat: boolean;
 }
 
 /**
@@ -129,6 +137,8 @@ export interface Member {
   device: Device;
   /** Lost the connection mid-match; the seat is kept for a minute. */
   away?: boolean;
+  /** The owner took their chat away (in this room). */
+  muted?: boolean;
 }
 
 /** One row of the room list. */
@@ -275,6 +285,11 @@ export type ClientMsg =
   | { t: 'chat'; text: string; team?: boolean }
   /** Onto a side: one's own (rooms where players pick), or `member`'s (the owner, where the owner picks). */
   | { t: 'team'; team: Side; member?: string }
+  /** The owner takes someone's chat away or gives it back (by member id, or by name: `/채금 name` in a match). */
+  | { t: 'mute'; member?: string; name?: string; on: boolean }
+  /** The admin page: the server's admin key, then its operations. */
+  | { t: 'adminAuth'; key: string }
+  | { t: 'adm'; op: AdminOp }
   | { t: 'leave' }
   | { t: 'settings'; settings: RoomSettings }
   | { t: 'start' }
@@ -306,6 +321,7 @@ export type ErrorCode =
   | 'busy'
   | 'rate'
   | 'banned'
+  | 'words'
   | 'bad';
 
 export type ServerMsg =
@@ -315,7 +331,9 @@ export type ServerMsg =
   | { t: 'chatLog'; lines: ChatLine[] }
   | { t: 'rooms'; rooms: RoomInfo[] }
   | { t: 'room'; room: Room }
-  | { t: 'left'; reason: 'leave' | 'kicked' | 'closed' }
+  | { t: 'left'; reason: 'leave' | 'kicked' | 'closed' | 'admin' }
+  | { t: 'adminOk' }
+  | { t: 'admState'; state: AdminState }
   | { t: 'pong'; at: number }
   | { t: 'error'; code: ErrorCode; detail?: string }
   | { t: 'match'; match: MatchStart }
@@ -337,6 +355,99 @@ export type ServerMsg =
       beacons?: { id: number; team: Side; owner: string; uses: number; pos: [number, number, number] }[];
     };
 
+// ---------------------------------------------------------------------------
+// The admin page (strikegy.xyz/admin): the server's state and the staff's tools.
+
+/** What the admin page may do. Minutes 0: for good. */
+export type AdminOp =
+  | { op: 'refresh' }
+  | { op: 'close'; room: string }
+  | { op: 'end'; room: string }
+  | { op: 'kick'; client: string }
+  | { op: 'ban'; client: string; minutes: number; reason: string }
+  | { op: 'unban'; id: string }
+  | { op: 'mute'; client: string; minutes: number }
+  | { op: 'unmute'; id: string }
+  | { op: 'notice'; text: string }
+  | { op: 'word'; word: string; on: boolean };
+
+/** A connected person as the admin page sees them (`addr`: a short hash of the address, never the address). */
+export interface AdminPerson {
+  id: string;
+  name: string;
+  tag: string;
+  device: Device;
+  addr: string;
+  room: string | null;
+  team: Side | null;
+  away: boolean;
+  /** Muted by the staff (until, ms; 0 for good), or in their room by its owner. */
+  muted: boolean;
+}
+
+export interface AdminRoom {
+  id: string;
+  settings: RoomSettings;
+  state: RoomState;
+  locked: boolean;
+  owner: string;
+  members: AdminPerson[];
+  chat: ChatLine[];
+}
+
+/** A ban or a mute the staff set (`until` ms; 0 for good). */
+export interface AdminMark {
+  id: string;
+  name: string;
+  tag: string;
+  addr: string;
+  reason: string;
+  at: number;
+  until: number;
+}
+
+export interface AdminState {
+  now: number;
+  server: Record<string, number | string | undefined>;
+  rooms: AdminRoom[];
+  /** Connected and in no room. */
+  lobby: AdminPerson[];
+  bans: AdminMark[];
+  mutes: AdminMark[];
+  /** Words the server masks besides the built-in list. */
+  words: string[];
+}
+
+const okId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,40}$/.test(v);
+const okMin = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 60 * 24 * 365;
+
+/** Checks an admin operation; null when it isn't one. */
+export function parseAdminOp(raw: unknown): AdminOp | null {
+  if (!isObj(raw)) return null;
+  switch (raw.op) {
+    case 'refresh':
+      return { op: 'refresh' };
+    case 'close':
+    case 'end':
+      return okId(raw.room) ? { op: raw.op, room: raw.room } : null;
+    case 'kick':
+      return okId(raw.client) ? { op: 'kick', client: raw.client } : null;
+    case 'ban':
+      return okId(raw.client) && okMin(raw.minutes) && str(raw.reason, 120) ? { op: 'ban', client: raw.client, minutes: raw.minutes, reason: raw.reason } : null;
+    case 'mute':
+      return okId(raw.client) && okMin(raw.minutes) ? { op: 'mute', client: raw.client, minutes: raw.minutes } : null;
+    case 'unban':
+    case 'unmute':
+      return okId(raw.id) ? { op: raw.op, id: raw.id } : null;
+    case 'notice':
+      return str(raw.text, CHAT_MAX * 2) ? { op: 'notice', text: raw.text } : null;
+    case 'word':
+      return str(raw.word, 32) && typeof raw.on === 'boolean' ? { op: 'word', word: raw.word, on: raw.on } : null;
+    default:
+      return null;
+  }
+}
+
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
 const INPUTS: readonly InputRule[] = ['all', 'desktop', 'mobile'];
 const DIFFS = ['easy', 'normal', 'hard'] as const;
@@ -349,7 +460,7 @@ const str = (v: unknown, max: number): v is string => typeof v === 'string' && v
 /** Checks settings from a client; returns a clean copy or null. */
 export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!isObj(raw)) return null;
-  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick } = raw;
+  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick, chat } = raw;
   if (!str(name, 32) || !str(map, 32) || !str(mode, 16)) return null;
   // No control characters or text-direction overrides (they scramble the room list).
   // eslint-disable-next-line no-control-regex -- stripping them is the point
@@ -360,6 +471,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!DIFFS.includes(difficulty as (typeof DIFFS)[number]) || typeof botShare !== 'boolean') return null;
   // Rooms from before team picking: drawn at random.
   if (teamPick !== undefined && !PICKS.includes(teamPick as TeamPick)) return null;
+  if (chat !== undefined && typeof chat !== 'boolean') return null;
   return {
     name: title,
     map,
@@ -370,6 +482,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
     input: input as InputRule,
     botShare,
     teamPick: (teamPick as TeamPick | undefined) ?? 'random',
+    chat: chat !== false,
   };
 }
 
@@ -410,6 +523,16 @@ export function parseClientMsg(text: string): ClientMsg | null {
         : null;
     case 'chat':
       return typeof raw.text === 'string' && raw.text.length <= CHAT_MAX * 4 && (raw.team === undefined || typeof raw.team === 'boolean') ? { t: 'chat', text: raw.text, team: raw.team === true } : null;
+    case 'mute':
+      return typeof raw.on === 'boolean' && (raw.member === undefined || str(raw.member, 32)) && (raw.name === undefined || str(raw.name, 32)) && (raw.member !== undefined || raw.name !== undefined)
+        ? { t: 'mute', member: raw.member as string | undefined, name: raw.name as string | undefined, on: raw.on }
+        : null;
+    case 'adminAuth':
+      return str(raw.key, 200) ? { t: 'adminAuth', key: raw.key } : null;
+    case 'adm': {
+      const op = parseAdminOp(raw.op);
+      return op ? { t: 'adm', op } : null;
+    }
     case 'team':
       return isSide(raw.team) && (raw.member === undefined || str(raw.member, 32)) ? { t: 'team', team: raw.team, member: raw.member as string | undefined } : null;
     case 'settings':

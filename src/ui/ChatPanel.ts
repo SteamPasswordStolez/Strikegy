@@ -27,6 +27,8 @@ export interface ChatPanelOptions {
   touch?: boolean;
   /** The HUD box closed (the game takes the keys back). */
   onClose?(): void;
+  /** Why nobody can type here now (the room has no chat, one's chat was taken away), or null. */
+  blocked?(): string | null;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
@@ -112,7 +114,8 @@ export class ChatPanel {
     const start = this.input.selectionStart;
     parent.appendChild(this.root);
     this.scrollDown();
-    if (focused) {
+    this.updateBlocked();
+    if (focused && !this.input.disabled) {
       this.input.focus({ preventScroll: true });
       if (start !== null) this.input.setSelectionRange(start, start);
     }
@@ -122,6 +125,14 @@ export class ChatPanel {
   /** Draws the log again (after someone was blocked or unblocked). */
   refresh(): void {
     this.redraw();
+  }
+
+  /** Locks or frees the line to type in (see `blocked`). */
+  private updateBlocked(): void {
+    const why = this.o.blocked?.() ?? null;
+    this.input.disabled = !!why;
+    this.input.placeholder = why ?? t(this.o.kind === 'room' ? 'chat.placeholder' : 'chat.placeholderHud');
+    this.root.classList.toggle('blocked', !!why);
   }
 
   open(team: boolean): void {
@@ -217,6 +228,13 @@ function sideClass(side: Side | null, mine: Side | null): string {
 /** One line: the server's notes in their own look; people's lines as [side] name#TAG: text. */
 function lineView(line: ChatLine, mine: Side | null): HTMLDivElement {
   const row = document.createElement('div');
+  if (!line.from && line.sys === 'notice') {
+    // The server's staff: its own look, never one a person's line can take.
+    row.className = 'chat-line notice';
+    el('span', 'chat-notice-badge', row, t('chat.notice'));
+    el('span', 'chat-text', row, line.text ?? '');
+    return row;
+  }
   if (!line.from) {
     row.className = 'chat-line sys';
     el('span', 'chat-sys-mark', row, '◆');

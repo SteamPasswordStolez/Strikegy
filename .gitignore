@@ -13,3 +13,5 @@ public/nav/
 # Model screenshot lab (scripts/bench/kitlab.mjs)
 public/maps/kitlab*.json
 .strikegy-tag-secret
+.strikegy-admin-key
+.strikegy-admin.json
