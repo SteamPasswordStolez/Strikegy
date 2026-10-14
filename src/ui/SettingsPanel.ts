@@ -8,7 +8,7 @@ type Category = 'controls' | 'keys' | 'video' | 'audio';
 const KEY_GROUPS: [MessageKey, Action[]][] = [
   ['keys.g.move', ['forward', 'back', 'left', 'right', 'sprint', 'jump', 'crouch']],
   ['keys.g.combat', ['fire', 'ads', 'reload', 'melee', 'grenade', 'breath', 'inspect']],
-  ['keys.g.kit', ['interact', 'medkit', 'build', 'support', 'view', 'scoreboard']],
+  ['keys.g.kit', ['interact', 'medkit', 'build', 'support', 'view', 'scoreboard', 'chat', 'teamChat']],
   ['keys.g.slots', ['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6', 'slot7', 'slot8', 'slot9']],
 ];
 

@@ -8,7 +8,7 @@
 import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import type { ClientMsg, RoomSettings } from '../src/net/lobbyProtocol.ts';
-import type { MatchHost, MatchLine } from './lobby.ts';
+import type { MatchHost, MatchLine, MatchPlayer } from './lobby.ts';
 import type { FromRoom, RoomWorkerData, ToRoom } from './roomWorker.ts';
 
 /** A finished match keeps running this long so the last news reaches everyone (ms). */
@@ -70,7 +70,7 @@ export class WorkerMatches implements MatchHost {
     return sum / this.cores;
   }
 
-  async start(room: string, settings: RoomSettings, members: { uid: string; name: string; line: MatchLine }[]): Promise<void> {
+  async start(room: string, settings: RoomSettings, members: (MatchPlayer & { line: MatchLine })[]): Promise<void> {
     this.stop(room);
     let loading = 0;
     for (const r of this.rooms.values()) if (!r.ready) loading++;
@@ -138,19 +138,19 @@ export class WorkerMatches implements MatchHost {
     }
     // Called off while loading.
     if (this.rooms.get(room) !== t) return;
-    for (const p of members) this.join(room, p.uid, p.name, p.line);
+    for (const { line, ...p } of members) this.join(room, p, line);
   }
 
   private post(room: string, m: ToRoom, transfer?: ArrayBuffer[]): void {
     this.rooms.get(room)?.worker.postMessage(m, transfer ?? []);
   }
 
-  join(room: string, uid: string, name: string, line: MatchLine): void {
+  join(room: string, player: MatchPlayer, line: MatchLine): void {
     const t = this.rooms.get(room);
     if (!t) return;
-    t.lines.set(uid, line);
-    if (t.ready) this.post(room, { t: 'join', uid, name });
-    else void t.loaded.then(() => this.rooms.get(room) === t && this.post(room, { t: 'join', uid, name })).catch(() => {});
+    t.lines.set(player.uid, line);
+    if (t.ready) this.post(room, { t: 'join', player });
+    else void t.loaded.then(() => this.rooms.get(room) === t && this.post(room, { t: 'join', player })).catch(() => {});
   }
 
   detach(room: string, uid: string): void {

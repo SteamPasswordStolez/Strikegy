@@ -37,6 +37,8 @@ export interface Mount {
   heat: number;
   overheated: boolean;
   nextShot: number;
+  /** The hull's heading when the gun was last aimed (the gun holds its bearing as the hull turns under it). */
+  hullYaw?: number;
 }
 
 /** Someone in a seat: a combatant id and which team they're on. */
@@ -515,6 +517,15 @@ export class Vehicle implements Damageable {
     const wantYaw = THREE.MathUtils.clamp(rel, -tr, tr);
     const wantPitch = THREE.MathUtils.clamp(worldPitch, lo, hi);
     if (s.turn && Number.isFinite(dt)) {
+      // Stabilised (owner, 2026-10-14: tanks were too hard to handle): the gun keeps its
+      // bearing while the hull turns under it, within its traverse; the turn rate is for aiming.
+      const hull = this.yaw;
+      if (m.hullYaw !== undefined) {
+        const dh = Math.atan2(Math.sin(hull - m.hullYaw), Math.cos(hull - m.hullYaw));
+        // A big jump is a gun nobody aimed for a while: no catching up on it.
+        if (Math.abs(dh) < 0.3) m.yaw = tr >= Math.PI ? Math.atan2(Math.sin(m.yaw - dh), Math.cos(m.yaw - dh)) : THREE.MathUtils.clamp(m.yaw - dh, -tr, tr);
+      }
+      m.hullYaw = hull;
       // The short way round (a gun with all-round traverse), at the turn rate.
       let d = wantYaw - m.yaw;
       if (tr >= Math.PI) d = Math.atan2(Math.sin(d), Math.cos(d));

@@ -4,19 +4,24 @@ import { loadJSON, saveJSON } from '@/core/storage';
 import { loadIdentity, seatId } from '@/net/identity';
 import { ServerLink, ServerError } from '@/net/ServerLink';
 import { serverUrls } from '@/net/servers';
-import type { Device, Lineup, InputRule, MatchStart, Room, RoomInfo, RoomSettings } from '@/net/lobbyProtocol';
-import { renderMatchSetup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
+import { chatOf, isMuted, setMuted } from '@/net/chat';
+import { hasSides, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
+import { ChatPanel, nameView } from './ChatPanel';
+import { modeName, renderMatchSetup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
 const INPUTS: readonly InputRule[] = ['all', 'desktop', 'mobile'];
+const PICKS: readonly TeamPick[] = ['random', 'self', 'host'];
 const DIFFS = ['easy', 'normal', 'hard'] as const;
+const SIDES: readonly Side[] = ['blue', 'red'];
 /** Room sizes the form steps through: both sides of the solo team sizes (2..300). */
 const SIZES = TEAM_SIZES.map((n) => n * 2);
 /** How often the round trip to the server is measured (ms). */
 const PING_EVERY = 2000;
 
-type View = 'connecting' | 'offline' | 'list' | 'create' | 'room';
+type View = 'connecting' | 'offline' | 'list' | 'create' | 'edit' | 'room';
+type Filter = 'all' | 'lobby' | 'playing';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -27,7 +32,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
 }
 
 const step = <T>(list: readonly T[], cur: T, d: number): T => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length]!;
-const modeName = (m: string): string => t(m === 'skirmish' ? 'lobby.skirmish' : (`mode.${m}` as MessageKey));
+const mapName = (id: string): string => t(`map.${id}` as MessageKey);
+const sideCap = (r: RoomInfo): number => Math.ceil(r.humanCap / 2);
 
 export interface MultiplayerHost {
   /** Modes the map offers (from its JSON, once loaded). */
@@ -42,10 +48,15 @@ export interface MultiplayerHost {
 }
 
 /**
- * The multiplayer pages of the main menu: connect to the game server, the
- * room list (join, quick join), creating a room, and the waiting room
- * (members, the round trip to the server). Keeps the connection while the
- * menu redraws; `close` drops it.
+ * The multiplayer pages of the main menu (remade 2026-10-14 in the menus'
+ * BF2042 look): connect to the game server; the server browser (rooms with
+ * their owner's tag, filters and search, the picked room's details and join
+ * buttons, a side to join a match under way on where players pick); creating
+ * a room or changing its settings (the shared setup page, plus who picks the
+ * sides); and the waiting room (the two sides, or one list where the sides
+ * are drawn at the start; moving between sides as the room's rule allows,
+ * kicking, blocking someone's chat; the room's chat). Keeps the connection
+ * while the menu redraws; `close` drops it.
  */
 export class MultiplayerMenu {
   private view: View = 'connecting';
@@ -55,11 +66,19 @@ export class MultiplayerMenu {
   /** Round trip to the server (ms), null until measured. */
   private ping: number | null = null;
   private pingTimer = 0;
+  /** Where the round trip is shown (updated in place: a redraw would take the chat's focus). */
+  private pingEls: HTMLElement[] = [];
   private rooms: RoomInfo[] = [];
+  private selected: string | null = null;
+  private filter: Filter = 'all';
+  private search = '';
+  /** Typed into the picked room's password box. */
+  private password = '';
   private notice: string | null = null;
   private form: RoomSettings & { password: string };
   private redrawQueued = false;
   private offs: (() => void)[] = [];
+  private chat: ChatPanel | null = null;
 
   constructor(private readonly host: MultiplayerHost) {
     const saved = loadJSON<Partial<RoomSettings>>(CREATE_KEY) ?? {};
@@ -73,6 +92,7 @@ export class MultiplayerMenu {
       difficulty: DIFFS.includes(saved.difficulty as (typeof DIFFS)[number]) ? saved.difficulty! : 'normal',
       input: INPUTS.includes(saved.input as InputRule) ? saved.input! : 'all',
       botShare: saved.botShare ?? true,
+      teamPick: PICKS.includes(saved.teamPick as TeamPick) ? saved.teamPick! : 'random',
       password: '',
     };
     void this.connect();
@@ -80,7 +100,7 @@ export class MultiplayerMenu {
   }
 
   get title(): MessageKey {
-    return this.view === 'create' ? 'mp.createTitle' : this.view === 'room' ? 'mp.roomTitle' : 'menu.multi';
+    return this.view === 'create' ? 'mp.createTitle' : this.view === 'edit' ? 'mp.editTitle' : this.view === 'room' ? 'mp.roomTitle' : 'menu.multi';
   }
 
   private async connect(): Promise<void> {
@@ -92,6 +112,16 @@ export class MultiplayerMenu {
       if (!urls.length) throw new ServerError('connect', 'no server');
       const link = await ServerLink.connect(urls, { name: id.name ?? 'player', uid: seatId(), device: this.host.device });
       this.link = link;
+      const store = chatOf(link);
+      this.chat?.dispose();
+      this.chat = new ChatPanel({
+        store,
+        kind: 'room',
+        send: (text, team) => link.send({ t: 'chat', text, team }),
+        teamOk: () => !!this.room && hasSides(this.room.settings) && this.room.settings.teamPick !== 'random',
+        myTeam: () => this.me()?.team ?? null,
+        touch: this.host.device === 'mobile',
+      });
       const offs = this.offs;
       offs.push(link.on('match', (m) => this.host.startMatch(m.match, link)));
       offs.push(link.on('close', () => {
@@ -107,17 +137,23 @@ export class MultiplayerMenu {
       }));
       offs.push(link.on('room', (m) => {
         this.room = m.room;
-        this.view = 'room';
+        if (this.view !== 'edit') this.view = 'room';
         this.queueRedraw();
       }));
       offs.push(link.on('left', (m) => {
         this.room = null;
         if (m.reason === 'kicked') this.notice = t('mp.kicked');
-        if (this.view === 'room') this.showList();
+        if (this.view === 'room' || this.view === 'edit') this.showList();
+      }));
+      offs.push(link.on('error', (m) => {
+        // Errors that answer no request of ours (a side change refused, a start too soon...).
+        if (this.view !== 'room') return;
+        this.notice = t(`mp.err.${m.code}` as MessageKey);
+        this.queueRedraw();
       }));
       offs.push(link.on('pong', (m) => {
         this.ping = performance.now() - m.at;
-        if (this.view !== 'create') this.queueRedraw();
+        this.showPing();
       }));
       this.startPing();
       // Back from a match (or a reload) the server may have put us straight back in our room.
@@ -164,6 +200,11 @@ export class MultiplayerMenu {
       this.showList();
       return true;
     }
+    if (this.view === 'edit') {
+      this.view = this.room ? 'room' : 'list';
+      this.host.redraw();
+      return true;
+    }
     if (this.view === 'room') {
       this.leave();
       this.showList();
@@ -188,6 +229,8 @@ export class MultiplayerMenu {
     for (const off of this.offs) off();
     this.offs = [];
     this.stopPing();
+    this.chat?.dispose();
+    this.chat = null;
     this.link = null;
   }
 
@@ -202,15 +245,17 @@ export class MultiplayerMenu {
     }
   }
 
-  private join(room: RoomInfo): void {
-    let password: string | undefined;
-    if (room.locked) {
-      const pw = prompt(t('mp.passwordPrompt'));
-      if (pw === null) return;
-      password = pw;
+  private join(room: RoomInfo, team?: Side): void {
+    if (room.locked && !this.password) {
+      this.selected = room.id;
+      this.notice = t('mp.needPassword');
+      this.host.redraw();
+      return;
     }
+    const password = room.locked ? this.password : undefined;
     void this.act(async () => {
-      await this.link!.request({ t: 'join', room: room.id, password }, 'room');
+      await this.link!.request({ t: 'join', room: room.id, password, team }, 'room');
+      this.password = '';
       this.view = 'room';
       this.host.redraw();
     }).finally(() => {
@@ -228,6 +273,12 @@ export class MultiplayerMenu {
   private create(): void {
     const { password, ...settings } = this.form;
     saveJSON(CREATE_KEY, settings);
+    if (this.view === 'edit') {
+      this.link?.send({ t: 'settings', settings });
+      this.view = 'room';
+      this.host.redraw();
+      return;
+    }
     void this.act(async () => {
       await this.link!.request({ t: 'create', settings, password: password || undefined }, 'room');
       this.view = 'room';
@@ -235,27 +286,98 @@ export class MultiplayerMenu {
     });
   }
 
+  private me(): Member | null {
+    return this.room?.members.find((m) => m.id === this.link?.id) ?? null;
+  }
+
+  private pingText(): string {
+    return this.ping === null ? '…' : `${Math.round(this.ping)} ms`;
+  }
+
+  /** Bars and the round trip, updated in place. */
+  private pingView(parent: HTMLElement): void {
+    const box = el('span', 'mp-ping', parent);
+    this.pingEls.push(box);
+    this.fillPing(box);
+  }
+
+  private fillPing(box: HTMLElement): void {
+    const ms = this.ping;
+    const bars = ms === null ? 0 : ms < 60 ? 4 : ms < 110 ? 3 : ms < 200 ? 2 : 1;
+    box.replaceChildren();
+    box.className = `mp-ping q${bars}`;
+    const b = el('span', 'mp-ping-bars', box);
+    for (let i = 0; i < 4; i++) el('i', i < bars ? 'on' : '', b);
+    el('span', 'mp-ping-ms', box, this.pingText());
+    box.title = t('mp.ping');
+  }
+
+  private showPing(): void {
+    this.pingEls = this.pingEls.filter((e) => e.isConnected);
+    for (const e of this.pingEls) this.fillPing(e);
+  }
+
   // ---------------------------------------------------------------------------
 
   render(body: HTMLElement): void {
     body.classList.add('lb-mp');
-    if (this.notice) el('div', 'mp-notice', body, this.notice);
-    if (this.view === 'connecting') el('div', 'lb-desc', body, t('mp.connecting'));
-    else if (this.view === 'offline') {
-      const retry = el('button', 'lb-btn primary', body, t('mp.retry'));
-      retry.addEventListener('click', () => {
-        void this.connect();
-        this.host.redraw();
-      });
-    } else if (this.view === 'list') this.renderList(body);
-    else if (this.view === 'create') this.renderCreate(body);
+    this.pingEls = [];
+    if (this.view === 'connecting' || this.view === 'offline') {
+      const box = el('div', 'mp-status', body);
+      if (this.notice) el('div', 'mp-notice', box, this.notice);
+      if (this.view === 'connecting') {
+        el('div', 'mp-spinner', box);
+        el('div', 'lb-desc', box, t('mp.connecting'));
+      } else {
+        const retry = el('button', 'lb-btn primary', box, t('mp.retry'));
+        retry.addEventListener('click', () => {
+          void this.connect();
+          this.host.redraw();
+        });
+      }
+      return;
+    }
+    if (this.view === 'list') this.renderList(body);
+    else if (this.view === 'create' || this.view === 'edit') this.renderCreate(body);
     else this.renderRoom(body);
   }
 
+  /** The player's own card: name, tag, the round trip. */
+  private idCard(parent: HTMLElement): void {
+    const card = el('div', 'mp-id', parent);
+    el('span', 'mp-id-label', card, t('mp.you'));
+    nameView(card, { name: this.link?.name ?? '', tag: this.link?.tag ?? '' }, 'mp-id-name');
+    this.pingView(card);
+  }
+
+  private notices(parent: HTMLElement): void {
+    if (!this.notice) return;
+    const text = this.notice;
+    const n = el('div', 'mp-notice', parent, text);
+    const dismiss = (): void => {
+      if (this.notice === text) this.notice = null;
+      n.remove();
+    };
+    n.addEventListener('click', dismiss);
+    setTimeout(dismiss, 6000);
+  }
+
+  private visibleRooms(): RoomInfo[] {
+    const q = this.search.trim().toLowerCase();
+    return this.rooms.filter((r) => {
+      if (this.filter !== 'all' && r.state !== this.filter) return false;
+      if (!q) return true;
+      const hay = `${r.settings.name} ${r.host.name}#${r.host.tag} ${mapName(r.settings.map)} ${modeName(r.settings.mode)}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
   private renderList(body: HTMLElement): void {
-    const bar = el('div', 'mp-bar', body);
-    el('div', 'mp-me', bar, `${t('mp.you')}: ${this.link?.name ?? ''} · ${this.pingText()}`);
-    const quick = el('button', 'lb-btn primary', bar, t('mp.quick'));
+    body.classList.add('mpb');
+    const top = el('div', 'mpb-top', body);
+    this.idCard(top);
+    const acts = el('div', 'mpb-acts', top);
+    const quick = el('button', 'lb-btn primary', acts, t('mp.quick'));
     quick.addEventListener('click', () => {
       const r = this.quickPick();
       if (r) this.join(r);
@@ -264,28 +386,143 @@ export class MultiplayerMenu {
         this.host.redraw();
       }
     });
-    el('button', 'lb-btn', bar, t('mp.create')).addEventListener('click', () => {
+    el('button', 'lb-btn', acts, t('mp.create')).addEventListener('click', () => {
       this.view = 'create';
       this.host.redraw();
     });
-    el('button', 'lb-btn', bar, t('mp.refresh')).addEventListener('click', () => this.link?.send({ t: 'list' }));
+    el('button', 'lb-btn', acts, t('mp.refresh')).addEventListener('click', () => this.link?.send({ t: 'list' }));
+    this.notices(body);
 
-    const list = el('div', 'mp-list', body);
-    if (!this.rooms.length) el('div', 'lb-desc', list, t('mp.noRooms'));
-    const head = el('div', 'mp-row mp-head', list);
+    // The list: filters and search over the rooms.
+    const left = el('div', 'mpb-list', body);
+    const tools = el('div', 'mpb-tools', left);
+    for (const f of ['all', 'lobby', 'playing'] as const) {
+      const n = f === 'all' ? this.rooms.length : this.rooms.filter((r) => r.state === f).length;
+      const c = el('button', `ms-chip${this.filter === f ? ' sel' : ''}`, tools, `${t(`mp.filter.${f}` as MessageKey)} ${n}`);
+      c.addEventListener('click', () => {
+        this.filter = f;
+        this.host.redraw();
+      });
+    }
+    const search = el('input', 'lb-input mpb-search', tools);
+    search.type = 'search';
+    search.placeholder = t('mp.search');
+    search.value = this.search;
+    search.addEventListener('input', () => {
+      this.search = search.value;
+      this.fillRows(rows);
+    });
+    const head = el('div', 'mpb-row mpb-head', left);
     for (const k of ['mp.col.name', 'mp.col.map', 'mp.col.players', 'mp.col.state'] as const) el('span', '', head, t(k));
-    for (const r of this.rooms) {
-      const row = el('button', 'mp-row', list);
-      el('span', 'mp-name', row, `${r.locked ? '🔒 ' : ''}${r.settings.name}`);
-      el('span', '', row, `${t(`map.${r.settings.map}` as MessageKey)} · ${modeName(r.settings.mode)}`);
-      el('span', 'mp-num', row, `${r.humans} / ${r.humanCap}${r.settings.lineup !== 'users' ? ` · ${t('mp.withBots')}` : ''}`);
-      el('span', r.state === 'playing' ? 'mp-live' : '', row, t(r.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
-      row.addEventListener('click', () => this.join(r));
+    const rows = el('div', 'mpb-rows', left);
+    this.fillRows(rows);
+
+    // The picked room.
+    const side = el('div', 'mpb-detail', body);
+    const room = this.rooms.find((r) => r.id === this.selected) ?? this.visibleRooms()[0];
+    if (room) this.renderDetail(side, room);
+    else {
+      el('div', 'mpb-empty-title', side, t('mp.noRooms'));
+      el('div', 'lb-desc', side, t('mp.noRoomsHint'));
     }
   }
 
-  private pingText(): string {
-    return `${t('mp.ping')} ${this.ping === null ? '…' : `${Math.round(this.ping)} ms`}`;
+  private fillRows(rows: HTMLElement): void {
+    rows.replaceChildren();
+    const list = this.visibleRooms();
+    if (!list.length) el('div', 'mpb-none', rows, this.rooms.length ? t('mp.noMatch') : t('mp.noRooms'));
+    const pick = this.selected ?? list[0]?.id;
+    for (const r of list) {
+      const row = el('button', `mpb-row${r.id === pick ? ' sel' : ''}${r.humans >= r.humanCap ? ' full' : ''}`, rows);
+      const name = el('span', 'mpb-name', row);
+      el('span', 'mpb-title', name, `${r.locked ? '🔒 ' : ''}${r.settings.name}`);
+      nameView(name, r.host, 'mpb-host');
+      const what = el('span', 'mpb-what', row);
+      el('span', '', what, mapName(r.settings.map));
+      el('span', 'mpb-mode', what, modeName(r.settings.mode));
+      const num = el('span', 'mpb-num', row);
+      el('span', '', num, `${r.humans} / ${r.humanCap}${r.settings.lineup !== 'users' ? ` · ${t('mp.withBots')}` : ''}`);
+      const bar = el('span', 'mpb-bar', num);
+      el('i', '', bar).style.width = `${Math.min(100, (r.humans / Math.max(1, r.humanCap)) * 100)}%`;
+      el('span', `mpb-state st-${r.state}`, row, t(r.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
+      row.addEventListener('click', () => {
+        if (this.selected !== r.id) this.password = '';
+        this.selected = r.id;
+        this.host.redraw();
+      });
+      row.addEventListener('dblclick', () => this.join(r));
+    }
+  }
+
+  /** A room's picture over its facts. */
+  private mapCard(parent: HTMLElement, s: RoomSettings): void {
+    const pic = el('div', 'mp-pic', parent);
+    const m = this.host.setupMaps().find((x) => x.id === s.map);
+    if (m?.picture) {
+      const img = el('img', '', pic);
+      img.src = thumb(m.picture);
+      img.alt = '';
+    }
+    const cap = el('div', 'mp-pic-cap', pic);
+    el('span', 'mp-pic-mode', cap, modeName(s.mode));
+    el('span', 'mp-pic-map', cap, mapName(s.map));
+  }
+
+  private facts(parent: HTMLElement, s: RoomSettings, r: RoomInfo): void {
+    const dl = el('dl', 'mp-facts', parent);
+    const row = (k: MessageKey, v: string): void => {
+      el('dt', '', dl, t(k));
+      el('dd', '', dl, v);
+    };
+    row('mp.row.size', t('mp.sizeValue').replace('{n}', String(s.size)).replaceAll('{a}', String(s.size / 2)));
+    row('mp.humans', `${r.humans} / ${r.humanCap}`);
+    row('mp.row.lineup', t(`mp.lineup.${s.lineup}` as MessageKey));
+    if (hasSides(s)) row('mp.row.teamPick', t(`mp.pick.${s.teamPick}` as MessageKey));
+    if (s.lineup !== 'users') row('mp.row.difficulty', t(`lobby.diff.${s.difficulty}` as MessageKey));
+    row('mp.row.input', t(`mp.input.${s.input}` as MessageKey));
+  }
+
+  private renderDetail(side: HTMLElement, r: RoomInfo): void {
+    const s = r.settings;
+    this.mapCard(side, s);
+    const head = el('div', 'mpb-dhead', side);
+    el('div', 'mpb-dname', head, `${r.locked ? '🔒 ' : ''}${s.name}`);
+    const by = el('div', 'mpb-dby', head);
+    el('span', '', by, t('mp.hostBy'));
+    nameView(by, r.host);
+    el('div', `mpb-dstate st-${r.state}`, head, t(r.state === 'playing' ? 'mp.playingNote' : 'mp.waitingNote'));
+    this.facts(side, s, r);
+    const full = r.humans >= r.humanCap;
+    const fits = s.input === 'all' || s.input === this.host.device;
+    if (r.locked) {
+      const pw = el('input', 'lb-input mpb-pw', side);
+      pw.type = 'password';
+      pw.placeholder = t('mp.passwordPrompt');
+      pw.maxLength = 64;
+      pw.value = this.password;
+      pw.addEventListener('input', () => (this.password = pw.value));
+      pw.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this.join(r);
+      });
+    }
+    const go = el('div', 'mpb-go', side);
+    if (!fits) el('div', 'lb-desc', go, t('mp.err.full'));
+    // A match under way where players pick their side: join one of them.
+    if (r.state === 'playing' && s.teamPick === 'self' && hasSides(s)) {
+      for (const team of SIDES) {
+        const open = r.sides[team] < sideCap(r);
+        const b = el('button', `lb-btn mpb-side side-${team}`, go);
+        el('span', '', b, t(`mp.joinSide.${team}` as MessageKey));
+        el('span', 'mpb-side-n', b, `${r.sides[team]} / ${sideCap(r)}`);
+        b.disabled = !open || full || !fits;
+        b.addEventListener('click', () => this.join(r, team));
+      }
+      return;
+    }
+    const b = el('button', 'lb-start mpb-join', go);
+    el('span', 'lb-start-text', b, t(r.state === 'playing' ? 'mp.joinLive' : 'mp.join'));
+    b.disabled = full || !fits;
+    b.addEventListener('click', () => this.join(r));
   }
 
   /** The create page's map: its team size sets the room size, and the mode stays if the map has it. */
@@ -293,7 +530,7 @@ export class MultiplayerMenu {
     const f = this.form;
     if (f.map === id) return;
     f.map = id;
-    f.size = Math.min(300, (MAPS.find((m) => m.id === id)?.team ?? 12) * 2);
+    if (this.view === 'create') f.size = Math.min(300, (MAPS.find((m) => m.id === id)?.team ?? 12) * 2);
     const modes = this.host.modesFor(id);
     if (!modes.includes(f.mode as LobbyMode)) f.mode = modes[0]!;
     this.host.redraw();
@@ -301,7 +538,7 @@ export class MultiplayerMenu {
 
   /** Keys on the create page (↑ ↓ mode, ← → map, Enter create); true when used. */
   key(code: string): boolean {
-    if (this.view !== 'create') return false;
+    if (this.view !== 'create' && this.view !== 'edit') return false;
     const f = this.form;
     if (code === 'ArrowUp' || code === 'ArrowDown') {
       f.mode = stepMode(f.mode as LobbyMode, this.host.modesFor(f.map), code === 'ArrowUp' ? -1 : 1);
@@ -317,10 +554,20 @@ export class MultiplayerMenu {
     return true;
   }
 
+  /** The owner changes the room's settings: the form starts from them. */
+  private editSettings(): void {
+    const r = this.room;
+    if (!r) return;
+    this.form = { ...r.settings, password: '' };
+    this.view = 'edit';
+    this.host.redraw();
+  }
+
   private renderCreate(body: HTMLElement): void {
     const f = this.form;
     const redraw = () => this.host.redraw();
     const bots = f.lineup !== 'users';
+    const edit = this.view === 'edit';
     const fields: SetupField[] = [
       { kind: 'text', id: 'name', label: t('mp.roomName'), value: f.name, set: (v) => (f.name = v) },
       {
@@ -330,7 +577,9 @@ export class MultiplayerMenu {
         value: t('mp.sizeValue').replace('{n}', String(f.size)).replaceAll('{a}', String(f.size / 2)),
         note: t('mp.note.size').replace('{n}', String((MAPS.find((m) => m.id === f.map)?.team ?? 12) * 2)),
         change: (d) => {
-          f.size = SIZES[Math.max(0, Math.min(SIZES.length - 1, SIZES.indexOf(f.size as (typeof SIZES)[number]) + d))]!;
+          const i = SIZES.indexOf(f.size as (typeof SIZES)[number]);
+          const at = i < 0 ? SIZES.findIndex((n) => n >= f.size) : i;
+          f.size = SIZES[Math.max(0, Math.min(SIZES.length - 1, at + d))]!;
           redraw();
         },
       },
@@ -347,6 +596,20 @@ export class MultiplayerMenu {
         },
       },
     ];
+    if (hasSides(f)) {
+      fields.push({
+        kind: 'choice',
+        id: 'teamPick',
+        label: t('mp.row.teamPick'),
+        note: t(`mp.note.pick.${f.teamPick}` as MessageKey),
+        options: PICKS.map((p) => ({ value: p, label: t(`mp.pick.${p}` as MessageKey) })),
+        value: f.teamPick,
+        pick: (v) => {
+          f.teamPick = v as TeamPick;
+          redraw();
+        },
+      });
+    }
     if (bots) {
       fields.push(
         {
@@ -377,28 +640,27 @@ export class MultiplayerMenu {
         },
       );
     }
-    fields.push(
-      {
-        kind: 'choice',
-        id: 'input',
-        label: t('mp.row.input'),
-        options: INPUTS.map((i) => ({ value: i, label: t(`mp.input.${i}` as MessageKey) })),
-        value: f.input,
-        pick: (v) => {
-          f.input = v as InputRule;
-          redraw();
-        },
+    fields.push({
+      kind: 'choice',
+      id: 'input',
+      label: t('mp.row.input'),
+      options: INPUTS.map((i) => ({ value: i, label: t(`mp.input.${i}` as MessageKey) })),
+      value: f.input,
+      pick: (v) => {
+        f.input = v as InputRule;
+        redraw();
       },
-      { kind: 'text', id: 'password', label: t('mp.password'), value: f.password, secret: true, set: (v) => (f.password = v) },
-    );
+    });
+    // A room's password is set when it is made.
+    if (!edit) fields.push({ kind: 'text', id: 'password', label: t('mp.password'), value: f.password, secret: true, set: (v) => (f.password = v) });
     renderMatchSetup(body, {
       mode: f.mode as LobbyMode,
       map: f.map,
       offered: this.host.modesFor(f.map),
       maps: this.host.setupMaps(),
       fields,
-      start: t('mp.createGo'),
-      summary: t('mp.createHint'),
+      start: t(edit ? 'mp.saveSettings' : 'mp.createGo'),
+      summary: t(edit ? 'mp.editHint' : 'mp.createHint'),
       touch: this.host.device === 'mobile',
       onMode: (m) => {
         f.mode = m;
@@ -407,7 +669,11 @@ export class MultiplayerMenu {
       onMap: (id) => this.setFormMap(id),
       onStart: () => this.create(),
     });
+    this.notices(body);
   }
+
+  // ---------------------------------------------------------------------------
+  // The waiting room
 
   private renderRoom(body: HTMLElement): void {
     const room = this.room;
@@ -415,38 +681,110 @@ export class MultiplayerMenu {
       el('div', 'lb-desc', body, t('mp.connecting'));
       return;
     }
-    const me = this.link?.id ?? '';
-    const owner = room.owner === me;
-    const info = el('div', 'mp-roominfo', body);
-    el('div', 'lb-card-badge', info, `${modeName(room.settings.mode)} · ${t(`mp.lineup.${room.settings.lineup}` as MessageKey)}`);
-    el('div', 'lb-card-name', info, `${room.locked ? '🔒 ' : ''}${room.settings.name}`);
-    el(
-      'div',
-      'lb-card-facts',
-      info,
-      `${t(`map.${room.settings.map}` as MessageKey)} · ${t('mp.sizeValue').replace('{n}', String(room.settings.size)).replaceAll('{a}', String(room.settings.size / 2))} · ${t('mp.humans')} ${room.humans} / ${room.humanCap} · ${this.pingText()}`,
-    );
-    el('div', room.state === 'playing' ? 'mp-live' : 'lb-desc', info, t(room.state === 'playing' ? 'mp.playingNote' : 'mp.waitingNote'));
+    body.classList.add('mpr');
+    const s = room.settings;
+    const meId = this.link?.id ?? '';
+    const owner = room.owner === meId;
 
-    const list = el('div', 'mp-list', body);
-    const head = el('div', 'mp-row mp-head mp-members', list);
-    for (const k of ['mp.col.player', ''] as const) el('span', '', head, k ? t(k) : '');
-    for (const m of room.members) {
-      const row = el('div', `mp-row mp-members${m.id === me ? ' mp-self' : ''}`, list);
-      el('span', 'mp-name', row, `${m.device === 'mobile' ? '📱' : '🖥'} ${m.name}${m.id === room.owner ? ' ★' : ''}${m.away ? ` (${t('mp.away')})` : ''}`);
-      const cell = el('span', '', row);
-      if (owner && m.id !== me) {
-        el('button', 'lb-btn small', cell, t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));
-      }
+    // Head: the room, its state, me.
+    const head = el('div', 'mpr-head', body);
+    const titles = el('div', 'mpr-titles', head);
+    const badges = el('div', 'mpr-badges', titles);
+    el('span', 'mpr-badge accent', badges, modeName(s.mode));
+    el('span', 'mpr-badge', badges, mapName(s.map));
+    el('span', `mpr-badge st-${room.state}`, badges, t(room.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
+    if (room.locked) el('span', 'mpr-badge', badges, `🔒 ${t('mp.locked')}`);
+    el('div', 'mpr-name', titles, s.name);
+    this.idCard(head);
+    this.notices(body);
+
+    // The sides (or one list), then the chat.
+    const main = el('div', 'mpr-main', body);
+    const teams = el('div', 'mpr-teams', main);
+    const sides = hasSides(s) && s.teamPick !== 'random';
+    if (sides) {
+      for (const team of SIDES) this.sideColumn(teams, room, team, owner);
+    } else {
+      const col = el('div', 'mpr-side all', teams);
+      const h = el('div', 'mpr-side-head', col);
+      el('span', 'mpr-side-name', h, t('mp.col.player'));
+      el('span', 'mpr-side-n', h, `${room.humans} / ${room.humanCap}`);
+      el('div', 'mpr-side-note', col, t(!hasSides(s) ? (s.lineup === 'coop' ? 'mp.note.coopSide' : 'mp.note.noSides') : 'mp.note.pick.random'));
+      const list = el('div', 'mpr-members', col);
+      for (const m of room.members) this.memberCard(list, room, m, owner, null);
     }
+    const chatBox = el('div', 'mpr-chat', main);
+    el('div', 'mpr-chat-head', chatBox, t('chat.title'));
+    this.chat?.attach(chatBox);
 
-    const bar = el('div', 'mp-bar', body);
-    el('button', 'lb-btn', bar, t('mp.leave')).addEventListener('click', () => this.back());
+    // The room's card and the buttons.
+    const aside = el('div', 'mpr-aside', body);
+    this.mapCard(aside, s);
+    this.facts(aside, s, room);
+    if (owner && room.state === 'lobby') el('button', 'lb-btn mpr-edit', aside, t('mp.editRoom')).addEventListener('click', () => this.editSettings());
+    const foot = el('div', 'mpr-foot', aside);
     if (owner && room.state === 'lobby') {
-      el('button', 'lb-btn primary', bar, t('lobby.start')).addEventListener('click', () => this.link?.send({ t: 'start' }));
+      const go = el('button', 'lb-start', foot);
+      el('span', 'lb-start-text', go, t('lobby.start'));
+      go.addEventListener('click', () => this.link?.send({ t: 'start' }));
+    } else if (owner && room.state === 'playing') {
+      el('button', 'lb-btn', foot, t('mp.end')).addEventListener('click', () => this.link?.send({ t: 'end' }));
+    } else {
+      el('div', 'mpr-wait', foot, t(room.state === 'playing' ? 'mp.playingNote' : 'mp.waitingNote'));
     }
-    if (owner && room.state === 'playing') {
-      el('button', 'lb-btn', bar, t('mp.end')).addEventListener('click', () => this.link?.send({ t: 'end' }));
+    el('button', 'lb-btn mpr-leave', foot, t('mp.leave')).addEventListener('click', () => this.back());
+  }
+
+  private sideColumn(parent: HTMLElement, room: Room, team: Side, owner: boolean): void {
+    const s = room.settings;
+    const members = room.members.filter((m) => m.team === team);
+    const col = el('div', `mpr-side side-${team}`, parent);
+    const h = el('div', 'mpr-side-head', col);
+    el('span', 'mpr-side-name', h, t(`chat.side.${team}` as MessageKey));
+    el('span', 'mpr-side-n', h, `${members.length} / ${sideCap(room)}`);
+    const me = this.me();
+    if (s.teamPick === 'self' && me && me.team !== team && room.state === 'lobby') {
+      const b = el('button', 'lb-btn small mpr-switch', h, t('mp.toSide'));
+      b.disabled = members.length >= sideCap(room);
+      b.addEventListener('click', () => this.link?.send({ t: 'team', team }));
+    }
+    const list = el('div', 'mpr-members', col);
+    for (const m of members) this.memberCard(list, room, m, owner, team);
+    if (!members.length) el('div', 'mpr-none', list, t('mp.sideEmpty'));
+  }
+
+  private memberCard(list: HTMLElement, room: Room, m: Member, owner: boolean, team: Side | null): void {
+    const meId = this.link?.id ?? '';
+    const self = m.id === meId;
+    const card = el('div', `mpr-member${self ? ' self' : ''}${m.away ? ' away' : ''}`, list);
+    el('span', 'mpr-dev', card, m.device === 'mobile' ? '📱' : '🖥');
+    const who = el('span', 'mpr-who', card);
+    nameView(who, m);
+    const tags = el('span', 'mpr-tags', card);
+    if (m.id === room.owner) el('span', 'mpr-tag host', tags, t('mp.hostBadge'));
+    if (self) el('span', 'mpr-tag me', tags, t('mp.meBadge'));
+    if (m.away) el('span', 'mpr-tag', tags, t('mp.away'));
+    if (isMuted(m.tag) && !self) el('span', 'mpr-tag muted', tags, t('mp.muted'));
+    const acts = el('span', 'mpr-acts', card);
+    // The owner moves people between sides (rooms where the owner picks).
+    if (owner && team && room.settings.teamPick === 'host' && room.state === 'lobby') {
+      const other: Side = team === 'blue' ? 'red' : 'blue';
+      const mv = el('button', 'lb-btn small', acts, t(`mp.moveTo.${other}` as MessageKey));
+      mv.addEventListener('click', () => this.link?.send({ t: 'team', team: other, member: m.id }));
+    }
+    // Blocking goes by tag: not one's own (another tab of this browser has it too).
+    if (!self && m.tag && m.tag !== this.link?.tag) {
+      const muted = isMuted(m.tag);
+      const mu = el('button', 'lb-btn small', acts, t(muted ? 'mp.unmute' : 'mp.mute'));
+      mu.title = t('mp.muteHint');
+      mu.addEventListener('click', () => {
+        setMuted(m.tag, !muted);
+        this.chat?.refresh();
+        this.host.redraw();
+      });
+    }
+    if (owner && !self) {
+      el('button', 'lb-btn small danger', acts, t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));
     }
   }
 }

@@ -6,11 +6,12 @@
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import type { ClientMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
+import type { MatchPlayer } from './lobby.ts';
 import { MatchRoom, type MatchConn, type MatchRoomOptions } from './matchRoom.ts';
 
 /** What the gateway tells a room's thread. */
 export type ToRoom =
-  | { t: 'join'; uid: string; name: string }
+  | { t: 'join'; player: MatchPlayer }
   | { t: 'detach'; uid: string }
   | { t: 'leave'; uid: string }
   | { t: 'msg'; uid: string; msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }> }
@@ -59,7 +60,7 @@ function handle(m: ToRoom): void {
   }
   switch (m.t) {
     case 'join':
-      return r.join(m.uid, m.name, connFor(m.uid));
+      return r.join(m.player, connFor(m.player.uid));
     case 'detach':
       return r.detach(m.uid);
     case 'leave':

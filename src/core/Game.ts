@@ -50,7 +50,7 @@ import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type Gadge
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
-import { vehicleWorldFor } from '@/sim/vehicles';
+import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
@@ -69,6 +69,8 @@ import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { ambienceFor } from '@/audio/ambienceDirector';
 import { HUD } from '@/ui/HUD';
+import { ChatPanel } from '@/ui/ChatPanel';
+import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
 import { SettingsPanel } from '@/ui/SettingsPanel';
@@ -179,6 +181,8 @@ export class Game {
   }
   /** A match on the game server, or null (solo). */
   private net: NetMatch | null = null;
+  /** The room's chat in a multiplayer match. */
+  private chat: ChatPanel | null = null;
   /** Asked the server to deploy; waiting for the spawn. */
   private netDeploying = false;
   /** Enemies a recon plane marked in a match on the game server: id -> until (elapsed s). */
@@ -316,6 +320,13 @@ export class Game {
   private readonly driveInputs = new Map<number, DriveInput>();
   /** Vehicle third-person camera distance, eased (pulled in by walls). */
   private rideCamDist = 6;
+  /**
+   * Third person in a seat whose gun turns at a rate (owner, 2026-10-14: tanks
+   * were too hard to handle there): the camera orbits the vehicle on its own,
+   * free of the gun's reach, and the gun aims at what the screen's centre is
+   * on (the look the gun follows, and the server is sent, is worked out from that).
+   */
+  private orbit: { yaw: number; pitch: number } | null = null;
   /** Vehicle view: first person by default, C switches to third person. */
   private rideThird = false;
   /** The first-person view from the seat (BFV-like overlays, see ui/VehicleView). */
@@ -1187,7 +1198,15 @@ export class Game {
         if (this.touch && this.deployed) {
           [lookYaw, lookPitch] = applyAimAssist(lookYaw, lookPitch, this.assistTarget(), { ads: w.adsBlend > 0.5, firing: input.fire, dt });
         }
-        p.applyLook(lookYaw, lookPitch);
+        if (this.orbiting()) {
+          const o = (this.orbit ??= { yaw: p.yaw, pitch: THREE.MathUtils.clamp(p.pitch - 0.12, ORBIT.min, ORBIT.max) });
+          o.yaw = (o.yaw + lookYaw) % (Math.PI * 2);
+          o.pitch = THREE.MathUtils.clamp(o.pitch + lookPitch, ORBIT.min, ORBIT.max);
+          this.orbitAim(o);
+        } else {
+          this.orbit = null;
+          p.applyLook(lookYaw, lookPitch);
+        }
       }
       const tSim = performance.now();
       const alpha = this.loop.advance(dt, (h) => this.simStep(h));
@@ -2107,12 +2126,14 @@ export class Game {
       this.fireMount(v, seat, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, this.jetGunAim(v, seat));
       return;
     }
-    // Aim: what the view centre points at.
+    // Aim: what the view centre points at; a gun with a turn rate fires where it points (as on the server).
     const cam = this.renderer.camera;
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const gunAim = v.spec.seats[seat]!.turn ? v.mountAim(seat) : null;
+    const fwd = gunAim ? viewDir(gunAim.yaw, gunAim.pitch) : new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const origin = gunAim ? v.seatEye(seat, new THREE.Vector3()) : cam.position;
     const range = v.mounts[seat]!.gun.range;
-    const look = this.physics.raycast(cam.position, fwd, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
-    const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : cam.position.clone().addScaledVector(fwd, range);
+    const look = this.physics.raycast(origin, fwd, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
+    const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : origin.clone().addScaledVector(fwd, range);
     this.fireMount(v, seat, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, aim);
   }
 
@@ -2131,7 +2152,47 @@ export class Game {
       const rel = Math.atan2(Math.sin(p.yaw - v.yaw), Math.cos(p.yaw - v.yaw));
       p.yaw = v.yaw + THREE.MathUtils.clamp(rel, -s.traverse, s.traverse);
     }
+    // In the sight the look runs only a little ahead of the gun (2026-10-14): a flick
+    // doesn't leave the gun turning on for seconds after the mouse stopped.
+    const gun = this.orbit ? null : v.mountAim(seat);
+    if (gun) {
+      const rel = Math.atan2(Math.sin(p.yaw - gun.yaw), Math.cos(p.yaw - gun.yaw));
+      p.yaw = gun.yaw + THREE.MathUtils.clamp(rel, -LOOK_LEAD.yaw, LOOK_LEAD.yaw);
+      p.pitch = THREE.MathUtils.clamp(p.pitch, gun.pitch - LOOK_LEAD.pitch, gun.pitch + LOOK_LEAD.pitch);
+    }
   }
+
+  /** In third person aboard, the camera orbits on its own (see `orbit`). */
+  private orbiting(): boolean {
+    const r = this.ride;
+    return !!r && this.rideThird && this.player.alive && !r.v.flight && !!r.v.spec.seats[r.seat]!.turn;
+  }
+
+  /**
+   * The look the gun follows, from the orbit camera: what the screen's
+   * centre is on, seen from the gun.
+   */
+  private orbitAim(o: { yaw: number; pitch: number }): void {
+    const { v, seat } = this.ride!;
+    const p = this.player;
+    const dir = viewDir(o.yaw, o.pitch, this.tmpOrbitDir);
+    const target = v.toWorld(this.tmpOrbitAt.set(0, v.spec.half[1] + ORBIT.height, 0), this.tmpOrbitAt, this.lastAlpha);
+    const range = Math.max(400, v.mounts[seat]?.gun.range ?? 600);
+    // From just past the vehicle (the camera ray would cross its own crew otherwise).
+    const from = target.addScaledVector(dir, 3);
+    const hit = this.physics.raycast(from, dir, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
+    const aim = this.tmpOrbitAim.copy(from).addScaledVector(dir, hit ? hit.distance : range);
+    const gun = v.model.mounts[seat]?.gun;
+    const pivot = gun ? gun.getWorldPosition(this.tmpOrbitAt) : v.seatEye(seat, this.tmpOrbitAt);
+    const dx = aim.x - pivot.x;
+    const dy = aim.y - pivot.y;
+    const dz = aim.z - pivot.z;
+    p.yaw = Math.atan2(-dx, -dz);
+    p.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+  }
+  private readonly tmpOrbitDir = new THREE.Vector3();
+  private readonly tmpOrbitAt = new THREE.Vector3();
+  private readonly tmpOrbitAim = new THREE.Vector3();
 
   /**
    * One round from a vehicle gun at `aim`: hitscan for the MGs and the
@@ -3059,7 +3120,12 @@ export class Game {
     }
     this.rideEyeSet = false;
     if (this.rideThird) {
-      const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + 1.1, 0), new THREE.Vector3(), alpha);
+      const o = this.orbit;
+      if (o) {
+        viewDir(o.yaw, o.pitch, fwd);
+        this.gunView = { yaw: o.yaw, pitch: o.pitch };
+      }
+      const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + (o ? ORBIT.height : 1.1), 0), new THREE.Vector3(), alpha);
       const want = v.flight ? 20 : v.kind === 'apc' || v.kind === 'rocket' ? 10 : v.kind === 'bike' ? 4.5 : TANK_KINDS.includes(v.kind) ? 11 : 6.5;
       const hit = this.physics.raycast(target, fwd.clone().negate(), want, Layer.WORLD, v.collider);
       const dist = hit ? Math.max(1.2, hit.distance - 0.3) : want;
@@ -3073,9 +3139,10 @@ export class Game {
   /** The seat's first-person overlay (sights, cockpit), or none. */
   private rideViewState(): VehicleViewState | null {
     const r = this.ride;
-    if (!r || this.rideThird || !this.player.alive) return null;
+    if (!r || !this.player.alive) return null;
+    if (this.rideThird && !this.orbit) return null;
     const { v, seat } = r;
-    const kind = this.rideViewKind(v, seat);
+    const kind: VehicleViewKind = this.rideThird ? 'third' : this.rideViewKind(v, seat);
     if (kind === 'open') return null;
     const m = v.mounts[seat];
     const cam = this.renderer.camera;
@@ -3115,9 +3182,23 @@ export class Game {
       locked: !!(f && v.altMounts[seat]?.gun.homing && this.lockTarget(v, this.myTeam)),
       warning: f?.turningBack ? t('jet.airspace') : null,
       fovY: cam.fov,
+      gun: kind === 'third' ? this.gunOnScreen(v, seat) : null,
       gunName: m ? t(`vehicleGun.${m.id}`) : '',
       vehicleName: t(`vehicle.${v.kind}`),
     };
+  }
+
+  /** Where the seat's gun points now, on the screen (px), or null when that is behind the camera. */
+  private gunOnScreen(v: Vehicle, seat: number): { x: number; y: number } | null {
+    const gun = v.mountAim(seat);
+    if (!gun) return null;
+    const dir = viewDir(gun.yaw, gun.pitch, this.tmpOrbitDir);
+    const from = v.muzzleOf(seat, this.tmpOrbitAim);
+    const range = Math.max(400, v.mounts[seat]!.gun.range);
+    const hit = this.physics.raycast(from, dir, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
+    const at = from.addScaledVector(dir, hit ? hit.distance : range).project(this.renderer.camera);
+    if (at.z > 1) return null;
+    return { x: ((at.x + 1) / 2) * window.innerWidth, y: ((1 - at.y) / 2) * window.innerHeight };
   }
 
   /** The player's body in the seat, for the third-person driving view (seen ones only). */
@@ -3589,7 +3670,7 @@ export class Game {
       const all = this.scores.table(null).sort((a, b) => m.scoreOf(b.id) - m.scoreOf(a.id) || b.score - a.score || a.id - b.id);
       const half = Math.ceil(all.length / 2);
       const rows = (list: typeof all) =>
-        list.map((r) => ({ name: r.name, squad: null, kills: r.kills, deaths: r.deaths, captures: m.scoreOf(r.id), score: r.score, alive: alive.get(r.id) ?? false, you: r.id === this.myId, mate: false }));
+        list.map((r) => ({ name: r.name, tag: this.net?.roster.get(r.id)?.tag, squad: null, kills: r.kills, deaths: r.deaths, captures: m.scoreOf(r.id), score: r.score, alive: alive.get(r.id) ?? false, you: r.id === this.myId, mate: false }));
       const label = (from: number, to: number) => t('score.ranks').replace('{a}', String(from)).replace('{b}', String(Math.max(from, to)));
       this.scoreboard.update(
         { label: label(1, half), stat: null, kills: all.slice(0, half).reduce((a, r) => a + r.kills, 0), rows: rows(all.slice(0, half)) },
@@ -3603,6 +3684,7 @@ export class Game {
       kills: this.scores.totals(team).kills,
       rows: this.scores.table(team).map((r) => ({
         name: r.name,
+        tag: this.net?.roster.get(r.id)?.tag,
         squad: this.squads.find((s) => s.team === team && s.has(r.id))?.name ?? null,
         kills: r.kills,
         deaths: r.deaths,
@@ -4421,6 +4503,18 @@ export class Game {
     net.onEvents = (ev) => this.onNetEvents(ev);
     net.onRoster = () => this.netSquads(net);
     this.netSquads(net);
+    // The room's chat (owner, 2026-10-14): Enter for everyone, Y for one's side (bindable).
+    const link = opts.link;
+    this.chat = new ChatPanel({
+      store: chatOf(link),
+      kind: 'hud',
+      send: (text, team) => link.send({ t: 'chat', text, team }),
+      teamOk: () => !MATCH.ffa,
+      myTeam: () => (MATCH.ffa ? null : this.myTeam),
+      canOpen: () => this.running && !this.overlay.visible && !this.matchOver,
+      touch: !!this.touch,
+    });
+    this.hud.root.parentElement?.appendChild(this.chat.root);
     net.onBoom = (e) => this.netBoom(e.type, new THREE.Vector3(...e.pos));
     net.onState = (m) => this.onNetState(m);
     // Vehicles (zone matches): copies of the server's, in a world laid out the same way (pads, tank spots, limits).
@@ -4818,6 +4912,10 @@ const JET_LOCK_GRACE = 10;
  * `speedFov` degrees at speed.
  */
 const RIDE_ZOOM = { sight: 3, mg: 1.6, speedFov: 6 };
+/** How far the look may run ahead of a slow gun in its sight (rad). */
+const LOOK_LEAD = { yaw: 0.5, pitch: 0.2 };
+/** The third-person orbit camera aboard: its pitch range (rad) and how high over the hull it looks from (m). */
+const ORBIT = { min: -0.85, max: 0.45, height: 1.6 };
 
 /** Player jet cannon: fires at the crosshair within this angle of the nose (rad), onto an enemy aircraft this close to the crosshair. */
 const JET_GUN = { cone: 0.21, assist: 0.031 };

@@ -53,8 +53,8 @@ describe('a match room on the game server', () => {
     const room = await MatchRoom.create({ room: 'r1', map: 'lyon', mode: 'zone' });
     const a = line();
     const b = line();
-    room.join('ua', 'alpha', a.line);
-    room.join('ub', 'bravo', b.line);
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
+    room.join({ uid: 'ub', name: 'bravo' }, b.line);
     const startA = a.texts.find((m) => m.t === 'match');
     const startB = b.texts.find((m) => m.t === 'match');
     expect(startA && startA.t === 'match' && startA.match.team).toBe('blue');
@@ -136,8 +136,8 @@ describe('anti-wallhack', () => {
     const room = await MatchRoom.create({ room: 'rs', map: 'iron_gate', mode: 'zone' });
     const sim = room.sim;
     const a = line();
-    room.join('ua', 'alpha', a.line);
-    room.join('ub', 'bravo', line().line);
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
+    room.join({ uid: 'ub', name: 'bravo' }, line().line);
     room.ready('ua');
     room.ready('ub');
     room.deploy('ua', 'base', { cls: 'assault' });
@@ -190,8 +190,8 @@ describe('vehicles on the game server', () => {
     const sim = room.sim;
     const a = line();
     const b = line();
-    room.join('ua', 'alpha', a.line);
-    room.join('ub', 'bravo', b.line);
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
+    room.join({ uid: 'ub', name: 'bravo' }, b.line);
     const start = a.texts.find((m) => m.t === 'match');
     expect(start && start.t === 'match' && start.match.size).toBe(24);
     room.ready('ua');
@@ -268,7 +268,7 @@ describe("bots run in a person's browser", () => {
     const room = await MatchRoom.create({ room: 'rh', map: 'lyon', mode: 'zone', lineup: 'usersBots', size: 8 });
     const sim = room.sim;
     const a = line();
-    room.join('ua', 'alpha', a.line);
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
     room.ready('ua', true);
     let seq = 0;
     const idle = createInputState();
@@ -320,7 +320,7 @@ describe('a room with bots', () => {
     const sim = room.sim;
     expect(sim.bots!.bots).toHaveLength(8);
     const a = line();
-    room.join('ua', 'alpha', a.line);
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
     room.ready('ua');
     const benched = sim.bots!.bots.filter((b) => b.benched);
     expect(benched).toHaveLength(1);
@@ -365,7 +365,7 @@ describe('lobby seats', () => {
     const calls: string[] = [];
     const h: MatchHost = {
       start: async (room, _s, members) => void calls.push(`start ${room} ${members.map((m) => m.uid).join(',')}`),
-      join: (room, uid) => void calls.push(`join ${room} ${uid}`),
+      join: (room, p) => void calls.push(`join ${room} ${p.uid}`),
       detach: (room, uid) => void calls.push(`detach ${room} ${uid}`),
       leave: (room, uid) => void calls.push(`leave ${room} ${uid}`),
       stop: (room) => void calls.push(`stop ${room}`),

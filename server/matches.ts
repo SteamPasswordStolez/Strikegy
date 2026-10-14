@@ -5,7 +5,7 @@
  * for now; a worker thread per room comes with several rooms at once.
  */
 import type { ClientMsg, RoomSettings } from '../src/net/lobbyProtocol.ts';
-import type { MatchHost, MatchLine } from './lobby.ts';
+import type { MatchHost, MatchLine, MatchPlayer } from './lobby.ts';
 import { MatchRoom } from './matchRoom.ts';
 
 /** A finished match keeps running this long so the last news reaches everyone (ms). */
@@ -42,7 +42,7 @@ export class Matches implements MatchHost {
     return n ? sum / n : 0;
   }
 
-  async start(room: string, settings: RoomSettings, members: { uid: string; name: string; line: MatchLine }[]): Promise<void> {
+  async start(room: string, settings: RoomSettings, members: (MatchPlayer & { line: MatchLine })[]): Promise<void> {
     this.stop(room);
     const made = MatchRoom.create({
       room,
@@ -70,15 +70,15 @@ export class Matches implements MatchHost {
     this.loading.delete(room);
     if (!m) throw new Error('map failed to load');
     this.rooms.set(room, m);
-    for (const p of members) m.join(p.uid, p.name, p.line);
+    for (const { line, ...p } of members) m.join(p, line);
     m.start();
   }
 
-  join(room: string, uid: string, name: string, line: MatchLine): void {
+  join(room: string, player: MatchPlayer, line: MatchLine): void {
     const m = this.rooms.get(room);
-    if (m) return m.join(uid, name, line);
+    if (m) return m.join(player, line);
     void this.loading.get(room)?.then((x) => {
-      if (x && this.rooms.get(room) === x) x.join(uid, name, line);
+      if (x && this.rooms.get(room) === x) x.join(player, line);
     });
   }
 

@@ -2,6 +2,8 @@ import { t } from '@/i18n';
 
 export interface ScoreboardRow {
   name: string;
+  /** A person's server tag in a multiplayer match (names can repeat across rooms, tags can't be copied). */
+  tag?: string;
   squad: string | null;
   kills: number;
   deaths: number;
@@ -71,7 +73,7 @@ export class Scoreboard {
       .map((r) => {
         const c = ['sb-row', r.you ? 'you' : '', r.mate ? 'mate' : '', r.alive ? '' : 'dead'].filter(Boolean).join(' ');
         return (
-          `<div class="${c}"><span class="sb-sq">${r.squad ? esc(r.squad.slice(0, 1)) : ''}</span><span class="sb-name">${esc(r.name)}</span>` +
+          `<div class="${c}"><span class="sb-sq">${r.squad ? esc(r.squad.slice(0, 1)) : ''}</span><span class="sb-name">${esc(r.name)}${r.tag ? `<span class="sb-tag">#${esc(r.tag)}</span>` : ''}</span>` +
           `<span>${r.kills}</span><span>${r.deaths}</span><span>${r.captures}</span><span class="sb-score">${r.score}</span></div>`
         );
       })

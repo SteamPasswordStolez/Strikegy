@@ -8,12 +8,15 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
 export type InputRule = 'all' | 'desktop' | 'mobile';
 export type RoomState = 'lobby' | 'playing';
+/** Who decides which side people play on (owner, 2026-10-14): drawn at the start, each player, or the room's owner. */
+export type TeamPick = 'random' | 'self' | 'host';
+export type Side = 'blue' | 'red';
 
 /** The most soldiers in a room, bots included (owner, 2026-10-04). */
 export const ROOM_MAX = 300;
@@ -27,11 +30,69 @@ export const NAME_MAX = 16;
 // Hangul syllables, lone consonants / vowels (ㄱ-ㅣ, U+3131-318E) and conjoining jamo (some IMEs).
 const NAME_RE = /^[0-9A-Za-z_\-가-힣\u3131-\u318e\u1100-\u11ff\ua960-\ua97f\ud7b0-\ud7ff]+$/;
 
+/**
+ * Words that would pass for the game's staff or the server itself (owner,
+ * 2026-10-14: no posing as someone to do harm or leave chat in their name).
+ * Names and room titles holding one are refused; compared without case, spaces, '_' and '-'.
+ */
+const RESERVED_PARTS = ['admin', 'moderator', 'strikegy', 'system', 'official', 'support', '운영', '관리자', '개발자', '시스템', '서버', '공식', '방장', '경고', '공지'];
+const RESERVED_WHOLE = ['gm', 'dev', 'mod', 'host', 'owner', 'server', 'staff', 'root', 'notice'];
+
+/** Whether a name or title passes for staff or the server (see `RESERVED_PARTS`). */
+export function reservedText(text: string): boolean {
+  const k = text.normalize('NFKC').toLowerCase().replace(/[\s_\-.]/g, '');
+  return RESERVED_WHOLE.includes(k) || RESERVED_PARTS.some((w) => k.includes(w));
+}
+
 /** A player name, trimmed, or null when it can't be used. */
 export function cleanName(raw: string): string | null {
   const name = raw.normalize('NFC').trim();
-  if (name.length < NAME_MIN || name.length > NAME_MAX || !NAME_RE.test(name)) return null;
+  if (name.length < NAME_MIN || name.length > NAME_MAX || !NAME_RE.test(name) || reservedText(name)) return null;
   return name;
+}
+
+/**
+ * The tag after every name in rooms and chat (`name#K7Q2M`): the server makes
+ * it from the browser's hidden id with a key only it holds, so nobody can
+ * pick or copy someone else's (owner, 2026-10-14). Letters that don't look
+ * alike only.
+ */
+export const TAG_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+export const TAG_LEN = 5;
+
+/** Longest chat line (characters). */
+export const CHAT_MAX = 120;
+
+// Control characters, zero-width and text-direction marks (they scramble lines or fake other text).
+// eslint-disable-next-line no-control-regex, no-misleading-character-class -- stripping them is the point
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\uffff]/g;
+
+/** A chat line as sent on: no invisible characters, spaces squeezed, at most `CHAT_MAX`; null when nothing is left. */
+export function cleanChat(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > CHAT_MAX * 4) return null;
+  const text = raw.normalize('NFC').replace(INVISIBLE, '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return [...text].slice(0, CHAT_MAX).join('');
+}
+
+/** Modes where every soldier is on their own (no sides to pick, no team chat). */
+export const SOLO_MODES: readonly string[] = ['ffa', 'gungame', 'lastman'];
+
+/** Whether people are split into sides in a room (not every-soldier-for-themselves, not all against the bots). */
+export function hasSides(s: Pick<RoomSettings, 'mode' | 'lineup'>): boolean {
+  return s.lineup !== 'coop' && !SOLO_MODES.includes(s.mode);
+}
+
+/** A line in a room's chat. `from` null: the server's own note (`sys`) about `who`. */
+export interface ChatLine {
+  at: number;
+  from: { id: string; name: string; tag: string; team: Side | null } | null;
+  text?: string;
+  /** To the sender's side only. */
+  team?: boolean;
+  sys?: 'join' | 'leave' | 'kicked' | 'host' | 'team' | 'slow' | 'start';
+  who?: { name: string; tag: string };
+  side?: Side;
 }
 
 /** Settings the room's creator picks (and may change while waiting). */
@@ -46,6 +107,8 @@ export interface RoomSettings {
   input: InputRule;
   /** Bots computed on same-team desktop PCs (on by default). */
   botShare: boolean;
+  /** Who picks the sides. */
+  teamPick: TeamPick;
 }
 
 /**
@@ -59,6 +122,10 @@ export function roomLoad(settings: RoomSettings, humans: number): number {
 export interface Member {
   id: string;
   name: string;
+  /** The server's tag for this browser (see `TAG_ALPHABET`). */
+  tag: string;
+  /** The side they play on (null: drawn at the start, or no sides in this mode). */
+  team: Side | null;
   device: Device;
   /** Lost the connection mid-match; the seat is kept for a minute. */
   away?: boolean;
@@ -73,14 +140,16 @@ export interface RoomInfo {
   humans: number;
   /** Most humans this room takes (HUMAN_CAP, or fewer when the room is small). */
   humanCap: number;
+  /** Its owner, as everyone sees them. */
+  host: { name: string; tag: string };
+  /** People on each side (for joining one under way). */
+  sides: { blue: number; red: number };
 }
 
 export interface Room extends RoomInfo {
   owner: string;
   members: Member[];
 }
-
-type Side = 'blue' | 'red';
 
 /** A soldier in a match as everyone knows it. */
 export interface MatchSoldierInfo {
@@ -91,6 +160,8 @@ export interface MatchSoldierInfo {
   squad: number;
   /** A bot (people get a name tag over their heads). */
   bot?: boolean;
+  /** A person's tag (see `TAG_ALPHABET`). */
+  tag?: string;
 }
 
 /** Sent when a match starts, or when joining (or coming back to) one under way. */
@@ -198,7 +269,12 @@ export type ClientMsg =
   | { t: 'hello'; v: number; name: string; uid: string; device: Device }
   | { t: 'list' }
   | { t: 'create'; settings: RoomSettings; password?: string }
-  | { t: 'join'; room: string; password?: string }
+  /** `team`: the side wanted (rooms where players pick their own). */
+  | { t: 'join'; room: string; password?: string; team?: Side }
+  /** A line to the room (`team`: to one's own side only). */
+  | { t: 'chat'; text: string; team?: boolean }
+  /** Onto a side: one's own (rooms where players pick), or `member`'s (the owner, where the owner picks). */
+  | { t: 'team'; team: Side; member?: string }
   | { t: 'leave' }
   | { t: 'settings'; settings: RoomSettings }
   | { t: 'start' }
@@ -233,7 +309,10 @@ export type ErrorCode =
   | 'bad';
 
 export type ServerMsg =
-  | { t: 'welcome'; id: string; name: string }
+  | { t: 'welcome'; id: string; name: string; tag: string }
+  | { t: 'chat'; line: ChatLine }
+  /** The room's recent chat, on joining it. */
+  | { t: 'chatLog'; lines: ChatLine[] }
   | { t: 'rooms'; rooms: RoomInfo[] }
   | { t: 'room'; room: Room }
   | { t: 'left'; reason: 'leave' | 'kicked' | 'closed' }
@@ -261,6 +340,8 @@ export type ServerMsg =
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
 const INPUTS: readonly InputRule[] = ['all', 'desktop', 'mobile'];
 const DIFFS = ['easy', 'normal', 'hard'] as const;
+const PICKS: readonly TeamPick[] = ['random', 'self', 'host'];
+const isSide = (v: unknown): v is Side => v === 'blue' || v === 'red';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
@@ -268,15 +349,17 @@ const str = (v: unknown, max: number): v is string => typeof v === 'string' && v
 /** Checks settings from a client; returns a clean copy or null. */
 export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!isObj(raw)) return null;
-  const { name, map, mode, size, lineup, difficulty, input, botShare } = raw;
+  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick } = raw;
   if (!str(name, 32) || !str(map, 32) || !str(mode, 16)) return null;
   // No control characters or text-direction overrides (they scramble the room list).
   // eslint-disable-next-line no-control-regex -- stripping them is the point
   const title = name.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim();
-  if (!title || !/^[\w-]+$/.test(map) || !/^\w+$/.test(mode)) return null;
+  if (!title || reservedText(title) || !/^[\w-]+$/.test(map) || !/^\w+$/.test(mode)) return null;
   if (typeof size !== 'number' || !Number.isInteger(size) || size < 2 || size > ROOM_MAX) return null;
   if (!LINEUPS.includes(lineup as Lineup) || !INPUTS.includes(input as InputRule)) return null;
   if (!DIFFS.includes(difficulty as (typeof DIFFS)[number]) || typeof botShare !== 'boolean') return null;
+  // Rooms from before team picking: drawn at random.
+  if (teamPick !== undefined && !PICKS.includes(teamPick as TeamPick)) return null;
   return {
     name: title,
     map,
@@ -286,6 +369,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
     difficulty: difficulty as RoomSettings['difficulty'],
     input: input as InputRule,
     botShare,
+    teamPick: (teamPick as TeamPick | undefined) ?? 'random',
   };
 }
 
@@ -321,7 +405,13 @@ export function parseClientMsg(text: string): ClientMsg | null {
     case 'create':
       return isObj(raw.settings) && (raw.password === undefined || str(raw.password, 64)) ? (raw as ClientMsg) : null;
     case 'join':
-      return str(raw.room, 32) && (raw.password === undefined || str(raw.password, 64)) ? (raw as ClientMsg) : null;
+      return str(raw.room, 32) && (raw.password === undefined || str(raw.password, 64)) && (raw.team === undefined || isSide(raw.team))
+        ? { t: 'join', room: raw.room, password: raw.password as string | undefined, team: raw.team as Side | undefined }
+        : null;
+    case 'chat':
+      return typeof raw.text === 'string' && raw.text.length <= CHAT_MAX * 4 && (raw.team === undefined || typeof raw.team === 'boolean') ? { t: 'chat', text: raw.text, team: raw.team === true } : null;
+    case 'team':
+      return isSide(raw.team) && (raw.member === undefined || str(raw.member, 32)) ? { t: 'team', team: raw.team, member: raw.member as string | undefined } : null;
     case 'settings':
       return isObj(raw.settings) ? (raw as ClientMsg) : null;
     case 'kick':

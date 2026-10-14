@@ -127,7 +127,7 @@ export class DeployScreen {
     this.button.addEventListener('click', () => this.tryDeploy());
 
     window.addEventListener('keydown', (e) => {
-      if (!this.visible || !this.state) return;
+      if (!this.visible || !this.state || e.defaultPrevented || (e.target as HTMLElement | null)?.tagName === 'INPUT') return;
       const d = /^Digit([1-9])$/.exec(e.code);
       if (d) {
         const opt = this.state.options[Number(d[1]) - 1];

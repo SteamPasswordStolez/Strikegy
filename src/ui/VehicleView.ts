@@ -16,9 +16,12 @@
  *   altitude, throttle, heading).
  * - `open` (jeep, bike, open gun seats): nothing over the view; the vehicle
  *   itself is in sight.
+ * - `third` (third person in a seat whose gun turns at a rate, 2026-10-14):
+ *   a small cross where the camera looks (the gun aims there) and a ring
+ *   where the gun points now, closing as it reloads.
  */
 
-export type VehicleViewKind = 'sight' | 'mg' | 'port' | 'cockpit' | 'open';
+export type VehicleViewKind = 'sight' | 'mg' | 'port' | 'cockpit' | 'open' | 'third';
 
 export interface VehicleViewState {
   kind: VehicleViewKind;
@@ -52,6 +55,8 @@ export interface VehicleViewState {
   warning: string | null;
   /** Vertical field of view (deg), for the horizon's place. */
   fovY: number;
+  /** Third person: where the gun points now on the screen (px), or null. */
+  gun: { x: number; y: number } | null;
   /** Words shown: the gun's name, the vehicle's, the zoom and range labels. */
   gunName: string;
   vehicleName: string;
@@ -100,6 +105,7 @@ export class VehicleView {
     if (s.kind === 'sight') this.sight(s);
     else if (s.kind === 'mg') this.mg(s);
     else if (s.kind === 'port') this.port(s);
+    else if (s.kind === 'third') this.third(s);
     else this.cockpit(s);
   }
 
@@ -296,6 +302,39 @@ export class VehicleView {
     g.fillRect(cx - bw / 2, cy + u * 0.2, bw, u * 0.008);
     g.fillStyle = s.overheated ? WARN : INK;
     g.fillRect(cx - bw / 2, cy + u * 0.2, bw * Math.min(1, s.heat), u * 0.008);
+    this.panel(s);
+  }
+
+  private third(s: VehicleViewState): void {
+    const g = this.g;
+    const { w, h } = this;
+    const cx = w / 2;
+    const cy = h / 2;
+    const u = Math.min(w, h);
+    // Where the camera looks: the gun is on its way there.
+    g.strokeStyle = INK_DIM;
+    g.lineWidth = Math.max(1.5, u * 0.002);
+    g.beginPath();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      g.moveTo(cx + dx * u * 0.008, cy + dy * u * 0.008);
+      g.lineTo(cx + dx * u * 0.02, cy + dy * u * 0.02);
+    }
+    g.stroke();
+    // Where the gun points now (its rounds go there), the reload closing round it.
+    if (s.gun) {
+      const x = Math.max(0, Math.min(w, s.gun.x));
+      const y = Math.max(0, Math.min(h, s.gun.y));
+      g.strokeStyle = INK;
+      g.lineWidth = Math.max(1.5, u * 0.0025);
+      g.beginPath();
+      g.arc(x, y, u * 0.016, 0, Math.PI * 2);
+      g.stroke();
+      g.fillStyle = INK;
+      g.beginPath();
+      g.arc(x, y, Math.max(1.5, u * 0.0025), 0, Math.PI * 2);
+      g.fill();
+      this.reloadRing(x, y, u * 0.026, s.reload);
+    }
     this.panel(s);
   }
 

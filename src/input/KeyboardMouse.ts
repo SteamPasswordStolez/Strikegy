@@ -1,5 +1,6 @@
 import type { InputSource, InputState } from './InputState';
 import { ACTIONS, bindings, onBindingsChange, type Action } from './bindings';
+import { typing } from './typing';
 
 /** Base radians per mouse count at sensitivity 1.0. */
 const MOUSE_RAD_PER_COUNT = 0.0022;
@@ -32,7 +33,8 @@ export class KeyboardMouse implements InputSource {
     this.rebind();
     this.disposers.push(onBindingsChange(() => this.rebind()));
     this.listen<KeyboardEvent>(window, 'keydown', (e) => {
-      if (e.repeat) return;
+      // Typing in the chat (or any text box) moves nobody.
+      if (e.repeat || typing(e)) return;
       this.press(e.code);
       if (this.locked && (this.byCode.has(e.code) || e.code === 'Tab')) e.preventDefault();
     });

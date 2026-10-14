@@ -2978,6 +2978,8 @@ body {
   position: fixed;
   inset: 0;
   overflow: hidden;
+  /* No scrolling the whole menu (focusing a box near the drifting backdrop's edge did). */
+  overflow: clip;
   color: var(--hud-fg);
   font-family: var(--font);
   background: var(--navy);
@@ -4140,106 +4142,851 @@ body {
   font-size: 12px;
 }
 
-/* Multiplayer pages: room list, create form, waiting room. */
+/* Multiplayer pages (remade 2026-10-14, BF2042 look): server browser, create / edit, waiting room. */
 .lb-mp {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 980px;
   min-height: 0;
 }
-.lb-mp .lb-setup {
-  max-width: 520px;
+.lb-btn:disabled,
+.lb-start:disabled {
+  opacity: 0.4;
+  filter: grayscale(0.6);
+  cursor: default;
+  box-shadow: none;
+}
+.lb-btn.danger:hover {
+  background: rgb(255 90 79 / 0.22);
+  box-shadow: inset 0 0 0 1px var(--hud-danger);
 }
 .mp-notice {
-  padding: 8px 12px;
-  background: rgb(255 90 79 / 0.14);
-  box-shadow: inset 3px 0 0 var(--hud-danger);
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 60;
+  max-width: min(640px, calc(100vw - 32px));
+  padding: 10px 16px;
+  transform: translateX(-50%);
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 3px 0 0 var(--hud-danger), 0 8px 30px rgb(0 0 0 / 0.4);
   font-size: 14px;
+  cursor: pointer;
 }
-.mp-bar {
+.mp-status .mp-notice {
+  position: static;
+  transform: none;
+}
+.mp-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  max-width: 520px;
+}
+.mp-spinner {
+  width: 220px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat, rgb(255 255 255 / 0.08);
+  animation: mpScan 1.1s linear infinite;
+}
+@keyframes mpScan {
+  from {
+    background-position: -40% 0, 0 0;
+  }
+  to {
+    background-position: 140% 0, 0 0;
+  }
+}
+/* The player's own card: name#TAG and the round trip as bars. */
+.mp-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 1px var(--glass-line), inset 3px 0 0 var(--accent);
+}
+.mp-id-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hud-faint);
+}
+.mp-id .chat-name {
+  font-size: 16px;
+}
+.mp-ping {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-dim);
+}
+.mp-ping-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+.mp-ping-bars i {
+  width: 3px;
+  background: rgb(255 255 255 / 0.18);
+}
+.mp-ping-bars i:nth-child(1) { height: 25%; }
+.mp-ping-bars i:nth-child(2) { height: 50%; }
+.mp-ping-bars i:nth-child(3) { height: 75%; }
+.mp-ping-bars i:nth-child(4) { height: 100%; }
+.mp-ping.q4 .on,
+.mp-ping.q3 .on {
+  background: var(--accent);
+}
+.mp-ping.q2 .on {
+  background: #ffd24a;
+}
+.mp-ping.q1 .on {
+  background: var(--hud-danger);
+}
+
+/* Server browser: the list (filters, rows) left, the picked room right. */
+.mpb {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px 26px;
+  height: 100%;
+}
+.mpb-top {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mpb-acts {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
-.mp-me {
-  margin-right: auto;
+.mpb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.mpb-list,
+.mpb-detail {
+  grid-row: 2;
+}
+.mpb-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.mpb-search {
+  flex: 1;
+  min-width: 160px;
+  margin-left: 6px;
+  font-size: 14px;
+  user-select: text;
+}
+.mpb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.5fr) minmax(0, 1fr) 84px;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 0;
+  background: var(--row-bg);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  color: var(--hud-fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+button.mpb-row {
+  cursor: pointer;
+}
+button.mpb-row:hover {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.3);
+}
+.mpb-row.sel {
+  background: var(--sel-bg);
+  box-shadow: inset 4px 0 0 var(--accent), inset 0 0 0 1px rgb(0 229 255 / 0.35);
+  color: var(--sel-fg);
+}
+.mpb-row.full {
+  opacity: 0.6;
+}
+.mpb-head {
+  padding-block: 2px;
+  background: none;
+  box-shadow: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hud-faint);
+}
+.mpb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.mpb-name,
+.mpb-what,
+.mpb-num {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.mpb-title {
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mpb-host {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.mpb-mode {
+  font-size: 12px;
+  color: var(--hud-dim);
+}
+.mpb-row.sel .mpb-mode {
+  color: inherit;
+}
+.mpb-num {
+  font-variant-numeric: tabular-nums;
+}
+.mpb-bar {
+  height: 3px;
+  background: rgb(255 255 255 / 0.12);
+}
+.mpb-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.mpb-state {
+  justify-self: start;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: rgb(255 255 255 / 0.08);
+}
+.mpb-state.st-playing {
+  background: rgb(0 229 255 / 0.18);
+  color: var(--accent);
+}
+.mpb-none {
+  padding: 18px 14px;
   font-size: 14px;
   color: var(--hud-dim);
 }
-.mp-list {
+.mpb-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
+}
+.mpb-empty-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+.mpb-dhead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mpb-dname {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.mpb-dby {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--hud-dim);
+}
+.mpb-dstate {
+  font-size: 12.5px;
+  color: var(--hud-dim);
+}
+.mpb-dstate.st-playing {
+  color: var(--accent);
+}
+.mpb-pw {
+  font-size: 15px;
+  user-select: text;
+}
+.mpb-go {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+}
+.mpb-join {
+  margin-top: 0;
+}
+.mpb-side {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 16px;
+  font-size: 15px;
+}
+.mpb-side.side-blue {
+  box-shadow: inset 4px 0 0 var(--ally), inset 0 0 0 1px rgb(76 157 255 / 0.4);
+}
+.mpb-side.side-red {
+  box-shadow: inset 4px 0 0 var(--enemy), inset 0 0 0 1px rgb(242 69 58 / 0.4);
+}
+.mpb-side-n {
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-dim);
+}
+
+/* A room's picture with its mode and map on it, and its facts. */
+.mp-pic {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: rgb(0 0 0 / 0.35);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+.mp-pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mp-pic-cap {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 12px 8px;
+  background: linear-gradient(transparent, rgb(3 10 20 / 0.85));
+  font-size: 13px;
+  font-weight: 700;
+}
+.mp-pic-mode {
+  color: var(--accent);
+  letter-spacing: 0.08em;
+}
+.mp-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.mp-facts dt {
+  color: var(--hud-dim);
+}
+.mp-facts dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
+/* Waiting room: head, then the sides and the chat, the room's card right. */
+.mpr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px 26px;
+  height: 100%;
+}
+.mpr-head {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mpr-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.mpr-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mpr-badge {
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+.mpr-badge.accent,
+.mpr-badge.st-playing {
+  background: rgb(0 229 255 / 0.16);
+  box-shadow: inset 0 0 0 1px rgb(0 229 255 / 0.4);
+  color: var(--accent);
+}
+.mpr-name {
+  overflow: hidden;
+  font-size: 26px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mpr-main {
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: minmax(0, 1.15fr) minmax(170px, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+.mpr-teams {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 14px;
+  min-height: 0;
+}
+.mpr-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 10px;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
+}
+.mpr-side.side-blue {
+  box-shadow: inset 0 3px 0 var(--ally), inset 0 0 0 1px rgb(76 157 255 / 0.25);
+  background: linear-gradient(180deg, rgb(76 157 255 / 0.14), transparent 40%), var(--glass);
+}
+.mpr-side.side-red {
+  box-shadow: inset 0 3px 0 var(--enemy), inset 0 0 0 1px rgb(242 69 58 / 0.25);
+  background: linear-gradient(180deg, rgb(242 69 58 / 0.13), transparent 40%), var(--glass);
+}
+.mpr-side.all {
+  box-shadow: inset 0 3px 0 var(--accent), inset 0 0 0 1px var(--glass-line);
+}
+.mpr-side-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px 6px;
+}
+.mpr-side-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.side-blue .mpr-side-name {
+  color: var(--ally-soft);
+}
+.side-red .mpr-side-name {
+  color: var(--enemy-soft);
+}
+.mpr-side-n {
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-dim);
+}
+.mpr-switch {
+  margin-left: auto;
+}
+.mpr-side-note {
+  padding: 0 4px 4px;
+  font-size: 12px;
+  color: var(--hud-dim);
+}
+.mpr-members {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-height: 0;
   overflow-y: auto;
 }
-.mp-row {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+.mpr-member {
+  display: flex;
   align-items: center;
-  padding: 9px 14px;
-  border: 0;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 10px;
   background: var(--row-bg);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
-  color: var(--hud-fg);
-  font: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
   font-size: 14px;
-  text-align: left;
 }
-button.mp-row {
-  cursor: pointer;
+.mpr-member.self {
+  background: linear-gradient(90deg, rgb(0 229 255 / 0.2), rgb(0 229 255 / 0.04));
+  box-shadow: inset 3px 0 0 var(--accent);
 }
-button.mp-row:hover {
-  background: var(--sel-bg);
-  box-shadow: inset 4px 0 0 var(--hud-accent);
-  color: var(--sel-fg);
+.mpr-member.away {
+  opacity: 0.55;
 }
-.mp-row.mp-head {
-  background: none;
-  box-shadow: none;
-  padding-block: 2px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--hud-dim);
+.mpr-dev {
+  font-size: 13px;
+  opacity: 0.8;
 }
-.mp-row.mp-members {
-  grid-template-columns: minmax(0, 1fr) 64px;
-}
-.mp-self {
-  box-shadow: inset 3px 0 0 var(--ally), inset 0 0 0 1px rgb(255 255 255 / 0.08);
-}
-.mp-name {
+.mpr-who {
+  min-width: 0;
   overflow: hidden;
-  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mp-num {
-  font-variant-numeric: tabular-nums;
-}
-.mp-live {
-  color: var(--hud-accent);
-  font-weight: 700;
-}
-.mp-roominfo {
+.mpr-tags {
   display: flex;
-  flex-direction: column;
   gap: 4px;
 }
-.lb-srow.mp-text {
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 228px);
+.mpr-tag {
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: rgb(255 255 255 / 0.1);
 }
-@media (max-height: 500px), (max-width: 640px) {
-  .mp-row {
-    gap: 6px;
-    padding: 6px 8px;
-    font-size: 12px;
+.mpr-tag.host {
+  background: rgb(255 210 74 / 0.18);
+  color: #ffd24a;
+}
+.mpr-tag.me {
+  background: rgb(0 229 255 / 0.18);
+  color: var(--accent);
+}
+.mpr-tag.muted {
+  background: rgb(255 90 79 / 0.16);
+  color: var(--enemy-soft);
+}
+.mpr-acts {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  opacity: 0.35;
+  transition: opacity 0.12s;
+}
+.mpr-member:hover .mpr-acts,
+.mpr-acts:focus-within {
+  opacity: 1;
+}
+.mpr-none {
+  padding: 10px;
+  font-size: 13px;
+  color: var(--hud-faint);
+}
+.mpr-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
+}
+.mpr-chat-head {
+  padding: 0 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hud-faint);
+}
+.mpr-aside {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.mpr-edit {
+  align-self: stretch;
+}
+.mpr-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+}
+.mpr-foot .lb-start {
+  margin-top: 0;
+}
+.mpr-wait {
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--hud-dim);
+  background: rgb(255 255 255 / 0.05);
+}
+@media (max-width: 900px), (max-height: 520px) {
+  .mpb,
+  .mpr {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    overflow-y: auto;
   }
+  .mpb-list,
+  .mpb-detail,
+  .mpr-main,
+  .mpr-aside {
+    grid-row: auto !important;
+  }
+  .mpb-rows {
+    max-height: 46vh;
+  }
+  .mpr-main {
+    grid-template-rows: auto 240px;
+  }
+  .mpb-row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+    gap: 8px;
+    padding: 7px 9px;
+    font-size: 12.5px;
+  }
+  .mpb-row .mpb-state {
+    display: none;
+  }
+  .mpb-head span:last-child {
+    display: none;
+  }
+}
+
+/* Chat: the waiting room's box and the match's (HUD). Names always carry their server tag. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 14px;
+}
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.chat-room {
+  flex: 1;
+}
+.chat-room .chat-log {
+  flex: 1;
+  padding: 2px 4px 6px;
+}
+.chat-line {
+  line-height: 1.4;
+}
+.chat-line.sys {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--hud-dim);
+}
+.chat-sys-mark {
+  margin-right: 6px;
+  font-size: 9px;
+  font-style: normal;
+  color: var(--accent);
+  vertical-align: 1px;
+}
+.chat-who {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.chat-line.sys .chat-who {
+  font-style: normal;
+}
+.chat-tag {
+  margin-left: 2px;
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.chat-who.side-blue,
+.chat-who.ally {
+  color: var(--ally-soft);
+}
+.chat-who.side-red,
+.chat-who.enemy {
+  color: var(--enemy-soft);
+}
+.chat-colon {
+  margin-right: 6px;
+  color: var(--hud-dim);
+}
+.chat-badge {
+  margin-right: 6px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgb(116 224 138 / 0.18);
+  color: var(--squad);
+}
+.chat-line.team .chat-text {
+  color: #c9f5d2;
+}
+.chat-empty {
+  padding: 8px 2px;
+  font-size: 13px;
+  color: var(--hud-faint);
+}
+.chat-form {
+  display: flex;
+  gap: 6px;
+}
+.chat-scope {
+  flex: none;
+  min-width: 56px;
+  padding: 0 10px;
+  border: 0;
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
+  color: var(--hud-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.chat-scope.team {
+  background: rgb(116 224 138 / 0.2);
+  box-shadow: inset 0 0 0 1px rgb(116 224 138 / 0.55);
+  color: var(--squad);
+}
+.chat-scope:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
+  color: var(--hud-fg);
+  font: inherit;
+  font-size: 14px;
+  user-select: text;
+}
+.chat-input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.chat.to-team .chat-input:focus {
+  box-shadow: inset 0 0 0 1px var(--squad);
+}
+.chat-send {
+  padding-inline: 14px;
+}
+/* In a match: lines over the game at the left, fading while closed; the box opens on a key. */
+.chat-hud {
+  position: fixed;
+  left: 16px;
+  bottom: 31%;
+  z-index: 45;
+  width: min(440px, 38vw);
+  max-height: 34vh;
+  pointer-events: none;
+  text-shadow: var(--hud-shadow);
+}
+.chat-hud .chat-log {
+  justify-content: flex-end;
+  padding: 4px 6px;
+  overflow: hidden;
+}
+.chat-hud .chat-line {
+  width: fit-content;
+  max-width: 100%;
+  padding: 1px 6px;
+  background: rgb(4 10 20 / 0.45);
+  transition: opacity 0.6s;
+}
+.chat-hud:not(.open) .chat-line.old {
+  opacity: 0;
+}
+.chat-hud .chat-form {
+  display: none;
+}
+.chat-hud.open {
+  pointer-events: auto;
+}
+.chat-hud.open .chat-log {
+  overflow-y: auto;
+  background: rgb(4 10 20 / 0.55);
+}
+.chat-hud.open .chat-form {
+  display: flex;
+  margin-top: 4px;
+}
+.chat-hud.open .chat-scope,
+.chat-hud.open .chat-input {
+  background: rgb(4 10 20 / 0.8);
+}
+.chat-open {
+  display: none;
+}
+.chat-hud.touch {
+  bottom: auto;
+  top: calc(var(--mm-size, 150px) + 70px);
+  width: min(320px, 42vw);
+  max-height: 28vh;
+}
+.chat-hud.touch .chat-open {
+  display: block;
+  align-self: flex-start;
+  order: -1;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(4 10 20 / 0.6);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.25);
+  color: var(--hud-fg);
+  font-size: 16px;
+  pointer-events: auto;
+}
+body.overlay-up .chat-hud {
+  display: none;
+}
+/* Over the deploy screen: in the empty corner under the kit. */
+body:has(.deploy.on) .chat-hud:not(.touch) {
+  bottom: 16px;
+  z-index: 45;
+  width: min(380px, 30vw);
+  max-height: 30vh;
+}
+/* Tags on the scoreboard (multiplayer). */
+.sb-tag {
+  margin-left: 3px;
+  font-size: 0.8em;
+  opacity: 0.5;
+}
+
+@media (max-height: 500px), (max-width: 640px) {
   .lb-name,
   .lb-lang {
     padding: 4px 10px;

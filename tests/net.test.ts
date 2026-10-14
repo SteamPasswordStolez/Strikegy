@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { cleanName, cleanSettings, PROTOCOL_VERSION, roomLoad, type RoomSettings, type ServerMsg } from '@/net/lobbyProtocol';
+import { cleanChat, cleanName, cleanSettings, PROTOCOL_VERSION, reservedText, roomLoad, type RoomSettings, type ServerMsg } from '@/net/lobbyProtocol';
 import { startGateway, type Gateway } from '../server/gateway';
-import { LobbyCore, type Conn } from '../server/lobby';
+import { LobbyCore, tagOf, type Conn } from '../server/lobby';
 
 describe('names and settings', () => {
   it('accepts Korean, latin, digits, _ and - within 2-16 characters', () => {
@@ -17,8 +17,21 @@ describe('names and settings', () => {
     expect(cleanName('<script>')).toBeNull();
   });
 
+  it('refuses names and room titles that pass for staff or the server', () => {
+    for (const n of ['admin', 'Admin_01', '운영자', '관리자님', 'GM', 'server', '방장', 'Strikegy-dev', 's-y-s-t-e-m']) expect(cleanName(n)).toBeNull();
+    for (const n of ['병사', 'modern', 'hosta', 'gmail']) expect(cleanName(n)).not.toBeNull();
+    expect(reservedText('공식 서버 방')).toBe(true);
+  });
+
+  it('cleans chat lines: no invisible or direction characters, one line, at most 120', () => {
+    expect(cleanChat('  안녕\n  하세요\u202e\u200b ')).toBe('안녕 하세요');
+    expect(cleanChat('\u200b\u3164 ')).toBeNull();
+    expect(cleanChat('ㅋ'.repeat(300))).toHaveLength(120);
+    expect(cleanChat(42)).toBeNull();
+  });
+
   it('rejects room sizes over 300 and unknown values', () => {
-    const ok: RoomSettings = { name: '방', map: 'iron_gate', mode: 'zone', size: 300, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true };
+    const ok: RoomSettings = { name: '방', map: 'iron_gate', mode: 'zone', size: 300, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random' };
     expect(cleanSettings(ok)).toEqual(ok);
     expect(cleanSettings({ ...ok, size: 301 })).toBeNull();
     expect(cleanSettings({ ...ok, lineup: 'x' })).toBeNull();
@@ -26,7 +39,7 @@ describe('names and settings', () => {
   });
 
   it('a room with bots weighs its full size on the server, users only just its people', () => {
-    const s: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 40, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true };
+    const s: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 40, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random' };
     expect(roomLoad(s, 3)).toBe(3);
     expect(roomLoad({ ...s, lineup: 'usersBots' }, 3)).toBe(40);
     expect(roomLoad({ ...s, lineup: 'coop' }, 3)).toBe(40);
@@ -34,7 +47,7 @@ describe('names and settings', () => {
 });
 
 describe('lobby core', () => {
-  const settings: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 8, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true };
+  const settings: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 8, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random' };
   const hello = (name: string) => JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name, uid: name, device: 'desktop' });
   const fake = () => {
     const got: ServerMsg[] = [];
@@ -50,7 +63,7 @@ describe('lobby core', () => {
     const idw = core.open(w.conn);
     const ido = core.open(o.conn);
     await core.message(idw, hello('watcher'));
-    await core.message(ido, hello('owner'));
+    await core.message(ido, hello('maker'));
     await core.message(idw, JSON.stringify({ t: 'list' }));
     const lists = () => w.got.filter((m) => m.t === 'rooms').length;
     const before = lists();
@@ -77,7 +90,7 @@ describe('lobby core', () => {
     const g = fake();
     const ido = core.open(o.conn, undefined, '1.2.3.4');
     const idg = core.open(g.conn, undefined, '5.6.7.8');
-    await core.message(ido, hello('owner'));
+    await core.message(ido, hello('maker'));
     await core.message(idg, hello('guesser'));
     await core.message(ido, JSON.stringify({ t: 'create', settings, password: 'right' }));
     const room = o.last('room')!.room.id;
@@ -103,6 +116,96 @@ describe('lobby core', () => {
     }
     expect(more[0]!.last('room')).toBeTruthy();
     expect(more[1]!.last('error')).toMatchObject({ code: 'busy', detail: 'rooms' });
+  });
+
+  it('tags people by their browser with the server key: same browser same tag, nobody picks one', async () => {
+    const core = new LobbyCore({ tagSecret: 'k1' });
+    const a = fake();
+    await core.message(core.open(a.conn), JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name: 'alpha', uid: 'abc123-0001', device: 'desktop' }));
+    const tag = a.last('welcome')!.tag;
+    expect(tag).toMatch(/^[2-9A-HJ-NP-Z]{5}$/);
+    // Another tab of the same browser: same tag; another key (server) or browser: another.
+    expect(tagOf('k1', 'abc123-0002')).toBe(tag);
+    expect(tagOf('k2', 'abc123-0001')).not.toBe(tag);
+    expect(tagOf('k1', 'abc124-0001')).not.toBe(tag);
+  });
+
+  it('chat: the room hears it with the tag, sides hear their own, floods and repeats are held back', async () => {
+    let now = 0;
+    const core = new LobbyCore({ now: () => now, tagSecret: 'k' });
+    const [a, b, c] = [fake(), fake(), fake()];
+    const [ida, idb, idc] = [core.open(a.conn), core.open(b.conn), core.open(c.conn)];
+    for (const [id, n] of [[ida, 'aa'], [idb, 'bb'], [idc, 'cc']] as const) await core.message(id, hello(n));
+    await core.message(ida, JSON.stringify({ t: 'create', settings: { ...settings, teamPick: 'self' } }));
+    const room = a.last('room')!.room.id;
+    // The first one in lands on a side at random; players pick here.
+    await core.message(ida, JSON.stringify({ t: 'team', team: 'blue' }));
+    await core.message(idb, JSON.stringify({ t: 'join', room, team: 'red' }));
+    await core.message(idc, JSON.stringify({ t: 'join', room, team: 'red' }));
+    // Joining gets the room's recent lines.
+    expect(c.got.some((m) => m.t === 'chatLog')).toBe(true);
+    const teams = Object.fromEntries(a.last('room')!.room.members.map((m) => [m.name, m.team]));
+    expect(teams).toEqual({ aa: 'blue', bb: 'red', cc: 'red' });
+    await core.message(ida, JSON.stringify({ t: 'chat', text: 'hi <b>all</b>' }));
+    const line = b.last('chat')!.line;
+    expect(line.from).toMatchObject({ name: 'aa', tag: a.last('welcome')!.tag, team: 'blue' });
+    expect(line.text).toBe('hi <b>all</b>');
+    // Red's side chat: red hears it, blue doesn't.
+    const aChats = a.got.filter((m) => m.t === 'chat').length;
+    await core.message(idb, JSON.stringify({ t: 'chat', text: 'flank left', team: true }));
+    expect(c.last('chat')!.line).toMatchObject({ text: 'flank left', team: true, side: 'red' });
+    expect(a.got.filter((m) => m.t === 'chat').length).toBe(aChats);
+    // Nobody can send a line as someone else or the server: the sender is stamped by the server.
+    await core.message(idc, JSON.stringify({ t: 'chat', text: 'x', from: { name: 'aa', tag: 'AAAAA' }, sys: 'host' }));
+    expect(a.last('chat')!.line.from).toMatchObject({ name: 'cc' });
+    expect(a.last('chat')!.line.sys).toBeUndefined();
+    // Floods: a burst of 5, then held back until the bucket refills; the same line 3 times in a row at most.
+    for (let i = 0; i < 5; i++) await core.message(idc, JSON.stringify({ t: 'chat', text: `m${i}` }));
+    expect(c.last('chat')!.line.sys).toBe('slow');
+    now += 10_000;
+    for (let i = 0; i < 4; i++) await core.message(ida, JSON.stringify({ t: 'chat', text: 'same' }));
+    expect(a.last('chat')!.line.sys).toBe('slow');
+    expect(b.got.filter((m) => m.t === 'chat' && m.line.text === 'same')).toHaveLength(3);
+  });
+
+  it('sides: drawn at the start, picked by each player, or set by the owner', async () => {
+    const core = new LobbyCore({ tagSecret: 'k' });
+    const people = ['p1', 'p2', 'p3', 'p4'].map((n) => ({ n, f: fake() }));
+    const ids = people.map((p) => core.open(p.f.conn));
+    for (const [i, p] of people.entries()) await core.message(ids[i]!, hello(p.n));
+    const send = (i: number, m: object) => core.message(ids[i]!, JSON.stringify(m));
+    const members = () => people[0]!.f.last('room')!.room.members;
+    const counts = () => ({ blue: members().filter((m) => m.team === 'blue').length, red: members().filter((m) => m.team === 'red').length });
+    // Players pick: a side takes half the people at most (2 in a room of 4).
+    await send(0, { t: 'create', settings: { ...settings, size: 4, teamPick: 'self' } });
+    const room = people[0]!.f.last('room')!.room.id;
+    for (const i of [1, 2, 3]) await send(i, { t: 'join', room, team: 'red' });
+    expect(counts()).toEqual({ blue: 2, red: 2 });
+    // Only the owner moves others, and only where the owner picks.
+    await send(0, { t: 'team', team: 'blue', member: ids[1] });
+    expect(people[0]!.f.last('error')!.code).toBe('notOwner');
+    // Owner picks: the owner moves people (not onto a full side), players can't move themselves.
+    await send(0, { t: 'settings', settings: { ...settings, size: 4, teamPick: 'host' } });
+    const p2 = () => members().find((m) => m.name === 'p2')!.team;
+    const before = p2();
+    await send(0, { t: 'team', team: before === 'red' ? 'blue' : 'red', member: ids[1] });
+    expect(people[0]!.f.last('error')).toMatchObject({ code: 'full', detail: 'side' });
+    expect(p2()).toBe(before);
+    await send(2, { t: 'team', team: 'blue' });
+    expect(people[2]!.f.last('error')!.code).toBe('notOwner');
+    // Random: sides dealt out at the start, two and two.
+    await send(0, { t: 'settings', settings: { ...settings, size: 4, teamPick: 'random' } });
+    await send(0, { t: 'start' });
+    expect(counts()).toEqual({ blue: 2, red: 2 });
+    // Against the bots everyone is blue; every soldier for themselves: no sides.
+    const solo = new LobbyCore({ tagSecret: 'k' });
+    const s1 = fake();
+    const sid = solo.open(s1.conn);
+    await solo.message(sid, hello('solo'));
+    await solo.message(sid, JSON.stringify({ t: 'create', settings: { ...settings, lineup: 'coop' } }));
+    expect(s1.last('room')!.room.members[0]!.team).toBe('blue');
+    await solo.message(sid, JSON.stringify({ t: 'settings', settings: { ...settings, mode: 'ffa' } }));
+    expect(s1.last('room')!.room.members[0]!.team).toBeNull();
   });
 
   it('caps the soldiers on the whole server: rooms with bots count at full size', async () => {
@@ -138,7 +241,7 @@ describe('game server gateway', () => {
   const url = (): string => `ws://127.0.0.1:${server.port}/play`;
 
   beforeAll(async () => {
-    server = await startGateway({ port: 0, host: '127.0.0.1', log: () => {} });
+    server = await startGateway({ port: 0, host: '127.0.0.1', log: () => {}, tagSecret: 'test-key' });
   });
   afterAll(async () => {
     await server.close();
@@ -167,7 +270,7 @@ describe('game server gateway', () => {
     return { ws, id: welcome.id, welcome, send, next };
   }
 
-  const settings: RoomSettings = { name: '테스트', map: 'iron_gate', mode: 'zone', size: 24, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true };
+  const settings: RoomSettings = { name: '테스트', map: 'iron_gate', mode: 'zone', size: 24, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random' };
 
   it('rejects an old client and bad names', async () => {
     const ws = new WebSocket(url());

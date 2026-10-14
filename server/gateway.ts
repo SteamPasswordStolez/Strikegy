@@ -5,6 +5,8 @@
  * player is in (`Matches`). `/health` answers with the load for a quick look
  * from outside.
  */
+import { randomBytes } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
@@ -28,6 +30,30 @@ export interface GatewayOptions {
   /** Each room's match in its own worker thread (the built server; tests run them in-process). */
   workers?: boolean;
   mapsDir?: string;
+  /** The key name tags are made with (default: `tagSecret()`). */
+  tagSecret?: string;
+}
+
+/** Where the tag key is kept between restarts (git-ignored; a new key gives everyone new tags). */
+const TAG_SECRET_FILE = '.strikegy-tag-secret';
+
+/** The tag key: `STRIKEGY_TAG_SECRET`, else the file, else a new one written to the file. */
+export function tagSecret(): string {
+  const env = process.env.STRIKEGY_TAG_SECRET;
+  if (env) return env;
+  try {
+    const saved = readFileSync(TAG_SECRET_FILE, 'utf8').trim();
+    if (saved.length >= 32) return saved;
+  } catch {
+    /* none yet */
+  }
+  const fresh = randomBytes(32).toString('hex');
+  try {
+    writeFileSync(TAG_SECRET_FILE, fresh, { mode: 0o600 });
+  } catch {
+    /* read-only: tags change on the next restart */
+  }
+  return fresh;
 }
 
 export interface Gateway {
@@ -42,7 +68,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const hostOpts = { log, mapsDir: opts.mapsDir, ended: (room: string) => lobby?.matchOver(room), kick: (room: string, uid: string, reason: string) => lobby?.kick(room, uid, reason) };
   const own = opts.matches === undefined ? (opts.workers ? new WorkerMatches(hostOpts) : new Matches(hostOpts)) : null;
   const matches = opts.matches === undefined ? own : opts.matches;
-  lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches });
+  lobby = new LobbyCore({ log, serverMax: opts.serverMax, matches, tagSecret: opts.tagSecret ?? tagSecret() });
   const core = lobby;
   const sweep = setInterval(() => core.sweep(), 5000);
   // UDP data channels end here only for local testing; in production on the Oracle relay (edge.ts).

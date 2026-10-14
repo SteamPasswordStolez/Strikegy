@@ -26,6 +26,8 @@ export class ServerLink {
   private readonly binaryListeners = new Set<(data: Uint8Array) => void>();
   id = '';
   name = '';
+  /** The server's tag for this browser (shown after the name). */
+  tag = '';
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
   private readonly pendingCandidates: RTCIceCandidateInit[] = [];
@@ -118,6 +120,7 @@ export class ServerLink {
         const welcome = await client.request({ t: 'hello', v: PROTOCOL_VERSION, ...hello }, 'welcome');
         client.id = welcome.id;
         client.name = welcome.name;
+        client.tag = welcome.tag;
         return client;
       } catch (err) {
         last = err;

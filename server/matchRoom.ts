@@ -85,6 +85,8 @@ const CLASSES: readonly ClassId[] = ['assault', 'medic', 'support', 'recon'];
 interface Seat {
   uid: string;
   name: string;
+  /** Its tag (lobby.ts `tagOf`). */
+  tag: string;
   soldier: Soldier;
   conn: MatchConn | null;
   /** Loaded the match: snapshots go out. */
@@ -218,13 +220,15 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(uid: string, name: string, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team }, conn: MatchConn): void {
+    const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
-      const team = this.smallerTeam();
+      // The lobby's side (random at the start, or picked); all on blue against the bots.
+      const team = this.opts.lineup === 'coop' ? 'blue' : (player.team ?? this.smallerTeam());
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, botRefused: 0, lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false };
+      seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, botRefused: 0, lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false };
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -664,7 +668,7 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
+    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
     for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0, bot: true });
     return out;
   }

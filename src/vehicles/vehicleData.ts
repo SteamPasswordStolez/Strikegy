@@ -44,7 +44,8 @@ export interface SeatSpec {
   /**
    * How fast the gun turns (rad/s) and elevates (owner, 2026-10-12: the
    * driver's sight is fixed to the gun, which follows the view with a delay
-   * and only as far as it can turn). None: it points where the view does at once.
+   * and only as far as it can turn; 2026-10-14: about 1.5x faster, the first
+   * rates made tanks too hard to handle). None: it points where the view does at once.
    */
   turn?: number;
   elevate?: number;
@@ -162,7 +163,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   tank: {
     kind: 'tank',
     seats: [
-      { role: 'driver', eye: [0.35, 2.55, 0.2], exposed: false, gun: 'tankgun', pitch: [-0.15, 0.35], turn: 0.7, elevate: 0.3 },
+      { role: 'driver', eye: [0.35, 2.55, 0.2], exposed: false, gun: 'tankgun', pitch: [-0.15, 0.35], turn: 1.05, elevate: 0.45 },
       { role: 'gunner', eye: [-0.45, 3.15, 0.6], exposed: true, gun: 'mg' },
       { role: 'gunner', eye: [0.6, 1.55, -2.4], exposed: false, gun: 'mg', traverse: 0.45, pitch: [-0.2, 0.3] },
       { role: 'passenger', eye: [-0.5, 1.7, 1.6], exposed: false },
@@ -195,7 +196,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   spg: {
     kind: 'spg',
     seats: [
-      { role: 'driver', eye: [0, 2.85, 0.9], exposed: false, gun: 'howitzer', pitch: [-0.05, 0.95], turn: 0.45, elevate: 0.25 },
+      { role: 'driver', eye: [0, 2.85, 0.9], exposed: false, gun: 'howitzer', pitch: [-0.05, 0.95], turn: 0.7, elevate: 0.4 },
       { role: 'gunner', eye: [-0.55, 3.1, 1.6], exposed: true, gun: 'mg' },
       { role: 'passenger', eye: [0.5, 1.7, 0.4], exposed: false },
       { role: 'passenger', eye: [-0.5, 1.7, 0.4], exposed: false },
@@ -228,7 +229,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   td: {
     kind: 'td',
     seats: [
-      { role: 'driver', eye: [0.3, 2.3, -0.6], exposed: false, gun: 'atgun', traverse: 0.22, pitch: [-0.1, 0.25], turn: 0.4, elevate: 0.25 },
+      { role: 'driver', eye: [0.3, 2.3, -0.6], exposed: false, gun: 'atgun', traverse: 0.22, pitch: [-0.1, 0.25], turn: 0.6, elevate: 0.35 },
       { role: 'gunner', eye: [-0.5, 2.85, 0.6], exposed: true, gun: 'mg' },
       { role: 'gunner', eye: [-0.6, 1.5, -2.5], exposed: false, gun: 'mg', traverse: 0.45, pitch: [-0.2, 0.3] },
       { role: 'passenger', eye: [0.5, 1.6, 1.6], exposed: false },
@@ -262,7 +263,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   rocket: {
     kind: 'rocket',
     seats: [
-      { role: 'driver', eye: [-0.5, 2.15, -2.3], exposed: false, gun: 'rockets', pitch: [0.1, 1.1], turn: 0.55, elevate: 0.3 },
+      { role: 'driver', eye: [-0.5, 2.15, -2.3], exposed: false, gun: 'rockets', pitch: [0.1, 1.1], turn: 0.8, elevate: 0.45 },
       { role: 'gunner', eye: [0.5, 2.7, -1.6], exposed: true, gun: 'mg' },
     ],
     half: [1.25, 0.8, 3.6],

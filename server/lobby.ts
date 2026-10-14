@@ -5,19 +5,32 @@
  * keeping a seat for a minute when a connection drops mid-match so the same
  * browser (its hidden id) comes back to the same soldier.
  *
+ * People are shown as `name#TAG`: the tag comes from the browser's hidden id
+ * and a key only the server holds (`tagOf`), so nobody can take on someone
+ * else's (owner, 2026-10-14: no posing as others). Rooms have a chat (the
+ * waiting room and the match, all or one side) with its own rate limit, and
+ * sides picked at random at the start, by each player or by the owner.
+ *
  * Transport-free (the gateway hands it text and binary messages and a way to
  * answer), so tests drive it directly. Started by Yoro on exp as the
  * signalling core for P2P; host picking, WebRTC set-up and TURN went when the
  * owner chose a server-authoritative design (2026-10-04).
  */
+import { createHmac, randomBytes } from 'node:crypto';
 import {
+  CHAT_MAX,
   HUMAN_CAP,
   PROTOCOL_VERSION,
   SERVER_MAX,
+  TAG_ALPHABET,
+  TAG_LEN,
+  cleanChat,
   cleanName,
   cleanSettings,
+  hasSides,
   parseClientMsg,
   roomLoad,
+  type ChatLine,
   type ClientMsg,
   type Device,
   type ErrorCode,
@@ -26,6 +39,7 @@ import {
   type RoomInfo,
   type RoomSettings,
   type ServerMsg,
+  type Side,
 } from '../src/net/lobbyProtocol.ts';
 
 /** Messages a connection may send: a bucket of this many, refilled per second. */
@@ -50,12 +64,20 @@ export interface MatchLine {
   binary(data: Uint8Array): void;
 }
 
+/** A person as a match takes them: hidden id, name, tag and the side the lobby gave them (none: the match picks). */
+export interface MatchPlayer {
+  uid: string;
+  name: string;
+  tag: string;
+  team?: Side;
+}
+
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
 export interface MatchHost {
   /** Loads and starts a room's match with its members; rejects if it can't. */
-  start(room: string, settings: RoomSettings, members: { uid: string; name: string; line: MatchLine }[]): Promise<void>;
+  start(room: string, settings: RoomSettings, members: (MatchPlayer & { line: MatchLine })[]): Promise<void>;
   /** Someone joins a match under way, or comes back to their seat. */
-  join(room: string, uid: string, name: string, line: MatchLine): void;
+  join(room: string, player: MatchPlayer, line: MatchLine): void;
   /** Their connection dropped: the seat stays. */
   detach(room: string, uid: string): void;
   /** Gone for good. */
@@ -74,6 +96,20 @@ export interface LobbyOptions {
   serverMax?: number;
   matches?: MatchHost | null;
   now?: () => number;
+  /** The key people's tags are made with (keep it: a new one gives everyone new tags). Default: a fresh one. */
+  tagSecret?: string;
+}
+
+/**
+ * A browser's tag from its hidden id (the part before the tab's) and the
+ * server's key: 5 letters of 32, so ~33 million to try through the server
+ * to land on someone's, one connection at a time.
+ */
+export function tagOf(secret: string, uid: string): string {
+  const mac = createHmac('sha256', secret).update(uid.split('-')[0] ?? uid).digest();
+  let out = '';
+  for (let i = 0; i < TAG_LEN; i++) out += TAG_ALPHABET[mac[i]! & 31];
+  return out;
 }
 
 interface Client {
@@ -97,7 +133,22 @@ interface Client {
   addr: string;
   /** Wrong room passwords lately (ms timestamps). */
   passwordTries: number[];
+  /** Its tag (see `tagOf`). */
+  tag: string;
+  /** Its side in the room (null: drawn at the start, or no sides). */
+  team: Side | null;
+  /** Chat lines it may send: a small bucket of its own. */
+  chatTokens: number;
+  lastChat: number;
+  /** Its last line and how often in a row (no flooding one line). */
+  chatText: string;
+  chatRepeats: number;
 }
+
+/** Chat: lines in a burst, refilled per second; the same line in a row at most this often. */
+const CHAT_RATE = { burst: 5, perSecond: 0.6, repeats: 2 } as const;
+/** Chat lines a room keeps for people joining it. */
+const CHAT_KEEP = 40;
 
 /** Rooms one address may have open at once (each started one builds a whole map on the server). */
 const ROOMS_PER_ADDRESS = 2;
@@ -126,6 +177,8 @@ interface RoomRec {
   startedAt: number;
   /** Uids and addresses the anticheat put out of this room, until when (ms). */
   banned: Map<string, number>;
+  /** Recent chat (for people joining). */
+  chat: ChatLine[];
 }
 
 const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -162,9 +215,11 @@ export class LobbyCore {
   private readonly serverMax: number;
   private readonly matches: MatchHost | null;
   private readonly now: () => number;
+  private readonly tagSecret: string;
 
   constructor(private readonly opts: LobbyOptions = {}) {
     this.log = opts.log ?? (() => {});
+    this.tagSecret = opts.tagSecret ?? randomBytes(32).toString('hex');
     this.serverMax = opts.serverMax ?? SERVER_MAX;
     this.matches = opts.matches ?? null;
     this.now = opts.now ?? Date.now;
@@ -193,7 +248,7 @@ export class LobbyCore {
   /** A new connection; returns its client id. */
   open(conn: Conn, id = randomHex(4), addr = ''): string {
     const now = this.now();
-    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [] });
+    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [], tag: '', team: null, chatTokens: CHAT_RATE.burst, lastChat: now, chatText: '', chatRepeats: 0 });
     return id;
   }
 
@@ -352,13 +407,19 @@ export class LobbyCore {
 
   private member(id: string): Member {
     const c = this.clients.get(id);
-    const m: Member = { id, name: c?.name ?? '?', device: c?.device ?? 'desktop' };
+    const m: Member = { id, name: c?.name ?? '?', tag: c?.tag ?? '', team: c?.team ?? null, device: c?.device ?? 'desktop' };
     if (c?.awayUntil != null) m.away = true;
     return m;
   }
 
   private info(r: RoomRec): RoomInfo {
-    return { id: r.id, settings: r.settings, locked: r.password !== null, state: r.state, humans: r.members.length, humanCap: humanCap(r.settings) };
+    const host = this.clients.get(r.owner);
+    const sides = { blue: 0, red: 0 };
+    for (const id of r.members) {
+      const team = this.clients.get(id)?.team;
+      if (team) sides[team]++;
+    }
+    return { id: r.id, settings: r.settings, locked: r.password !== null, state: r.state, humans: r.members.length, humanCap: humanCap(r.settings), host: { name: host?.name ?? '?', tag: host?.tag ?? '' }, sides };
   }
 
   private view(r: RoomRec): Room {
@@ -400,11 +461,124 @@ export class LobbyCore {
   private leaveRoom(c: Client, reason: 'leave' | 'kicked' | 'closed'): void {
     const r = c.room ? this.rooms.get(c.room) : undefined;
     c.room = null;
+    c.team = null;
     if (!r) return;
     if (reason !== 'closed') this.send(c, { t: 'left', reason });
     if (r.state === 'playing') this.matches?.leave(r.id, c.uid);
+    const owner = r.owner;
     this.removeMember(r, c.id);
-    if (this.rooms.has(r.id)) this.broadcast(r);
+    if (!this.rooms.has(r.id)) return;
+    this.note(r, reason === 'kicked' ? 'kicked' : 'leave', c);
+    const host = this.clients.get(r.owner);
+    if (r.owner !== owner && host) this.note(r, 'host', host);
+    this.broadcast(r);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sides
+
+  /** People on each side of a room (leaving out `skip`). */
+  private sideCounts(r: RoomRec, skip?: Client): Record<Side, number> {
+    const n = { blue: 0, red: 0 };
+    for (const id of r.members) {
+      const m = this.clients.get(id);
+      if (m && m !== skip && m.team) n[m.team]++;
+    }
+    return n;
+  }
+
+  /** People one side may have: half the room's people, rounded up. */
+  private sideCap(r: RoomRec): number {
+    return Math.ceil(humanCap(r.settings) / 2);
+  }
+
+  /**
+   * The side someone joining gets: all on blue against the bots, none in
+   * every-soldier-for-themselves modes, the one wanted where players pick
+   * (if it has room), else the smaller one.
+   */
+  private sideFor(r: RoomRec, c: Client, wanted?: Side): Side | null {
+    if (r.settings.lineup === 'coop') return 'blue';
+    if (!hasSides(r.settings)) return null;
+    const n = this.sideCounts(r, c);
+    if (wanted && r.settings.teamPick === 'self' && n[wanted] < this.sideCap(r)) return wanted;
+    if (n.blue !== n.red) return n.blue < n.red ? 'blue' : 'red';
+    return Math.random() < 0.5 ? 'blue' : 'red';
+  }
+
+  /** After a settings change: everyone on a side the new settings allow, none over a side's cap. */
+  private fixSides(r: RoomRec): void {
+    const cap = this.sideCap(r);
+    const n = { blue: 0, red: 0 };
+    for (const id of r.members) {
+      const m = this.clients.get(id);
+      if (!m) continue;
+      if (r.settings.lineup === 'coop') m.team = 'blue';
+      else if (!hasSides(r.settings)) m.team = null;
+      else {
+        if (!m.team) m.team = n.blue <= n.red ? 'blue' : 'red';
+        if (n[m.team] >= cap) m.team = m.team === 'blue' ? 'red' : 'blue';
+        n[m.team]++;
+      }
+    }
+  }
+
+  /** Random sides at the start (rooms that draw them): shuffled, then dealt out in turn. */
+  private drawSides(r: RoomRec): void {
+    if (r.settings.teamPick !== 'random' || !hasSides(r.settings)) return;
+    const list = r.members.map((id) => this.clients.get(id)).filter((m): m is Client => !!m);
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j]!, list[i]!];
+    }
+    const first: Side = Math.random() < 0.5 ? 'blue' : 'red';
+    list.forEach((m, i) => (m.team = i % 2 === 0 ? first : first === 'blue' ? 'red' : 'blue'));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chat
+
+  /** Hands a line to the room (a side's line to that side only) and keeps it for people joining. */
+  private post(r: RoomRec, line: ChatLine): void {
+    r.chat.push(line);
+    if (r.chat.length > CHAT_KEEP) r.chat.shift();
+    const msg: ServerMsg = { t: 'chat', line };
+    for (const id of r.members) {
+      const m = this.clients.get(id);
+      if (m && this.sees(m, line)) this.send(m, msg);
+    }
+  }
+
+  private sees(m: Client, line: ChatLine): boolean {
+    return !line.team || line.side === m.team;
+  }
+
+  /** The server's own line about someone (joined, left, now the owner...). */
+  private note(r: RoomRec, sys: NonNullable<ChatLine['sys']>, who: Client, side?: Side): void {
+    this.post(r, { at: this.now(), from: null, sys, who: { name: who.name ?? '?', tag: who.tag }, side });
+  }
+
+  private chat(c: Client, r: RoomRec, raw: string, team: boolean): void {
+    const now = this.now();
+    c.chatTokens = Math.min(CHAT_RATE.burst, c.chatTokens + ((now - c.lastChat) / 1000) * CHAT_RATE.perSecond);
+    c.lastChat = now;
+    const text = cleanChat(raw);
+    if (!text) return;
+    const repeat = text === c.chatText;
+    if (c.chatTokens < 1 || (repeat && c.chatRepeats >= CHAT_RATE.repeats)) {
+      this.send(c, { t: 'chat', line: { at: now, from: null, sys: 'slow' } });
+      return;
+    }
+    c.chatTokens -= 1;
+    c.chatRepeats = repeat ? c.chatRepeats + 1 : 0;
+    c.chatText = text;
+    // Side chat only where there are sides; elsewhere it goes to everyone.
+    const side = team && hasSides(r.settings) && c.team ? c.team : undefined;
+    this.post(r, { at: now, from: { id: c.id, name: c.name ?? '?', tag: c.tag, team: c.team }, text: text.slice(0, CHAT_MAX * 2), team: !!side || undefined, side });
+  }
+
+  private sendChatLog(c: Client, r: RoomRec): void {
+    this.send(c, { t: 'chatLog', lines: r.chat.filter((l) => this.sees(c, l)) });
   }
 
   private uniqueName(r: RoomRec, name: string): string {
@@ -417,13 +591,20 @@ export class LobbyCore {
     }
   }
 
-  private joinRoom(c: Client, r: RoomRec): void {
+  private joinRoom(c: Client, r: RoomRec, wanted?: Side): void {
     c.name = this.uniqueName(r, c.name!);
     c.room = r.id;
     c.watching = false;
+    c.team = this.sideFor(r, c, wanted);
     r.members.push(c.id);
+    this.sendChatLog(c, r);
+    this.note(r, 'join', c, c.team ?? undefined);
     this.broadcast(r);
-    if (r.state === 'playing') this.matches?.join(r.id, c.uid, c.name!, this.lineOf(c));
+    if (r.state === 'playing') this.matches?.join(r.id, this.player(c), this.lineOf(c));
+  }
+
+  private player(c: Client): MatchPlayer {
+    return { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined };
   }
 
   /**
@@ -438,11 +619,15 @@ export class LobbyCore {
       if (!r) break;
       c.name = old.name;
       c.room = r.id;
+      c.team = old.team;
+      c.chatTokens = old.chatTokens;
+      c.lastChat = old.lastChat;
       r.members = r.members.map((m) => (m === old.id ? c.id : m));
       if (r.owner === old.id || this.clients.get(r.owner)?.awayUntil != null) r.owner = c.id;
       this.clients.delete(old.id);
+      this.sendChatLog(c, r);
       this.broadcast(r);
-      if (r.state === 'playing') this.matches?.join(r.id, c.uid, c.name!, this.lineOf(c));
+      if (r.state === 'playing') this.matches?.join(r.id, this.player(c), this.lineOf(c));
       return;
     }
   }
@@ -455,8 +640,9 @@ export class LobbyCore {
       if (c.name) return this.fail(c, 'bad', 'hello again');
       c.name = name;
       c.uid = msg.uid;
+      c.tag = tagOf(this.tagSecret, msg.uid);
       c.device = msg.device;
-      this.send(c, { t: 'welcome', id: c.id, name });
+      this.send(c, { t: 'welcome', id: c.id, name, tag: c.tag });
       if (c.uid) this.rejoin(c);
       return;
     }
@@ -482,7 +668,7 @@ export class LobbyCore {
           password = { salt, hash: await pbkdf2(msg.password, salt) };
           if (!this.still(c)) return;
         }
-        const rec: RoomRec = { id: randomHex(3), settings, password, state: 'lobby', owner: c.id, members: [], passwordTries: [], startedAt: -Infinity, banned: new Map() };
+        const rec: RoomRec = { id: randomHex(3), settings, password, state: 'lobby', owner: c.id, members: [], passwordTries: [], startedAt: -Infinity, banned: new Map(), chat: [] };
         this.rooms.set(rec.id, rec);
         this.log(`room ${rec.id} "${settings.name}" by ${c.name}`);
         return this.joinRoom(c, rec);
@@ -508,7 +694,7 @@ export class LobbyCore {
         if (rec.settings.input !== 'all' && rec.settings.input !== c.device) return this.fail(c, 'full', 'input');
         const n = rec.members.length;
         if (!this.fits(roomLoad(rec.settings, n + 1) - roomLoad(rec.settings, n))) return this.fail(c, 'serverFull');
-        return this.joinRoom(c, rec);
+        return this.joinRoom(c, rec, msg.team);
       }
       case 'leave':
         if (!r) return this.fail(c, 'notInRoom');
@@ -522,8 +708,26 @@ export class LobbyCore {
         const n = r.members.length;
         if (!this.fits(roomLoad(settings, n) - roomLoad(r.settings, n))) return this.fail(c, 'serverFull');
         r.settings = settings;
+        this.fixSides(r);
         return this.broadcast(r);
       }
+      case 'team': {
+        if (!r) return this.fail(c, 'notInRoom');
+        if (r.state !== 'lobby' || !hasSides(r.settings)) return this.fail(c, 'busy');
+        const pick = r.settings.teamPick;
+        const target = msg.member ? this.clients.get(msg.member) : c;
+        if (!target || target.room !== r.id) return;
+        // Your own side where players pick; anyone's (yours too) by the owner where the owner does.
+        if (pick === 'random' || (pick === 'self' && target !== c) || (pick === 'host' && r.owner !== c.id)) return this.fail(c, 'notOwner');
+        if (target.team === msg.team) return;
+        if (this.sideCounts(r, target)[msg.team] >= this.sideCap(r)) return this.fail(c, 'full', 'side');
+        target.team = msg.team;
+        this.note(r, 'team', target, msg.team);
+        return this.broadcast(r);
+      }
+      case 'chat':
+        if (!r) return this.fail(c, 'notInRoom');
+        return this.chat(c, r, msg.text, msg.team === true);
       case 'start': {
         if (!r) return this.fail(c, 'notInRoom');
         if (r.owner !== c.id) return this.fail(c, 'notOwner');
@@ -531,15 +735,17 @@ export class LobbyCore {
         if (this.now() - r.startedAt < START_COOLDOWN_MS) return this.fail(c, 'rate');
         r.startedAt = this.now();
         r.state = 'playing';
+        this.drawSides(r);
         this.log(`room ${r.id} starts`);
         this.broadcast(r);
+        this.post(r, { at: this.now(), from: null, sys: 'start' });
         if (!this.matches) return;
         const members = r.members.map((id) => this.clients.get(id)!).filter((m) => m && m.awayUntil === null);
         try {
           await this.matches.start(
             r.id,
             r.settings,
-            members.map((m) => ({ uid: m.uid, name: m.name!, line: this.lineOf(m) })),
+            members.map((m) => ({ ...this.player(m), line: this.lineOf(m) })),
           );
         } catch (err) {
           this.log(`room ${r.id} could not start: ${String(err)}`);

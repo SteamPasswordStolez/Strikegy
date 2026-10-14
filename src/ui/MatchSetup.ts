@@ -152,7 +152,7 @@ export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
 
 /** Small copies of the map pictures for the strip (made once each). */
 const thumbs = new WeakMap<HTMLCanvasElement, string>();
-function thumb(c: HTMLCanvasElement): string {
+export function thumb(c: HTMLCanvasElement): string {
   let url = thumbs.get(c);
   if (!url) {
     const s = document.createElement('canvas');
