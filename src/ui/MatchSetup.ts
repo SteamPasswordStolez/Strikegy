@@ -1,23 +1,33 @@
 import { t, type MessageKey } from '@/i18n';
 import type { LobbyMode } from '@/data/maps';
+import { uiSound } from '@/audio/uiSounds';
+import { icon } from './icons';
+import './ds.css';
+import './matchSetup.css';
 
 /**
- * The match setup page shared by "play" and creating a multiplayer room
- * (owner, 2026-10-12: with this many modes and settings they need more
- * explaining and better order). Three columns:
+ * The match setup page shared by "play" and creating / editing a multiplayer
+ * room, on the design system (owner, 2026-10-17; ds.css, BFV theme;
+ * matchSetup.css). The page around it (head, keys along the bottom) is the
+ * menu's; this draws:
  *
- * - modes, grouped by kind (zone fights, attack / defence, team deathmatch,
- *   every soldier for themselves, practice), each with a one-line tag; the
- *   ones the picked map doesn't offer greyed out;
- * - the picked map large (picture, name, size, players, blurb) over a strip
- *   of every map to pick from;
- * - the picked mode: what it is, its rules as a short list, then the
- *   settings (steppers, choice chips, text boxes) and the start button.
+ * - tabs of mode groups (zone fights, attack / defence, team fights, every
+ *   soldier for themselves, practice); a tab picks its first mode the map has;
+ * - the group's modes as rows with a short tag at the side, the ones the
+ *   picked map lacks greyed out;
+ * - the picked map large (picture, name, zones, size, players it is made for)
+ *   over a strip of every map;
+ * - the picked mode (name, one line, its rules behind "show rules"), the
+ *   settings as rows (stepper / choices / text box; a note only when it
+ *   warns, otherwise it is the label's tooltip) and the start button, which
+ *   stays in sight while the settings scroll.
  *
- * Keys (desktop): ↑ ↓ mode, ← → map, Enter start.
+ * Keys (handled by the menu): Q / E group, ↑ ↓ mode, ← → map, Enter start.
  */
 
-export const MODE_GROUPS: readonly { id: 'objective' | 'attack' | 'team' | 'solo' | 'practice'; modes: readonly LobbyMode[] }[] = [
+export type ModeGroupId = 'objective' | 'attack' | 'team' | 'solo' | 'practice';
+
+export const MODE_GROUPS: readonly { id: ModeGroupId; modes: readonly LobbyMode[] }[] = [
   { id: 'objective', modes: ['zone', 'frontline', 'conquest', 'hardpoint'] },
   { id: 'attack', modes: ['rush', 'snd', 'escort', 'fortress'] },
   { id: 'team', modes: ['tdm', 'killconfirm'] },
@@ -36,6 +46,9 @@ export interface SetupMap {
   picture: HTMLCanvasElement | null;
   /** "5 zones · 329 × 210 m". */
   facts: string;
+  /** Zones and playable size (width, depth in m), once the map has loaded. */
+  zones?: number;
+  size?: [number, number];
   /** Its own team size (players a side it is made for). */
   team: number;
   blurb: string;
@@ -54,7 +67,7 @@ export interface SetupView {
   maps: SetupMap[];
   fields: SetupField[];
   start: string;
-  /** A line over the start button (what will happen), optional. */
+  /** What will happen (kept for the callers; the page no longer prints it). */
   summary?: string;
   touch: boolean;
   onMode(m: LobbyMode): void;
@@ -70,102 +83,196 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
   return e;
 }
 
+/** The rules list stays open (or shut) from one redraw to the next. */
+let rulesOpen = false;
+/** Where the settings column was scrolled, so a pick doesn't throw it back to the top. */
+let fieldsScroll = 0;
+
+const hover = (e: HTMLElement): void => e.addEventListener('pointerenter', () => uiSound('hover'));
+
 export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
-  body.classList.add('ms');
-  // Modes.
-  const modes = el('div', 'ms-col ms-modes', body);
+  body.classList.add('mset');
+  const group = groupOf(v.mode);
+
+  // Mode groups.
+  const tabs = el('div', 'ds-tabs mset-tabs', body);
   for (const g of MODE_GROUPS) {
-    el('div', 'ms-group', modes, t(`modeGroup.${g.id}` as MessageKey));
-    for (const m of g.modes) {
-      const ok = v.offered.includes(m);
-      const b = el('button', `ms-mode${m === v.mode ? ' sel' : ''}${ok ? '' : ' off'}`, modes);
-      el('span', 'ms-mode-name', b, modeName(m));
-      el('span', 'ms-mode-tag', b, ok ? t(`modeTag.${m}` as MessageKey) : t('lobby.notOnMap'));
-      if (ok) b.addEventListener('click', () => v.onMode(m));
-      else b.disabled = true;
+    const first = g.modes.find((m) => v.offered.includes(m));
+    const tab = el('button', `ds-tab${g.id === group ? ' sel' : ''}${first ? '' : ' off'}`, tabs, t(`modeGroup.${g.id}` as MessageKey));
+    if (!first) tab.disabled = true;
+    else if (g.id !== group) {
+      hover(tab);
+      tab.addEventListener('click', () => {
+        uiSound('select');
+        v.onMode(first);
+      });
+    }
+  }
+
+  // The group's modes.
+  const modes = el('div', 'mset-modes', body);
+  for (const m of MODE_GROUPS.find((g) => g.id === group)?.modes ?? []) {
+    const ok = v.offered.includes(m);
+    const row = el('button', `ds-row${m === v.mode ? ' sel' : ''}${ok ? '' : ' off'}`, modes);
+    el('span', 'ds-row-main', row, modeName(m));
+    el('span', 'ds-row-side', row, ok ? t(`modeTag.${m}` as MessageKey) : t('lobby.notOnMap'));
+    if (!ok) row.disabled = true;
+    else if (m !== v.mode) {
+      hover(row);
+      row.addEventListener('click', () => {
+        uiSound('select');
+        v.onMode(m);
+      });
     }
   }
 
   // The map.
-  const mapCol = el('div', 'ms-col ms-map', body);
+  const mapCol = el('div', 'mset-map', body);
   const cur = v.maps.find((m) => m.id === v.map) ?? v.maps[0];
   if (cur) {
-    const pic = el('div', 'ms-pic', mapCol);
-    if (cur.picture) pic.appendChild(cur.picture);
-    else el('div', 'lb-loading', pic, t('loading'));
-    const head = el('div', 'ms-map-head', mapCol);
-    el('div', 'ms-map-name', head, cur.name);
-    el('div', 'ms-map-facts', head, `${cur.facts} · ${t('lobby.madeFor').replaceAll('{n}', String(cur.team))}`);
-    el('div', 'ms-map-blurb', mapCol, cur.blurb);
+    const card = el('div', 'ds-card sel mset-card', mapCol);
+    if (cur.picture) card.style.backgroundImage = `url(${picture(cur.picture, 960)})`;
+    const info = el('div', 'mset-card-info', card);
+    el('div', 'ds-label', info, t('lobby.map'));
+    el('div', 'mset-map-name', info, cur.name);
+    const facts = el('div', 'mset-facts', info);
+    const fact = (label: string, value: string) => {
+      const f = el('div', 'mset-fact', facts);
+      el('span', 'ds-label', f, label);
+      el('span', 'ds-num', f, value);
+    };
+    if (cur.zones !== undefined) fact(t('lobby.factZones'), String(cur.zones));
+    if (cur.size) fact(t('lobby.factSize'), `${cur.size[0]} × ${cur.size[1]} m`);
+    fact(t('lobby.factFor'), `${cur.team} vs ${cur.team}`);
   }
-  const strip = el('div', 'ms-strip', mapCol);
+  const strip = el('div', 'mset-strip', mapCol);
   for (const m of v.maps) {
-    const b = el('button', `ms-thumb${m.id === v.map ? ' sel' : ''}`, strip);
-    if (m.picture) {
-      const img = el('img', 'ms-thumb-img', b);
-      img.src = thumb(m.picture);
-      img.alt = '';
+    const b = el('button', `ds-card${m.id === v.map ? ' sel' : ''}`, strip);
+    if (m.picture) b.style.backgroundImage = `url(${picture(m.picture, 320)})`;
+    el('span', 'ds-card-name', b, m.name);
+    if (m.id !== v.map) {
+      hover(b);
+      b.addEventListener('click', () => {
+        uiSound('select');
+        v.onMap(m.id);
+      });
     }
-    el('span', 'ms-thumb-name', b, m.name);
-    b.addEventListener('click', () => v.onMap(m.id));
   }
 
   // The mode, its rules, the settings, start.
-  const side = el('div', 'ms-col ms-detail', body);
-  const groupOf = MODE_GROUPS.find((g) => g.modes.includes(v.mode));
-  if (groupOf) el('div', 'ms-eyebrow', side, t(`modeGroup.${groupOf.id}` as MessageKey));
-  el('div', 'ms-title', side, modeName(v.mode));
-  el('div', 'ms-desc', side, t(`modeDesc.${v.mode}` as MessageKey));
-  const rules = el('ul', 'ms-rules', side);
+  const side = el('div', 'mset-side', body);
+  const head = el('div', 'mset-mode', side);
+  el('div', 'ds-label', head, t(`modeGroup.${group}` as MessageKey));
+  el('div', 'mset-mode-name', head, modeName(v.mode));
+  el('div', 'mset-mode-tag', head, t(`modeTag.${v.mode}` as MessageKey));
+  const toggle = el('button', 'ds-btn ghost mset-rules-btn', head);
+  toggle.innerHTML = icon('info');
+  el('span', '', toggle, t(rulesOpen ? 'lobby.rulesHide' : 'lobby.rulesShow'));
+  const rules = el('ul', `mset-rules${rulesOpen ? ' open' : ''}`, head);
   for (const r of t(`modeRules.${v.mode}` as MessageKey).split('|')) el('li', '', rules, r.trim());
-  const fields = el('div', 'ms-fields', side);
+  hover(toggle);
+  toggle.addEventListener('click', () => {
+    rulesOpen = !rulesOpen;
+    uiSound(rulesOpen ? 'open' : 'back');
+    rules.classList.toggle('open', rulesOpen);
+    toggle.lastElementChild!.textContent = t(rulesOpen ? 'lobby.rulesHide' : 'lobby.rulesShow');
+  });
+
+  const fields = el('div', 'mset-fields', side);
   for (const f of v.fields) {
-    const row = el('div', `ms-field${f.kind === 'stepper' && f.warn ? ' warn' : ''}`, fields);
-    el('span', 'ms-field-label', row, f.label);
-    const ctl = el('div', 'ms-field-ctl', row);
+    const warn = f.kind === 'stepper' && f.warn;
+    const row = el('div', `mset-field${warn ? ' warn' : ''}`, fields);
+    const label = el('span', 'mset-field-label', row, f.label);
+    const note = f.kind !== 'text' ? f.note : undefined;
+    if (note && !warn) label.title = note;
     if (f.kind === 'stepper') {
-      el('button', 'lb-arrow', ctl, '◀').addEventListener('click', () => f.change(-1));
-      el('span', 'ms-field-val', ctl, f.value);
-      el('button', 'lb-arrow', ctl, '▶').addEventListener('click', () => f.change(1));
+      const ctl = el('div', 'ds-stepper', row);
+      const less = el('button', '', ctl);
+      less.innerHTML = icon('back');
+      el('output', 'ds-num', ctl, f.value);
+      const more = el('button', '', ctl);
+      more.innerHTML = icon('next');
+      for (const [b, d] of [
+        [less, -1],
+        [more, 1],
+      ] as const) {
+        hover(b);
+        b.addEventListener('click', () => {
+          uiSound('move');
+          f.change(d);
+        });
+      }
     } else if (f.kind === 'choice') {
+      const seg = el('div', 'ds-seg', row);
       for (const o of f.options) {
-        const c = el('button', `ms-chip${o.value === f.value ? ' sel' : ''}`, ctl, o.label);
-        c.addEventListener('click', () => f.pick(o.value));
+        const c = el('button', o.value === f.value ? 'sel' : '', seg, o.label);
+        if (o.value === f.value) continue;
+        hover(c);
+        c.addEventListener('click', () => {
+          uiSound('select');
+          f.pick(o.value);
+        });
       }
     } else {
-      const input = el('input', 'lb-input ms-input', ctl);
+      const input = el('input', 'ds-input', row);
       input.type = f.secret ? 'password' : 'text';
       input.maxLength = 32;
       input.value = f.value;
       if (f.placeholder) input.placeholder = f.placeholder;
       input.addEventListener('input', () => f.set(input.value));
     }
-    const note = f.kind !== 'text' ? f.note : undefined;
-    if (note) el('div', 'ms-field-note', row, note);
+    if (warn && note) el('div', 'mset-field-note', row, note);
   }
-  if (v.summary) el('div', 'ms-summary', side, v.summary);
-  const go = el('button', 'lb-start ms-start', side);
-  el('span', 'lb-start-text', go, v.start);
-  if (!v.touch) el('span', 'keycap', go, 'Enter');
+  // Keep the column where it was across the redraw a pick causes.
+  requestAnimationFrame(() => (fields.scrollTop = fieldsScroll));
+  fields.addEventListener('scroll', () => (fieldsScroll = fields.scrollTop), { passive: true });
+
+  const go = el('button', 'ds-btn primary mset-start', side);
+  el('span', '', go, v.start);
+  if (!v.touch) el('span', 'ds-kbd', go, 'ENTER');
   go.addEventListener('click', () => v.onStart());
 }
 
-/** Small copies of the map pictures for the strip (made once each). */
-const thumbs = new WeakMap<HTMLCanvasElement, string>();
-export function thumb(c: HTMLCanvasElement): string {
-  let url = thumbs.get(c);
+/** The group a mode is in (practice for anything unknown). */
+export function groupOf(mode: LobbyMode): ModeGroupId {
+  return MODE_GROUPS.find((g) => g.modes.includes(mode))?.id ?? 'practice';
+}
+
+/** The first mode the map offers in the next / previous group that has one (Q / E). */
+export function stepGroup(cur: LobbyMode, offered: readonly LobbyMode[], d: number): LobbyMode {
+  const at = MODE_GROUPS.findIndex((g) => g.id === groupOf(cur));
+  for (let k = 1; k < MODE_GROUPS.length; k++) {
+    const g = MODE_GROUPS[(at + d * k + MODE_GROUPS.length * k) % MODE_GROUPS.length]!;
+    const first = g.modes.find((m) => offered.includes(m));
+    if (first) return first;
+  }
+  return cur;
+}
+
+/** Copies of the map pictures at a given width, as image addresses (made once each). */
+const copies = new WeakMap<HTMLCanvasElement, Map<number, string>>();
+function picture(c: HTMLCanvasElement, width: number): string {
+  let byWidth = copies.get(c);
+  if (!byWidth) copies.set(c, (byWidth = new Map()));
+  let url = byWidth.get(width);
   if (!url) {
+    const w = Math.min(width, c.width);
     const s = document.createElement('canvas');
-    s.width = 240;
-    s.height = Math.round((240 * c.height) / Math.max(1, c.width));
+    s.width = w;
+    s.height = Math.round((w * c.height) / Math.max(1, c.width));
     s.getContext('2d')!.drawImage(c, 0, 0, s.width, s.height);
     url = s.toDataURL('image/jpeg', 0.8);
-    thumbs.set(c, url);
+    byWidth.set(width, url);
   }
   return url;
 }
 
-/** The next / previous mode the map offers, in the list's order (↑ ↓). */
+/** Small copies of the map pictures (the server browser's room card). */
+export function thumb(c: HTMLCanvasElement): string {
+  return picture(c, 240);
+}
+
+/** The next / previous mode the map offers, in the list's order (↑ ↓; crosses into the next group). */
 export function stepMode(cur: LobbyMode, offered: readonly LobbyMode[], d: number): LobbyMode {
   const order = MODE_GROUPS.flatMap((g) => g.modes).filter((m) => offered.includes(m));
   if (!order.length) return cur;

@@ -7,7 +7,8 @@ import { serverUrls } from '@/net/servers';
 import { chatOf, isMuted, setMuted } from '@/net/chat';
 import { hasSides, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
 import { ChatPanel, nameView } from './ChatPanel';
-import { modeName, renderMatchSetup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
+import { modeName, renderMatchSetup, stepGroup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
+import { uiSound } from '@/audio/uiSounds';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
@@ -98,6 +99,16 @@ export class MultiplayerMenu {
     };
     void this.connect();
     if (import.meta.env.DEV) (window as unknown as { __mp: MultiplayerMenu }).__mp = this;
+  }
+
+  /** The create / edit page (the shared setup page, on the design system). */
+  get onSetupPage(): boolean {
+    return this.view === 'create' || this.view === 'edit';
+  }
+
+  /** What the setup page's start button does. */
+  get setupStart(): MessageKey {
+    return this.view === 'edit' ? 'mp.saveSettings' : 'mp.createGo';
   }
 
   get title(): MessageKey {
@@ -540,14 +551,20 @@ export class MultiplayerMenu {
     this.host.redraw();
   }
 
-  /** Keys on the create page (↑ ↓ mode, ← → map, Enter create); true when used. */
+  /** Keys on the create page (Q / E mode group, ↑ ↓ mode, ← → map, Enter create); true when used. */
   key(code: string): boolean {
     if (this.view !== 'create' && this.view !== 'edit') return false;
     const f = this.form;
-    if (code === 'ArrowUp' || code === 'ArrowDown') {
+    if (code === 'KeyQ' || code === 'KeyE') {
+      uiSound('move');
+      f.mode = stepGroup(f.mode as LobbyMode, this.host.modesFor(f.map), code === 'KeyQ' ? -1 : 1);
+      this.host.redraw();
+    } else if (code === 'ArrowUp' || code === 'ArrowDown') {
+      uiSound('move');
       f.mode = stepMode(f.mode as LobbyMode, this.host.modesFor(f.map), code === 'ArrowUp' ? -1 : 1);
       this.host.redraw();
     } else if (code === 'ArrowLeft' || code === 'ArrowRight') {
+      uiSound('move');
       this.setFormMap(step(
         MAPS.map((m) => m.id),
         f.map,

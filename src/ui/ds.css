@@ -323,12 +323,21 @@
 }
 .ds-tab {
   position: relative;
+  flex: none;
   padding: var(--s2) 0 var(--s3);
+  border: 0;
+  background: none;
+  font-family: inherit;
   font-size: var(--fs-lg);
   font-weight: 600;
+  white-space: nowrap;
   color: var(--ink-3);
   cursor: pointer;
   transition: color var(--t-fast) var(--ease);
+}
+.ds-tab.off {
+  opacity: 0.4;
+  cursor: default;
 }
 .ds-tab::after {
   content: '';
@@ -357,9 +366,14 @@
   align-items: center;
   gap: var(--s4);
   min-height: calc(var(--u) * 3.25);
+  width: 100%;
   padding: var(--s2) var(--s4);
-  background: var(--surface-1);
+  border: 0;
   border-left: var(--bar-w) solid transparent;
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition:
     background var(--t-fast) var(--ease),
@@ -679,6 +693,9 @@
   overflow: hidden;
   background: var(--surface-2) center / cover;
   border: var(--line-w) solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition:
     border-color var(--t-fast) var(--ease),

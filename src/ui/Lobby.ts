@@ -16,7 +16,7 @@ import { loadIdentity } from '@/net/identity';
 import { inRoom } from '@/core/session';
 import type { MatchStart } from '@/net/lobbyProtocol';
 import { CREDITS } from '@/data/credits';
-import { SOLO_LOBBY_MODES, renderMatchSetup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
+import { SOLO_LOBBY_MODES, renderMatchSetup, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 
 const PICK_KEY = 'strikegy.lobby.v1';
@@ -49,6 +49,14 @@ function modesOf(map: MapDef | undefined): LobbyMode[] {
   }
   out.push('skirmish');
   return out;
+}
+
+/** The playable area's width and depth (m, rounded). */
+function mapSize(map: MapDef): [number, number] {
+  const pts = mapOutline(map);
+  const w = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
+  const d = Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]));
+  return [Math.round(w), Math.round(d)];
 }
 
 const step = <T>(list: readonly T[], cur: T, d: number): T => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length]!;
@@ -215,10 +223,18 @@ export class Lobby {
     if (key === 'Escape' || key === 'Backspace') return this.back();
     if (this.screen === 'multi' && this.multi?.key(key)) return;
     if (this.screen !== 'play') return;
-    // The setup page: ↑ ↓ mode, ← → map, Enter start.
-    if (key === 'ArrowUp' || key === 'ArrowDown') this.setMode(stepMode(this.pick.mode, modesOf(this.maps.get(this.pick.map)), key === 'ArrowUp' ? -1 : 1));
-    else if (key === 'ArrowLeft' || key === 'ArrowRight') this.setMap(this.step(MAPS.map((m) => m.id), this.pick.map, key === 'ArrowLeft' ? -1 : 1));
-    else if (key === 'Enter') this.finish(this.pick);
+    // The setup page: Q / E mode group, ↑ ↓ mode, ← → map, Enter start.
+    const offered = modesOf(this.maps.get(this.pick.map));
+    if (key === 'KeyQ' || key === 'KeyE') {
+      uiSound('move');
+      this.setMode(stepGroup(this.pick.mode, offered, key === 'KeyQ' ? -1 : 1));
+    } else if (key === 'ArrowUp' || key === 'ArrowDown') {
+      uiSound('move');
+      this.setMode(stepMode(this.pick.mode, offered, key === 'ArrowUp' ? -1 : 1));
+    } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      uiSound('move');
+      this.setMap(this.step(MAPS.map((m) => m.id), this.pick.map, key === 'ArrowLeft' ? -1 : 1));
+    } else if (key === 'Enter') this.finish(this.pick);
   };
 
   private step<T>(list: readonly T[], cur: T, d: number): T {
@@ -258,13 +274,16 @@ export class Lobby {
     this.frame.replaceChildren();
     this.picks = [];
     this.continuePic = null;
-    this.root.className = `lobby lb-scr-${this.screen}`;
-    // The main screen is on the design system; the other pages move onto it next.
+    // On the design system so far: the main screen and the setup pages (play,
+    // create / edit room); the other pages keep the old look until their turn.
     const main = this.screen === 'main';
-    this.frame.className = main ? 'lb-frame mm ds-root' : 'lb-frame';
-    if (main) this.frame.dataset.dsTheme = 'bfv';
+    const setup = this.screen === 'play' || (this.screen === 'multi' && !!this.multi?.onSetupPage);
+    this.root.className = `lobby lb-scr-${this.screen}${main || setup ? ' lb-ds' : ''}`;
+    this.frame.className = main ? 'lb-frame mm ds-root' : setup ? 'lb-frame dsp ds-root' : 'lb-frame';
+    if (main || setup) this.frame.dataset.dsTheme = 'bfv';
     else delete this.frame.dataset.dsTheme;
-    if (this.screen !== 'main') {
+    if (setup) this.renderPageHead(this.screen === 'play' ? 'lobby.setupTitle' : this.multi!.title);
+    else if (!main) {
       const top = el('div', 'lb-top', this.frame);
       const back = el('button', 'lb-back', top);
       el('span', 'lb-back-arrow', back).textContent = '◀';
@@ -309,8 +328,37 @@ export class Lobby {
       });
       body.appendChild(panel.root);
     }
-    this.renderHints();
+    if (setup) this.renderPageFoot();
+    else this.renderHints();
     this.updateBackground();
+  }
+
+  /** A design-system page's head: back (Esc) and the title. */
+  private renderPageHead(title: MessageKey): void {
+    const head = el('div', 'dsp-head', this.frame);
+    const back = el('button', 'ds-btn ghost dsp-back', head);
+    back.innerHTML = icon('back');
+    el('span', '', back).textContent = t('lobby.hint.back');
+    if (!this.touch) el('span', 'ds-kbd', back).textContent = 'ESC';
+    back.addEventListener('pointerenter', () => uiSound('hover'));
+    back.addEventListener('click', () => this.back());
+    el('div', 'dsp-title', head).textContent = t(title);
+  }
+
+  /** The setup pages' keys along the bottom (keyboard only). */
+  private renderPageFoot(): void {
+    if (this.touch) return;
+    const foot = el('div', 'dsp-foot', this.frame);
+    const hint = (keys: string[], what: string) => {
+      const h = el('span', 'ds-hint', foot);
+      for (const k of keys) el('span', 'ds-kbd', h).textContent = k;
+      el('span', '', h).textContent = what;
+    };
+    hint(['Q', 'E'], t('lobby.modeKind'));
+    hint(['↑', '↓'], t('lobby.mode'));
+    hint(['←', '→'], t('lobby.map'));
+    hint(['ENTER'], t(this.screen === 'play' ? 'lobby.start' : this.multi!.setupStart));
+    hint(['ESC'], t('lobby.hint.back'));
   }
 
   // ---------------------------------------------------------------------------
@@ -457,7 +505,16 @@ export class Lobby {
   setupMaps(): SetupMap[] {
     return MAPS.map((m) => {
       const def = this.maps.get(m.id);
-      return { id: m.id, name: t(`map.${m.id}` as MessageKey), picture: this.picture(m.id), facts: def ? this.mapFacts(def) : '', team: m.team, blurb: t(`mapDesc.${m.id}` as MessageKey) };
+      return {
+        id: m.id,
+        name: t(`map.${m.id}` as MessageKey),
+        picture: this.picture(m.id),
+        facts: def ? this.mapFacts(def) : '',
+        zones: def ? (def.zones?.length ?? 0) : undefined,
+        size: def ? mapSize(def) : undefined,
+        team: m.team,
+        blurb: t(`mapDesc.${m.id}` as MessageKey),
+      };
     });
   }
 
@@ -508,10 +565,8 @@ export class Lobby {
 
   /** "5 zones · 500 × 360 m". */
   private mapFacts(map: MapDef): string {
-    const pts = mapOutline(map);
-    const w = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
-    const d = Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]));
-    return `${t('lobby.zones').replace('{n}', String(map.zones?.length ?? 0))} · ${Math.round(w)} × ${Math.round(d)} m`;
+    const [w, d] = mapSize(map);
+    return `${t('lobby.zones').replace('{n}', String(map.zones?.length ?? 0))} · ${w} × ${d} m`;
   }
 
   /** Keys along the bottom (keyboard only; the main screen has its own). */

@@ -746,5 +746,11 @@
   "tip.station": "Supply stations at zones your side holds refill ammo and medkits.",
   "tip.rocket": "One panzerfaust round brings a sandbag wall down.",
   "tip.squad": "On the deploy screen you can spawn next to a squad mate who is not in a fight.",
-  "tip.mines": "Mines do not go off under someone walking crouched."
+  "tip.mines": "Mines do not go off under someone walking crouched.",
+  "lobby.rulesShow": "Show rules",
+  "lobby.rulesHide": "Hide rules",
+  "lobby.factZones": "Zones",
+  "lobby.factSize": "Size",
+  "lobby.factFor": "Made for",
+  "lobby.modeKind": "Mode type"
 }

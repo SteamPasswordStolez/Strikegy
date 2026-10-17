@@ -1,0 +1,256 @@
+/*
+ * The setup pages on the design system (owner, 2026-10-17; ds.css, BFV
+ * theme): "play" and creating / editing a multiplayer room. The page frame
+ * (`.dsp`: head with back + title, keys along the bottom) and the setup body
+ * (`.mset`, MatchSetup.ts). All sizes and colours come from the ds tokens.
+ */
+
+/* The menu's backdrop steps further back behind a setup page. */
+.lobby.lb-ds:not(.lb-scr-main) .lb-shade {
+  background: rgb(8 8 7 / 0.8);
+}
+.lobby.lb-ds:not(.lb-scr-main) .lb-bg {
+  filter: blur(6px) saturate(0.3) brightness(0.4);
+}
+
+.lb-frame.dsp {
+  gap: var(--s4);
+  padding: var(--s6) var(--s7) var(--s5);
+}
+.dsp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+}
+.dsp-back {
+  padding-left: var(--s2);
+}
+.dsp-title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+.dsp-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s5);
+  padding-top: var(--s3);
+  border-top: var(--line-w) solid var(--line);
+}
+
+/* ---- The setup body: tabs over modes | map | mode + settings + start ---- */
+.mset {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 20) minmax(0, 1fr) calc(var(--u) * 26);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--s4) var(--s6);
+  height: 100%;
+}
+.mset-tabs {
+  grid-column: 1 / -1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mset-modes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+.mset-modes .ds-row-side {
+  text-align: right;
+}
+
+.mset-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+  min-height: 0;
+}
+.mset-card {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+  padding: var(--s5);
+  cursor: default;
+}
+.mset-map-name {
+  margin-top: var(--s1);
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.05;
+}
+.mset-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s6);
+  margin-top: var(--s3);
+}
+.mset-fact .ds-label {
+  display: block;
+}
+.mset-fact .ds-num {
+  font-size: var(--fs-xl);
+  line-height: 1.1;
+}
+.mset-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--s2);
+}
+.mset-strip .ds-card {
+  padding: var(--s2);
+}
+.mset-strip .ds-card-name {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mset-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-height: 0;
+}
+.mset-mode-name {
+  margin-top: var(--s1);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+.mset-mode-tag {
+  margin-top: var(--s1);
+  color: var(--ink-2);
+}
+.mset-rules-btn {
+  --h: calc(var(--u) * 2.25);
+  margin-top: var(--s2);
+  padding-left: 0;
+  font-size: var(--fs-sm);
+}
+.mset-rules-btn:hover {
+  background: transparent;
+}
+.mset-rules {
+  display: none;
+  margin: var(--s2) 0 0;
+  padding-left: var(--s5);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.mset-rules.open {
+  display: block;
+}
+.mset-rules li + li {
+  margin-top: var(--s1);
+}
+
+/* The settings scroll; the start button under them always shows. */
+.mset-fields,
+.mset-modes {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.mset-fields {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: var(--line-w) solid var(--line);
+}
+.mset-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s3);
+  padding: var(--s3) 0;
+  border-bottom: var(--line-w) solid var(--line);
+}
+.mset-field-label {
+  font-weight: 600;
+}
+.mset-field-label[title] {
+  cursor: help;
+}
+.mset-field .ds-seg button {
+  min-width: calc(var(--u) * 3.5);
+  padding: 0 var(--s3);
+}
+.mset-field .ds-input {
+  flex-basis: 100%;
+}
+.mset-field.warn .mset-field-label,
+.mset-field-note {
+  color: var(--warn);
+}
+.mset-field-note {
+  flex-basis: 100%;
+  font-size: var(--fs-sm);
+}
+.mset-start {
+  flex: none;
+  width: 100%;
+}
+.mset-start .ds-kbd {
+  border-color: currentColor;
+  color: inherit;
+}
+
+/* Phones in landscape: a smaller unit and narrower side columns. */
+@media (max-height: 520px) {
+  .lb-frame.dsp {
+    --u: 11px;
+    padding: max(10px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  }
+  .mset {
+    grid-template-columns: calc(var(--u) * 16) minmax(0, 1fr) calc(var(--u) * 24);
+    gap: var(--s2) var(--s4);
+  }
+  .mset-card {
+    padding: var(--s3);
+  }
+  .mset-map-name {
+    font-size: var(--fs-xl);
+  }
+  .mset-mode-tag {
+    display: none;
+  }
+  /* The whole column scrolls (open rules would squeeze the settings), the start button sticks to its foot. */
+  .mset-side {
+    gap: var(--s2);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  .mset-fields {
+    flex: none;
+    overflow: visible;
+  }
+  .mset-start {
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+  }
+}
+/* Narrow portrait screens: one column that scrolls. */
+@media (max-width: 760px) and (orientation: portrait) {
+  .lb-frame.dsp .lb-body {
+    overflow-y: auto;
+  }
+  .mset {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    height: auto;
+  }
+  .mset-card {
+    flex: none;
+    min-height: calc(var(--u) * 14);
+  }
+  .mset-fields {
+    overflow: visible;
+  }
+}
