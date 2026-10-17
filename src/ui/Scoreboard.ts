@@ -1,4 +1,6 @@
 import { t } from '@/i18n';
+import './ds.css';
+import './scoreboard.css';
 
 export interface ScoreboardRow {
   name: string;
@@ -29,6 +31,8 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
  * BF-style scoreboard: allies left, enemies right, one row per soldier
  * (squad, name, kills, deaths, zones, score). Shown while Z is held (touch:
  * tap the zone bar) and at the end of a match. Rows shrink to fit big games.
+ * On the design system (scoreboard.css): the element is its own `ds-root`
+ * over the game; at the end the result screen (result.css) dresses it.
  */
 export class Scoreboard {
   readonly root: HTMLDivElement;
@@ -36,7 +40,8 @@ export class Scoreboard {
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
-    this.root.className = 'scoreboard hidden';
+    this.root.className = 'scoreboard ds-root hidden';
+    this.root.dataset.dsTheme = 'bfv';
     parent.appendChild(this.root);
   }
 
@@ -51,6 +56,8 @@ export class Scoreboard {
   /** Match-end mode: laid out inside the result overlay instead of floating over the game. */
   setFinal(final: boolean): void {
     this.root.classList.toggle('final', final);
+    // The result screen is a `ds-root` already, with its own unit on phones: no second root inside it.
+    this.root.classList.toggle('ds-root', !final);
   }
 
   update(allies: ScoreboardSide, enemies: ScoreboardSide): void {

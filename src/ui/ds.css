@@ -93,6 +93,13 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Korean breaks between words, never inside one ("나옵\n니다"). */
+.ds:lang(ko),
+.ds-root:lang(ko) {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
 /* ---------- Themes ---------- */
 /* Colours sit on the root only (a nested `.ds` that re-scales the unit, e.g. a
    preview frame, inherits them). BFV-like: warm white on charcoal, the picked
@@ -753,6 +760,9 @@
   font: 600 var(--fs-xs) / 1 var(--font-display);
   letter-spacing: 0.04em;
   color: var(--ink);
+}
+.ds-keys .ov-key-what {
+  min-width: 0;
 }
 .ds-keys.gestures .ov-key .keycap {
   border-color: transparent;

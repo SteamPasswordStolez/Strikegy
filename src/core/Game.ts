@@ -514,7 +514,7 @@ export class Game {
 
   static async create(container: HTMLElement, options: GameOptions): Promise<Game> {
     const game = new Game(container, options);
-    game.overlay.show(t('title'), t('loading'), '', 'info');
+    game.overlay.show(t('title'), t('loading'), 'info');
     game.overlay.setProgress(0.04, t('load.map'));
     await game.init();
     return game;
@@ -1062,7 +1062,7 @@ export class Game {
     // From the deploy screen: it steps aside; resuming opens it again.
     this.deployScreen?.hide();
     const touch = !!this.touch;
-    this.overlay.show(t('paused'), '', '', 'pause');
+    this.overlay.show(t('paused'), '', 'pause');
     let viewEl: HTMLElement;
     let panel: SettingsPanel | null = null;
     if (view === 'settings') {
@@ -4512,7 +4512,7 @@ export class Game {
       if (document.pointerLockElement) document.exitPointerLock();
       const title = t(won ? 'match.victory' : 'match.defeat');
       const line = this.resultLine();
-      this.overlay.show(title, line, '', won ? 'win' : 'loss');
+      this.overlay.show(title, line, won ? 'win' : 'loss');
       // Final standings under the result.
       let board: HTMLElement | null = null;
       if (this.bots || this.net) {
@@ -4633,7 +4633,7 @@ export class Game {
       if (this.matchOver) return;
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      this.overlay.show(t('mp.lost'), t('mp.lostSub'), '', 'info');
+      this.overlay.show(t('mp.lost'), t('mp.lostSub'), 'info');
       this.overlay.setActions([
         { label: t('mp.reconnect'), primary: true, onClick: () => location.reload() },
         { label: t('lobby.back'), onClick: toLobby },
@@ -4647,7 +4647,7 @@ export class Game {
       this.touch?.setVisible(false);
       this.deployScreen?.hide();
       if (document.pointerLockElement) document.exitPointerLock();
-      this.overlay.show(t('mp.ended'), t('mp.endedSub'), '', 'info');
+      this.overlay.show(t('mp.ended'), t('mp.endedSub'), 'info');
       this.overlay.setActions([
         { label: t('mp.backToRoom'), primary: true, onClick: () => location.reload() },
         { label: t('lobby.back'), onClick: () => this.quit() },

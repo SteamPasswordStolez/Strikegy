@@ -2,51 +2,58 @@ import { t } from '@/i18n';
 import { saveName } from '@/net/identity';
 import { NAME_MAX, reservedText } from '@/net/lobbyProtocol';
 import { profane } from '@/net/wordFilter';
+import { uiSound } from '@/audio/uiSounds';
+import './ds.css';
+import './dialogs.css';
 
 /**
  * "Pick your name": shown over the main menu on the first visit, and when the
- * name on the menu is clicked. `required` hides the cancel button.
+ * name on the menu is clicked. `required` hides the cancel button. A
+ * design-system dialog (dialogs.css); the shade is its own `ds-root`.
  */
 export function askName(parent: HTMLElement, current: string | null, required: boolean, done: (name: string | null) => void, switchLanguage?: () => void): void {
   const shade = document.createElement('div');
-  shade.className = 'lb-dialog-shade';
+  shade.className = 'dlg-shade ds-root';
+  shade.dataset.dsTheme = 'bfv';
   const box = document.createElement('form');
-  box.className = 'lb-dialog';
+  box.className = 'ds-dialog dlg';
   shade.appendChild(box);
-  const title = document.createElement('div');
-  title.className = 'lb-dialog-title';
+  const title = document.createElement('h3');
   title.textContent = t('name.title');
   const input = document.createElement('input');
-  input.className = 'lb-input';
+  input.className = 'ds-input';
   input.maxLength = NAME_MAX;
   input.value = current ?? '';
   input.placeholder = t('name.placeholder');
   input.setAttribute('autocomplete', 'nickname');
   const note = document.createElement('div');
-  note.className = 'lb-desc';
+  note.className = 'dlg-note';
   note.textContent = t('name.rule');
   const row = document.createElement('div');
-  row.className = 'lb-dialog-buttons';
-  const ok = document.createElement('button');
-  ok.type = 'submit';
-  ok.className = 'lb-btn primary';
-  ok.textContent = t('lobby.hint.ok');
-  row.appendChild(ok);
+  row.className = 'ds-actions';
   let cancel: HTMLButtonElement | null = null;
   if (!required) {
     cancel = document.createElement('button');
     cancel.type = 'button';
-    cancel.className = 'lb-btn';
+    cancel.className = 'ds-btn ghost';
     cancel.textContent = t('mp.cancel');
-    cancel.addEventListener('click', () => close(null));
+    cancel.addEventListener('click', () => {
+      uiSound('back');
+      close(null);
+    });
     row.appendChild(cancel);
   }
+  const ok = document.createElement('button');
+  ok.type = 'submit';
+  ok.className = 'ds-btn primary';
+  ok.textContent = t('lobby.hint.ok');
+  row.appendChild(ok);
   box.append(title, input, note, row);
   // The first thing a new player sees: a way to English (or back) right here.
   if (switchLanguage) {
     const lang = document.createElement('button');
     lang.type = 'button';
-    lang.className = 'lb-lang';
+    lang.className = 'ds-btn ghost dlg-lang';
     const label = () => (lang.textContent = t('lobby.otherLanguage'));
     label();
     lang.addEventListener('click', () => {
@@ -70,8 +77,11 @@ export function askName(parent: HTMLElement, current: string | null, required: b
     // No swearing in names (the server refuses them too).
     const bad = profane(input.value);
     const name = bad ? null : saveName(input.value);
-    if (name) close(name);
-    else {
+    if (name) {
+      uiSound('select');
+      close(name);
+    } else {
+      uiSound('error');
       // Names passing for staff or the server, or swearing (owner, 2026-10-14), get their own reason.
       note.textContent = t(bad ? 'name.words' : reservedText(input.value) ? 'name.reserved' : 'name.rule');
       note.classList.add('warn');
@@ -82,7 +92,10 @@ export function askName(parent: HTMLElement, current: string | null, required: b
     e.stopPropagation();
     // Enter while a Hangul syllable is still being composed only finishes it (no submit with half a name).
     if (e.key === 'Enter' && e.isComposing) e.preventDefault();
-    if (e.key === 'Escape' && !required) close(null);
+    if (e.key === 'Escape' && !required) {
+      uiSound('back');
+      close(null);
+    }
   });
   parent.appendChild(shade);
   input.focus();

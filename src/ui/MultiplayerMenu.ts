@@ -477,7 +477,8 @@ export class MultiplayerMenu {
   private fillRows(rows: HTMLElement): void {
     rows.replaceChildren();
     const list = this.visibleRooms();
-    if (!list.length) el('div', 'mpb-none', rows, this.rooms.length ? t('mp.noMatch') : t('mp.noRooms'));
+    // No rooms at all: the detail column says so (and what to do); here only "none match".
+    if (!list.length && this.rooms.length) el('div', 'mpb-none', rows, t('mp.noMatch'));
     const pick = this.selected ?? list[0]?.id;
     for (const r of list) {
       const row = el('button', `mpb-row${r.id === pick ? ' sel' : ''}${r.humans >= r.humanCap ? ' full' : ''}`, rows);

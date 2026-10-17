@@ -1,0 +1,94 @@
+/*
+ * Dialogs on the design system (owner, 2026-10-17; ds.css `ds-dialog`, BFV
+ * theme): the name dialog over the main menu (ui/NameDialog, `.dlg-shade` is
+ * its own `ds-root`) and the overlay's messages (Overlay `.ovd`, kind `info`:
+ * errors, connection lost, the room's owner ended the match) with their
+ * buttons, Enter the first and Esc the second.
+ */
+.dlg-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: var(--s4);
+  background: var(--shade);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.dlg,
+.ovd-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  animation: dlg-in var(--t-slow) var(--ease) both;
+}
+.ds-dialog.dlg h3,
+.ds-dialog.ovd-box h3 {
+  margin: 0;
+}
+.dlg h3 {
+  padding-right: calc(var(--u) * 6);
+}
+.dlg-lang {
+  --h: calc(var(--u) * 2);
+  position: absolute;
+  top: var(--s3);
+  right: var(--s3);
+  font-size: var(--fs-sm);
+}
+.dlg-note {
+  min-height: 1.45em;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.dlg-note.warn {
+  color: var(--warn);
+}
+.ds-dialog .ds-actions {
+  margin-top: var(--s4);
+}
+
+/* The overlay's messages: the game (or nothing) dimmed, the dialog in the middle. */
+.overlay.kind-info {
+  padding: 0;
+  background: rgb(10 10 9 / 0.86);
+}
+.ovd {
+  display: none;
+  position: absolute;
+  inset: 0;
+  place-items: center;
+  padding: var(--s4);
+  text-align: left;
+}
+.overlay.kind-info:not(.loading) .ovd {
+  display: grid;
+}
+.ds-dialog.ovd-box {
+  width: min(100%, calc(var(--u) * 32));
+}
+.ovd-context:empty {
+  display: none;
+}
+.ds-dialog.ovd-box p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ovd-box .ds-actions:empty {
+  display: none;
+}
+
+@keyframes dlg-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--s2));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dlg,
+  .ovd-box {
+    animation: none;
+  }
+}

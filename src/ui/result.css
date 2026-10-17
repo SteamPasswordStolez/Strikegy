@@ -149,80 +149,25 @@
   color: inherit;
 }
 
-/* The shared scoreboard, dressed for the result screen. */
+/* The shared scoreboard (scoreboard.css), laid into the result screen: no
+   block of its own, it fills the column and scrolls. */
 .rs .scoreboard.final {
   --row: calc(var(--u) * 2);
   flex: 1;
-  position: static;
   width: 100%;
-  max-height: none;
   margin: 0;
   padding: 0;
   gap: var(--s5);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   background: none;
-  box-shadow: none;
-  font-family: var(--font-ui);
+  border: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   font-size: var(--fs-sm);
-  color: var(--ink);
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
-}
-.rs .sb-head {
-  gap: var(--s3);
-  padding: 0 var(--s2) var(--s2);
-  border-bottom-width: var(--bar-w);
-  font-size: var(--fs-sm);
-}
-.rs .sb-side.ally .sb-head {
-  color: var(--ally);
-}
-.rs .sb-side.enemy .sb-head {
-  color: var(--enemy);
-}
-.rs .sb-team {
-  font-size: var(--fs-lg);
-  letter-spacing: 0;
-  text-transform: none;
-}
-.rs .sb-tickets,
-.rs .sb-kills,
-.rs .sb-row .sb-sq {
-  color: var(--ink-3);
-}
-.rs .sb-row {
-  padding: 0 var(--s2);
-  color: var(--ink);
-  font-family: var(--font-display);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-.rs .sb-row .sb-name {
-  font-family: var(--font-ui);
-  font-weight: 500;
-}
-.rs .sb-row:nth-child(even) {
-  background: var(--surface-1);
-}
-.rs .sb-cols {
-  font-family: var(--font-ui);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--ink-3);
-}
-.rs .sb-row.mate .sb-name {
-  color: var(--squad);
-}
-.rs .sb-row.you {
-  background: var(--sel-bg);
-  box-shadow: none;
-  color: var(--sel-ink);
-}
-.rs .sb-row.you .sb-name,
-.rs .sb-row.you .sb-sq {
-  color: var(--sel-ink);
-  font-weight: 700;
 }
 
 @keyframes rs-in {

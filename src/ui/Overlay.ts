@@ -5,6 +5,7 @@ import './ds.css';
 import './loading.css';
 import './result.css';
 import './pause.css';
+import './dialogs.css';
 
 /** What the loading screen says about the match (Game sets it once the map is in). */
 export interface LoadingInfo {
@@ -68,13 +69,13 @@ const TIPS: readonly { key: MessageKey; keys: boolean }[] = [
 const TIP_EVERY_MS = 7000;
 
 /**
- * How the full-screen layer is dressed: the title menu (start), the pause
- * menu (a column of entries beside the controls or the settings), a match
- * result (won / lost), or a plain message (loading, errors).
+ * How the full-screen layer is dressed: the pause menu (a column of entries
+ * beside the controls or the settings), a match result (won / lost), or a
+ * message (loading, errors, connection lost) in a dialog.
  */
-export type OverlayKind = 'menu' | 'pause' | 'win' | 'loss' | 'info';
+export type OverlayKind = 'pause' | 'win' | 'loss' | 'info';
 
-/** A button on the overlay (back to the lobby, play again; the pause menu's entries). */
+/** A button on the overlay (back to the lobby, play again, reconnect; the pause menu's entries). */
 export interface OverlayAction {
   label: string;
   primary?: boolean;
@@ -83,17 +84,16 @@ export interface OverlayAction {
   onClick: () => void;
 }
 
-/** Full-screen message layer used for start / pause / result / error states. */
+/** Full-screen layer for the loading, pause, result and message (error, connection lost) screens. */
 export class Overlay {
   readonly root: HTMLDivElement;
-  private panel: HTMLDivElement;
-  private contextEl: HTMLDivElement;
-  private titleEl: HTMLDivElement;
-  private subEl: HTMLDivElement;
-  private hintEl: HTMLDivElement;
-  private actionsEl: HTMLDivElement;
-  private fillEl: HTMLDivElement;
   private shown: OverlayKind = 'info';
+  /** A message (kind `info`, design system, dialogs.css): context, title, line and buttons. */
+  private readonly msg: HTMLDivElement;
+  private readonly msgContext: HTMLDivElement;
+  private readonly msgTitle: HTMLHeadingElement;
+  private readonly msgLine: HTMLParagraphElement;
+  private readonly msgActions: HTMLDivElement;
   /** The loading screen (design system, BFV theme): shown while the root has `.loading`. */
   private readonly ld: HTMLDivElement;
   private readonly ldPic: HTMLDivElement;
@@ -108,7 +108,8 @@ export class Overlay {
   private tipAt = Math.floor(Math.random() * 1000);
   /** The result screen (design system): shown while the root has `.result`. */
   private readonly rs: HTMLDivElement;
-  private resultKeys: ((e: KeyboardEvent) => void) | null = null;
+  /** Enter / Esc on the result screen's or a message's buttons. */
+  private actionKeys: ((e: KeyboardEvent) => void) | null = null;
   private readonly ps: HTMLDivElement;
   private pauseKeys: ((e: KeyboardEvent) => void) | null = null;
   /** The pause entry the keys are on. */
@@ -117,25 +118,6 @@ export class Overlay {
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
     this.root.className = 'overlay kind-info';
-    this.panel = document.createElement('div');
-    this.panel.className = 'ov-panel';
-    this.contextEl = document.createElement('div');
-    this.contextEl.className = 'ov-context';
-    this.titleEl = document.createElement('div');
-    this.titleEl.className = 'overlay-title';
-    const rule = document.createElement('div');
-    rule.className = 'ov-rule';
-    this.fillEl = document.createElement('div');
-    this.fillEl.className = 'ov-fill';
-    rule.appendChild(this.fillEl);
-    this.subEl = document.createElement('div');
-    this.subEl.className = 'overlay-sub';
-    this.hintEl = document.createElement('div');
-    this.hintEl.className = 'overlay-hint';
-    this.actionsEl = document.createElement('div');
-    this.actionsEl.className = 'ov-actions';
-    this.panel.append(this.contextEl, this.titleEl, rule, this.subEl, this.hintEl, this.actionsEl);
-    this.root.appendChild(this.panel);
 
     const div = (cls: string, parent: HTMLElement): HTMLDivElement => {
       const e = document.createElement('div');
@@ -165,6 +147,15 @@ export class Overlay {
     this.rs.dataset.dsTheme = 'bfv';
     this.ps = div('ps ds-root', this.root);
     this.ps.dataset.dsTheme = 'bfv';
+    this.msg = div('ovd ds-root', this.root);
+    this.msg.dataset.dsTheme = 'bfv';
+    const box = div('ds-dialog ovd-box', this.msg);
+    this.msgContext = div('ds-label ovd-context', box);
+    this.msgTitle = document.createElement('h3');
+    this.msgLine = document.createElement('p');
+    this.msgActions = document.createElement('div');
+    this.msgActions.className = 'ds-actions';
+    box.append(this.msgTitle, this.msgLine, this.msgActions);
     parent.appendChild(this.root);
   }
 
@@ -271,7 +262,6 @@ export class Overlay {
    * (Enter the first, Esc the second). Call after `show(..., 'win' | 'loss')`.
    */
   setResult(r: ResultInfo): void {
-    this.stopResultKeys();
     const rs = this.rs;
     rs.replaceChildren();
     rs.classList.toggle('won', r.won);
@@ -318,9 +308,21 @@ export class Overlay {
       board.appendChild(r.board);
     }
 
-    const foot = div('rs-foot', rs);
+    this.buttons(div('rs-foot', rs), r.actions, 'start');
+    this.root.classList.add('result');
+  }
+
+  /**
+   * Design-system buttons for `actions`: the first the call to action (Enter),
+   * the second quiet (Esc), and those keys work them; nothing else in the
+   * game sees Enter / Esc meanwhile.
+   */
+  private buttons(parent: HTMLElement, actions: readonly OverlayAction[], firstSound: 'start' | 'select'): void {
+    this.stopActionKeys();
+    parent.replaceChildren();
     const keys = ['ENTER', 'ESC'];
-    r.actions.forEach((a, i) => {
+    const sound = (i: number) => uiSound(i === 0 ? firstSound : 'back');
+    actions.forEach((a, i) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `ds-btn${i === 0 ? ' primary' : ' ghost'}`;
@@ -336,29 +338,28 @@ export class Overlay {
       b.addEventListener('pointerenter', () => uiSound('hover'));
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        uiSound(i === 0 ? 'start' : 'back');
+        sound(i);
         a.onClick();
       });
-      foot.appendChild(b);
+      parent.appendChild(b);
     });
-    this.root.classList.add('result');
-    // Enter / Esc work the buttons; nothing else in the game sees them meanwhile.
-    this.resultKeys = (e: KeyboardEvent) => {
+    if (!actions.length) return;
+    this.actionKeys = (e: KeyboardEvent) => {
       const i = e.code === 'Enter' || e.code === 'NumpadEnter' ? 0 : e.code === 'Escape' ? 1 : -1;
-      const a = r.actions[i];
+      const a = actions[i];
       if (!a) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      uiSound(i === 0 ? 'start' : 'back');
+      sound(i);
       a.onClick();
     };
-    window.addEventListener('keydown', this.resultKeys, { capture: true });
+    window.addEventListener('keydown', this.actionKeys, { capture: true });
   }
 
-  private stopResultKeys(): void {
-    if (!this.resultKeys) return;
-    window.removeEventListener('keydown', this.resultKeys, { capture: true });
-    this.resultKeys = null;
+  private stopActionKeys(): void {
+    if (!this.actionKeys) return;
+    window.removeEventListener('keydown', this.actionKeys, { capture: true });
+    this.actionKeys = null;
   }
 
   /** The match on the loading screen: mode, map name, facts and the map from above. */
@@ -383,34 +384,23 @@ export class Overlay {
     this.tipTimer = 0;
   }
 
-  /** The small line over the title: map and mode. */
+  /** The small line over a message's title: map and mode. */
   setContext(text: string): void {
-    this.contextEl.textContent = text;
+    this.msgContext.textContent = text;
   }
 
-  /** Buttons under everything else (cleared by every `show`). A click on one doesn't reach the overlay. */
+  /**
+   * A message's buttons (cleared by every `show`): the first is the call to
+   * action on Enter, the second on Esc. A click on one doesn't reach the overlay.
+   */
   setActions(actions: readonly OverlayAction[]): void {
-    this.actionsEl.replaceChildren();
-    for (const a of actions) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = `ov-action${a.primary ? ' primary' : ''}${a.selected ? ' sel' : ''}`;
-      b.textContent = a.label;
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        a.onClick();
-      });
-      this.actionsEl.appendChild(b);
-    }
+    this.buttons(this.msgActions, actions, 'select');
   }
 
   /** Loading: how far along (0..1) and what it is doing now, under the title (cleared by `show`). */
   setProgress(fraction: number, step: string): void {
     this.root.classList.add('loading');
     const p = Math.max(0, Math.min(1, fraction));
-    this.fillEl.style.setProperty('--p', p.toFixed(3));
-    this.subEl.textContent = step;
-    this.subEl.style.display = '';
     this.ldBar.style.setProperty('--p', p.toFixed(3));
     this.ldStep.textContent = step;
     this.ldPct.textContent = `${Math.round(p * 100)}%`;
@@ -420,23 +410,22 @@ export class Overlay {
     }
   }
 
-  show(title: string, sub = '', hint = '', kind: OverlayKind = 'info'): void {
+  /** Puts the layer up as `kind`; for a message, `title` and `line` are what it says. */
+  show(title: string, line = '', kind: OverlayKind = 'info'): void {
     this.stopTips();
-    this.stopResultKeys();
     this.stopPauseKeys();
     this.setActions([]);
     this.shown = kind;
     this.root.className = `overlay kind-${kind}`;
-    this.titleEl.textContent = title;
-    this.subEl.textContent = sub;
-    this.subEl.style.display = sub ? '' : 'none';
-    renderHint(this.hintEl, hint);
+    this.msgTitle.textContent = title;
+    this.msgLine.textContent = line;
+    this.msgLine.hidden = !line;
     document.body.classList.add('overlay-up');
   }
 
   hide(): void {
     this.stopTips();
-    this.stopResultKeys();
+    this.stopActionKeys();
     this.stopPauseKeys();
     this.root.classList.add('hidden');
     document.body.classList.remove('overlay-up');
@@ -488,13 +477,16 @@ export function renderHint(el: HTMLElement, hint: string): void {
   }
 }
 
-/** "Shift sprint" → Shift / sprint; "E(hold) revive" keeps the note with the key; "Left drag: move" splits at the colon. */
+/**
+ * "Shift sprint" → Shift / sprint; "E(hold) revive" → E / revive (hold): the
+ * cap holds the key alone; "Left drag: move" splits at the colon.
+ */
 function splitKey(item: string, gestures: boolean): { key: string; what: string } {
   const s = item.trim();
   const colon = s.indexOf(': ');
   if (gestures)
     return colon > 0 ? { key: s.slice(0, colon), what: s.slice(colon + 2) } : { key: '', what: s };
-  const m = /^([^\s(]+(?:\s?\([^)]*\))?)\s+(.+)$/.exec(s);
-  if (m && m[1]!.length <= 16) return { key: m[1]!, what: m[2]! };
+  const m = /^([^\s(]+)(?:\s?\(([^)]*)\))?\s+(.+)$/.exec(s);
+  if (m && m[1]!.length <= 16) return { key: m[1]!, what: m[2] ? `${m[3]!} (${m[2]})` : m[3]! };
   return { key: '', what: s };
 }

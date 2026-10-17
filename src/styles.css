@@ -441,17 +441,14 @@ body {
 }
 
 /* ---------- Overlay ---------- */
-/* Title menu (start / pause): the name and a call to action on the left, the
-   world showing through on the right, the controls as keycaps underneath.
-   Results and messages are centred. */
+/* The full-screen layer (ui/Overlay): loading, pause, result and messages,
+   each dressed on the design system in its own file (loading.css, pause.css,
+   result.css, dialogs.css). */
 .overlay {
   position: fixed;
   inset: 0;
   display: flex;
-  padding: max(24px, 7vh) max(24px, 7vw);
-  background:
-    linear-gradient(90deg, rgb(4 10 22 / 0.94) 0%, rgb(4 10 22 / 0.72) 42%, rgb(4 10 22 / 0.28) 100%),
-    radial-gradient(ellipse at 80% 60%, transparent 40%, rgb(0 0 0 / 0.45));
+  background: rgb(10 10 9 / 0.9);
   cursor: pointer;
   z-index: 10;
   overflow-y: auto;
@@ -463,218 +460,6 @@ body {
 .overlay-up .hud {
   visibility: hidden;
 }
-.ov-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 14px;
-  max-width: min(820px, 100%);
-  /* Centred vertically, yet a tall page (results) scrolls from its top. */
-  margin: auto 0;
-}
-.ov-context {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  color: var(--hud-accent);
-}
-.ov-context:empty {
-  display: none;
-}
-.overlay-title {
-  font-size: clamp(44px, 9vw, 108px);
-  font-weight: 700;
-  font-stretch: semi-condensed;
-  letter-spacing: 0.1em;
-  line-height: 0.92;
-  text-shadow: 0 4px 30px rgb(0 0 0 / 0.5);
-}
-.ov-rule {
-  width: 120px;
-  height: 3px;
-  background: var(--hud-accent);
-}
-/* The call to action: a light slab with a cut corner. */
-.overlay-sub {
-  margin-top: 8px;
-  padding: 12px 34px 12px 22px;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--on-accent);
-  background: var(--accent);
-  clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
-  animation: cta-pulse 1.8s ease-in-out infinite;
-}
-@keyframes cta-pulse {
-  50% {
-    background: #7ff3ff;
-    box-shadow: 0 0 0 0 transparent;
-    filter: brightness(1.08);
-  }
-}
-.overlay-hint {
-  max-width: 720px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--hud-dim);
-}
-.overlay-hint.keys {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 7px 22px;
-  width: min(820px, 86vw);
-  max-width: none;
-  margin-top: 14px;
-  padding-top: 16px;
-  border-top: 1px solid var(--panel-line);
-}
-.ov-key {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  line-height: 1.25;
-}
-.ov-key .keycap {
-  flex: none;
-  min-width: 2.4em;
-  font-size: 12px;
-}
-.ov-key-what {
-  min-width: 0;
-}
-/* Results and messages: centred, the title in the winner's colour. */
-.overlay.kind-info,
-.overlay.kind-win,
-.overlay.kind-loss {
-  text-align: center;
-  background: radial-gradient(ellipse at center, rgb(6 16 32 / 0.62), rgb(4 10 22 / 0.92));
-}
-.kind-info .ov-panel,
-.kind-win .ov-panel,
-.kind-loss .ov-panel {
-  align-items: center;
-  max-width: 100%;
-  margin: auto;
-}
-.kind-info .overlay-sub,
-.kind-win .overlay-sub,
-.kind-loss .overlay-sub {
-  padding: 0;
-  font-size: 15px;
-  letter-spacing: 0.12em;
-  color: var(--hud-dim);
-  background: none;
-  clip-path: none;
-  animation: none;
-}
-/* Loading: the rule fills with the load's real steps, and a sheen keeps
-   running over it. Both move by transform only, which the browser animates
-   off the main thread, so they keep moving while a long step (navmesh,
-   shaders) holds the page. */
-.ov-fill {
-  display: none;
-}
-.loading .ov-rule {
-  position: relative;
-  width: min(320px, 60vw);
-  overflow: hidden;
-  background: rgb(255 255 255 / 0.14);
-}
-.loading .ov-fill {
-  display: block;
-  position: absolute;
-  inset: 0;
-  background: var(--hud-accent);
-  transform: scaleX(var(--p, 0));
-  transform-origin: left;
-  transition: transform 0.5s ease-out;
-}
-.loading .ov-rule::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 35%;
-  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.75), transparent);
-  animation: ov-load 1.2s linear infinite;
-  will-change: transform;
-}
-@keyframes ov-load {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(290%);
-  }
-}
-.kind-win .overlay-title {
-  color: var(--ally-soft);
-}
-.kind-win .ov-rule {
-  background: var(--ally);
-}
-.kind-loss .overlay-title {
-  color: var(--enemy-soft);
-}
-.kind-loss .ov-rule {
-  background: var(--enemy);
-}
-.kind-win .overlay-hint,
-.kind-loss .overlay-hint {
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--hud-fg);
-}
-/* Gestures (touch) read as labels, not keys. */
-.overlay-hint.gestures {
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-}
-.overlay-hint.gestures .keycap {
-  min-width: 0;
-  height: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  color: var(--hud-accent);
-}
-/* Short (phone) screens: a smaller title, tighter rows. */
-@media (max-height: 520px) {
-  .overlay {
-    padding: max(14px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 14px max(20px, env(safe-area-inset-left));
-  }
-  .ov-panel {
-    gap: 8px;
-  }
-  .ov-context {
-    font-size: 11px;
-  }
-  .overlay-title {
-    font-size: clamp(34px, 13vh, 64px);
-  }
-  .ov-rule {
-    width: 80px;
-  }
-  .overlay-sub {
-    margin-top: 2px;
-    padding: 9px 28px 9px 16px;
-    font-size: 14px;
-  }
-  .overlay-hint.keys {
-    margin-top: 4px;
-    padding-top: 8px;
-    gap: 4px 16px;
-    font-size: 11px;
-  }
-}
-
 /* Keyboard key, wherever a key is named (prompts, chips, controls). */
 .keycap {
   display: inline-flex;
@@ -1906,137 +1691,6 @@ body {
   height: 128px;
 }
 
-/* ---------- Scoreboard ---------- */
-/* Two team columns; rows shrink with the player count (--rows) so 40v40 fits. */
-.scoreboard {
-  --row: clamp(13px, calc(64vh / var(--rows, 12)), 24px);
-  position: fixed;
-  left: 50%;
-  top: 9vh;
-  transform: translateX(-50%);
-  z-index: 8;
-  display: flex;
-  gap: 14px;
-  width: min(1080px, calc(100vw - 32px));
-  padding: 16px 18px;
-  border-radius: 0;
-  background: var(--panel-strong);
-  box-shadow: 0 18px 50px rgb(0 0 0 / 0.5);
-  font-size: calc(var(--row) * 0.58);
-  text-shadow: none;
-  pointer-events: none;
-}
-.scoreboard.hidden {
-  display: none;
-}
-.scoreboard.final {
-  position: static;
-  transform: none;
-  margin: 4px auto 0;
-  max-height: 58vh;
-  /* Many players on a short screen: the board scrolls instead of running under the line below. */
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  pointer-events: auto;
-  touch-action: pan-y;
-  --row: clamp(12px, calc(46vh / var(--rows, 12)), 22px);
-}
-.sb-side {
-  flex: 1 1 0;
-  min-width: 0;
-}
-.sb-head {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding: 0 8px 8px;
-  border-bottom: 3px solid currentColor;
-  font-size: 13px;
-  font-weight: 700;
-}
-.sb-side.ally .sb-head {
-  color: var(--ally-soft);
-}
-.sb-side.enemy .sb-head {
-  color: var(--enemy-soft);
-}
-.sb-team {
-  font-size: 18px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-.sb-tickets,
-.sb-kills {
-  color: var(--hud-dim);
-}
-.sb-kills {
-  margin-left: auto;
-}
-.sb-row {
-  display: grid;
-  grid-template-columns: 1.6em minmax(0, 1fr) 2.6em 2.6em 2.6em 3.6em;
-  align-items: center;
-  height: var(--row);
-  padding: 0 6px;
-  color: var(--hud-fg);
-  text-align: right;
-}
-.sb-row:nth-child(even) {
-  background: rgba(255, 255, 255, 0.04);
-}
-.sb-row .sb-name {
-  overflow: hidden;
-  text-align: left;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.sb-row .sb-sq {
-  text-align: left;
-  color: var(--hud-dim);
-}
-.sb-cols {
-  color: var(--hud-dim);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.sb-row.mate .sb-name {
-  color: var(--squad);
-}
-.sb-row.you {
-  background: linear-gradient(90deg, rgb(0 229 255 / 0.26), rgb(0 229 255 / 0.06));
-  box-shadow: inset 3px 0 var(--hud-accent);
-}
-.sb-row.you .sb-name {
-  color: var(--hud-accent);
-  font-weight: 700;
-}
-.sb-row.dead {
-  opacity: 0.45;
-}
-.sb-score {
-  font-weight: 700;
-}
-/* Short (phone) screens: rows keep a readable size and the board scrolls. */
-@media (max-height: 520px) {
-  .scoreboard:not(.final) {
-    --row: 18px;
-    top: 48px;
-    gap: 8px;
-    padding: 8px;
-    max-height: calc(100vh - 56px);
-    overflow-y: auto;
-    pointer-events: auto;
-    touch-action: pan-y;
-  }
-  .sb-head {
-    font-size: 11px;
-  }
-  .sb-team {
-    font-size: 13px;
-  }
-}
-
 /* ---- Down / revive / medkit ------------------------------------------------ */
 .hud-medkit {
   margin-top: 10px;
@@ -2256,15 +1910,6 @@ body {
   }
 }
 /* Game setup: the rows on the left, the map's card on the right. */
-.lb-desc {
-  min-height: 3.2em;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--hud-dim);
-}
-.lb-desc.warn {
-  color: var(--hud-accent);
-}
 .lb-card {
   display: flex;
   flex-direction: column;
@@ -2354,10 +1999,6 @@ body {
     gap: 8px;
     padding: max(10px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 10px max(18px, env(safe-area-inset-left));
   }
-  .lb-desc {
-    min-height: 0;
-    font-size: 11px;
-  }
   .lb-card {
     gap: 6px;
   }
@@ -2371,36 +2012,6 @@ body {
     display: none;
   }
   }
-
-/* Buttons on the overlay (back to the lobby, play again). */
-.ov-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 6px;
-}
-.ov-actions:empty {
-  display: none;
-}
-.ov-action {
-  padding: 10px 22px;
-  border: 1px solid rgb(255 255 255 / 0.45);
-  border-radius: 0;
-  background: rgb(255 255 255 / 0.04);
-  color: var(--hud-fg);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.ov-action:hover,
-.ov-action.primary {
-  border-color: var(--accent);
-  background: var(--sel-bg);
-  color: var(--sel-fg);
-}
 
 /* Tutorial card under the objective bar (at the bottom over the deploy screen). */
 .tut {
@@ -2511,73 +2122,6 @@ body {
   font-size: 13px;
 }
 
-/* Language and player name, top right of the main menu. */
-.lb-lang {
-  padding: 8px 14px;
-  border: 0;
-  background: var(--row-bg);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
-  color: var(--hud-fg);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.lb-lang:hover {
-  box-shadow: inset 0 0 0 1px var(--hud-accent);
-}
-.lb-dialog .lb-lang {
-  align-self: flex-end;
-  margin: -6px -6px 0 0;
-  padding: 5px 10px;
-  font-size: 12px;
-}
-/* Player name on the main menu and the name dialog. */
-.lb-dialog-shade {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  background: rgb(3 8 18 / 0.72);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-}
-.lb-dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: min(420px, 100%);
-  padding: 24px;
-  background: var(--glass-strong);
-  border: 1px solid var(--glass-line);
-  box-shadow: inset 3px 0 0 var(--accent), 0 18px 60px rgb(0 0 0 / 0.5), 0 0 40px rgb(0 229 255 / 0.08);
-}
-.lb-dialog-title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-}
-.lb-dialog-buttons {
-  display: flex;
-  gap: 8px;
-}
-.lb-input {
-  min-width: 0;
-  padding: 9px 12px;
-  border: 0;
-  background: rgb(255 255 255 / 0.08);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
-  color: var(--hud-fg);
-  font: inherit;
-  font-size: 16px;
-}
-.lb-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--hud-accent);
-}
 .lb-btn {
   padding: 9px 18px;
   border: 0;
@@ -2844,41 +2388,11 @@ body:has(.deploy.on) .chat-hud:not(.touch) {
 .chat.blocked .chat-send {
   opacity: 0.5;
 }
-/* Tags on the scoreboard (multiplayer). */
-.sb-tag {
-  margin-left: 3px;
-  font-size: 0.8em;
-  opacity: 0.5;
-}
 
-@media (max-height: 500px), (max-width: 640px) {
-  .lb-lang {
-    padding: 4px 10px;
-  }
-}
-
-/* Credits page (main menu). */
 /* Korean: the wide tracking that suits Latin capitals only spreads syllables apart. */
-:lang(ko) .overlay-title,
-:lang(ko) .ov-action,
 :lang(ko) .lb-card-name,
-:lang(ko) .deploy-title,
-:lang(ko) .overlay-sub,
-:lang(ko) .lb-dialog-title {
+:lang(ko) .deploy-title {
   letter-spacing: 0.02em;
-}
-:lang(ko) .ov-context {
-  letter-spacing: 0.12em;
-}
-
-/* Loading: the name as on the main menu (italic, white to cyan, glowing). */
-.loading .overlay-title {
-  font-style: italic;
-  background: linear-gradient(180deg, #ffffff 30%, #bff6ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 0 24px rgb(0 229 255 / 0.35));
 }
 
 /* First-person vehicle views (ui/VehicleView.ts): under the rest of the HUD; the infantry crosshair goes. */

@@ -693,25 +693,72 @@ button.mpb-row.sel:hover {
   text-transform: none;
 }
 
-/* ---------- Narrow or short screens: one column that scrolls ---------- */
-@media (max-width: 900px), (max-height: 520px) {
+/* ---------- Phones on their side: the same two columns, tighter ---------- */
+@media (max-height: 520px) and (min-width: 701px) {
+  .mpb {
+    grid-template-columns: minmax(0, 1.7fr) minmax(calc(var(--u) * 19), 1fr);
+    gap: var(--s2) var(--s4);
+  }
+  .mpr {
+    grid-template-columns: minmax(0, 1fr) calc(var(--u) * 19);
+    gap: var(--s2) var(--s4);
+  }
+  .mpb-tools {
+    margin-bottom: var(--s2);
+  }
+  .mpb-row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+    gap: var(--s2);
+    padding: var(--s1) var(--s3);
+  }
+  .mpb-row .mpb-state,
+  .mpb-head span:last-child {
+    display: none;
+  }
+  /* The map's picture as a strip: the room's facts and the button stay in sight. */
+  .mpb-detail .mp-pic,
+  .mpr-aside .mp-pic {
+    aspect-ratio: auto;
+    height: calc(var(--u) * 7);
+  }
+  .mpb-detail,
+  .mpr-aside {
+    gap: var(--s2);
+  }
+  .mpr-name {
+    font-size: var(--fs-xl);
+  }
+  .mpr-main {
+    grid-template-rows: minmax(0, 1fr) minmax(calc(var(--u) * 9), 1fr);
+    gap: var(--s2);
+  }
+}
+
+/* ---------- Narrow (portrait) screens: one column that scrolls ---------- */
+@media (max-width: 700px) {
   .mpb,
   .mpr {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: none;
     overflow-y: auto;
   }
+  /* In a scrolling column every part keeps its own height. */
   .mpb-list,
   .mpb-detail,
   .mpr-main,
   .mpr-aside {
     grid-row: auto;
+    min-height: auto;
+    overflow: visible;
   }
   .mpb-rows {
     max-height: 46vh;
   }
   .mpr-main {
     grid-template-rows: auto calc(var(--u) * 15);
+  }
+  .mpr-teams {
+    min-height: auto;
   }
   .mpb-row {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 0.9fr);

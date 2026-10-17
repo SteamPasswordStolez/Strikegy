@@ -1,0 +1,163 @@
+/*
+ * In-match scoreboard on the design system (owner, 2026-10-17; ds.css, BFV
+ * theme; ui/Scoreboard, shown while Z is held): one dark block over the game,
+ * the two sides side by side, each headed by its name in the side's colour,
+ * its tickets / points and kills; a row a soldier. The player's row is the
+ * light slab, squad mates' names green, the dead faded. Rows shrink with the
+ * player count (--rows) so 40 v 40 fits. The element carries `ds-root` itself
+ * (never a parent of the old-style HUD); at the match's end it moves into the
+ * result screen, drops `ds-root` and is dressed by result.css.
+ */
+.scoreboard {
+  --row: clamp(calc(var(--u) * 1.125), calc(62vh / var(--rows, 12)), calc(var(--u) * 1.875));
+  position: fixed;
+  left: 50%;
+  /* Under the zone bar, over the tutorial card (shown only while no overlay is up). */
+  top: max(96px, calc(var(--u) * 6.5));
+  transform: translateX(-50%);
+  z-index: 46;
+  display: flex;
+  gap: var(--s6);
+  width: min(calc(var(--u) * 72), calc(100vw - 32px));
+  padding: var(--s5) var(--s6) var(--s6);
+  background: rgb(12 12 11 / 0.88);
+  border: var(--line-w) solid var(--line);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: min(var(--fs-sm), calc(var(--row) * 0.62));
+  line-height: 1.2;
+  color: var(--ink);
+  text-align: left;
+  text-shadow: none;
+  pointer-events: none;
+  animation: sb-in var(--t-base) var(--ease) both;
+}
+.scoreboard.hidden {
+  display: none;
+}
+.scoreboard.final {
+  position: static;
+  transform: none;
+  animation: none;
+  pointer-events: auto;
+}
+.sb-side {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.sb-head {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+  padding: 0 var(--s2) var(--s2);
+  border-bottom: var(--bar-w) solid currentColor;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.sb-side.ally .sb-head {
+  color: var(--ally);
+}
+.sb-side.enemy .sb-head {
+  color: var(--enemy);
+}
+.sb-team {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.sb-tickets {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-lg);
+  color: var(--ink);
+}
+.sb-kills {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+.sb-row {
+  display: grid;
+  grid-template-columns: 1.6em minmax(0, 1fr) 2.8em 2.8em 2.8em 3.8em;
+  align-items: center;
+  height: var(--row);
+  padding: 0 var(--s2);
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+.sb-row:nth-child(odd) {
+  background: rgb(239 235 226 / 0.04);
+}
+.sb-row .sb-name {
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sb-row .sb-sq {
+  text-align: left;
+  color: var(--ink-3);
+}
+.sb-cols {
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.sb-cols:nth-child(odd) {
+  background: none;
+}
+.sb-row.mate .sb-name {
+  color: var(--squad);
+}
+.sb-row.you {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.sb-row.you .sb-name,
+.sb-row.you .sb-sq {
+  color: var(--sel-ink);
+  font-weight: 700;
+}
+.sb-row.dead {
+  opacity: 0.42;
+}
+.sb-score {
+  font-weight: 700;
+}
+/* Tags (multiplayer): names can repeat across rooms, tags can't. */
+.sb-tag {
+  margin-left: 0.3em;
+  font-size: 0.85em;
+  opacity: 0.5;
+}
+@keyframes sb-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Short (phone) screens: rows keep a readable size and the board scrolls. */
+@media (max-height: 520px) {
+  .scoreboard:not(.final) {
+    --row: 18px;
+    top: 58px;
+    gap: var(--s4);
+    padding: var(--s2) var(--s3) var(--s3);
+    max-height: calc(100vh - 66px);
+    overflow-y: auto;
+    pointer-events: auto;
+    touch-action: pan-y;
+    font-size: 11px;
+  }
+  .scoreboard:not(.final) .sb-team,
+  .scoreboard:not(.final) .sb-tickets {
+    font-size: var(--fs-md);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scoreboard {
+    animation: none;
+  }
+}

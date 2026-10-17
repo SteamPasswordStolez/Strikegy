@@ -3,7 +3,10 @@
  * theme; the frame itself is in matchSetup.css): controls, credits and
  * settings. The multiplayer pages have multiplayer.css.
  */
-.lb-frame.dsp .lb-body {
+/* Its own pages only: the multiplayer pages put their grids (.mpb, .mpr) on the body. */
+.lb-body.lb-controls,
+.lb-body.lb-credits,
+.lb-body.lb-settings {
   display: flex;
   flex-direction: column;
   min-height: 0;
