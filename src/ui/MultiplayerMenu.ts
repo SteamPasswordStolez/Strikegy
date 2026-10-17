@@ -9,6 +9,8 @@ import { hasSides, type Device, type Lineup, type InputRule, type MatchStart, ty
 import { ChatPanel, nameView } from './ChatPanel';
 import { modeName, renderMatchSetup, stepGroup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
 import { uiSound } from '@/audio/uiSounds';
+import { icon } from './icons';
+import './multiplayer.css';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
@@ -32,6 +34,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
   return e;
 }
 
+/** A design-system button with an optional icon before the label (and the hover sound). */
+function button(parent: HTMLElement, cls: string, label: string, ic?: Parameters<typeof icon>[0]): HTMLButtonElement {
+  const b = el('button', cls, parent);
+  b.type = 'button';
+  if (ic) b.insertAdjacentHTML('beforeend', icon(ic));
+  if (label) el('span', '', b, label);
+  b.addEventListener('pointerenter', () => uiSound('hover'));
+  return b;
+}
+
 const step = <T>(list: readonly T[], cur: T, d: number): T => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length]!;
 const mapName = (id: string): string => t(`map.${id}` as MessageKey);
 const sideCap = (r: RoomInfo): number => Math.ceil(r.humanCap / 2);
@@ -49,8 +61,8 @@ export interface MultiplayerHost {
 }
 
 /**
- * The multiplayer pages of the main menu (remade 2026-10-14 in the menus'
- * BF2042 look): connect to the game server; the server browser (rooms with
+ * The multiplayer pages of the main menu (remade 2026-10-14; on the design
+ * system since 2026-10-17, multiplayer.css): connect to the game server; the server browser (rooms with
  * their owner's tag, filters and search, the picked room's details and join
  * buttons, a side to join a match under way on where players pick); creating
  * a room or changing its settings (the shared setup page, plus who picks the
@@ -109,6 +121,12 @@ export class MultiplayerMenu {
   /** What the setup page's start button does. */
   get setupStart(): MessageKey {
     return this.view === 'edit' ? 'mp.saveSettings' : 'mp.createGo';
+  }
+
+  /** The page's keys for the bottom line (the menu adds Esc). */
+  get hints(): [string[], string][] {
+    if (this.view === 'list') return [[['↑', '↓'], t('mp.hint.room')], [['ENTER'], t('mp.join')]];
+    return [];
   }
 
   get title(): MessageKey {
@@ -300,6 +318,10 @@ export class MultiplayerMenu {
     });
   }
 
+  private get touch(): boolean {
+    return this.host.device === 'mobile';
+  }
+
   private me(): Member | null {
     return this.room?.members.find((m) => m.id === this.link?.id) ?? null;
   }
@@ -317,12 +339,11 @@ export class MultiplayerMenu {
 
   private fillPing(box: HTMLElement): void {
     const ms = this.ping;
-    const bars = ms === null ? 0 : ms < 60 ? 4 : ms < 110 ? 3 : ms < 200 ? 2 : 1;
+    const q = ms === null ? '' : ms < 80 ? ' good' : ms < 160 ? ' mid' : ' bad';
     box.replaceChildren();
-    box.className = `mp-ping q${bars}`;
-    const b = el('span', 'mp-ping-bars', box);
-    for (let i = 0; i < 4; i++) el('i', i < bars ? 'on' : '', b);
-    el('span', 'mp-ping-ms', box, this.pingText());
+    const b = el('span', `ds-ping${q}`, box);
+    for (let i = 0; i < 3; i++) el('i', '', b);
+    el('span', 'ds-num mp-ping-ms', box, this.pingText());
     box.title = t('mp.ping');
   }
 
@@ -338,12 +359,12 @@ export class MultiplayerMenu {
     this.pingEls = [];
     if (this.view === 'connecting' || this.view === 'offline') {
       const box = el('div', 'mp-status', body);
-      if (this.notice) el('div', 'mp-notice', box, this.notice);
+      if (this.notice) el('div', 'mp-status-note', box, this.notice);
       if (this.view === 'connecting') {
         el('div', 'mp-spinner', box);
-        el('div', 'lb-desc', box, t('mp.connecting'));
+        el('div', 'ds-dim', box, t('mp.connecting'));
       } else {
-        const retry = el('button', 'lb-btn primary', box, t('mp.retry'));
+        const retry = button(box, 'ds-btn primary', t('mp.retry'), 'refresh');
         retry.addEventListener('click', () => {
           void this.connect();
           this.host.redraw();
@@ -359,15 +380,18 @@ export class MultiplayerMenu {
   /** The player's own card: name, tag, the round trip. */
   private idCard(parent: HTMLElement): void {
     const card = el('div', 'mp-id', parent);
-    el('span', 'mp-id-label', card, t('mp.you'));
+    card.insertAdjacentHTML('beforeend', icon('user'));
     nameView(card, { name: this.link?.name ?? '', tag: this.link?.tag ?? '' }, 'mp-id-name');
+    card.title = t('mp.you');
     this.pingView(card);
   }
 
   private notices(parent: HTMLElement): void {
     if (!this.notice) return;
     const text = this.notice;
-    const n = el('div', 'mp-notice', parent, text);
+    const n = el('div', 'ds-toast danger mp-toast', parent);
+    n.insertAdjacentHTML('beforeend', icon('info'));
+    el('span', '', n, text);
     const dismiss = (): void => {
       if (this.notice === text) this.notice = null;
       n.remove();
@@ -391,7 +415,7 @@ export class MultiplayerMenu {
     const top = el('div', 'mpb-top', body);
     this.idCard(top);
     const acts = el('div', 'mpb-acts', top);
-    const quick = el('button', 'lb-btn primary', acts, t('mp.quick'));
+    const quick = button(acts, 'ds-btn primary', t('mp.quick'), 'play');
     quick.addEventListener('click', () => {
       const r = this.quickPick();
       if (r) this.join(r);
@@ -400,25 +424,34 @@ export class MultiplayerMenu {
         this.host.redraw();
       }
     });
-    el('button', 'lb-btn', acts, t('mp.create')).addEventListener('click', () => {
+    button(acts, 'ds-btn ghost', t('mp.create'), 'plus').addEventListener('click', () => {
       this.view = 'create';
       this.host.redraw();
     });
-    el('button', 'lb-btn', acts, t('mp.refresh')).addEventListener('click', () => this.link?.send({ t: 'list' }));
+    const refresh = button(acts, 'ds-btn ghost mp-icon-btn', '', 'refresh');
+    refresh.title = t('mp.refresh');
+    refresh.setAttribute('aria-label', t('mp.refresh'));
+    refresh.addEventListener('click', () => this.link?.send({ t: 'list' }));
     this.notices(body);
 
     // The list: filters and search over the rooms.
     const left = el('div', 'mpb-list', body);
     const tools = el('div', 'mpb-tools', left);
+    const seg = el('div', 'ds-seg mpb-filter', tools);
     for (const f of ['all', 'lobby', 'playing'] as const) {
       const n = f === 'all' ? this.rooms.length : this.rooms.filter((r) => r.state === f).length;
-      const c = el('button', `ms-chip${this.filter === f ? ' sel' : ''}`, tools, `${t(`mp.filter.${f}` as MessageKey)} ${n}`);
+      const c = el('button', this.filter === f ? 'sel' : '', seg, t(`mp.filter.${f}` as MessageKey));
+      c.type = 'button';
+      el('span', 'ds-num mpb-filter-n', c, String(n));
       c.addEventListener('click', () => {
+        if (this.filter !== f) uiSound('move');
         this.filter = f;
         this.host.redraw();
       });
     }
-    const search = el('input', 'lb-input mpb-search', tools);
+    const find = el('label', 'mpb-search', tools);
+    find.insertAdjacentHTML('beforeend', icon('search'));
+    const search = el('input', 'ds-input', find);
     search.type = 'search';
     search.placeholder = t('mp.search');
     search.value = this.search;
@@ -427,7 +460,7 @@ export class MultiplayerMenu {
       this.fillRows(rows);
     });
     const head = el('div', 'mpb-row mpb-head', left);
-    for (const k of ['mp.col.name', 'mp.col.map', 'mp.col.players', 'mp.col.state'] as const) el('span', '', head, t(k));
+    for (const k of ['mp.col.name', 'mp.col.map', 'mp.col.players', 'mp.col.state'] as const) el('span', 'ds-label', head, t(k));
     const rows = el('div', 'mpb-rows', left);
     this.fillRows(rows);
 
@@ -437,7 +470,7 @@ export class MultiplayerMenu {
     if (room) this.renderDetail(side, room);
     else {
       el('div', 'mpb-empty-title', side, t('mp.noRooms'));
-      el('div', 'lb-desc', side, t('mp.noRoomsHint'));
+      el('div', 'ds-dim', side, t('mp.noRoomsHint'));
     }
   }
 
@@ -448,19 +481,27 @@ export class MultiplayerMenu {
     const pick = this.selected ?? list[0]?.id;
     for (const r of list) {
       const row = el('button', `mpb-row${r.id === pick ? ' sel' : ''}${r.humans >= r.humanCap ? ' full' : ''}`, rows);
+      row.type = 'button';
       const name = el('span', 'mpb-name', row);
-      el('span', 'mpb-title', name, `${r.locked ? '🔒 ' : ''}${r.settings.name}`);
+      const title = el('span', 'mpb-title', name);
+      if (r.locked) title.insertAdjacentHTML('beforeend', icon('lock'));
+      el('span', '', title, r.settings.name);
       nameView(name, r.host, 'mpb-host');
       const what = el('span', 'mpb-what', row);
       el('span', '', what, mapName(r.settings.map));
       el('span', 'mpb-mode', what, modeName(r.settings.mode));
       const num = el('span', 'mpb-num', row);
-      el('span', '', num, `${r.humans} / ${r.humanCap}${r.settings.lineup !== 'users' ? ` · ${t('mp.withBots')}` : ''}`);
+      el('span', 'ds-num', num, `${r.humans} / ${r.humanCap}`);
+      if (r.settings.lineup !== 'users') el('span', 'mpb-bots', num, t('mp.withBots'));
       const bar = el('span', 'mpb-bar', num);
       el('i', '', bar).style.width = `${Math.min(100, (r.humans / Math.max(1, r.humanCap)) * 100)}%`;
       el('span', `mpb-state st-${r.state}`, row, t(r.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
+      row.addEventListener('pointerenter', () => uiSound('hover'));
       row.addEventListener('click', () => {
-        if (this.selected !== r.id) this.password = '';
+        if (this.selected !== r.id) {
+          this.password = '';
+          uiSound('move');
+        }
         this.selected = r.id;
         this.host.redraw();
       });
@@ -478,14 +519,14 @@ export class MultiplayerMenu {
       img.alt = '';
     }
     const cap = el('div', 'mp-pic-cap', pic);
-    el('span', 'mp-pic-mode', cap, modeName(s.mode));
+    el('span', 'ds-label mp-pic-mode', cap, modeName(s.mode));
     el('span', 'mp-pic-map', cap, mapName(s.map));
   }
 
   private facts(parent: HTMLElement, s: RoomSettings, r: RoomInfo): void {
     const dl = el('dl', 'mp-facts', parent);
     const row = (k: MessageKey, v: string): void => {
-      el('dt', '', dl, t(k));
+      el('dt', 'ds-label', dl, t(k));
       el('dd', '', dl, v);
     };
     row('mp.row.size', t('mp.sizeValue').replace('{n}', String(s.size)).replaceAll('{a}', String(s.size / 2)));
@@ -501,7 +542,9 @@ export class MultiplayerMenu {
     const s = r.settings;
     this.mapCard(side, s);
     const head = el('div', 'mpb-dhead', side);
-    el('div', 'mpb-dname', head, `${r.locked ? '🔒 ' : ''}${s.name}`);
+    const dname = el('div', 'mpb-dname', head);
+    if (r.locked) dname.insertAdjacentHTML('beforeend', icon('lock'));
+    el('span', '', dname, s.name);
     const by = el('div', 'mpb-dby', head);
     el('span', '', by, t('mp.hostBy'));
     nameView(by, r.host);
@@ -510,7 +553,7 @@ export class MultiplayerMenu {
     const full = r.humans >= r.humanCap;
     const fits = s.input === 'all' || s.input === this.host.device;
     if (r.locked) {
-      const pw = el('input', 'lb-input mpb-pw', side);
+      const pw = el('input', 'ds-input mpb-pw', side);
       pw.type = 'password';
       pw.placeholder = t('mp.passwordPrompt');
       pw.maxLength = 64;
@@ -521,21 +564,22 @@ export class MultiplayerMenu {
       });
     }
     const go = el('div', 'mpb-go', side);
-    if (!fits) el('div', 'lb-desc', go, t('mp.err.full'));
+    if (!fits) el('div', 'ds-dim', go, t('mp.err.full'));
     // A match under way where players pick their side: join one of them.
     if (r.state === 'playing' && s.teamPick === 'self' && hasSides(s)) {
       for (const team of SIDES) {
         const open = r.sides[team] < sideCap(r);
-        const b = el('button', `lb-btn mpb-side side-${team}`, go);
+        const b = el('button', `ds-btn mpb-side side-${team}`, go);
+        b.type = 'button';
         el('span', '', b, t(`mp.joinSide.${team}` as MessageKey));
-        el('span', 'mpb-side-n', b, `${r.sides[team]} / ${sideCap(r)}`);
+        el('span', 'ds-num mpb-side-n', b, `${r.sides[team]} / ${sideCap(r)}`);
         b.disabled = !open || full || !fits;
         b.addEventListener('click', () => this.join(r, team));
       }
       return;
     }
-    const b = el('button', 'lb-start mpb-join', go);
-    el('span', 'lb-start-text', b, t(r.state === 'playing' ? 'mp.joinLive' : 'mp.join'));
+    const b = button(go, 'ds-btn primary mp-big mpb-join', t(r.state === 'playing' ? 'mp.joinLive' : 'mp.join'));
+    if (!this.touch) el('span', 'ds-kbd', b, 'ENTER');
     b.disabled = full || !fits;
     b.addEventListener('click', () => this.join(r));
   }
@@ -553,6 +597,7 @@ export class MultiplayerMenu {
 
   /** Keys on the create page (Q / E mode group, ↑ ↓ mode, ← → map, Enter create); true when used. */
   key(code: string): boolean {
+    if (this.view === 'list') return this.listKey(code);
     if (this.view !== 'create' && this.view !== 'edit') return false;
     const f = this.form;
     if (code === 'KeyQ' || code === 'KeyE') {
@@ -572,6 +617,26 @@ export class MultiplayerMenu {
       ));
     } else if (code === 'Enter') this.create();
     else return false;
+    return true;
+  }
+
+  /** The server browser: ↑ ↓ pick a room, Enter join it. */
+  private listKey(code: string): boolean {
+    const list = this.visibleRooms();
+    if (!list.length) return false;
+    const at = Math.max(0, list.findIndex((r) => r.id === (this.selected ?? list[0]!.id)));
+    if (code === 'ArrowUp' || code === 'ArrowDown') {
+      const next = list[Math.max(0, Math.min(list.length - 1, at + (code === 'ArrowUp' ? -1 : 1)))]!;
+      if (next.id !== this.selected) {
+        uiSound('move');
+        this.password = '';
+      }
+      this.selected = next.id;
+      this.host.redraw();
+    } else if (code === 'Enter') {
+      uiSound('select');
+      this.join(list[at]!);
+    } else return false;
     return true;
   }
 
@@ -714,7 +779,7 @@ export class MultiplayerMenu {
   private renderRoom(body: HTMLElement): void {
     const room = this.room;
     if (!room) {
-      el('div', 'lb-desc', body, t('mp.connecting'));
+      el('div', 'ds-dim', body, t('mp.connecting'));
       return;
     }
     body.classList.add('mpr');
@@ -726,10 +791,14 @@ export class MultiplayerMenu {
     const head = el('div', 'mpr-head', body);
     const titles = el('div', 'mpr-titles', head);
     const badges = el('div', 'mpr-badges', titles);
-    el('span', 'mpr-badge accent', badges, modeName(s.mode));
-    el('span', 'mpr-badge', badges, mapName(s.map));
-    el('span', `mpr-badge st-${room.state}`, badges, t(room.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
-    if (room.locked) el('span', 'mpr-badge', badges, `🔒 ${t('mp.locked')}`);
+    el('span', 'ds-badge accent', badges, modeName(s.mode));
+    el('span', 'ds-badge line', badges, mapName(s.map));
+    el('span', `ds-badge line st-${room.state}`, badges, t(room.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
+    if (room.locked) {
+      const lock = el('span', 'ds-badge line', badges);
+      lock.insertAdjacentHTML('beforeend', icon('lock'));
+      el('span', '', lock, t('mp.locked'));
+    }
     el('div', 'mpr-name', titles, s.name);
     this.idCard(head);
     this.notices(body);
@@ -744,31 +813,33 @@ export class MultiplayerMenu {
       const col = el('div', 'mpr-side all', teams);
       const h = el('div', 'mpr-side-head', col);
       el('span', 'mpr-side-name', h, t('mp.col.player'));
-      el('span', 'mpr-side-n', h, `${room.humans} / ${room.humanCap}`);
+      el('span', 'ds-num mpr-side-n', h, `${room.humans} / ${room.humanCap}`);
       el('div', 'mpr-side-note', col, t(!hasSides(s) ? (s.lineup === 'coop' ? 'mp.note.coopSide' : 'mp.note.noSides') : 'mp.note.pick.random'));
       const list = el('div', 'mpr-members', col);
       for (const m of room.members) this.memberCard(list, room, m, owner, null);
     }
     const chatBox = el('div', 'mpr-chat', main);
-    el('div', 'mpr-chat-head', chatBox, t('chat.title'));
+    el('div', 'ds-label mpr-chat-head', chatBox, t('chat.title'));
     this.chat?.attach(chatBox);
 
     // The room's card and the buttons.
     const aside = el('div', 'mpr-aside', body);
     this.mapCard(aside, s);
     this.facts(aside, s, room);
-    if (owner && room.state === 'lobby') el('button', 'lb-btn mpr-edit', aside, t('mp.editRoom')).addEventListener('click', () => this.editSettings());
+    if (owner && room.state === 'lobby') button(aside, 'ds-btn ghost mpr-edit', t('mp.editRoom'), 'settings').addEventListener('click', () => this.editSettings());
     const foot = el('div', 'mpr-foot', aside);
     if (owner && room.state === 'lobby') {
-      const go = el('button', 'lb-start', foot);
-      el('span', 'lb-start-text', go, t('lobby.start'));
-      go.addEventListener('click', () => this.link?.send({ t: 'start' }));
+      const go = button(foot, 'ds-btn primary mp-big', t('lobby.start'), 'play');
+      go.addEventListener('click', () => {
+        uiSound('start');
+        this.link?.send({ t: 'start' });
+      });
     } else if (owner && room.state === 'playing') {
-      el('button', 'lb-btn', foot, t('mp.end')).addEventListener('click', () => this.link?.send({ t: 'end' }));
+      button(foot, 'ds-btn ghost', t('mp.end')).addEventListener('click', () => this.link?.send({ t: 'end' }));
     } else {
       el('div', 'mpr-wait', foot, t(room.state === 'playing' ? 'mp.playingNote' : 'mp.waitingNote'));
     }
-    el('button', 'lb-btn mpr-leave', foot, t('mp.leave')).addEventListener('click', () => this.back());
+    button(foot, 'ds-btn ghost mpr-leave', t('mp.leave'), 'exit').addEventListener('click', () => this.back());
   }
 
   private sideColumn(parent: HTMLElement, room: Room, team: Side, owner: boolean): void {
@@ -777,10 +848,10 @@ export class MultiplayerMenu {
     const col = el('div', `mpr-side side-${team}`, parent);
     const h = el('div', 'mpr-side-head', col);
     el('span', 'mpr-side-name', h, t(`chat.side.${team}` as MessageKey));
-    el('span', 'mpr-side-n', h, `${members.length} / ${sideCap(room)}`);
+    el('span', 'ds-num mpr-side-n', h, `${members.length} / ${sideCap(room)}`);
     const me = this.me();
     if (s.teamPick === 'self' && me && me.team !== team && room.state === 'lobby') {
-      const b = el('button', 'lb-btn small mpr-switch', h, t('mp.toSide'));
+      const b = button(h, 'ds-btn ghost mp-sm mpr-switch', t('mp.toSide'));
       b.disabled = members.length >= sideCap(room);
       b.addEventListener('click', () => this.link?.send({ t: 'team', team }));
     }
@@ -793,26 +864,27 @@ export class MultiplayerMenu {
     const meId = this.link?.id ?? '';
     const self = m.id === meId;
     const card = el('div', `mpr-member${self ? ' self' : ''}${m.away ? ' away' : ''}`, list);
-    el('span', 'mpr-dev', card, m.device === 'mobile' ? '📱' : '🖥');
+    const dev = el('span', 'mpr-dev', card);
+    dev.insertAdjacentHTML('beforeend', icon(m.device === 'mobile' ? 'phone' : 'desktop'));
     const who = el('span', 'mpr-who', card);
     nameView(who, m);
     const tags = el('span', 'mpr-tags', card);
-    if (m.id === room.owner) el('span', 'mpr-tag host', tags, t('mp.hostBadge'));
-    if (self) el('span', 'mpr-tag me', tags, t('mp.meBadge'));
-    if (m.away) el('span', 'mpr-tag', tags, t('mp.away'));
-    if (isMuted(m.tag) && !self) el('span', 'mpr-tag muted', tags, t('mp.muted'));
-    if (m.muted) el('span', 'mpr-tag muted', tags, t('mp.chatBanned'));
+    if (m.id === room.owner) el('span', 'ds-badge accent', tags, t('mp.hostBadge'));
+    if (self) el('span', 'ds-badge', tags, t('mp.meBadge'));
+    if (m.away) el('span', 'ds-badge line', tags, t('mp.away'));
+    if (isMuted(m.tag) && !self) el('span', 'ds-badge line mpr-muted', tags, t('mp.muted'));
+    if (m.muted) el('span', 'ds-badge line mpr-muted', tags, t('mp.chatBanned'));
     const acts = el('span', 'mpr-acts', card);
     // The owner moves people between sides (rooms where the owner picks).
     if (owner && team && room.settings.teamPick === 'host' && room.state === 'lobby') {
       const other: Side = team === 'blue' ? 'red' : 'blue';
-      const mv = el('button', 'lb-btn small', acts, t(`mp.moveTo.${other}` as MessageKey));
+      const mv = button(acts, 'ds-btn ghost mp-sm', t(`mp.moveTo.${other}` as MessageKey));
       mv.addEventListener('click', () => this.link?.send({ t: 'team', team: other, member: m.id }));
     }
     // Blocking goes by tag: not one's own (another tab of this browser has it too).
     if (!self && m.tag && m.tag !== this.link?.tag) {
       const muted = isMuted(m.tag);
-      const mu = el('button', 'lb-btn small', acts, t(muted ? 'mp.unmute' : 'mp.mute'));
+      const mu = button(acts, 'ds-btn ghost mp-sm', t(muted ? 'mp.unmute' : 'mp.mute'));
       mu.title = t('mp.muteHint');
       mu.addEventListener('click', () => {
         setMuted(m.tag, !muted);
@@ -822,12 +894,12 @@ export class MultiplayerMenu {
     }
     // The owner takes someone's chat away in this room (or gives it back).
     if (owner && !self) {
-      const cb = el('button', 'lb-btn small', acts, t(m.muted ? 'mp.chatUnban' : 'mp.chatBan'));
+      const cb = button(acts, 'ds-btn ghost mp-sm', t(m.muted ? 'mp.chatUnban' : 'mp.chatBan'));
       cb.title = t('mp.chatBanHint');
       cb.addEventListener('click', () => this.link?.send({ t: 'mute', member: m.id, on: !m.muted }));
     }
     if (owner && !self) {
-      el('button', 'lb-btn small danger', acts, t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));
+      button(acts, 'ds-btn ghost mp-sm danger', t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));
     }
   }
 }

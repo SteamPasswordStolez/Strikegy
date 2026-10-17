@@ -1,0 +1,137 @@
+/*
+ * Pause menu on the design system (owner, 2026-10-17; ds.css, BFV theme;
+ * Overlay `.ps`, shown with kind `pause`): the game dimmed behind, the
+ * entries in a column on the left (the one the keys are on a light slab, the
+ * open view marked), the controls or the settings on the right.
+ */
+.overlay.kind-pause {
+  padding: 0;
+  overflow: hidden;
+  cursor: default;
+  background: linear-gradient(90deg, rgb(10 10 9 / 0.94) 0%, rgb(10 10 9 / 0.86) 40%, rgb(10 10 9 / 0.7) 100%);
+}
+.overlay.kind-pause .ov-panel {
+  display: none;
+}
+.ps {
+  display: none;
+  position: absolute;
+  inset: 0;
+  text-align: left;
+}
+.overlay.kind-pause .ps {
+  display: grid;
+  grid-template-columns: minmax(0, calc(var(--u) * 20)) minmax(0, 1fr);
+  gap: var(--s8);
+  padding: var(--s7) var(--s8) var(--s6);
+}
+
+.ps-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  animation: ps-in var(--t-slow) var(--ease) both;
+}
+.ps-context {
+  color: var(--ink-3);
+}
+.ps-title {
+  margin: var(--s1) 0 var(--s6);
+  font: 700 var(--fs-2xl) / 1 var(--font-display);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.ps-menu {
+  gap: var(--line-w);
+}
+/* Entries fill the column; the one under the keys / pointer is a light slab. */
+.ps-item.ds-menu-item {
+  align-self: stretch;
+  padding: var(--s3) var(--s4) var(--s3) var(--s5);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.ps-item.ds-menu-item:hover,
+.ps-item.ds-menu-item.sel {
+  padding-left: var(--s5);
+}
+.ps-item.ds-menu-item:hover::before {
+  transform: scaleY(0);
+}
+/* The open view: the bar stays. */
+.ps-item.ds-menu-item.sel {
+  color: var(--ink);
+}
+.ps-item.ds-menu-item.sel::before {
+  transform: scaleY(1);
+}
+.ps-item.ds-menu-item.focus {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.ps-item.ds-menu-item.focus::before {
+  background: var(--accent);
+}
+/* Leaving the match: set apart from the rest. */
+.ps-item.danger {
+  margin-top: var(--s4);
+}
+.ps-item.danger:not(.focus) {
+  color: var(--ink-3);
+}
+
+.ps-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s5);
+  margin-top: auto;
+  padding-top: var(--s5);
+}
+
+.ps-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-top: calc(var(--fs-2xl) + var(--s6) + var(--fs-xs) * 1.5);
+  animation: ps-in var(--t-slow) var(--ease) 60ms both;
+}
+.ps-view > * {
+  flex: 1;
+  min-height: 0;
+}
+.ps-view > .ds-keys {
+  flex: none;
+  max-width: calc(var(--u) * 52);
+  overflow-y: auto;
+}
+
+@keyframes ps-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--u) * -0.75));
+  }
+}
+
+/* Short screens (phones on their side): tighter, the title smaller. */
+@media (max-height: 520px) {
+  .overlay.kind-pause .ps {
+    grid-template-columns: minmax(0, calc(var(--u) * 14)) minmax(0, 1fr);
+    gap: var(--s5);
+    padding: var(--s4) var(--s5);
+  }
+  .ps-title {
+    margin-bottom: var(--s3);
+    font-size: var(--fs-xl);
+  }
+  .ps-item.ds-menu-item {
+    padding-top: var(--s2);
+    padding-bottom: var(--s2);
+    font-size: var(--fs-md);
+  }
+  .ps-view {
+    padding-top: 0;
+  }
+}

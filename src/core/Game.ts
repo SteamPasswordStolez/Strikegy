@@ -72,7 +72,7 @@ import { HUD } from '@/ui/HUD';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
-import { Overlay } from '@/ui/Overlay';
+import { Overlay, renderHint, type OverlayAction } from '@/ui/Overlay';
 import { Briefing } from '@/audio/briefing/Briefing';
 import { voiceLangFor } from '@/audio/briefing/cues';
 import { BriefingDirector } from '@/modes/briefingDirector';
@@ -1062,16 +1062,43 @@ export class Game {
     // From the deploy screen: it steps aside; resuming opens it again.
     this.deployScreen?.hide();
     const touch = !!this.touch;
-    this.overlay.show(t('paused'), '', view === 'controls' ? t(touch ? 'start.hintTouch' : 'start.hint') : '', 'pause');
-    this.overlay.setActions([
-      { label: t('pause.resume'), selected: view === 'controls', onClick: () => this.resume() },
-      { label: t('pause.settings'), selected: view === 'settings', onClick: () => this.pause(view === 'settings' ? 'controls' : 'settings') },
+    this.overlay.show(t('paused'), '', '', 'pause');
+    let viewEl: HTMLElement;
+    let panel: SettingsPanel | null = null;
+    if (view === 'settings') {
+      panel = this.settingsPanel();
+      viewEl = panel.root;
+    } else {
+      viewEl = document.createElement('div');
+      viewEl.className = 'ds-keys';
+      renderHint(viewEl, t(touch ? 'start.hintTouch' : 'start.hint'));
+    }
+    this.overlay.setPause({
+      context: this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName,
+      title: t('paused'),
+      view: viewEl,
+      busy: () => !!panel?.capturing,
+      viewKeys: (e) => {
+        if (!panel || (e.code !== 'KeyQ' && e.code !== 'KeyE')) return false;
+        panel.stepCategory(e.code === 'KeyQ' ? -1 : 1);
+        return true;
+      },
+      entries: this.pauseEntries(view),
+    });
+  }
+
+  /** The pause menu's entries: resume, the two views, the touch layout, the tutorial, quit. */
+  private pauseEntries(view: 'controls' | 'settings'): OverlayAction[] {
+    const touch = !!this.touch;
+    return [
+      { label: t('pause.resume'), onClick: () => this.resume() },
+      { label: t('menu.controls'), selected: view === 'controls', onClick: () => this.pause('controls') },
+      { label: t('pause.settings'), selected: view === 'settings', onClick: () => this.pause('settings') },
       ...(touch
         ? [
             {
               label: t('layout.edit'),
               onClick: () => {
-                this.overlay.setExtra(null);
                 this.overlay.hide();
                 this.touch?.editLayout(() => this.pause());
               },
@@ -1089,9 +1116,8 @@ export class Game {
             },
           ]
         : []),
-      { label: t('pause.quit'), onClick: () => this.quit() },
-    ]);
-    this.overlay.setExtra(view === 'settings' ? this.settingsPanel().root : null);
+      { label: t('pause.quit'), primary: true, onClick: () => this.quit() },
+    ];
   }
 
   // ---------------------------------------------------------------------------

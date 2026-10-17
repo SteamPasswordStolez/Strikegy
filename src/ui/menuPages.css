@@ -1,0 +1,67 @@
+/*
+ * The menu's other pages in the `.dsp` frame (owner, 2026-10-17; ds.css, BFV
+ * theme; the frame itself is in matchSetup.css): controls, credits and
+ * settings. The multiplayer pages have multiplayer.css.
+ */
+.lb-frame.dsp .lb-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Controls: the key list, as wide as reads well. */
+.lb-controls {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.lb-controls .ds-keys {
+  width: min(calc(var(--u) * 64), 100%);
+}
+
+/* Credits: a note, then a row a work (link out). */
+.lb-credits {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.lb-credit-note {
+  max-width: calc(var(--u) * 48);
+  margin: 0 0 var(--s4);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.lb-credit-list {
+  width: min(calc(var(--u) * 60), 100%);
+}
+a.lb-credit {
+  min-height: calc(var(--u) * 2.75);
+  text-decoration: none;
+}
+.lb-credit-work {
+  font-size: var(--fs-md);
+}
+.lb-credit-by {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lb-credit-lic {
+  flex: none;
+}
+
+/* Settings: the panel fills the page. */
+.lb-settings .sp {
+  width: min(calc(var(--u) * 72), 100%);
+}
+
+/* Multiplayer: its pages lay themselves out. */
+.lb-mp {
+  height: 100%;
+}
+
+@media (max-width: 640px) {
+  .lb-credit-by {
+    display: none;
+  }
+}

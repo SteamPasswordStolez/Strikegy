@@ -1,0 +1,199 @@
+/*
+ * Settings on the design system (owner, 2026-10-17; ds.css, needs a `ds-root`
+ * around it: the menu's page frame or the pause menu): the categories as tabs,
+ * the rows on the left, the row under the pointer named and explained on the
+ * right; key bindings as two key boxes a row.
+ */
+.sp {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--s5);
+  min-height: 0;
+  height: 100%;
+  cursor: default;
+  text-align: left;
+}
+.sp-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(calc(var(--u) * 14), 0.5fr);
+  gap: var(--s6);
+  min-height: 0;
+}
+.sp-rows {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--s2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+/* A row: the label, the control at the right. */
+.sp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  min-height: calc(var(--u) * 3.25);
+  padding: var(--s1) var(--s4);
+  border-left: var(--bar-w) solid transparent;
+  background: var(--surface-1);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.sp-row + .sp-row {
+  margin-top: var(--line-w);
+}
+.sp-row:hover {
+  border-left-color: var(--ink);
+  background: var(--surface-2);
+}
+.sp-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
+}
+/* Takes effect on the next load (in a match). */
+.sp-row.later .sp-label::after {
+  content: ' *';
+  color: var(--ink-3);
+}
+.sp-ctl {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s3);
+  width: min(calc(var(--u) * 21), 58%);
+}
+.sp-range {
+  flex: 1;
+  min-width: 0;
+}
+.sp-val {
+  flex: none;
+  min-width: calc(var(--u) * 3.5);
+  font-size: var(--fs-lg);
+  text-align: right;
+}
+.sp-seg {
+  flex-wrap: wrap;
+}
+.sp-seg button {
+  min-width: calc(var(--u) * 4.5);
+}
+
+/* The right column: the row under the pointer. */
+.sp-desc {
+  align-self: start;
+  padding: var(--s4) var(--s5);
+  border-left: var(--line-w) solid var(--line);
+}
+.sp-desc-title {
+  margin-bottom: var(--s3);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.sp-desc-text {
+  font-size: var(--fs-md);
+  color: var(--ink-2);
+}
+.sp-desc.warn .sp-desc-title,
+.sp-desc.warn .sp-desc-text {
+  color: var(--warn);
+}
+
+/* Key bindings: groups, two key boxes a row. */
+.sp-group {
+  margin: var(--s5) 0 var(--s2);
+  color: var(--ink-3);
+}
+.sp-group:first-child {
+  margin-top: 0;
+}
+.sp-keyrow .sp-ctl {
+  gap: var(--s2);
+}
+.sp-key {
+  flex: 1;
+  max-width: calc(var(--u) * 8.5);
+  height: calc(var(--u) * 2.25);
+  padding: 0 var(--s2);
+  overflow: hidden;
+  border: var(--line-w) solid var(--line-strong);
+  border-bottom-width: max(2px, calc(var(--line-w) * 2));
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--ink);
+  font: 600 var(--fs-sm) / 1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.sp-key:hover {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.sp-key.empty {
+  color: var(--ink-3);
+}
+.sp-key.clash {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.sp-key.waiting {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-ui);
+  animation: sp-wait 0.9s var(--ease) infinite alternate;
+}
+@keyframes sp-wait {
+  to {
+    opacity: 0.65;
+  }
+}
+.sp-keyrow.clash .sp-label {
+  color: var(--danger);
+}
+.sp-reset {
+  margin-top: var(--s5);
+}
+
+/* Narrow or short screens (phones): one column, the description a line under the rows. */
+@media (max-width: 900px), (max-height: 520px) {
+  .sp {
+    gap: var(--s3);
+  }
+  .sp-cats {
+    gap: var(--s4);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sp-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: var(--s2);
+  }
+  .sp-row {
+    min-height: calc(var(--u) * 2.75);
+  }
+  .sp-desc {
+    padding: var(--s2) 0 0;
+    border-left: 0;
+    border-top: var(--line-w) solid var(--line);
+  }
+  .sp-desc-title {
+    display: none;
+  }
+  .sp-desc-text {
+    font-size: var(--fs-sm);
+  }
+}

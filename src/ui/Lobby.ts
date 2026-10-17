@@ -8,6 +8,7 @@ import { icon } from './icons';
 import { loadUiSounds, setUiVolume, uiSound } from '@/audio/uiSounds';
 import './ds.css';
 import './mainMenu.css';
+import './menuPages.css';
 import { renderHint } from './Overlay';
 import { SettingsPanel } from './SettingsPanel';
 import { MultiplayerMenu } from './MultiplayerMenu';
@@ -89,6 +90,8 @@ export class Lobby {
   private continuePic: HTMLElement | null = null;
   private readonly pictureUrls = new Map<string, string>();
   private multi: MultiplayerMenu | null = null;
+  /** The settings page's panel (Q / E step its tabs). */
+  private settingsPanel: SettingsPanel | null = null;
   private playerName = loadIdentity().name;
 
   constructor(
@@ -221,6 +224,7 @@ export class Lobby {
       return;
     }
     if (key === 'Escape' || key === 'Backspace') return this.back();
+    if (this.screen === 'settings' && this.settingsPanel && (key === 'KeyQ' || key === 'KeyE')) return this.settingsPanel.stepCategory(key === 'KeyQ' ? -1 : 1);
     if (this.screen === 'multi' && this.multi?.key(key)) return;
     if (this.screen !== 'play') return;
     // The setup page: Q / E mode group, ↑ ↓ mode, ← → map, Enter start.
@@ -274,62 +278,50 @@ export class Lobby {
     this.frame.replaceChildren();
     this.picks = [];
     this.continuePic = null;
-    // On the design system so far: the main screen and the setup pages (play,
-    // create / edit room); the other pages keep the old look until their turn.
+    this.settingsPanel = null;
+    // Every page is on the design system: the main screen (mainMenu.css) and the
+    // pages in the `.dsp` frame (head with back + title, keys along the bottom).
     const main = this.screen === 'main';
-    const setup = this.screen === 'play' || (this.screen === 'multi' && !!this.multi?.onSetupPage);
-    this.root.className = `lobby lb-scr-${this.screen}${main || setup ? ' lb-ds' : ''}`;
-    this.frame.className = main ? 'lb-frame mm ds-root' : setup ? 'lb-frame dsp ds-root' : 'lb-frame';
-    if (main || setup) this.frame.dataset.dsTheme = 'bfv';
-    else delete this.frame.dataset.dsTheme;
-    if (setup) this.renderPageHead(this.screen === 'play' ? 'lobby.setupTitle' : this.multi!.title);
-    else if (!main) {
-      const top = el('div', 'lb-top', this.frame);
-      const back = el('button', 'lb-back', top);
-      el('span', 'lb-back-arrow', back).textContent = '◀';
-      el('span', '', back).textContent = t('lobby.hint.back');
-      if (!this.touch) el('span', 'keycap', back).textContent = 'Esc';
-      back.addEventListener('click', () => this.back());
-      const head = el('div', 'lb-pagehead', top);
-      el('div', 'lb-eyebrow', head).textContent = t('title');
-      el('div', 'lb-pagetitle', head).textContent = t(
+    this.root.className = `lobby lb-scr-${this.screen} lb-ds`;
+    this.frame.className = main ? 'lb-frame mm ds-root' : 'lb-frame dsp ds-root';
+    this.frame.dataset.dsTheme = 'bfv';
+    if (!main)
+      this.renderPageHead(
         this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : this.screen === 'credits' ? 'menu.credits' : 'menu.settings',
       );
-    }
     const body = el('div', 'lb-body', this.frame);
     if (this.screen === 'main') this.renderMain(body);
     else if (this.screen === 'play') this.renderPlay(body);
     else if (this.screen === 'multi') this.multi!.render(body);
     else if (this.screen === 'controls') {
       body.classList.add('lb-controls');
-      const keys = el('div', 'overlay-hint lb-keys', body);
+      const keys = el('div', 'ds-keys lb-keys', body);
       renderHint(keys, t(this.touch ? 'start.hintTouch' : 'start.hint'));
     } else if (this.screen === 'credits') {
-      body.classList.add('lb-controls', 'lb-credits');
+      body.classList.add('lb-credits');
+      el('p', 'lb-credit-note', body).textContent = t('credits.note');
       const list = el('div', 'lb-credit-list', body);
-      el('p', 'lb-credit-note', list).textContent = t('credits.note');
       for (const c of CREDITS) {
-        const row = el('a', 'lb-credit', list);
+        const row = el('a', 'ds-row lb-credit', list);
         row.href = c.url;
         row.target = '_blank';
         row.rel = 'noopener noreferrer';
-        el('span', 'lb-credit-work', row).textContent = c.work;
-        el('span', 'lb-credit-by', row).textContent = c.author;
-        el('span', 'lb-credit-lic', row).textContent = c.license;
+        el('span', 'ds-row-main lb-credit-work', row).textContent = c.work;
+        el('span', 'ds-row-side lb-credit-by', row).textContent = c.author;
+        el('span', 'ds-badge line lb-credit-lic', row).textContent = c.license;
       }
     } else {
       body.classList.add('lb-settings');
-      const panel = new SettingsPanel(this.settings, {
+      const panel = (this.settingsPanel = new SettingsPanel(this.settings, {
         live: false,
         onChange: (key) => {
           if (key === 'locale') this.render();
           this.onSetting(key);
         },
-      });
+      }));
       body.appendChild(panel.root);
     }
-    if (setup) this.renderPageFoot();
-    else this.renderHints();
+    if (!main) this.renderPageFoot();
     this.updateBackground();
   }
 
@@ -345,7 +337,7 @@ export class Lobby {
     el('div', 'dsp-title', head).textContent = t(title);
   }
 
-  /** The setup pages' keys along the bottom (keyboard only). */
+  /** A page's keys along the bottom (keyboard only). */
   private renderPageFoot(): void {
     if (this.touch) return;
     const foot = el('div', 'dsp-foot', this.frame);
@@ -354,10 +346,14 @@ export class Lobby {
       for (const k of keys) el('span', 'ds-kbd', h).textContent = k;
       el('span', '', h).textContent = what;
     };
-    hint(['Q', 'E'], t('lobby.modeKind'));
-    hint(['↑', '↓'], t('lobby.mode'));
-    hint(['←', '→'], t('lobby.map'));
-    hint(['ENTER'], t(this.screen === 'play' ? 'lobby.start' : this.multi!.setupStart));
+    const setup = this.screen === 'play' || (this.screen === 'multi' && !!this.multi?.onSetupPage);
+    if (setup) {
+      hint(['Q', 'E'], t('lobby.modeKind'));
+      hint(['↑', '↓'], t('lobby.mode'));
+      hint(['←', '→'], t('lobby.map'));
+      hint(['ENTER'], t(this.screen === 'play' ? 'lobby.start' : this.multi!.setupStart));
+    } else if (this.screen === 'settings') hint(['Q', 'E'], t('lobby.category'));
+    else if (this.screen === 'multi') for (const [keys, what] of this.multi!.hints) hint(keys, what);
     hint(['ESC'], t('lobby.hint.back'));
   }
 
@@ -567,23 +563,6 @@ export class Lobby {
   private mapFacts(map: MapDef): string {
     const [w, d] = mapSize(map);
     return `${t('lobby.zones').replace('{n}', String(map.zones?.length ?? 0))} · ${w} × ${d} m`;
-  }
-
-  /** Keys along the bottom (keyboard only; the main screen has its own). */
-  private renderHints(): void {
-    if (this.touch || this.screen === 'main') return;
-    const bar = el('div', 'lb-hints', this.frame);
-    const hint = (key: string, what: MessageKey) => {
-      const h = el('span', 'lb-hint', bar);
-      el('span', 'keycap', h).textContent = key;
-      el('span', '', h).textContent = t(what);
-    };
-    if (this.screen === 'play') {
-      hint('↑ ↓', 'lobby.mode');
-      hint('← →', 'lobby.map');
-      hint('Enter', 'lobby.start');
-    }
-    hint('Esc', 'lobby.hint.back');
   }
 
   // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import { uiSound } from '@/audio/uiSounds';
 import './ds.css';
 import './loading.css';
 import './result.css';
+import './pause.css';
 
 /** What the loading screen says about the match (Game sets it once the map is in). */
 export interface LoadingInfo {
@@ -34,6 +35,21 @@ export interface ResultInfo {
   board?: HTMLElement | null;
   /** First = Enter (the main one), second = Esc. */
   actions: OverlayAction[];
+}
+
+/** What the pause menu shows (Game fills it on every pause). */
+export interface PauseInfo {
+  /** "Iron Gate · Zone". */
+  context: string;
+  title: string;
+  /** The entries, top down; `selected` marks the one whose view is open. */
+  entries: OverlayAction[];
+  /** The open view on the right (the controls or the settings), if any. */
+  view: HTMLElement | null;
+  /** Keys for the view first (true = taken), e.g. Q / E for the settings' tabs. */
+  viewKeys?: (e: KeyboardEvent) => boolean;
+  /** The view wants every key for now (binding a key): the menu leaves them alone. */
+  busy?: () => boolean;
 }
 
 /** Loading tips: the ones naming keys are for keyboards only. */
@@ -93,6 +109,10 @@ export class Overlay {
   /** The result screen (design system): shown while the root has `.result`. */
   private readonly rs: HTMLDivElement;
   private resultKeys: ((e: KeyboardEvent) => void) | null = null;
+  private readonly ps: HTMLDivElement;
+  private pauseKeys: ((e: KeyboardEvent) => void) | null = null;
+  /** The pause entry the keys are on. */
+  private pauseFocus = 0;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -143,7 +163,105 @@ export class Overlay {
     this.ldBar = div('ds-progress ld-bar', bottom);
     this.rs = div('rs ds-root', this.root);
     this.rs.dataset.dsTheme = 'bfv';
+    this.ps = div('ps ds-root', this.root);
+    this.ps.dataset.dsTheme = 'bfv';
     parent.appendChild(this.root);
+  }
+
+  /**
+   * The pause menu on the design system (pause.css): the entries in a column
+   * on the left (↑ ↓ Enter), the open view (controls or settings) on the
+   * right. Call after `show(..., 'pause')`; every pause redraws it.
+   */
+  setPause(p: PauseInfo): void {
+    this.stopPauseKeys();
+    const ps = this.ps;
+    ps.replaceChildren();
+    const div = (cls: string, parent: HTMLElement, text?: string): HTMLDivElement => {
+      const e = document.createElement('div');
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      parent.appendChild(e);
+      return e;
+    };
+    const touch = isTouchDevice();
+    const side = div('ps-side', ps);
+    div('ds-label ps-context', side, p.context);
+    div('ps-title', side, p.title);
+    const list = div('ds-menu ps-menu', side);
+    const items: HTMLButtonElement[] = [];
+    const sel = p.entries.findIndex((a) => a.selected);
+    this.pauseFocus = Math.max(0, sel);
+    const focus = (i: number) => {
+      this.pauseFocus = i;
+      items.forEach((b, k) => b.classList.toggle('focus', k === i));
+    };
+    p.entries.forEach((a, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ds-menu-item ps-item${a.selected ? ' sel' : ''}${a.primary ? ' danger' : ''}`;
+      b.textContent = a.label;
+      b.addEventListener('pointerenter', () => {
+        if (this.pauseFocus !== i) uiSound('hover');
+        focus(i);
+      });
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        uiSound(a.selected ? 'back' : 'select');
+        a.onClick();
+      });
+      list.appendChild(b);
+      items.push(b);
+    });
+    focus(this.pauseFocus);
+    if (!touch) {
+      const foot = div('ps-foot', side);
+      const hint = (keys: string[], what: string) => {
+        const h = div('ds-hint', foot);
+        for (const k of keys) {
+          const cap = document.createElement('span');
+          cap.className = 'ds-kbd';
+          cap.textContent = k;
+          h.appendChild(cap);
+        }
+        const w = document.createElement('span');
+        w.textContent = what;
+        h.appendChild(w);
+      };
+      hint(['↑', '↓'], t('lobby.hint.move'));
+      hint(['ENTER'], t('lobby.hint.select'));
+      hint(['ESC'], t('pause.resume'));
+    }
+    const view = div('ps-view', ps);
+    if (p.view) view.appendChild(p.view);
+    else view.classList.add('empty');
+
+    this.pauseKeys = (e: KeyboardEvent) => {
+      if (!this.visible || this.shown !== 'pause' || p.busy?.()) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable]')) return;
+      if (p.viewKeys?.(e)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      const n = items.length;
+      if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        const next = Math.max(0, Math.min(n - 1, this.pauseFocus + (e.code === 'ArrowUp' ? -1 : 1)));
+        if (next !== this.pauseFocus) uiSound('move');
+        focus(next);
+      } else if (e.code === 'Enter' || e.code === 'NumpadEnter') items[this.pauseFocus]?.click();
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', this.pauseKeys, { capture: true });
+  }
+
+  private stopPauseKeys(): void {
+    if (!this.pauseKeys) return;
+    window.removeEventListener('keydown', this.pauseKeys, { capture: true });
+    this.pauseKeys = null;
   }
 
   /**
@@ -270,16 +388,6 @@ export class Overlay {
     this.contextEl.textContent = text;
   }
 
-  /** Extra content between the subtitle and the hint (e.g. the final scoreboard); null removes it. */
-  setExtra(el: HTMLElement | null): void {
-    this.panel.querySelector('.overlay-extra')?.remove();
-    if (!el) return;
-    const box = document.createElement('div');
-    box.className = 'overlay-extra';
-    box.appendChild(el);
-    this.panel.insertBefore(box, this.hintEl);
-  }
-
   /** Buttons under everything else (cleared by every `show`). A click on one doesn't reach the overlay. */
   setActions(actions: readonly OverlayAction[]): void {
     this.actionsEl.replaceChildren();
@@ -315,6 +423,7 @@ export class Overlay {
   show(title: string, sub = '', hint = '', kind: OverlayKind = 'info'): void {
     this.stopTips();
     this.stopResultKeys();
+    this.stopPauseKeys();
     this.setActions([]);
     this.shown = kind;
     this.root.className = `overlay kind-${kind}`;
@@ -328,6 +437,7 @@ export class Overlay {
   hide(): void {
     this.stopTips();
     this.stopResultKeys();
+    this.stopPauseKeys();
     this.root.classList.add('hidden');
     document.body.classList.remove('overlay-up');
   }

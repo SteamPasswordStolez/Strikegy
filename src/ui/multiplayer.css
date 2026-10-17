@@ -1,0 +1,728 @@
+/*
+ * Multiplayer pages on the design system (owner, 2026-10-17; ds.css, BFV
+ * theme, inside the menu's `.dsp` frame): connecting, the server browser
+ * (own card, actions, filters and search over the room rows, the picked
+ * room's card right) and the waiting room (the sides or one list, the room's
+ * chat, the room's card and buttons right). The create / edit pages are the
+ * shared setup page (matchSetup.css).
+ */
+
+/* ---------- Connecting / offline ---------- */
+.mp-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s4);
+  max-width: calc(var(--u) * 32);
+  padding-top: var(--s6);
+}
+.mp-status-note {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--warn);
+}
+.mp-spinner {
+  position: relative;
+  width: calc(var(--u) * 14);
+  height: var(--bar-w);
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.mp-spinner::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: var(--ink);
+  animation: mp-scan 1.1s var(--ease) infinite;
+}
+@keyframes mp-scan {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+/* A toast at the top for refusals and errors (gone after 6 s or a click). */
+.mp-toast {
+  position: fixed;
+  top: var(--s5);
+  left: 50%;
+  z-index: 60;
+  max-width: min(calc(var(--u) * 40), calc(100vw - 32px));
+  transform: translateX(-50%);
+  cursor: pointer;
+  animation: mp-drop var(--t-base) var(--ease) both;
+}
+.ds-toast.danger {
+  border-left-color: var(--danger);
+}
+@keyframes mp-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(var(--u) * -0.5));
+  }
+}
+
+/* ---------- Own card: name#TAG and the round trip ---------- */
+.mp-id {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s3);
+  height: calc(var(--u) * 2.75);
+  padding: 0 var(--s4);
+  background: var(--surface-1);
+  font-size: var(--fs-md);
+}
+.mp-id .ds-icon {
+  color: var(--ink-2);
+}
+.mp-id .chat-name {
+  font-weight: 700;
+  color: var(--ink);
+}
+.mp-ping {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: var(--s2);
+}
+.mp-ping-ms {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.ds-ping.bad i:nth-child(1) {
+  background: var(--danger);
+}
+.chat-tag {
+  margin-left: 2px;
+  font-weight: 500;
+  opacity: 0.55;
+}
+
+/* Small buttons (member actions) and an icon-only one (refresh). */
+.ds-btn.mp-sm {
+  height: calc(var(--u) * 1.875);
+  padding: 0 var(--s3);
+  font-size: var(--fs-xs);
+}
+.ds-btn.mp-sm.danger:hover {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #1d0703;
+}
+.ds-btn.mp-icon-btn {
+  width: calc(var(--u) * 2.75);
+  padding: 0;
+}
+.ds-btn.mp-big {
+  justify-content: space-between;
+  width: 100%;
+  height: calc(var(--u) * 3.5);
+  font-size: var(--fs-lg);
+}
+
+/* ---------- Server browser ---------- */
+.mpb {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(calc(var(--u) * 20), 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--s4) var(--s6);
+  height: 100%;
+}
+.mpb-top {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.mpb-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.mpb-list {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.mpb-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+.mpb-filter button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+}
+.mpb-filter-n {
+  opacity: 0.6;
+}
+.mpb-search {
+  position: relative;
+  flex: 1;
+  min-width: calc(var(--u) * 10);
+}
+.mpb-search .ds-icon {
+  position: absolute;
+  left: var(--s3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-3);
+  pointer-events: none;
+}
+.mpb-search .ds-input {
+  height: calc(var(--u) * 2.25);
+  padding-left: calc(var(--s3) + var(--u) * 1.5);
+  user-select: text;
+}
+
+/* Rows: name + owner, map + mode, people with a bar, state. */
+.mpb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.5fr) minmax(0, 1fr) calc(var(--u) * 5.5);
+  align-items: center;
+  gap: var(--s4);
+  width: 100%;
+  min-height: calc(var(--u) * 3.5);
+  padding: var(--s2) var(--s4);
+  border: 0;
+  border-left: var(--bar-w) solid transparent;
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.mpb-row {
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+button.mpb-row:hover {
+  background: var(--surface-2);
+}
+.mpb-row.sel,
+button.mpb-row.sel:hover {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.mpb-row.full:not(.sel) {
+  opacity: 0.55;
+}
+.mpb-head {
+  min-height: 0;
+  padding-block: 0 var(--s1);
+  background: none;
+}
+.mpb-head .ds-label {
+  color: var(--ink-3);
+}
+.mpb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--line-w);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--s1);
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+.mpb-name,
+.mpb-what,
+.mpb-num {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mpb-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  overflow: hidden;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mpb-title .ds-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  opacity: 0.7;
+}
+.mpb-host,
+.mpb-mode,
+.mpb-bots {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+}
+.mpb-what > span:first-child {
+  font-weight: 600;
+}
+.mpb-row.sel .mpb-host,
+.mpb-row.sel .mpb-mode,
+.mpb-row.sel .mpb-bots {
+  color: inherit;
+  opacity: 0.7;
+}
+.mpb-bar {
+  height: var(--bar-w);
+  background: var(--surface-3);
+}
+.mpb-row.sel .mpb-bar {
+  background: rgb(0 0 0 / 0.15);
+}
+.mpb-bar i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+}
+.mpb-state {
+  justify-self: start;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.mpb-state.st-playing {
+  color: var(--accent);
+}
+.mpb-row.sel .mpb-state {
+  color: inherit;
+}
+.mpb-none {
+  padding: var(--s5) var(--s4);
+  color: var(--ink-3);
+}
+
+/* The picked room. */
+.mpb-detail {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-height: 0;
+  overflow-y: auto;
+}
+.mpb-empty-title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+.mpb-dhead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.mpb-dname {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.2;
+}
+.mpb-dname .ds-icon {
+  flex: none;
+  opacity: 0.7;
+}
+.mpb-dby {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.mpb-dby .chat-name {
+  color: var(--ink);
+}
+.mpb-dstate {
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.mpb-dstate.st-playing {
+  color: var(--accent);
+}
+.mpb-pw {
+  user-select: text;
+}
+.mpb-go {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: auto;
+}
+.mpb-side {
+  justify-content: space-between;
+  width: 100%;
+  height: calc(var(--u) * 3);
+  border-left: var(--bar-w) solid var(--ally);
+}
+.mpb-side.side-red {
+  border-left-color: var(--enemy);
+}
+
+/* A room's picture with its mode and map on it, and its facts. */
+.mp-pic {
+  position: relative;
+  flex: none;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+.mp-pic img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mp-pic-cap {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s6) var(--s4) var(--s3);
+  background: linear-gradient(0deg, rgb(0 0 0 / 0.78), transparent);
+}
+.mp-pic-mode {
+  color: var(--ink-2);
+}
+.mp-pic-map {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.mp-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s2) var(--s4);
+  margin: 0;
+}
+.mp-facts dt {
+  align-self: center;
+  color: var(--ink-3);
+}
+.mp-facts dd {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: right;
+}
+
+/* ---------- Waiting room ---------- */
+.mpr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(calc(var(--u) * 17), calc(var(--u) * 21));
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--s4) var(--s6);
+  height: 100%;
+}
+.mpr-head {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.mpr-titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+}
+.mpr-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+.mpr-badges .ds-badge {
+  gap: var(--s1);
+}
+.mpr-badges .ds-icon {
+  width: 1em;
+  height: 1em;
+}
+.mpr-badges .st-playing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mpr-name {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.05;
+}
+.mpr-main {
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: minmax(0, 1.15fr) minmax(calc(var(--u) * 10), 1fr);
+  gap: var(--s4);
+  min-height: 0;
+}
+.mpr-teams {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--s4);
+  min-height: 0;
+}
+.mpr-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  padding: var(--s3);
+  border-top: var(--bar-w) solid var(--ink-2);
+  background: var(--surface-1);
+}
+.mpr-side.side-blue {
+  border-top-color: var(--ally);
+}
+.mpr-side.side-red {
+  border-top-color: var(--enemy);
+}
+.mpr-side-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.mpr-side-name {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.side-blue .mpr-side-name {
+  color: var(--ally);
+}
+.side-red .mpr-side-name {
+  color: var(--enemy);
+}
+.mpr-side-n {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.mpr-switch {
+  margin-left: auto;
+}
+.mpr-side-note {
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.mpr-members {
+  display: flex;
+  flex-direction: column;
+  gap: var(--line-w);
+  min-height: 0;
+  overflow-y: auto;
+}
+.mpr-member {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: calc(var(--u) * 2.75);
+  padding: var(--s1) var(--s3);
+  border-left: var(--bar-w) solid transparent;
+  background: var(--surface-2);
+}
+.mpr-member.self {
+  border-left-color: var(--accent);
+}
+.mpr-member.away {
+  opacity: 0.55;
+}
+.mpr-dev {
+  display: inline-flex;
+  color: var(--ink-3);
+}
+.mpr-dev .ds-icon {
+  width: calc(var(--u) * 1.125);
+  height: calc(var(--u) * 1.125);
+}
+.mpr-who {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mpr-tags {
+  display: flex;
+  gap: var(--s1);
+}
+.mpr-tags .ds-badge {
+  height: calc(var(--u) * 1.25);
+  padding: 0 var(--s1);
+}
+.mpr-muted {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.mpr-acts {
+  display: flex;
+  gap: var(--s1);
+  margin-left: auto;
+  opacity: 0.35;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.mpr-member:hover .mpr-acts,
+.mpr-acts:focus-within {
+  opacity: 1;
+}
+.mpr-none {
+  padding: var(--s3);
+  color: var(--ink-3);
+}
+.mpr-aside {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-height: 0;
+  overflow-y: auto;
+}
+.mpr-edit {
+  width: 100%;
+}
+.mpr-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: auto;
+}
+.mpr-leave {
+  width: 100%;
+}
+.mpr-wait {
+  padding: var(--s3);
+  background: var(--surface-1);
+  font-size: var(--fs-sm);
+  text-align: center;
+  color: var(--ink-2);
+}
+
+/* The room's chat. */
+.mpr-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--s3);
+  background: var(--surface-1);
+}
+.mpr-chat-head {
+  margin-bottom: var(--s2);
+  color: var(--ink-3);
+}
+.mpr .chat-log {
+  font-size: var(--fs-sm);
+}
+.mpr .chat-line.sys {
+  color: var(--ink-3);
+}
+.mpr .chat-sys-mark {
+  color: var(--accent);
+}
+.mpr .chat-who.side-blue {
+  color: var(--ally);
+}
+.mpr .chat-who.side-red {
+  color: var(--enemy);
+}
+.mpr .chat-colon {
+  color: var(--ink-3);
+}
+.mpr .chat-empty {
+  color: var(--ink-3);
+}
+.mpr .chat-form {
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.mpr .chat-scope {
+  min-width: calc(var(--u) * 3.5);
+  height: calc(var(--u) * 2.25);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+}
+.mpr .chat-scope.team {
+  border-color: var(--squad);
+  color: var(--squad);
+}
+.mpr .chat-input {
+  height: calc(var(--u) * 2.25);
+  padding: 0 var(--s3);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  box-shadow: none;
+  color: var(--ink);
+  font: 500 var(--fs-sm) / 1 var(--font-ui);
+}
+.mpr .chat-input:focus {
+  border-color: var(--ink);
+  box-shadow: none;
+}
+.mpr .chat.to-team .chat-input:focus {
+  border-color: var(--squad);
+}
+.mpr .chat-send {
+  height: calc(var(--u) * 2.25);
+  padding: 0 var(--s4);
+  border: 0;
+  border-radius: var(--r-1);
+  background: var(--sel-bg);
+  box-shadow: none;
+  color: var(--sel-ink);
+  font: 700 var(--fs-xs) / 1 var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* ---------- Narrow or short screens: one column that scrolls ---------- */
+@media (max-width: 900px), (max-height: 520px) {
+  .mpb,
+  .mpr {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    overflow-y: auto;
+  }
+  .mpb-list,
+  .mpb-detail,
+  .mpr-main,
+  .mpr-aside {
+    grid-row: auto;
+  }
+  .mpb-rows {
+    max-height: 46vh;
+  }
+  .mpr-main {
+    grid-template-rows: auto calc(var(--u) * 15);
+  }
+  .mpb-row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+    gap: var(--s2);
+    padding: var(--s1) var(--s3);
+  }
+  .mpb-row .mpb-state,
+  .mpb-head span:last-child {
+    display: none;
+  }
+  .mpr-name {
+    font-size: var(--fs-xl);
+  }
+}
