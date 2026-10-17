@@ -57,6 +57,11 @@ export class BriefingDirector {
   private hillSoonFor = -1;
   private soloLead = false;
   private lastAliveRound = -1;
+  /** Zones of ours the enemy was pushing at the last look, and when each was last called out. */
+  private pushed = new Set<string>();
+  private readonly attackedAt = new Map<string, number>();
+  /** Zones already called lost when they went neutral (the enemy's capture after that isn't news). */
+  private readonly lostCalled = new Set<string>();
 
   constructor(
     private readonly brief: Briefing,
@@ -68,12 +73,16 @@ export class BriefingDirector {
     this.offs.push(
       bus.on('zone:captured', (e) => {
         if (this.solo) return;
+        const called = this.lostCalled.delete(e.zone);
         if (ours(e.team)) this.say('zone.taken', 'good', { zone: e.zone });
-        else this.say('zone.lost', 'bad', { zone: e.zone });
+        // Ours -> neutral was already called lost; neutral -> theirs only finishes it.
+        else if (!called) this.say('zone.lost', 'bad', { zone: e.zone });
       }),
       bus.on('zone:neutralized', (e) => {
         // `team` lost it: ours going neutral is a loss; theirs going neutral waits for our capture.
-        if (!this.solo && ours(e.team)) this.say('zone.lost', 'bad', { zone: e.zone });
+        if (this.solo || !ours(e.team)) return;
+        this.lostCalled.add(e.zone);
+        this.say('zone.lost', 'bad', { zone: e.zone });
       }),
       bus.on('mode:event', (e) => this.onModeEvent(e)),
     );
@@ -208,8 +217,17 @@ export class BriefingDirector {
       const state = zones.every((z) => z.owner === us) ? 'us' : zones.every((z) => z.owner === them) ? 'them' : 'mixed';
       if (state !== this.allState && state !== 'mixed') this.say(state === 'us' ? 'zones.allOurs' : 'zones.allTheirs', state === 'us' ? 'good' : 'bad');
       this.allState = state;
-      const hit = zones.find((z) => z.owner === us && z.pushing === them && !z.locked);
-      if (hit) this.say('zone.attacked', 'bad', { zone: hit.id });
+      // A push on one of ours: said when it starts, at most every 30 s a zone (the push lasts many looks).
+      const now = new Set(zones.filter((z) => z.owner === us && z.pushing === them && !z.locked).map((z) => z.id));
+      for (const id of now) {
+        if (this.pushed.has(id)) continue;
+        const last = this.attackedAt.get(id);
+        if (last !== undefined && this.clock - last < CUES['zone.attacked'].cooldown) continue;
+        this.attackedAt.set(id, this.clock);
+        this.say('zone.attacked', 'bad', { zone: id });
+        break;
+      }
+      this.pushed = now;
     }
 
     // The score: lead changes held for 5 s, and the last stretch.

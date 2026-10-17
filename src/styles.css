@@ -1804,7 +1804,7 @@ body {
 /* Centre banners (zone taken, new attack, timer moved): text between two rules. */
 .hud-notices {
   position: absolute;
-  top: 27%;
+  top: 33%;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
