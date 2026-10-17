@@ -1,0 +1,580 @@
+/*
+ * Deploy screen and kit picker on the design system (owner, 2026-10-17;
+ * ds.css, BFV theme; DeployScreen.ts, LoadoutPanel.ts): the soldier on the
+ * left (class, kit rows with the guns' pictures), the map in the middle as
+ * large as it fits with the spawn points on it, squad / spawn list / deploy on
+ * the right; the kit list opens over the map as cards with each gun's picture.
+ */
+.deploy {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: none;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--s4);
+  padding: var(--s5) var(--s6);
+  background: radial-gradient(ellipse at 50% 45%, rgb(22 22 20 / 0.9), rgb(8 8 7 / 0.97));
+  backdrop-filter: blur(4px);
+  color: var(--ink);
+  text-shadow: none;
+}
+.deploy.on {
+  display: grid;
+}
+
+.deploy-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+}
+.deploy-titles {
+  margin-right: auto;
+}
+.deploy-title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+.deploy-tickets {
+  font: 600 var(--fs-md) / 1.2 var(--font-display);
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+
+.deploy-body {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 20) minmax(0, 1fr) calc(var(--u) * 20);
+  gap: var(--s5);
+  min-height: 0;
+}
+.deploy-left,
+.deploy-scroll,
+.lp-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.deploy-left {
+  min-height: 0;
+  overflow-y: auto;
+}
+.deploy-section {
+  display: block;
+  margin-bottom: var(--s2);
+}
+
+/* ---- The soldier: class, passive, kit rows ---- */
+.loadout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.loadout .deploy-section {
+  margin-bottom: 0;
+}
+.lo-classes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s1);
+}
+.lo-class {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s2) 0;
+  border: var(--line-w) solid var(--line);
+  background: var(--surface-1);
+  color: var(--ink-2);
+  font: 600 var(--fs-xs) / 1.1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.lo-class .ds-icon {
+  width: calc(var(--u) * 1.5);
+  height: calc(var(--u) * 1.5);
+}
+.lo-class:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.lo-class.sel {
+  border-color: var(--sel-bg);
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+  cursor: default;
+}
+.lo-passive {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.lo-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--line-w);
+}
+.lo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: calc(var(--u) * 3.5);
+  padding: var(--s2) var(--s2) var(--s2) var(--s3);
+  border: 0;
+  border-left: var(--bar-w) solid transparent;
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.lo-row:hover {
+  background: var(--surface-2);
+}
+.lo-row.open {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.lo-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.lo-value {
+  overflow: hidden;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lo-sub {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.lo-gun {
+  flex: none;
+  width: calc(var(--u) * 6.5);
+  height: calc(var(--u) * 2.4);
+  object-fit: contain;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.5));
+  transition: opacity var(--t-slow) var(--ease);
+}
+.lo-chev {
+  flex: none;
+  color: var(--ink-3);
+}
+.lo-row.open .ds-label,
+.lo-row.open .lo-sub,
+.lo-row.open .lo-chev {
+  color: inherit;
+  opacity: 0.65;
+}
+.lo-row.open .lo-gun {
+  filter: none;
+}
+.lo-gun.loading,
+.lp-gun.loading {
+  opacity: 0;
+}
+
+/* ---- The map with its spawn points ---- */
+.deploy-map {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+.deploy-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border: var(--line-w) solid var(--line);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+}
+.deploy-marks {
+  position: absolute;
+  pointer-events: none;
+}
+.dm {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+.dm-icon {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 2.4);
+  height: calc(var(--u) * 2.4);
+  border: var(--bar-w) solid var(--ally);
+  border-radius: 50%;
+  background: rgb(12 12 11 / 0.85);
+  font: 700 var(--fs-md) / 1 var(--font-display);
+  transition:
+    transform var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+.dm-icon .ds-icon {
+  width: calc(var(--u) * 1.2);
+  height: calc(var(--u) * 1.2);
+}
+.dm.k-base .dm-icon,
+.dm.k-ride .dm-icon {
+  border-radius: var(--r-1);
+}
+.dm.k-mate .dm-icon,
+.dm.k-beacon .dm-icon {
+  width: calc(var(--u) * 1.9);
+  height: calc(var(--u) * 1.9);
+  border-color: var(--squad);
+}
+.dm:hover .dm-icon {
+  transform: scale(1.12);
+}
+.dm.warn .dm-icon {
+  border-color: var(--warn);
+}
+.dm.sel .dm-icon {
+  border-color: var(--sel-bg);
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+  animation: dm-pulse 1.6s ease-in-out infinite;
+}
+@keyframes dm-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(239 235 226 / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 calc(var(--u) * 0.6) rgb(239 235 226 / 0);
+  }
+}
+.dm.blocked {
+  opacity: 0.35;
+  cursor: default;
+}
+.dm-label {
+  padding: 1px var(--s1);
+  background: rgb(12 12 11 / 0.75);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dm-label:empty {
+  display: none;
+}
+
+/* ---- The kit list over the map ---- */
+.loadout-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: none;
+  flex-direction: column;
+  border: var(--line-w) solid var(--line);
+  background: rgb(12 12 11 / 0.95);
+  backdrop-filter: blur(8px);
+}
+.loadout-picker.on {
+  display: flex;
+}
+.lp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3) var(--s2) var(--s4);
+  border-bottom: var(--line-w) solid var(--line);
+}
+.lp-title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.lp-list {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--u) * 14), 1fr));
+  align-content: start;
+  gap: var(--s2);
+  min-height: 0;
+  padding: var(--s3) var(--s4) var(--s4);
+  overflow-y: auto;
+}
+.lp-group {
+  grid-column: 1 / -1;
+  margin-top: var(--s2);
+}
+.lp-group:first-child {
+  margin-top: 0;
+}
+.lp-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: var(--line-w) solid var(--line);
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.lp-item:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.lp-item.sel {
+  border: var(--bar-w) solid var(--sel-bg);
+  background: var(--surface-2);
+  cursor: default;
+}
+.lp-item.taken {
+  opacity: 0.4;
+  cursor: default;
+}
+.lp-pic {
+  display: grid;
+  place-items: center;
+  height: calc(var(--u) * 4.2);
+  background: radial-gradient(ellipse at center, rgb(239 235 226 / 0.07), transparent 70%);
+}
+.lp-gun {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 4px rgb(0 0 0 / 0.6));
+  transition: opacity var(--t-slow) var(--ease);
+}
+.lp-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.lp-name {
+  font-weight: 700;
+}
+.lp-note {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.lp-top .lp-note {
+  white-space: nowrap;
+}
+.lp-bars {
+  display: grid;
+  gap: 3px;
+}
+.lp-stat {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 3.5) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+/* ---- Squad, spawn list, deploy ---- */
+.deploy-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-height: 0;
+}
+.deploy-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s4);
+  min-height: 0;
+  overflow-y: auto;
+}
+.deploy-squad:empty {
+  display: none;
+}
+.deploy .deploy-member {
+  min-height: calc(var(--u) * 2.2);
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+}
+.deploy-member .name {
+  flex: 1;
+  min-width: 0;
+}
+.deploy .deploy-member.you .name {
+  color: var(--ink);
+  font-weight: 700;
+}
+.deploy-member .state {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.deploy-onmate {
+  --h: calc(var(--u) * 1.9);
+  padding: 0 var(--s2);
+  border-color: var(--line-strong);
+  font-size: var(--fs-xs);
+}
+.deploy-list {
+  display: flex;
+  flex-direction: column;
+}
+.deploy-opt {
+  gap: var(--s2);
+  min-height: calc(var(--u) * 2.75);
+  padding: var(--s1) var(--s3);
+}
+.deploy-num {
+  flex: none;
+}
+.deploy-opt.sel .deploy-num {
+  border-color: currentColor;
+  color: inherit;
+}
+.deploy-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: calc(var(--u) * 1.5);
+  font: 700 var(--fs-md) / 1 var(--font-display);
+}
+.deploy-label {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.deploy-why {
+  display: block;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  color: var(--ink-3);
+}
+.deploy-opt.warn .deploy-why {
+  color: var(--warn);
+}
+.deploy-opt.sel .deploy-why {
+  color: inherit;
+  opacity: 0.7;
+}
+
+.deploy-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-top: var(--s3);
+  border-top: var(--line-w) solid var(--line);
+}
+.deploy-pick-name {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  line-height: 1.15;
+}
+.deploy-pick-why,
+.deploy-note {
+  font-size: var(--fs-sm);
+  color: var(--warn);
+}
+.deploy-pick-why:empty,
+.deploy-note:empty {
+  display: none;
+}
+.deploy-button {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+/* Waiting: a dark button that fills with the accent as the respawn timer runs out. */
+.deploy .deploy-button[disabled] {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  opacity: 1;
+}
+.deploy-button-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  opacity: 0.32;
+  transform: scaleX(var(--p, 1));
+  transform-origin: left;
+  transition: transform 0.25s linear;
+}
+.deploy-button:not(.waiting) .deploy-button-fill {
+  display: none;
+}
+.deploy-button-text {
+  position: relative;
+}
+.deploy-button.ready-pulse {
+  animation: deploy-ready 0.7s ease-out 2;
+}
+@keyframes deploy-ready {
+  from {
+    box-shadow: 0 0 0 0 rgb(233 160 59 / 0.6);
+  }
+  to {
+    box-shadow: 0 0 0 calc(var(--u) * 0.8) rgb(233 160 59 / 0);
+  }
+}
+
+/* The tutorial card sits in the head's empty middle, off the map and the kit list. */
+.tut.at-deploy {
+  top: max(10px, 1.4vh);
+  bottom: auto;
+}
+
+/* Phones in landscape: a smaller unit, narrower sides, no squad roster (the list has the mates). */
+@media (max-height: 520px) {
+  .deploy {
+    --u: 11px;
+    gap: var(--s2);
+    padding: max(8px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .deploy-body {
+    grid-template-columns: calc(var(--u) * 17) minmax(0, 1fr) calc(var(--u) * 18);
+    gap: var(--s3);
+  }
+  .deploy-squad,
+  .lo-passive,
+  .lo-sub {
+    display: none;
+  }
+  .lo-row {
+    min-height: calc(var(--u) * 3);
+    padding: var(--s1) var(--s2);
+  }
+  .lo-gun {
+    width: calc(var(--u) * 5);
+    height: calc(var(--u) * 2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm.sel .dm-icon,
+  .deploy-button.ready-pulse {
+    animation: none;
+  }
+}

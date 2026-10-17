@@ -14,16 +14,19 @@ import {
 import type { LoadoutStore } from '@/data/loadoutStore';
 import { GADGETS, classGadget } from '@/data/gadgets';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import { uiSound } from '@/audio/uiSounds';
+import { icon } from './icons';
+import { weaponPortrait, weaponPortraitNow } from './weaponPortraits';
 
+/** Class marks, drawn like the icon set (24 px grid, one stroke, square ends). */
 const ICON: Record<ClassId, string> = {
   assault: '<path d="M4 17l9-9 3 3-9 9H4z"/><path d="M13 8l3-3 3 3-3 3"/>',
   medic: '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>',
-  support: '<rect x="3" y="8" width="18" height="12" rx="1.5"/><path d="M7 8V5h10v3M8 12v4M12 12v4M16 12v4"/>',
+  support: '<rect x="3" y="8" width="18" height="12"/><path d="M7 8V5h10v3M8 12v4M12 12v4M16 12v4"/>',
   recon: '<circle cx="12" cy="12" r="7.5"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
 };
 
-const svg = (paths: string) =>
-  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">${paths}</svg>`;
+const classIcon = (c: ClassId) => `<svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON[c]}</svg>`;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -32,12 +35,33 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
   return e;
 }
 
+/** A gun's picture in an <img>, filled in once it has been drawn (weaponPortraits). */
+function gunPicture(parent: HTMLElement, id: WeaponId, cls: string): void {
+  const img = el('img', cls, parent);
+  img.alt = '';
+  img.decoding = 'async';
+  const now = weaponPortraitNow(id);
+  if (now) {
+    img.src = now;
+    return;
+  }
+  img.classList.add('loading');
+  void weaponPortrait(id).then((url) => {
+    if (!url) img.remove();
+    else {
+      img.src = url;
+      img.classList.remove('loading');
+    }
+  });
+}
+
 type Slot = 'primary0' | 'primary1' | 'pistol' | 'grenade' | 'gadget';
 
 /**
- * BFV-style class and kit picker on the deploy screen: four class buttons,
- * one row per slot; a row opens a list over the map with stat bars. Choices
- * are kept per class and apply on the next deploy.
+ * BFV-style class and kit picker on the deploy screen, on the design system
+ * (owner, 2026-10-17; deploy.css): four class buttons, one row per slot with
+ * the gun's picture; a row opens a list over the map — cards with each gun's
+ * picture and stat bars. Choices are kept per class and apply on the next deploy.
  */
 export class LoadoutPanel {
   readonly root: HTMLDivElement;
@@ -55,6 +79,9 @@ export class LoadoutPanel {
     side.prepend(this.root);
     this.picker = el('div', 'loadout-picker', mapBox);
     this.render();
+    // The kit's own guns first, so the rows show them at once.
+    const l = this.current;
+    for (const id of [l.primary[0], l.primary[1], l.pistol]) void weaponPortrait(id);
   }
 
   private get current(): Loadout {
@@ -82,38 +109,49 @@ export class LoadoutPanel {
   close(): void {
     if (!this.open) return;
     this.open = null;
-    this.renderPicker();
+    this.render();
   }
 
   private render(): void {
     const l = this.current;
     this.root.replaceChildren();
-    el('div', 'deploy-section', this.root).textContent = t('loadout.title');
+    el('div', 'ds-label deploy-section', this.root).textContent = t('loadout.title');
     const classes = el('div', 'lo-classes', this.root);
     for (const c of CLASS_IDS) {
       const b = el('button', `lo-class${c === l.cls ? ' sel' : ''}`, classes);
-      b.innerHTML = svg(ICON[c]);
+      b.innerHTML = classIcon(c);
       el('span', '', b).textContent = t(`class.${c}` as MessageKey);
-      b.addEventListener('click', () => this.setClass(c));
+      if (c === l.cls) continue;
+      b.addEventListener('pointerenter', () => uiSound('hover'));
+      b.addEventListener('click', () => {
+        uiSound('select');
+        this.setClass(c);
+      });
     }
     el('div', 'lo-passive', this.root).textContent = t(`class.${l.cls}.passive` as MessageKey);
-    const row = (slot: Slot, label: string, value: string, sub = '') => {
-      const r = el('button', `lo-row${this.open === slot ? ' open' : ''}`, this.root);
-      el('span', 'lo-slot', r).textContent = label;
-      el('span', 'lo-value', r).textContent = value;
-      if (sub) el('span', 'lo-sub', r).textContent = sub;
+    const rows = el('div', 'lo-rows', this.root);
+    const row = (slot: Slot, label: string, value: string, gun: WeaponId | null, sub = '') => {
+      const r = el('button', `lo-row${this.open === slot ? ' open' : ''}`, rows);
+      const text = el('span', 'lo-text', r);
+      el('span', 'ds-label', text).textContent = label;
+      el('span', 'lo-value', text).textContent = value;
+      if (sub) el('span', 'lo-sub', text).textContent = sub;
+      if (gun) gunPicture(r, gun, 'lo-gun');
+      r.insertAdjacentHTML('beforeend', icon('next', 'lo-chev'));
+      r.addEventListener('pointerenter', () => uiSound('hover'));
       r.addEventListener('click', () => {
         this.open = this.open === slot ? null : slot;
+        uiSound(this.open ? 'open' : 'back');
         this.render();
       });
     };
-    row('primary0', t('loadout.primary1'), WEAPONS[l.primary[0]].name);
-    row('primary1', t('loadout.primary2'), WEAPONS[l.primary[1]].name);
-    row('pistol', t('loadout.pistol'), WEAPONS[l.pistol].name);
-    row('grenade', t('loadout.grenade'), `${t(`grenade.${l.grenade}` as MessageKey)} ×${GRENADE_COUNT[l.grenade]}`);
+    row('primary0', t('loadout.primary1'), WEAPONS[l.primary[0]].name, l.primary[0]);
+    row('primary1', t('loadout.primary2'), WEAPONS[l.primary[1]].name, l.primary[1]);
+    row('pistol', t('loadout.pistol'), WEAPONS[l.pistol].name, l.pistol);
+    row('grenade', t('loadout.grenade'), `${t(`grenade.${l.grenade}` as MessageKey)} ×${GRENADE_COUNT[l.grenade]}`, null);
     const gid = classGadget(l.cls, l.reconGadget);
     const gadget = l.cls === 'recon' ? t(`gadget.${l.reconGadget}`) : t(`gadget.${l.cls}` as MessageKey);
-    row('gadget', t('loadout.gadget'), gid ? `${gadget} ×${GADGETS[gid].count}` : gadget, gid ? undefined : t('gadget.supportNote'));
+    row('gadget', t('loadout.gadget'), gid ? `${gadget} ×${GADGETS[gid].count}` : gadget, null, gid ? undefined : t('gadget.supportNote'));
     this.renderPicker();
   }
 
@@ -125,18 +163,30 @@ export class LoadoutPanel {
     if (!slot) return;
     const l = this.current;
     const head = el('div', 'lp-head', p);
-    el('span', '', head).textContent =
+    el('span', 'lp-title', head).textContent =
       slot === 'primary0' ? t('loadout.primary1') : slot === 'primary1' ? t('loadout.primary2') : slot === 'pistol' ? t('loadout.pistol') : slot === 'grenade' ? t('loadout.grenade') : t('loadout.gadget');
-    const close = el('button', 'lp-close', head);
-    close.textContent = t('loadout.close');
-    close.addEventListener('click', () => this.close());
+    const close = el('button', 'ds-btn ghost lp-close', head);
+    close.innerHTML = icon('close');
+    el('span', '', close).textContent = t('loadout.close');
+    close.addEventListener('pointerenter', () => uiSound('hover'));
+    close.addEventListener('click', () => {
+      uiSound('back');
+      this.close();
+    });
     const list = el('div', 'lp-list', p);
+    const pickable = (b: HTMLElement, pick: () => void) => {
+      b.addEventListener('pointerenter', () => uiSound('hover'));
+      b.addEventListener('click', () => {
+        uiSound('select');
+        pick();
+      });
+    };
 
     if (slot === 'grenade') {
       for (const g of GRENADE_TYPES) {
         const b = el('button', `lp-item simple${g === l.grenade ? ' sel' : ''}`, list);
         el('span', 'lp-name', b).textContent = `${t(`grenade.${g}` as MessageKey)} ×${GRENADE_COUNT[g]}`;
-        b.addEventListener('click', () => this.update({ ...l, grenade: g }));
+        if (g !== l.grenade) pickable(b, () => this.update({ ...l, grenade: g }));
       }
       return;
     }
@@ -153,7 +203,7 @@ export class LoadoutPanel {
         const b = el('button', `lp-item simple${g === l.reconGadget ? ' sel' : ''}`, list);
         el('span', 'lp-name', b).textContent = `${t(`gadget.${g}`)} ×${GADGETS[g].count}`;
         el('span', 'lp-note', b).textContent = t(`gadgetInfo.${g}`);
-        b.addEventListener('click', () => this.update({ ...l, reconGadget: g }));
+        if (g !== l.reconGadget) pickable(b, () => this.update({ ...l, reconGadget: g }));
       }
       return;
     }
@@ -166,10 +216,12 @@ export class LoadoutPanel {
       const w = WEAPONS[id];
       if (w.class !== group) {
         group = w.class;
-        el('div', 'lp-group', list).textContent = t(`wclass.${w.class}` as MessageKey);
+        el('div', 'ds-label lp-group', list).textContent = t(`wclass.${w.class}` as MessageKey);
       }
       const b = el('button', `lp-item${id === current ? ' sel' : ''}${id === other ? ' taken' : ''}`, list);
       b.disabled = id === other;
+      const pic = el('div', 'lp-pic', b);
+      gunPicture(pic, id, 'lp-gun');
       const top = el('div', 'lp-top', b);
       el('span', 'lp-name', top).textContent = w.name;
       const scope = w.scope ? (l.cls === 'recon' ? `${w.scope}→${zoomedLabel(w.scope, RECON_ZOOM)}` : w.scope) : '';
@@ -179,17 +231,18 @@ export class LoadoutPanel {
       for (const k of ['damage', 'rate', 'range', 'handling'] as const) {
         const s = el('div', 'lp-stat', bars);
         el('span', '', s).textContent = t(`stat.${k}`);
-        const bar = el('i', '', s);
-        bar.style.setProperty('--v', String(stats[k]));
+        const bar = el('i', 'ds-stat-bar', s);
+        bar.style.setProperty('--p', `${Math.round(stats[k] * 100)}%`);
       }
-      b.addEventListener('click', () => {
-        if (slot === 'pistol') this.update({ ...l, pistol: id });
-        else {
-          const primary: [WeaponId, WeaponId] = [...l.primary];
-          primary[slot === 'primary0' ? 0 : 1] = id;
-          this.update({ ...l, primary });
-        }
-      });
+      if (id !== current && id !== other)
+        pickable(b, () => {
+          if (slot === 'pistol') this.update({ ...l, pistol: id });
+          else {
+            const primary: [WeaponId, WeaponId] = [...l.primary];
+            primary[slot === 'primary0' ? 0 : 1] = id;
+            this.update({ ...l, primary });
+          }
+        });
     }
     // Keep the chosen weapon in view.
     list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });

@@ -4035,6 +4035,7 @@ export class Game {
         out.push({
           key: `jet:${kind}`,
           kind: 'vehicle',
+          air: true,
           label: `${t('spawn.jet')}: ${t(`vehicle.${kind}`)} (${vw.jets(this.myTeam)}/${vw.jetLimit()})`,
           x: base.x,
           z: base.z,
@@ -4051,6 +4052,7 @@ export class Game {
       out.push({
         key: `veh:${v.id}`,
         kind: 'ride',
+        air: !!v.spec.flight,
         label: `${t(`vehicle.${v.kind}`)} — ${t(`seat.${v.spec.seats[seat]!.role}`)} (${aboard}/${v.seats.length})`,
         x: v.pos.x,
         z: v.pos.z,

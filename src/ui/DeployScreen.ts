@@ -1,5 +1,9 @@
 import { t } from '@/i18n';
+import { uiSound } from '@/audio/uiSounds';
 import type { MapImage } from './mapPainter';
+import { icon, type IconName } from './icons';
+import './ds.css';
+import './deploy.css';
 
 export type Tone = 'ally' | 'enemy' | 'neutral';
 
@@ -14,6 +18,8 @@ export interface DeployOption {
   blocked: string | null;
   /** Allowed but risky (zone under attack). */
   warn: string | null;
+  /** An aircraft (vehicles and rides: the jet icon instead of the tank). */
+  air?: boolean;
 }
 
 export interface DeployState {
@@ -35,10 +41,8 @@ export interface DeployState {
   squad: { name: string; members: { name: string; state: 'ok' | 'combat' | 'down' | 'dead'; you: boolean }[] } | null;
 }
 
-const COLOR: Record<Tone, string> = { ally: '#42b4ff', enemy: '#f04a3a', neutral: '#d8d8d0' };
-
-/** The glyph in a spawn marker / list row by kind (zones show their letter). */
-const GLYPH: Record<DeployOption['kind'], string> = { base: '⌂', zone: '', mate: '◆', beacon: '▲', vehicle: '▣', ride: '▣' };
+/** The sides on the map picture (the ds theme's colours). */
+const COLOR: Record<Tone, string> = { ally: '#4fa3ff', enemy: '#ff5b3a', neutral: '#efebe2' };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -47,14 +51,41 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
   return e;
 }
 
-const glyphOf = (o: DeployOption) => (o.kind === 'zone' ? o.key.replace('zone:', '') : GLYPH[o.kind]);
+/** A spawn's icon by kind (zones show their letter instead). */
+function iconOf(o: DeployOption): IconName | null {
+  switch (o.kind) {
+    case 'base':
+      return 'base';
+    case 'mate':
+      return 'user';
+    case 'beacon':
+      return 'beacon';
+    case 'vehicle':
+    case 'ride':
+      return o.air ? 'jet' : 'tank';
+    default:
+      return null;
+  }
+}
+
+/** Fills a marker / row's badge: the icon, or the zone's letter. */
+function badge(span: HTMLElement, o: DeployOption): void {
+  const name = iconOf(o);
+  const want = name ?? `#${o.key.replace('zone:', '')}`;
+  if (span.dataset.badge === want) return;
+  span.dataset.badge = want;
+  if (name) span.innerHTML = icon(name);
+  else span.textContent = o.key.replace('zone:', '');
+}
 
 /**
- * Battlefield V style deploy screen: the soldier (class and kit) on the left,
- * the map in the middle with every spawn point on it as a button (click to
- * pick it), the squad and the full spawn list on the right, and a deploy
- * button that names the pick and fills up while the respawn timer runs out.
- * Keys: 1-9 pick, Space / Enter deploy, Esc (or the button top right) pauses.
+ * Battlefield V style deploy screen on the design system (owner, 2026-10-17;
+ * ds.css, BFV theme; deploy.css): the soldier (class and kit, LoadoutPanel)
+ * on the left, the map in the middle as large as it fits with every spawn
+ * point on it as a button, the squad and the numbered spawn list on the
+ * right, and the deploy button, which names the pick and fills while the
+ * respawn timer runs out. Keys: 1-9 pick, Space / Enter deploy, Esc (or the
+ * button top right) pauses.
  */
 export class DeployScreen {
   readonly root: HTMLDivElement;
@@ -78,6 +109,7 @@ export class DeployScreen {
   private readonly markEls = new Map<string, HTMLButtonElement>();
   /** Longest wait seen since the screen opened (the button's fill runs against it). */
   private waitFrom = 0;
+  private wasReady = false;
   private readonly touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
   constructor(
@@ -87,17 +119,22 @@ export class DeployScreen {
     private readonly onDeploy: () => void,
     private readonly onPause: () => void = () => {},
   ) {
-    this.root = el('div', 'deploy', parent);
+    this.root = el('div', 'deploy ds-root', parent);
+    this.root.dataset.dsTheme = 'bfv';
     const head = el('div', 'deploy-head', this.root);
     const titles = el('div', 'deploy-titles', head);
-    el('div', 'deploy-eyebrow', titles).textContent = t('deploy.title');
+    el('div', 'ds-label', titles).textContent = t('deploy.title');
     this.title = el('div', 'deploy-title', titles);
     this.tickets = el('div', 'deploy-tickets', head);
-    const pause = el('button', 'deploy-pause', head);
-    el('span', 'deploy-pause-icon', pause).textContent = '❚❚';
+    const pause = el('button', 'ds-btn ghost deploy-pause', head);
+    pause.innerHTML = icon('pause');
     el('span', '', pause).textContent = t('paused');
-    if (!this.touch) el('span', 'keycap', pause).textContent = 'Esc';
-    pause.addEventListener('click', () => this.onPause());
+    if (!this.touch) el('span', 'ds-kbd', pause).textContent = 'ESC';
+    pause.addEventListener('pointerenter', () => uiSound('hover'));
+    pause.addEventListener('click', () => {
+      uiSound('open');
+      this.onPause();
+    });
     const body = el('div', 'deploy-body', this.root);
 
     this.sideTop = el('div', 'deploy-left', body);
@@ -108,20 +145,19 @@ export class DeployScreen {
     this.canvas.width = map.canvas.width;
     this.canvas.height = map.canvas.height;
     this.marks = el('div', 'deploy-marks', mapBox);
-    el('div', 'deploy-maphint', mapBox).textContent = t(this.touch ? 'deploy.mapHintTouch' : 'deploy.mapHint');
 
     const side = el('div', 'deploy-side', body);
     const scroll = el('div', 'deploy-scroll', side);
     this.squadEl = el('div', 'deploy-squad', scroll);
-    el('div', 'deploy-section', scroll).textContent = t('deploy.spawns');
+    el('div', 'ds-label deploy-section', scroll).textContent = t('deploy.spawns');
     this.list = el('div', 'deploy-list', scroll);
     const foot = el('div', 'deploy-foot', side);
     const pick = el('div', 'deploy-pick', foot);
-    el('div', 'deploy-pick-head', pick).textContent = t('deploy.at');
+    el('div', 'ds-label', pick).textContent = t('deploy.at');
     this.pickName = el('div', 'deploy-pick-name', pick);
     this.pickWhy = el('div', 'deploy-pick-why', pick);
     this.note = el('div', 'deploy-note', foot);
-    this.button = el('button', 'deploy-button', foot);
+    this.button = el('button', 'ds-btn primary deploy-button', foot);
     el('span', 'deploy-button-fill', this.button);
     this.buttonText = el('span', 'deploy-button-text', this.button);
     this.button.addEventListener('click', () => this.tryDeploy());
@@ -131,7 +167,7 @@ export class DeployScreen {
       const d = /^Digit([1-9])$/.exec(e.code);
       if (d) {
         const opt = this.state.options[Number(d[1]) - 1];
-        if (opt && !opt.blocked) this.onSelect(opt.key);
+        if (opt && !opt.blocked) this.pick(opt.key);
         e.preventDefault();
       } else if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
@@ -157,8 +193,15 @@ export class DeployScreen {
     this.root.classList.remove('on');
   }
 
+  private pick(key: string): void {
+    if (this.state?.selected !== key) uiSound('move');
+    this.onSelect(key);
+  }
+
   private tryDeploy(): void {
-    if (this.state && this.state.wait <= 0) this.onDeploy();
+    if (!this.state || this.state.wait > 0) return;
+    uiSound('start');
+    this.onDeploy();
   }
 
   update(s: DeployState): void {
@@ -175,23 +218,29 @@ export class DeployScreen {
     const ready = s.wait <= 0;
     this.waitFrom = ready ? 0 : Math.max(this.waitFrom, s.wait);
     this.button.disabled = !ready;
+    this.button.classList.toggle('waiting', !ready);
     this.button.style.setProperty('--p', ready ? '1' : (1 - s.wait / Math.max(0.01, this.waitFrom)).toFixed(3));
     // Touch screens have no Space key: drop the hint.
     const go = this.touch ? t('deploy.go').replace(/\s*\(.*\)$/, '') : t('deploy.go');
     this.buttonText.textContent = ready ? go : (s.waitText ?? `${t('deploy.wait')} ${Math.ceil(s.wait)}`);
+    if (ready && !this.wasReady) this.button.classList.add('ready-pulse');
+    else if (!ready) this.button.classList.remove('ready-pulse');
+    this.wasReady = ready;
 
     const listKey = `${s.selected}|${s.options.map((o) => `${o.key}${o.label}${o.blocked}${o.warn}`).join()}`;
     if (listKey !== this.listKey) {
       this.listKey = listKey;
       this.list.replaceChildren();
       s.options.forEach((o, i) => {
-        const row = el('button', `deploy-opt k-${o.kind}${o.key === s.selected ? ' sel' : ''}${o.blocked ? ' blocked' : ''}${o.warn ? ' warn' : ''}`, this.list);
+        const row = el('button', `ds-row deploy-opt${o.key === s.selected ? ' sel' : ''}${o.blocked ? ' off' : ''}${o.warn ? ' warn' : ''}`, this.list);
         row.disabled = !!o.blocked;
-        el('span', 'deploy-num', row).textContent = this.touch ? '' : String(i + 1);
-        el('span', 'deploy-glyph', row).textContent = glyphOf(o);
-        el('span', 'deploy-label', row).textContent = o.label;
-        if (o.blocked || o.warn) el('span', 'deploy-why', row).textContent = o.blocked ?? o.warn ?? '';
-        row.addEventListener('click', () => this.onSelect(o.key));
+        if (!this.touch) el('span', 'ds-kbd deploy-num', row).textContent = String(i + 1);
+        badge(el('span', 'deploy-badge', row), o);
+        const text = el('span', 'ds-row-main deploy-label', row);
+        text.textContent = o.label;
+        if (o.blocked || o.warn) el('span', 'deploy-why', text).textContent = o.blocked ?? o.warn ?? '';
+        if (!o.blocked && o.key !== s.selected) row.addEventListener('pointerenter', () => uiSound('hover'));
+        row.addEventListener('click', () => this.pick(o.key));
       });
     }
     this.updateSquad(s);
@@ -207,16 +256,17 @@ export class DeployScreen {
     this.squadKey = squadKey;
     this.squadEl.replaceChildren();
     if (!s.squad) return;
-    el('div', 'deploy-section', this.squadEl).textContent = `${t('squad.label')} ${s.squad.name}`;
+    el('div', 'ds-label deploy-section', this.squadEl).textContent = `${t('squad.label')} ${s.squad.name}`;
     for (const m of s.squad.members) {
       const opt = m.you ? undefined : mates.find((o) => o.label === m.name);
       const row = el('div', `deploy-member m-${m.state}${m.you ? ' you' : ''}${opt && opt.key === s.selected ? ' sel' : ''}`, this.squadEl);
       el('span', 'dot', row);
       el('span', 'name', row).textContent = m.name;
       if (opt && !opt.blocked) {
-        const b = el('button', 'deploy-onmate', row);
+        const b = el('button', 'ds-btn ghost deploy-onmate', row);
         b.textContent = t('deploy.onMate');
-        b.addEventListener('click', () => this.onSelect(opt.key));
+        b.addEventListener('pointerenter', () => uiSound('hover'));
+        b.addEventListener('click', () => this.pick(opt.key));
       } else el('span', 'state', row).textContent = opt?.blocked ?? t(`squad.${m.state}`);
     }
   }
@@ -243,16 +293,17 @@ export class DeployScreen {
         el('span', 'dm-icon', b);
         el('span', 'dm-label', b);
         const key = o.key;
-        b.addEventListener('click', () => this.onSelect(key));
+        b.addEventListener('pointerenter', () => {
+          if (this.state?.selected !== key && !b!.disabled) uiSound('hover');
+        });
+        b.addEventListener('click', () => this.pick(key));
         this.markEls.set(o.key, b);
       }
       const cls = `dm k-${o.kind}${o.key === s.selected ? ' sel' : ''}${o.blocked ? ' blocked' : ''}${o.warn ? ' warn' : ''}`;
       if (b.className !== cls) b.className = cls;
       b.disabled = !!o.blocked;
-      const icon = b.firstChild as HTMLSpanElement;
+      badge(b.firstChild as HTMLSpanElement, o);
       const label = b.lastChild as HTMLSpanElement;
-      const glyph = glyphOf(o);
-      if (icon.textContent !== glyph) icon.textContent = glyph;
       // Tags stay short on the map: a zone's warning, a vehicle's name (seat and crew are in the list).
       const text = o.kind === 'zone' ? (o.warn ?? '') : o.kind === 'ride' ? o.label.split(' — ')[0]! : o.label;
       if (label.textContent !== text) label.textContent = text;
@@ -279,24 +330,20 @@ export class DeployScreen {
     // The canvas is scaled down to fit; draw at a constant on-screen size.
     const shown = this.canvas.getBoundingClientRect().width;
     const px = shown > 0 ? Math.max(1, this.canvas.width / shown) : 1;
-    const font = (size: number) => `bold ${Math.round(size * px)}px sans-serif`;
-    // Dim the picture a little so the markers stand out.
-    g.fillStyle = 'rgba(6, 9, 12, 0.18)';
+    const font = (size: number) => `bold ${Math.round(size * px)}px "Barlow Condensed", "Pretendard Std Variable", sans-serif`;
+    // Dim and cool the picture a little so the markers stand out.
+    g.fillStyle = 'rgba(12, 12, 11, 0.28)';
     g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     if (s.enemyBase) {
       const [u, v] = this.map.project(s.enemyBase.x, s.enemyBase.z);
-      g.beginPath();
-      g.rect(u - 11 * px, v - 11 * px, 22 * px, 22 * px);
-      g.fillStyle = '#101214cc';
-      g.fill();
+      const r = 11 * px;
+      g.fillStyle = 'rgba(12, 12, 11, 0.85)';
+      g.fillRect(u - r, v - r, r * 2, r * 2);
       g.lineWidth = 2 * px;
       g.strokeStyle = COLOR.enemy;
-      g.stroke();
+      g.strokeRect(u - r, v - r, r * 2, r * 2);
       g.fillStyle = COLOR.enemy;
-      g.font = font(14);
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('⌂', u, v);
+      g.fillRect(u - r * 0.4, v - r * 0.4, r * 0.8, r * 0.8);
     }
     for (const z of s.zones) {
       const [u, v] = this.map.project(z.x, z.z);
@@ -315,7 +362,7 @@ export class DeployScreen {
       if (s.options.some((o) => o.key === `zone:${z.id}`)) continue;
       const [u, v] = this.map.project(z.x, z.z);
       g.fillStyle = COLOR[z.owner];
-      g.font = font(18);
+      g.font = font(20);
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.lineWidth = 3 * px;
