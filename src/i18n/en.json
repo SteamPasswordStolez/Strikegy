@@ -734,5 +734,17 @@
   "lobby.sideDesc": "Pick which side you fight for. Random is settled when the match starts.",
   "lobby.menuScene": "Battle behind the menu",
   "setDesc.menuScene": "Plays a recorded film of bot battles behind the main menu (light, nothing to load). Off: the map picture instead.",
-  "lobby.live": "LIVE"
+  "lobby.live": "LIVE",
+  "menu.continue": "Continue",
+  "load.tip": "Tip",
+  "tip.revive": "Hold {k:interact} next to a downed teammate to get them back up.",
+  "tip.build": "Press {k:build} for build mode, aim at a blue blueprint and hold {k:fire} to put up sandbags.",
+  "tip.support": "Press {k:support} to spend squad points on smoke, mortars or artillery.",
+  "tip.slide": "Press {k:crouch} while sprinting to slide.",
+  "tip.breath": "Through a sniper scope, hold {k:breath} to hold your breath and steady the aim. Hold it too long and your sight goes dark.",
+  "tip.downed": "When you go down, teammates have 15 seconds to revive you. Hold {k:jump} if you would rather not wait.",
+  "tip.station": "Supply stations at zones your side holds refill ammo and medkits.",
+  "tip.rocket": "One panzerfaust round brings a sandbag wall down.",
+  "tip.squad": "On the deploy screen you can spawn next to a squad mate who is not in a fight.",
+  "tip.mines": "Mines do not go off under someone walking crouched."
 }

@@ -268,8 +268,13 @@
 .ds-menu-item {
   position: relative;
   display: flex;
+  align-self: flex-start;
   align-items: center;
   gap: var(--s3);
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
   padding: var(--s2) var(--s4) var(--s2) var(--s5);
   font-size: var(--fs-xl);
   font-weight: 700;

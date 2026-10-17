@@ -1,0 +1,195 @@
+/*
+ * Loading screen on the design system (owner, 2026-10-17; ds.css, BFV theme;
+ * Overlay `.ld`, shown while the overlay has `.loading`): the map from above
+ * fading in on the right, the mode, the map's name and facts bottom left, a
+ * tip that changes every few seconds, and the bar with the step and percent.
+ * Everything that keeps moving through the long steps (bar, sheen, drift)
+ * moves by transform or opacity only, which the browser animates off the main thread.
+ */
+.overlay.loading {
+  padding: 0;
+  background: #0c0c0b;
+  cursor: default;
+}
+.overlay.loading .ov-panel {
+  display: none;
+}
+.ld {
+  display: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-align: left;
+}
+.overlay.loading .ld {
+  display: block;
+}
+
+.ld-pic {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 70%;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.8s var(--ease);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 40%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 40%);
+}
+.ld.has-info .ld-pic {
+  opacity: 0.6;
+}
+.ld-pic canvas {
+  position: absolute;
+  inset: -6%;
+  width: 112%;
+  height: 112%;
+  object-fit: cover;
+  filter: saturate(0.55) contrast(1.05);
+  animation: ld-drift 40s ease-in-out infinite alternate;
+}
+@keyframes ld-drift {
+  from {
+    transform: scale(1) translate(0, 0);
+  }
+  to {
+    transform: scale(1.08) translate(-2%, 1.5%);
+  }
+}
+.ld-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgb(0 0 0 / 0.85) 0%, transparent 50%),
+    linear-gradient(90deg, #0c0c0b 0%, rgb(12 12 11 / 0.6) 40%, transparent 70%);
+}
+
+.ld-wordmark {
+  position: absolute;
+  top: var(--s7);
+  left: var(--s8);
+  font: 700 var(--fs-xl) / 1 var(--font-display);
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+
+.ld-main {
+  position: absolute;
+  left: var(--s8);
+  right: var(--s8);
+  bottom: calc(var(--s8) + var(--s6));
+  max-width: calc(var(--u) * 46);
+}
+.ld-mode,
+.ld-name,
+.ld-facts {
+  opacity: 0;
+  transform: translateY(var(--s2));
+  transition:
+    opacity var(--t-slow) var(--ease),
+    transform var(--t-slow) var(--ease);
+}
+.ld.has-info .ld-mode,
+.ld.has-info .ld-name,
+.ld.has-info .ld-facts {
+  opacity: 1;
+  transform: none;
+}
+.ld.has-info .ld-name {
+  transition-delay: 60ms;
+}
+.ld.has-info .ld-facts {
+  transition-delay: 120ms;
+}
+.ld-mode {
+  margin-bottom: var(--s2);
+  color: var(--accent);
+}
+.ld-name {
+  font-size: var(--fs-hero);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.ld-facts {
+  margin-top: var(--s3);
+  font-size: var(--fs-lg);
+  color: var(--ink-2);
+}
+.ld-facts:empty {
+  display: none;
+}
+.ld-tip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  max-width: 54ch;
+  margin-top: var(--s6);
+  padding-left: var(--s4);
+  border-left: var(--bar-w) solid var(--line-strong);
+}
+.ld-tip-text {
+  color: var(--ink-2);
+}
+
+.ld-bottom {
+  position: absolute;
+  left: var(--s8);
+  right: var(--s8);
+  bottom: var(--s6);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  row-gap: var(--s2);
+}
+.ld-step {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.ld-pct {
+  font-size: var(--fs-md);
+}
+.ld-bar {
+  grid-column: 1 / -1;
+}
+/* A sheen keeps running over the bar so a long step never looks stuck. */
+.ld-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  width: 20%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+  animation: ld-sheen 1.4s linear infinite;
+  will-change: transform;
+}
+@keyframes ld-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(500%);
+  }
+}
+
+/* Phones in landscape: a smaller unit and a smaller name. */
+@media (max-height: 520px) {
+  .ld {
+    --u: 11px;
+  }
+  .ld-name {
+    font-size: var(--fs-2xl);
+  }
+  .ld-tip {
+    margin-top: var(--s4);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ld-pic canvas,
+  .ld-bar::before {
+    animation: none;
+  }
+}

@@ -106,3 +106,58 @@ function isDark(hex: string): boolean {
   const l = ((n >> 16) & 255) * 0.3 + ((n >> 8) & 255) * 0.59 + (n & 255) * 0.11;
   return l < 110;
 }
+
+/** The playable outline, or the map's rectangle when it has none. */
+export function mapOutline(map: MapDef): [number, number][] {
+  if (map.world.boundary?.length) return map.world.boundary;
+  const [w, d] = map.world.size;
+  return [
+    [-w / 2, -d / 2],
+    [w / 2, -d / 2],
+    [w / 2, d / 2],
+    [-w / 2, d / 2],
+  ];
+}
+
+/**
+ * The map from above with its zones (lettered rings) and both bases (a square
+ * in the side's colour), for the menus and the loading screen.
+ */
+export function paintMapCard(map: MapDef, maxPx = 1000): HTMLCanvasElement {
+  const img = paintMap(map, { points: mapOutline(map) }, maxPx);
+  const g = img.canvas.getContext('2d')!;
+  const k = maxPx / 1000;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  for (const z of map.zones ?? []) {
+    const [u, v] = img.project(z.pos[0], z.pos[2]);
+    g.beginPath();
+    g.arc(u, v, z.radius * img.scale, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(239, 235, 226, 0.14)';
+    g.fill();
+    g.lineWidth = 2 * k;
+    g.strokeStyle = '#efebe2';
+    g.stroke();
+    g.font = `bold ${Math.round(24 * k)}px sans-serif`;
+    g.lineWidth = 4 * k;
+    g.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+    g.strokeText(z.id, u, v);
+    g.fillStyle = '#efebe2';
+    g.fillText(z.id, u, v);
+  }
+  for (const team of ['blue', 'red'] as const) {
+    const own = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
+    if (!own.length) continue;
+    const [u, v] = img.project(own.reduce((a, s) => a + s.pos[0], 0) / own.length, own.reduce((a, s) => a + s.pos[2], 0) / own.length);
+    const color = team === 'blue' ? '#4fa3ff' : '#ff5b3a';
+    const r = 13 * k;
+    g.fillStyle = 'rgba(12, 12, 11, 0.85)';
+    g.fillRect(u - r, v - r, r * 2, r * 2);
+    g.lineWidth = 2.5 * k;
+    g.strokeStyle = color;
+    g.strokeRect(u - r, v - r, r * 2, r * 2);
+    g.fillStyle = color;
+    g.fillRect(u - r * 0.4, v - r * 0.4, r * 0.8, r * 0.8);
+  }
+  return img.canvas;
+}

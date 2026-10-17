@@ -88,7 +88,7 @@ import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
 import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
 import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeployScreen';
-import { paintMap, type MapImage } from '@/ui/mapPainter';
+import { paintMap, paintMapCard, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
 import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimAssist';
 import { ShowcaseCamera } from '@/render/showcaseCamera';
@@ -537,6 +537,7 @@ export class Game {
       this.overlay.show(t('error.map'), String(err instanceof Error ? err.message : err));
       throw err;
     }
+    this.showLoadingInfo(map);
     const outdoor = map.world.visualProfile !== 'indoor';
     // `?procsky` (dev): the procedural sky instead of the photographed one, for comparing.
     const procSky = import.meta.env.DEV && new URLSearchParams(location.search).has('procsky');
@@ -801,6 +802,27 @@ export class Game {
     this.rafId = requestAnimationFrame(this.frame);
     this.begin();
     this.net?.ready(!!this.netBots);
+  }
+
+  /** The loading screen's match line: mode, the map's name and facts, the map from above. */
+  private showLoadingInfo(map: MapDef): void {
+    const asked = this.options.mode ?? 'auto';
+    // The same test as the match's own set-up below: no zones (or none in play) is the range / a skirmish.
+    const zones = map.zones?.length ?? 0;
+    const zoned = asked !== 'skirmish' && (asked !== 'auto' || !!this.options.bots) && zones > 0;
+    const kind = zoned ? pickMode(map, asked === 'auto' ? undefined : (asked as ModeKind), true) : null;
+    const nameKey = `map.${map.meta.id}` as MessageKey;
+    const name = t(nameKey) === nameKey ? map.meta.name : t(nameKey);
+    const facts: string[] = [];
+    if (zones) facts.push(t('lobby.zones').replace('{n}', String(zones)));
+    const b = this.options.bots;
+    if (b && b.allies + b.enemies > 0) facts.push(`${b.allies + 1} vs ${b.enemies}`);
+    this.overlay.setLoadingInfo({
+      mode: kind ? t(`mode.${kind}` as MessageKey) : this.options.bots ? t('lobby.skirmish') : t('menu.range'),
+      name,
+      facts: facts.join(' · '),
+      picture: paintMapCard(map, 1400),
+    });
   }
 
   /** Loading: moves the bar and lets the page draw it before the next long step. */

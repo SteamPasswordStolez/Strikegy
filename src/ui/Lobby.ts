@@ -3,7 +3,11 @@ import { isTouchDevice, loadSettings, saveSettings, type Settings } from '@/core
 import { loadJSON, saveJSON } from '@/core/storage';
 import { BIG_TEAM, MAPS, RANGE_ID, SIDES, TEAM_SIZES, matchQuery, snapTeam, type Difficulty, type LobbyMode, type LobbyPick } from '@/data/maps';
 import type { MapDef } from '@/world/mapTypes';
-import { paintMap } from './mapPainter';
+import { mapOutline, paintMapCard } from './mapPainter';
+import { icon } from './icons';
+import { loadUiSounds, setUiVolume, uiSound } from '@/audio/uiSounds';
+import './ds.css';
+import './mainMenu.css';
 import { renderHint } from './Overlay';
 import { SettingsPanel } from './SettingsPanel';
 import { MultiplayerMenu } from './MultiplayerMenu';
@@ -18,10 +22,11 @@ import type { ServerLink } from '@/net/ServerLink';
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
 
-/** The main menu's entries, top to bottom. */
+/** The main menu's entries, top to bottom: play the biggest, then two more, then the small ones. */
 const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'credits'] as const;
 type Entry = (typeof ALL_ENTRIES)[number];
 const ENTRIES: readonly Entry[] = ALL_ENTRIES;
+const BIG_ENTRIES: readonly Entry[] = ['multi', 'range'];
 type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
@@ -46,24 +51,14 @@ function modesOf(map: MapDef | undefined): LobbyMode[] {
   return out;
 }
 
-function outline(map: MapDef): [number, number][] {
-  if (map.world.boundary?.length) return map.world.boundary;
-  const [w, d] = map.world.size;
-  return [
-    [-w / 2, -d / 2],
-    [w / 2, -d / 2],
-    [w / 2, d / 2],
-    [-w / 2, d / 2],
-  ];
-}
-
 const step = <T>(list: readonly T[], cur: T, d: number): T => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length]!;
 const modeName = (m: LobbyMode): string => t(m === 'skirmish' ? 'lobby.skirmish' : (`mode.${m}` as MessageKey));
 
 /**
- * The main menu: a screen of its own before any match. The game's name and
- * a column of entries (play / firing range / controls / settings) over the
- * last map, drifting slowly behind. Play
+ * The main menu: a screen of its own before any match, on the design system
+ * (ds.css, BFV theme; mainMenu.css): the name, one big entry (play) over the
+ * rest, the player's card top right, and a card that starts the last setup
+ * again, over the menu film (main.ts) or the last map drifting behind. Play
  * opens the game setup (mode, map, players a side, bot difficulty, the map's
  * picture) and its start button goes straight into the match; the range
  * starts at once. `onStart` gets the match address (main.ts loads the game).
@@ -82,7 +77,9 @@ export class Lobby {
   private readonly touch = isTouchDevice();
   /** What moves without a redraw: the entries / rows and the line describing the picked one. */
   private picks: HTMLElement[] = [];
-  private pickDesc: HTMLElement | null = null;
+  /** The "continue" card's picture (filled in once the map has loaded). */
+  private continuePic: HTMLElement | null = null;
+  private readonly pictureUrls = new Map<string, string>();
   private multi: MultiplayerMenu | null = null;
   private playerName = loadIdentity().name;
 
@@ -110,6 +107,9 @@ export class Lobby {
     el('div', 'lb-shade', this.root);
     this.frame = el('div', 'lb-frame', this.root);
     window.addEventListener('keydown', this.onKey);
+    // Menu sounds: browsers start audio only after a press, so the clips load then.
+    setUiVolume(this.settings.masterVolume);
+    for (const ev of ['pointerdown', 'keydown'] as const) document.addEventListener(ev, () => void loadUiSounds(), { once: true });
     this.render();
     for (const m of [...MAPS.map((e) => e.id), RANGE_ID]) void this.load(m);
     // First visit: a name before anything else.
@@ -139,13 +139,6 @@ export class Lobby {
     this.render();
   }
 
-  private langButton(parent: HTMLElement): void {
-    const b = el('button', 'lb-lang', parent);
-    b.textContent = t('lobby.otherLanguage');
-    b.title = t('lobby.language');
-    b.addEventListener('click', () => this.toggleLocale());
-  }
-
   /** The map the menu shows behind it (the last one picked). */
   get backdropMap(): string {
     return this.pick.map;
@@ -157,6 +150,7 @@ export class Lobby {
 
   /** Leaves for the match (main.ts takes the menu down once the loading screen is up). */
   private finish(pick: LobbyPick, extra = ''): void {
+    uiSound('start');
     this.save();
     window.removeEventListener('keydown', this.onKey);
     this.onStart(matchQuery(pick) + extra);
@@ -191,11 +185,15 @@ export class Lobby {
   private activate(e: Entry): void {
     if (e === 'range') this.finish({ ...this.pick, map: RANGE_ID });
     else if (e === 'tutorial') this.finish({ ...this.pick, map: RANGE_ID }, '&tutorial');
-    else this.go(e);
+    else {
+      uiSound('select');
+      this.go(e);
+    }
   }
 
   /** Back one page (the multiplayer pages step back inside themselves first). */
   private back(): void {
+    uiSound('back');
     if (this.screen === 'multi' && this.multi?.back()) return;
     this.go('main');
   }
@@ -205,8 +203,13 @@ export class Lobby {
     const key = e.code;
     if (key.startsWith('Arrow') || key === 'Enter') e.preventDefault();
     if (this.screen === 'main') {
-      if (key === 'ArrowUp' || key === 'ArrowDown') this.select((this.entry + (key === 'ArrowUp' ? -1 : 1) + ENTRIES.length) % ENTRIES.length);
-      else if (key === 'Enter') this.activate(ENTRIES[this.entry]!);
+      if (key === 'ArrowUp' || key === 'ArrowDown') {
+        // Stops at the ends (it used to wrap from play to credits).
+        const i = Math.max(0, Math.min(ENTRIES.length - 1, this.entry + (key === 'ArrowUp' ? -1 : 1)));
+        if (i !== this.entry) uiSound('move');
+        this.select(i);
+      } else if (key === 'Enter') this.activate(ENTRIES[this.entry]!);
+      else if (key === 'KeyF') this.finish(this.pick);
       return;
     }
     if (key === 'Escape' || key === 'Backspace') return this.back();
@@ -238,24 +241,29 @@ export class Lobby {
     if (id === this.pick.map) {
       this.fixMode();
       this.updateBackground();
+      this.paintContinue();
     }
     // The setup pages show every map's picture.
     if (this.screen === 'play' || this.screen === 'multi') this.render();
   }
 
-  /** Moves the highlight of the main entries in place: the logo's entrance doesn't replay. */
+  /** Moves the highlight of the main entries in place: the entrance doesn't replay. */
   private select(i: number): void {
     if (this.screen !== 'main') return;
     this.entry = i;
     this.picks.forEach((e, k) => e.classList.toggle('sel', k === i));
-    if (this.pickDesc) this.pickDesc.textContent = t(`menu.${ENTRIES[i]!}Desc`);
   }
 
   private render(): void {
     this.frame.replaceChildren();
     this.picks = [];
-    this.pickDesc = null;
+    this.continuePic = null;
     this.root.className = `lobby lb-scr-${this.screen}`;
+    // The main screen is on the design system; the other pages move onto it next.
+    const main = this.screen === 'main';
+    this.frame.className = main ? 'lb-frame mm ds-root' : 'lb-frame';
+    if (main) this.frame.dataset.dsTheme = 'bfv';
+    else delete this.frame.dataset.dsTheme;
     if (this.screen !== 'main') {
       const top = el('div', 'lb-top', this.frame);
       const back = el('button', 'lb-back', top);
@@ -309,36 +317,74 @@ export class Lobby {
   // Main: the name and the entries
 
   private renderMain(body: HTMLElement): void {
-    body.classList.add('lb-main');
-    const col = el('div', 'lb-maincol', body);
-    const logo = el('div', 'lb-logo', col);
-    el('div', 'lb-wordmark', logo).textContent = t('title');
-    el('div', 'lb-logo-rule', logo);
-    el('div', 'lb-tag', logo).textContent = t('menu.tagline');
-    const list = el('div', 'lb-menu', col);
+    body.classList.add('mm-body');
+    const top = el('div', 'mm-top', body);
+    el('div', 'mm-wordmark', top).textContent = t('title');
+    const corner = el('div', 'mm-corner', top);
+    const lang = el('button', 'ds-btn ghost mm-lang', corner);
+    lang.textContent = t('lobby.otherLanguage');
+    lang.title = t('lobby.language');
+    lang.addEventListener('click', () => {
+      uiSound('select');
+      this.toggleLocale();
+    });
+    const prof = el('button', 'mm-profile', corner);
+    prof.title = t('name.label');
+    prof.innerHTML = icon('user');
+    el('span', 'mm-profile-name', prof).textContent = this.playerName ?? '—';
+    prof.addEventListener('click', () => {
+      uiSound('open');
+      this.editName(false);
+    });
+    for (const b of [lang, prof]) b.addEventListener('pointerenter', () => uiSound('hover'));
+
+    const menu = el('div', 'ds-menu mm-menu', body);
     ENTRIES.forEach((id, i) => {
-      const b = el('button', `lb-item${i === this.entry ? ' sel' : ''}`, list);
-      el('span', 'lb-item-name', b).textContent = t(`menu.${id}`);
+      const size = id === 'play' ? ' hero' : BIG_ENTRIES.includes(id) ? '' : ' small';
+      const b = el('button', `ds-menu-item${size}${i === this.entry ? ' sel' : ''}`, menu);
+      b.style.setProperty('--i', String(i));
+      b.textContent = t(`menu.${id}`);
       b.addEventListener('pointerenter', () => {
-        if (!this.touch) this.select(i);
+        if (this.touch) return;
+        if (i !== this.entry) uiSound('hover');
+        this.select(i);
       });
       b.addEventListener('click', () => this.activate(id));
       this.picks.push(b);
     });
-    this.pickDesc = el('div', 'lb-item-desc', col);
-    this.pickDesc.textContent = t(`menu.${ENTRIES[this.entry]!}Desc`);
-    el('div', 'lb-version', body).textContent = t('menu.version');
-    // The battle behind the menu (main.ts): shown by CSS once it runs.
-    const live = el('div', 'lb-live', body);
-    el('span', 'lb-live-dot', live);
-    el('span', 'lb-live-tag', live).textContent = t('lobby.live');
-    el('span', 'lb-live-map', live).textContent = t(`map.${this.pick.map}` as MessageKey);
-    const corner = el('div', 'lb-corner', body);
-    this.langButton(corner);
-    const name = el('button', 'lb-name', corner);
-    el('span', 'lb-name-label', name).textContent = t('name.label');
-    el('span', 'lb-name-value', name).textContent = this.playerName ?? '—';
-    name.addEventListener('click', () => this.editName(false));
+
+    // The last setup, one press away.
+    const p = this.pick;
+    const card = el('button', 'ds-card mm-continue', body);
+    this.continuePic = el('div', 'mm-continue-pic', card);
+    const head = el('div', 'mm-continue-head', card);
+    el('span', 'ds-badge accent', head).textContent = t('menu.continue');
+    if (!this.touch) el('span', 'ds-kbd', head).textContent = 'F';
+    const info = el('div', 'mm-continue-info', card);
+    el('div', 'ds-card-name', info).textContent = t(`map.${p.map}` as MessageKey);
+    el('div', 'ds-dim', info).textContent = `${modeName(p.mode)} · ${p.team} vs ${p.team} · ${t('lobby.difficulty')} ${t(`lobby.diff.${p.difficulty}` as MessageKey)}`;
+    card.addEventListener('pointerenter', () => uiSound('hover'));
+    card.addEventListener('click', () => this.finish(this.pick));
+    this.paintContinue();
+
+    const foot = el('div', 'mm-foot', body);
+    if (!this.touch) {
+      const hint = (keys: string[], what: string) => {
+        const h = el('span', 'ds-hint', foot);
+        for (const k of keys) el('span', 'ds-kbd', h).textContent = k;
+        el('span', '', h).textContent = what;
+      };
+      hint(['↑', '↓'], t('lobby.hint.select'));
+      hint(['ENTER'], t('lobby.hint.ok'));
+      hint(['F'], t('menu.continue'));
+    }
+    el('span', 'mm-version ds-label', foot).textContent = t('menu.version');
+  }
+
+  /** The continue card's picture: the picked map from above. */
+  private paintContinue(): void {
+    const url = this.pictureUrl(this.pick.map);
+    if (this.continuePic && url) this.continuePic.style.backgroundImage = `url(${url})`;
   }
 
   // ---------------------------------------------------------------------------
@@ -462,26 +508,21 @@ export class Lobby {
 
   /** "5 zones · 500 × 360 m". */
   private mapFacts(map: MapDef): string {
-    const pts = outline(map);
+    const pts = mapOutline(map);
     const w = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
     const d = Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]));
     return `${t('lobby.zones').replace('{n}', String(map.zones?.length ?? 0))} · ${Math.round(w)} × ${Math.round(d)} m`;
   }
 
-  /** Keys along the bottom (keyboard only). */
+  /** Keys along the bottom (keyboard only; the main screen has its own). */
   private renderHints(): void {
-    if (this.touch) return;
+    if (this.touch || this.screen === 'main') return;
     const bar = el('div', 'lb-hints', this.frame);
     const hint = (key: string, what: MessageKey) => {
       const h = el('span', 'lb-hint', bar);
       el('span', 'keycap', h).textContent = key;
       el('span', '', h).textContent = t(what);
     };
-    if (this.screen === 'main') {
-      hint('↑ ↓', 'lobby.hint.select');
-      hint('Enter', 'lobby.hint.ok');
-      return;
-    }
     if (this.screen === 'play') {
       hint('↑ ↓', 'lobby.mode');
       hint('← →', 'lobby.map');
@@ -499,43 +540,21 @@ export class Lobby {
     if (cached) return cached;
     const map = this.maps.get(id);
     if (!map) return null;
-    const img = paintMap(map, { points: outline(map) }, 1000);
-    const g = img.canvas.getContext('2d')!;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    for (const z of map.zones ?? []) {
-      const [u, v] = img.project(z.pos[0], z.pos[2]);
-      g.beginPath();
-      g.arc(u, v, z.radius * img.scale, 0, Math.PI * 2);
-      g.fillStyle = 'rgba(242, 242, 238, 0.14)';
-      g.fill();
-      g.lineWidth = 2;
-      g.strokeStyle = '#f2f2ee';
-      g.stroke();
-      g.font = 'bold 24px sans-serif';
-      g.lineWidth = 4;
-      g.strokeStyle = 'rgba(0, 0, 0, 0.7)';
-      g.strokeText(z.id, u, v);
-      g.fillStyle = '#f2f2ee';
-      g.fillText(z.id, u, v);
-    }
-    for (const team of ['blue', 'red'] as const) {
-      const own = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
-      if (!own.length) continue;
-      const [u, v] = img.project(own.reduce((a, s) => a + s.pos[0], 0) / own.length, own.reduce((a, s) => a + s.pos[2], 0) / own.length);
-      const color = team === 'blue' ? '#3fb2ff' : '#f2453a';
-      g.fillStyle = 'rgba(8, 10, 13, 0.85)';
-      g.fillRect(u - 14, v - 14, 28, 28);
-      g.lineWidth = 2.5;
-      g.strokeStyle = color;
-      g.strokeRect(u - 14, v - 14, 28, 28);
-      g.fillStyle = color;
-      g.font = 'bold 17px sans-serif';
-      g.fillText('⌂', u, v + 1);
-    }
-    img.canvas.className = 'lb-canvas';
-    this.pictures.set(id, img.canvas);
-    return img.canvas;
+    const canvas = paintMapCard(map);
+    canvas.className = 'lb-canvas';
+    this.pictures.set(id, canvas);
+    return canvas;
+  }
+
+  /** The same picture as an image address (backgrounds), made once per map. */
+  private pictureUrl(id: string): string | null {
+    const cached = this.pictureUrls.get(id);
+    if (cached) return cached;
+    const c = this.picture(id);
+    if (!c) return null;
+    const url = c.toDataURL('image/jpeg', 0.78);
+    this.pictureUrls.set(id, url);
+    return url;
   }
 
   /** The picked map, dark and drifting, behind everything. */
@@ -543,9 +562,9 @@ export class Lobby {
   private updateBackground(): void {
     const id = this.pick.map;
     if (this.bgFor === id) return;
-    const c = this.picture(id);
-    if (!c) return;
+    const url = this.pictureUrl(id);
+    if (!url) return;
     this.bgFor = id;
-    this.bg.style.backgroundImage = `url(${c.toDataURL('image/jpeg', 0.72)})`;
+    this.bg.style.backgroundImage = `url(${url})`;
   }
 }

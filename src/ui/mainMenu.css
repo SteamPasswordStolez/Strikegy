@@ -1,0 +1,199 @@
+/*
+ * Main menu on the design system (owner, 2026-10-17; ds.css, BFV theme).
+ * Layout: the name top left, the player's card top right, the entries on the
+ * left (play the biggest), the "continue" card bottom right, keys along the
+ * bottom. The old .lobby / .lb-* rules still dress the other pages.
+ */
+.lobby.lb-scr-main {
+  background: #0c0c0b;
+}
+/* Neutral shade (the old one had a cyan glow): dark on the left and along the bottom. */
+.lobby.lb-scr-main .lb-shade {
+  background:
+    linear-gradient(90deg, rgb(0 0 0 / 0.82) 0%, rgb(0 0 0 / 0.55) 30%, transparent 62%),
+    linear-gradient(0deg, rgb(0 0 0 / 0.65) 0%, transparent 28%),
+    linear-gradient(180deg, rgb(0 0 0 / 0.45) 0%, transparent 18%);
+}
+.lobby.lb-scr-main .lb-bg {
+  filter: blur(3px) saturate(0.35) brightness(0.5);
+}
+
+.lb-frame.mm {
+  gap: 0;
+  padding: var(--s7) var(--s8) var(--s5);
+}
+.mm-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+}
+
+.mm-top {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+}
+.mm-wordmark {
+  font: 700 var(--fs-2xl) / 1 var(--font-display);
+  letter-spacing: 0.06em;
+  animation: mm-in var(--t-slow) var(--ease) both;
+}
+.mm-corner {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.mm-lang {
+  --h: calc(var(--u) * 2.75);
+  font-size: var(--fs-sm);
+}
+.mm-profile {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  height: calc(var(--u) * 2.75);
+  padding: 0 var(--s4);
+  border: var(--line-w) solid var(--line);
+  background: var(--surface-1);
+  color: var(--ink);
+  font: 600 var(--fs-md) / 1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.mm-profile:hover,
+.mm-profile:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  outline: none;
+}
+.mm-profile .ds-icon {
+  color: var(--ink-2);
+}
+
+.mm-menu {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: center;
+  margin-left: calc(var(--s5) * -1);
+}
+.mm-menu .ds-menu-item {
+  animation: mm-in var(--t-slow) var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 40ms + 80ms);
+}
+.mm-menu .ds-menu-item.hero {
+  margin-bottom: var(--s3);
+}
+.mm-menu .ds-menu-item:not(.small) + .ds-menu-item.small {
+  margin-top: var(--s5);
+}
+
+/* The last setup, one press away. */
+.mm-continue {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  justify-content: space-between;
+  width: calc(var(--u) * 24);
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  animation: mm-in var(--t-slow) var(--ease) both;
+  animation-delay: 240ms;
+}
+.mm-continue > .mm-continue-pic {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--surface-2) center / cover;
+  filter: saturate(0.6) brightness(0.8);
+  transform: scale(1.04);
+  transition:
+    transform var(--t-slow) var(--ease),
+    filter var(--t-slow) var(--ease);
+}
+.mm-continue::before {
+  z-index: 1;
+}
+.mm-continue > :not(.mm-continue-pic) {
+  z-index: 2;
+}
+.mm-continue:hover,
+.mm-continue:focus-visible {
+  border-color: var(--sel-bg);
+  outline: none;
+}
+.mm-continue:hover > .mm-continue-pic {
+  transform: scale(1.1);
+  filter: saturate(0.8) brightness(0.95);
+}
+.mm-continue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mm-continue-info .ds-dim {
+  font-size: var(--fs-sm);
+}
+
+.mm-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s5);
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: var(--line-w) solid var(--line);
+}
+.mm-version {
+  margin-left: auto;
+}
+
+@keyframes mm-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--u) * -1));
+  }
+}
+
+/* Phones in landscape: a smaller unit, the same layout. */
+@media (max-height: 520px) {
+  .lb-frame.mm {
+    --u: 11px;
+    padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  }
+  .mm-continue {
+    width: calc(var(--u) * 21);
+  }
+}
+/* Narrow portrait screens: one column, the card under the entries. */
+@media (max-width: 760px) and (orientation: portrait) {
+  .mm-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    gap: var(--s6);
+  }
+  .mm-top {
+    flex-wrap: wrap;
+  }
+  .mm-continue {
+    grid-column: 1;
+    grid-row: 3;
+    width: 100%;
+  }
+  .mm-foot {
+    grid-row: 4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mm-wordmark,
+  .mm-menu .ds-menu-item,
+  .mm-continue {
+    animation: none;
+  }
+}
