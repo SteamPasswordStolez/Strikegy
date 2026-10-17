@@ -1,0 +1,106 @@
+/*
+ * Battle briefing on screen (CriticalStrip.ts; ds.css, BFV theme): the strip
+ * high in the middle and the subtitle near the bottom. Inside the HUD, so it
+ * hides with it under menus and results.
+ */
+.crit-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.crit {
+  position: absolute;
+  top: 17%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  min-width: calc(var(--u) * 18);
+  padding: var(--s3) var(--s6) var(--s3);
+  background: linear-gradient(90deg, transparent, rgb(12 12 11 / 0.82) 18%, rgb(12 12 11 / 0.82) 82%, transparent);
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, calc(var(--u) * -0.5));
+  transition:
+    opacity var(--t-base) var(--ease),
+    transform var(--t-base) var(--ease);
+}
+.crit::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--u) * 5);
+  height: var(--bar-w);
+  background: var(--ink);
+  transform: translateX(-50%) scaleX(0);
+  transition: transform var(--t-slow) var(--ease);
+}
+.crit.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.crit.on::after {
+  transform: translateX(-50%) scaleX(1);
+}
+.crit.t-good::after {
+  background: var(--ally);
+}
+.crit.t-bad::after {
+  background: var(--enemy);
+}
+.crit-head {
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  line-height: 1.1;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+}
+.crit.t-good .crit-head {
+  color: #cfe5ff;
+}
+.crit.t-bad .crit-head {
+  color: #ffd0c4;
+}
+.crit-detail {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.crit-detail:empty {
+  display: none;
+}
+
+.crit-subs {
+  position: absolute;
+  bottom: 20%;
+  left: 50%;
+  max-width: min(calc(var(--u) * 46), calc(100% - 32px));
+  padding: var(--s1) var(--s3);
+  background: rgb(12 12 11 / 0.72);
+  font-size: var(--fs-md);
+  line-height: 1.35;
+  text-align: center;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity var(--t-base) var(--ease);
+}
+.crit-subs.on {
+  opacity: 1;
+}
+.crit-sub-who {
+  margin-right: var(--s2);
+  font-weight: 700;
+  color: var(--accent);
+}
+@media (max-height: 520px) {
+  .crit-layer {
+    --u: 11px;
+  }
+  .crit {
+    top: 22%;
+  }
+  .crit-subs {
+    bottom: 30%;
+  }
+}

@@ -88,6 +88,8 @@ export class SettingsPanel {
       if (!this.opts.live) this.toggle(rows, 'lobby.menuScene', 'menuScene');
     } else {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
+      this.slider(rows, 'lobby.voiceVolume', 'voiceVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
+      this.toggle(rows, 'lobby.subtitles', 'subtitles');
       this.choice(rows, 'lobby.language', 'locale', ['ko', 'en'] as const, (v) => (v === 'ko' ? '한국어' : 'English'));
     }
   }
@@ -111,7 +113,7 @@ export class SettingsPanel {
     return ctl;
   }
 
-  private slider(parent: HTMLElement, label: MessageKey, key: 'sensitivity' | 'adsSensitivity' | 'fov' | 'masterVolume' | 'renderScale', min: number, max: number, step: number, show: (v: number) => string): void {
+  private slider(parent: HTMLElement, label: MessageKey, key: 'sensitivity' | 'adsSensitivity' | 'fov' | 'masterVolume' | 'voiceVolume' | 'renderScale', min: number, max: number, step: number, show: (v: number) => string): void {
     const ctl = this.row(parent, label, key);
     const input = el('input', 'sp-range', ctl);
     input.type = 'range';
@@ -142,7 +144,7 @@ export class SettingsPanel {
   }
 
   /** Two choices, off / on (or named by `names`). */
-  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
+  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene' | 'subtitles', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
     const seg = el('div', 'sp-seg', this.row(parent, label, key));
     for (const on of [false, true]) {
       const b = el('button', `sp-opt${on === this.s[key] ? ' sel' : ''}`, seg);

@@ -73,6 +73,8 @@ import { ChatPanel } from '@/ui/ChatPanel';
 import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
+import { Briefing } from '@/audio/briefing/Briefing';
+import { BriefingDirector } from '@/modes/briefingDirector';
 import { SettingsPanel } from '@/ui/SettingsPanel';
 import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
@@ -175,6 +177,9 @@ export class Game {
   /** The soldier this browser plays: id and side (fixed solo; the server's in a match there). */
   private readonly myId: number;
   private readonly myTeam: Team;
+  /** The battle briefing (strip + HQ radio) and what feeds it; zone matches only. */
+  private briefing: Briefing | null = null;
+  private briefDirector: BriefingDirector | null = null;
   /** This soldier as a side (free-for-all: just them). */
   private get meSide(): { id: number; team: Team } {
     return { id: this.myId, team: this.myTeam };
@@ -469,6 +474,7 @@ export class Game {
     this.overlay = new Overlay(container);
     this.scoreboard = new Scoreboard(container);
     this.audio = new AudioSystem(this.settings.masterVolume);
+    this.audio.setVoiceVolume(this.settings.voiceVolume);
     this.viewModel = new ViewModel(this.renderer.fpScene, this.models);
 
     this.kbm = new KeyboardMouse(
@@ -998,6 +1004,7 @@ export class Game {
   private resume(): void {
     if (this.matchOver) return;
     this.audio.unlock();
+    this.briefing?.setPaused(false);
     if (this.deployFlow && !this.deployed) {
       // Not on the field yet: the world runs behind the deploy screen.
       this.running = true;
@@ -1049,6 +1056,7 @@ export class Game {
     // Not over the result screen: ending the match lets go of the mouse, which used to pause.
     if (!this.started || this.matchOver) return;
     this.running = false;
+    this.briefing?.setPaused(true);
     this.touch?.setVisible(false);
     // From the deploy screen: it steps aside; resuming opens it again.
     this.deployScreen?.hide();
@@ -1175,6 +1183,8 @@ export class Game {
       live: true,
       onChange: (key) => {
         if (key === 'masterVolume') this.audio.setVolume(this.settings.masterVolume);
+        if (key === 'voiceVolume') this.audio.setVoiceVolume(this.settings.voiceVolume);
+        if (key === 'subtitles') this.briefing?.setSubtitles(this.settings.subtitles);
         if (key === 'renderScale') this.renderer.setRenderScale(this.settings.renderScale);
         // Toggled down when crouching becomes held: stand up (the key isn't held).
         if (key === 'crouchHold' && this.settings.crouchHold && this.player.crouchToggled) this.kbm.flipCrouchOnce();
@@ -1198,6 +1208,8 @@ export class Game {
     this.lastTime = now;
     this.elapsed += dt;
     this.countFps(dt);
+    this.briefing?.update();
+    this.briefDirector?.update(dt);
 
     const input = this.input;
     resetFrameInput(input);
@@ -3570,18 +3582,24 @@ export class Game {
     this.zoneMode = zm;
     if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
-    const side = (team: Team): Side => (team === this.myTeam ? 'ally' : 'enemy');
     if (!this.options.net) this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
+    // The battle briefing (owner, 2026-10-17): the strip and HQ's radio take the news below.
+    this.briefing = new Briefing(this.hud.root, this.audio, this.settings.locale, this.settings.subtitles, ASSET_BASE);
+    this.briefDirector = new BriefingDirector(this.briefing, zm, {
+      myTeam: this.myTeam,
+      myId: this.myId,
+      onField: () => this.deployed && this.player.alive,
+      outsideCircle: () => this.deployed && this.player.alive && zm.stormDps(this.player.feet) > 0,
+    }, this.bus);
+    this.briefDirector.start();
     this.bus.on('zone:captured', (e) => {
       const ours = e.team === this.myTeam;
-      this.hud.notify(`${e.zone} ${t(ours ? 'zone.captured' : 'zone.enemyCaptured')}`, side(e.team));
       this.audio.zoneCue(ours);
       this.bots?.replan('blue');
       this.bots?.replan('red');
     });
     this.bus.on('zone:neutralized', (e) => {
       const ours = e.team === this.myTeam;
-      this.hud.notify(`${e.zone} ${t(ours ? 'zone.lost' : 'zone.enemyLost')}`, ours ? 'enemy' : 'ally');
       this.audio.zoneCue(!ours);
       if (ours && this.spawnKey === `zone:${e.zone}`) this.spawnKey = 'base';
       this.bots?.replan('blue');
@@ -4354,7 +4372,6 @@ export class Game {
       return;
     }
     if (e.type === 'shrink') {
-      this.hud.notify(t('lms.shrink'), 'enemy');
       this.audio.zoneCue(false);
       this.bots?.replan('blue');
       this.bots?.replan('red');
@@ -4376,8 +4393,6 @@ export class Game {
     }
     if (e.type === 'charge') {
       const c = zm.charges?.charges.find((x) => x.id === e.id);
-      const key = e.state === 'armed' ? (ours(e.team) ? 'charge.weArmed' : 'charge.theyArmed') : e.state === 'defused' ? (ours(e.team) ? 'charge.weDefused' : 'charge.theyDefused') : ours(e.team) ? 'charge.weBlew' : 'charge.theyBlew';
-      this.hud.notify(t(key).replace('{id}', e.id), ours(e.team) ? 'ally' : 'enemy');
       this.audio.zoneCue(ours(e.team));
       // Solo: the charge goes off here (on the game server the server's blast and its boom come instead).
       if (e.state === 'blown' && c && !this.net) this.blast('charge', new THREE.Vector3(c.x, c.y + 0.4, c.z), { id: -1, name: t('charge.name'), team: e.team }, t('charge.name'));
@@ -4386,12 +4401,10 @@ export class Game {
       return;
     }
     if (e.type === 'roundEnd') {
-      this.hud.notify(t(ours(e.winner) ? 'snd.won' : 'snd.lost').replace('{why}', t(`snd.why.${e.why}`)), ours(e.winner) ? 'ally' : 'enemy');
       this.audio.zoneCue(ours(e.winner));
       return;
     }
     if (e.type === 'round') {
-      this.hud.notify(`${t('snd.round').replace('{n}', String(e.n))} · ${t(ours(e.attacker) ? 'mode.attack' : 'mode.defend')}`, ours(e.attacker) ? 'ally' : 'enemy');
       // Everyone back for the new round (on the game server the server moves people's soldiers and says so).
       if (!this.net) this.newRound();
       else if (!this.deployed || !this.player.alive) this.respawnTimer = 0;
@@ -4404,7 +4417,6 @@ export class Game {
       return;
     }
     if (e.type === 'hill') {
-      this.hud.notify(t('mode.hillMoved').replace('{z}', e.zone), 'neutral');
       this.audio.zoneCue(true);
       if (this.spawnKey === `zone:${e.zone}`) this.spawnKey = 'base';
       this.bots?.replan('blue');
@@ -4413,8 +4425,6 @@ export class Game {
     }
     if (e.type === 'checkpoint') {
       const att = m instanceof EscortRules && ours(m.attacker);
-      const text = e.bonus > 0 ? t('escort.checkpoint').replace('{z}', e.zone).replace('{n}', String(e.bonus)) : t('escort.delivered');
-      this.hud.notify(text, att ? 'ally' : 'enemy');
       this.audio.zoneCue(att);
       if (this.spawnKey.startsWith('zone:') && !zm.match.spawnZones(this.myTeam)?.includes(this.spawnKey.slice(5))) this.spawnKey = 'base';
       this.bots?.replan('blue');
@@ -4422,29 +4432,20 @@ export class Game {
       return;
     }
     if (e.type === 'built') {
-      this.hud.notify(t('fortress.fight'), 'neutral');
       this.audio.zoneCue(true);
       this.bots?.replan('blue');
       this.bots?.replan('red');
       return;
     }
     if (e.type === 'attack' && (m instanceof ConquestRules || m instanceof RushRules || m instanceof EscortRules) && e.reason === 'opening') {
-      this.hud.notify(t(ours(e.attacker) ? 'mode.goAttack' : 'mode.goDefend'), ours(e.attacker) ? 'ally' : 'enemy');
       this.audio.zoneCue(ours(e.attacker));
     } else if (e.type === 'sector') {
       if (m instanceof ConquestRules || m instanceof RushRules) {
-        const n = String(e.sector + 1);
-        this.hud.notify(t(ours(e.team) ? 'mode.breakthrough' : 'mode.breached').replace('{n}', n), ours(e.team) ? 'ally' : 'enemy');
         this.audio.zoneCue(ours(e.team));
       }
     } else if (m instanceof FrontlineRules && e.type === 'attack') {
       // A new attack: say who attacks and why.
       const weAttack = ours(e.attacker);
-      const key =
-        e.reason === 'opening' ? (weAttack ? 'mode.openingLost' : 'mode.openingWon')
-        : e.reason === 'captured' ? (weAttack ? 'mode.sectorLost' : 'mode.sectorWon')
-        : weAttack ? 'mode.heldUs' : 'mode.heldThem';
-      this.hud.notify(t(key), weAttack === (e.reason === 'held') ? 'ally' : 'enemy');
       this.audio.zoneCue(weAttack === (e.reason === 'held'));
     }
     if (this.spawnKey.startsWith('zone:') && !zm.freeSpawns && zm.zone(this.spawnKey.slice(5))?.owner !== this.myTeam) this.spawnKey = 'base';
@@ -4477,6 +4478,7 @@ export class Game {
     // Free-for-all: whoever came first (the server's copy of the rules says who on a client).
     const solo = this.zoneMode?.match instanceof SoloRules;
     const won = solo ? (winnerId ?? this.zoneMode?.match.winnerId) === this.myId : winner === this.myTeam;
+    this.briefDirector?.end(won);
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;

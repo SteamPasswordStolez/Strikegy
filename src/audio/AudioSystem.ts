@@ -336,6 +336,38 @@ export class AudioSystem {
     if (this.master) this.master.gain.value = v;
   }
 
+  private voiceBus: GainNode | null = null;
+  private voiceVolume = 1;
+
+  /**
+   * The battle briefing's way out (audio/briefing): its own gain straight
+   * into the master, past the world's reverb and blast muffling, so a radio
+   * line stays clear in the loudest fight. Null until audio is unlocked.
+   */
+  voiceOutput(): { ctx: AudioContext; dest: GainNode } | null {
+    if (!this.ctx || !this.master) return null;
+    if (!this.voiceBus) {
+      this.voiceBus = this.ctx.createGain();
+      this.voiceBus.gain.value = this.voiceVolume;
+      this.voiceBus.connect(this.master);
+    }
+    return { ctx: this.ctx, dest: this.voiceBus };
+  }
+
+  setVoiceVolume(v: number): void {
+    this.voiceVolume = v;
+    if (this.voiceBus) this.voiceBus.gain.value = v;
+  }
+
+  /** Lowers the world by `db` from `from` to `to` (context time) under a voice line. */
+  duck(db: number, from: number, to: number): void {
+    const g = this.world?.gain;
+    if (!g) return;
+    g.cancelScheduledValues(from);
+    g.setTargetAtTime(Math.pow(10, db / 20), from, 0.05);
+    g.setTargetAtTime(1, to, 0.15);
+  }
+
   /** Keeps the Web Audio listener on the camera. */
   setListener(pos: THREE.Vector3, forward: THREE.Vector3, up: THREE.Vector3): void {
     const l = this.ctx?.listener;

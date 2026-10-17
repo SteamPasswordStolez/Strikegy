@@ -15,6 +15,10 @@ export interface Settings {
   locale: Locale;
   showFps: boolean;
   masterVolume: number;
+  /** The battle briefing's voice (0..1, under the master volume). */
+  voiceVolume: number;
+  /** The briefing's spoken lines as text (owner, 2026-10-17: on by default). */
+  subtitles: boolean;
   /** Render resolution as a share of the screen's (0.5..1; no automatic changes). */
   renderScale: number;
   /** Crouch while the key is held (keyboard), instead of a press toggling it. */
@@ -34,6 +38,8 @@ export const DEFAULT_SETTINGS: Settings = {
   locale: 'ko',
   showFps: false,
   masterVolume: 0.8,
+  voiceVolume: 1,
+  subtitles: true,
   renderScale: 0.9,
   crouchHold: false,
   menuScene: true,
