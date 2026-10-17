@@ -7,7 +7,28 @@ import { loadSettings } from '@/core/Settings';
 import { MAPS } from '@/data/maps';
 
 const container = document.getElementById('app')!;
-const loadGame = () => import('@/core/Game');
+const fetchGame = () => import('@/core/Game');
+// A tab opened before a new deploy asks for the old build's game chunk, which is gone (Pages
+// keeps the page cached for 10 min, the new build has new chunk names): reload once to get
+// the new page. The match the player picked is kept in the tab (core/session.ts), so the
+// reload goes straight into it. Once in 30 s, so a real outage doesn't loop.
+const STALE_KEY = 'strikegy.staleReload';
+function reloadForNewBuild(): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(STALE_KEY)) || 0;
+    if (Date.now() - last < 30_000) return false;
+    sessionStorage.setItem(STALE_KEY, String(Date.now()));
+  } catch {
+    return false;
+  }
+  location.reload();
+  return true;
+}
+const loadGame = () =>
+  fetchGame().catch((err: unknown) => {
+    if (reloadForNewBuild()) return new Promise<never>(() => {});
+    throw err;
+  });
 // No map in the address: the lobby, or the solo match this tab was playing
 // (a reload or "again"). The address stays the site's own: the match's
 // settings are kept in the tab (core/session.ts), a history entry with the
@@ -27,7 +48,8 @@ else {
       rememberMatch(query);
       startSolo(query, () => menu.root.remove());
     },
-    () => void loadGame(),
+    // Prefetch while the setup is open: a failure waits for the start press (which reloads).
+    () => void fetchGame().catch(() => {}),
     // A room's match on the game server: a reload comes back to the
     // multiplayer pages, where the server puts this browser back in its seat.
     (start, link) => {
