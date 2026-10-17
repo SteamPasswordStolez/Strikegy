@@ -13,6 +13,9 @@ export interface ScoreRow {
   /** Zones captured while standing in them. */
   captures: number;
   score: number;
+  /** For the result screen (counted where the match is played; may be missing in a server's table). */
+  headshots?: number;
+  revives?: number;
 }
 
 /** What a score popup says the points were for. */
@@ -45,6 +48,7 @@ export class ScoreTracker {
     const v = victimId === undefined ? undefined : this.rows.get(victimId);
     if (v && (v === a || friends(v, a))) return;
     a.kills++;
+    if (headshot) a.headshots = (a.headshots ?? 0) + 1;
     a.score += POINTS.kill + (headshot ? POINTS.headshot : 0);
     this.onPoints?.(a.id, POINTS.kill, 'kill');
     if (headshot) this.onPoints?.(a.id, POINTS.headshot, 'headshot');
@@ -60,6 +64,7 @@ export class ScoreTracker {
     const r = this.rows.get(id);
     if (!r) return;
     const pts = medic ? POINTS.reviveMedic : POINTS.revive;
+    r.revives = (r.revives ?? 0) + 1;
     r.score += pts;
     this.onPoints?.(id, pts, 'revive');
   }

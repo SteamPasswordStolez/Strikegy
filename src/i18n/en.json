@@ -752,5 +752,15 @@
   "lobby.factZones": "Zones",
   "lobby.factSize": "Size",
   "lobby.factFor": "Made for",
-  "lobby.modeKind": "Mode type"
+  "lobby.modeKind": "Mode type",
+  "result.yours": "Your match",
+  "result.score": "Score",
+  "result.kills": "Kills",
+  "result.deaths": "Deaths",
+  "result.headshots": "Headshots",
+  "result.revives": "Revives",
+  "result.captures": "Captures",
+  "result.place": "#{n} of {total} on your side",
+  "result.mvp": "Top scorer",
+  "result.board": "Final standings"
 }

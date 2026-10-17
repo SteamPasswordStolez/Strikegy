@@ -752,5 +752,15 @@
   "lobby.factZones": "거점",
   "lobby.factSize": "크기",
   "lobby.factFor": "권장",
-  "lobby.modeKind": "모드 종류"
+  "lobby.modeKind": "모드 종류",
+  "result.yours": "내 기록",
+  "result.score": "점수",
+  "result.kills": "처치",
+  "result.deaths": "사망",
+  "result.headshots": "헤드샷",
+  "result.revives": "부활",
+  "result.captures": "점령",
+  "result.place": "팀 내 {n}위 / {total}명",
+  "result.mvp": "최고 득점",
+  "result.board": "최종 순위"
 }

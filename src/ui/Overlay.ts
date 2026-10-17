@@ -1,7 +1,9 @@
 import { t, type MessageKey } from '@/i18n';
 import { isTouchDevice } from '@/core/Settings';
+import { uiSound } from '@/audio/uiSounds';
 import './ds.css';
 import './loading.css';
+import './result.css';
 
 /** What the loading screen says about the match (Game sets it once the map is in). */
 export interface LoadingInfo {
@@ -12,6 +14,26 @@ export interface LoadingInfo {
   facts: string;
   /** The map from above (ui/mapPainter `paintMapCard`). */
   picture?: HTMLCanvasElement;
+}
+
+/** What the result screen shows (Game fills it when a match ends). */
+export interface ResultInfo {
+  won: boolean;
+  /** "Iron Gate · Zone". */
+  context: string;
+  title: string;
+  /** Why it ended and the score. */
+  line: string;
+  /** The player's own numbers. */
+  stats: { label: string; value: string }[];
+  /** "#3 of 12 on your side". */
+  place?: string;
+  /** The match's top scorer. */
+  mvp?: string;
+  /** The final standings (the scoreboard in its final mode), if any. */
+  board?: HTMLElement | null;
+  /** First = Enter (the main one), second = Esc. */
+  actions: OverlayAction[];
 }
 
 /** Loading tips: the ones naming keys are for keyboards only. */
@@ -68,6 +90,9 @@ export class Overlay {
   private readonly ldBar: HTMLDivElement;
   private tipTimer = 0;
   private tipAt = Math.floor(Math.random() * 1000);
+  /** The result screen (design system): shown while the root has `.result`. */
+  private readonly rs: HTMLDivElement;
+  private resultKeys: ((e: KeyboardEvent) => void) | null = null;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -116,7 +141,106 @@ export class Overlay {
     this.ldStep = div('ld-step', bottom);
     this.ldPct = div('ld-pct ds-num', bottom);
     this.ldBar = div('ds-progress ld-bar', bottom);
+    this.rs = div('rs ds-root', this.root);
+    this.rs.dataset.dsTheme = 'bfv';
     parent.appendChild(this.root);
+  }
+
+  /**
+   * The match result on the design system (owner, 2026-10-17; result.css):
+   * won or lost in big type with the side's colour, why and the score, the
+   * player's own numbers and place, the final standings, and the buttons
+   * (Enter the first, Esc the second). Call after `show(..., 'win' | 'loss')`.
+   */
+  setResult(r: ResultInfo): void {
+    this.stopResultKeys();
+    const rs = this.rs;
+    rs.replaceChildren();
+    rs.classList.toggle('won', r.won);
+    rs.classList.toggle('lost', !r.won);
+    const div = (cls: string, parent: HTMLElement, text?: string): HTMLDivElement => {
+      const e = document.createElement('div');
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      parent.appendChild(e);
+      return e;
+    };
+    // The map from the loading screen, faint behind it all.
+    const pic = div('rs-pic', rs);
+    const canvas = this.ldPic.querySelector('canvas');
+    if (canvas) pic.appendChild(canvas);
+    div('rs-shade', rs);
+
+    const head = div('rs-head', rs);
+    div('ds-label', head, r.context);
+    div('rs-title', head, r.title);
+    div('rs-line', head, r.line);
+
+    const mine = div('rs-mine', rs);
+    div('ds-label rs-mine-label', mine, t('result.yours'));
+    const tiles = div('rs-tiles', mine);
+    for (const s of r.stats) {
+      const tile = div('rs-tile', tiles);
+      div('ds-label', tile, s.label);
+      div('ds-num rs-tile-num', tile, s.value);
+    }
+    if (r.place || r.mvp) {
+      const facts = div('rs-facts', mine);
+      if (r.place) div('rs-place', facts, r.place);
+      if (r.mvp) {
+        const m = div('rs-mvp', facts);
+        div('ds-label', m, t('result.mvp'));
+        div('rs-mvp-name', m, r.mvp);
+      }
+    }
+
+    const board = div('rs-board', rs);
+    if (r.board) {
+      div('ds-label rs-board-label', board, t('result.board'));
+      board.appendChild(r.board);
+    }
+
+    const foot = div('rs-foot', rs);
+    const keys = ['ENTER', 'ESC'];
+    r.actions.forEach((a, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ds-btn${i === 0 ? ' primary' : ' ghost'}`;
+      const label = document.createElement('span');
+      label.textContent = a.label;
+      b.appendChild(label);
+      if (keys[i] && !isTouchDevice()) {
+        const k = document.createElement('span');
+        k.className = 'ds-kbd';
+        k.textContent = keys[i]!;
+        b.appendChild(k);
+      }
+      b.addEventListener('pointerenter', () => uiSound('hover'));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        uiSound(i === 0 ? 'start' : 'back');
+        a.onClick();
+      });
+      foot.appendChild(b);
+    });
+    this.root.classList.add('result');
+    // Enter / Esc work the buttons; nothing else in the game sees them meanwhile.
+    this.resultKeys = (e: KeyboardEvent) => {
+      const i = e.code === 'Enter' || e.code === 'NumpadEnter' ? 0 : e.code === 'Escape' ? 1 : -1;
+      const a = r.actions[i];
+      if (!a) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      uiSound(i === 0 ? 'start' : 'back');
+      a.onClick();
+    };
+    window.addEventListener('keydown', this.resultKeys, { capture: true });
+  }
+
+  private stopResultKeys(): void {
+    if (!this.resultKeys) return;
+    window.removeEventListener('keydown', this.resultKeys, { capture: true });
+    this.resultKeys = null;
   }
 
   /** The match on the loading screen: mode, map name, facts and the map from above. */
@@ -190,6 +314,7 @@ export class Overlay {
 
   show(title: string, sub = '', hint = '', kind: OverlayKind = 'info'): void {
     this.stopTips();
+    this.stopResultKeys();
     this.setActions([]);
     this.shown = kind;
     this.root.className = `overlay kind-${kind}`;
@@ -202,6 +327,7 @@ export class Overlay {
 
   hide(): void {
     this.stopTips();
+    this.stopResultKeys();
     this.root.classList.add('hidden');
     document.body.classList.remove('overlay-up');
   }

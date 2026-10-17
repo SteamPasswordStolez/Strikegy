@@ -4481,27 +4481,68 @@ export class Game {
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
-      this.overlay.show(t(won ? 'match.victory' : 'match.defeat'), this.resultLine(), t(this.net ? 'mp.again' : 'match.again'), won ? 'win' : 'loss');
-      this.overlay.setActions(
-        this.net
-          ? [
-              { label: t('mp.backToRoom'), primary: true, onClick: () => location.reload() },
-              { label: t('lobby.back'), onClick: () => this.quit() },
-            ]
-          : [
-              { label: t('lobby.again'), primary: true, onClick: () => location.reload() },
-              { label: t('lobby.back'), onClick: toLobby },
-            ],
-      );
+      const title = t(won ? 'match.victory' : 'match.defeat');
+      const line = this.resultLine();
+      this.overlay.show(title, line, '', won ? 'win' : 'loss');
       // Final standings under the result.
+      let board: HTMLElement | null = null;
       if (this.bots || this.net) {
         this.fillScoreboard();
         this.scoreboard.setFinal(true);
         this.scoreboard.setVisible(true);
-        this.overlay.setExtra(this.scoreboard.root);
+        board = this.scoreboard.root;
       }
-      this.overlay.root.addEventListener('click', () => location.reload(), { once: true });
+      this.overlay.setResult({
+        won,
+        context: this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName,
+        title,
+        line,
+        ...this.resultStats(),
+        board,
+        actions: this.net
+          ? [
+              { label: t('mp.backToRoom'), onClick: () => location.reload() },
+              { label: t('lobby.back'), onClick: () => this.quit() },
+            ]
+          : [
+              { label: t('lobby.again'), onClick: () => location.reload() },
+              { label: t('lobby.back'), onClick: toLobby },
+            ],
+      });
     }, 2500);
+  }
+
+  /** The result screen's own numbers: the player's stats, place and the top scorer. */
+  private resultStats(): { stats: { label: string; value: string }[]; place?: string; mvp?: string } {
+    const me = this.scores.get(this.myId);
+    if (!me) return { stats: [] };
+    const m = this.zoneMode?.match;
+    const solo = m instanceof SoloRules;
+    const stats = [
+      { label: t('result.score'), value: me.score.toLocaleString() },
+      { label: t('result.kills'), value: String(me.kills) },
+      { label: t('result.deaths'), value: String(me.deaths) },
+    ];
+    // Counted only where the match is played (a server's table doesn't carry them).
+    if (!this.net) {
+      stats.push({ label: t('result.headshots'), value: String(me.headshots ?? 0) });
+      if (!solo) stats.push({ label: t('result.revives'), value: String(me.revives ?? 0) });
+    }
+    const zones = !!this.zoneMode?.zones.some((z) => !z.hidden) && !solo;
+    if (zones) stats.push({ label: t('result.captures'), value: String(me.captures) });
+    const all = this.scores.table(null);
+    let place: string | undefined;
+    if (solo) {
+      const s = this.soloScores(m);
+      place = t('mode.place').replace('{n}', String(s.place)).replace('{total}', String(s.total));
+    } else {
+      const side = this.scores.table(this.myTeam);
+      const at = side.findIndex((r) => r.id === this.myId);
+      if (at >= 0 && side.length > 1) place = t('result.place').replace('{n}', String(at + 1)).replace('{total}', String(side.length));
+    }
+    const top = all[0];
+    const mvp = top && all.length > 1 ? (top.id === this.myId ? playerName(t('feed.you')) : top.name) : undefined;
+    return { stats, place, mvp };
   }
 
   // ---------------------------------------------------------------------------
