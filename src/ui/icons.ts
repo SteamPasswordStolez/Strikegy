@@ -49,6 +49,13 @@ const PATHS = {
   jet: '<path d="M12 2.5 13.8 9l8.2 4v2l-8.2-2-.5 5.5 2.7 2h-8l2.7-2-.5-5.5-8.2 2v-2L10.2 9Z"/>',
   beacon: '<path d="M12 21v-9"/><circle cx="12" cy="9" r="2"/><path d="M8 5a5.6 5.6 0 0 0 0 8M16 5a5.6 5.6 0 0 1 0 8M5 2.5a9.5 9.5 0 0 0 0 13M19 2.5a9.5 9.5 0 0 1 0 13"/>',
   star: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8Z"/>',
+  // The kit on the HUD (throwables and class gadgets).
+  flash: '<rect x="8" y="7" width="8" height="13"/><path d="M8 11h8M8 15h8M10 7V4h4v3"/>',
+  smoke: '<rect x="7" y="8" width="10" height="12"/><path d="M9 8V5h6v3M7 12h10"/><path d="M15 4c1.5-1.2 3-1 4 0"/>',
+  rocket: '<path d="M2 15l12-4.5"/><path d="M14 10.5l4.5-2 3 2.5-4.5 2z"/><path d="M6 13.5l1.2 4.5M10 12l1 2.8"/>',
+  riflesmoke: '<path d="M12 3l3 4v8l-3 2.5L9 15V7z"/><path d="M12 17.5V21M9 11h6"/>',
+  mine: '<path d="M4 17h16l-2.5-5h-11z"/><path d="M12 12V9M10 9h4"/>',
+  headshot: '<circle cx="12" cy="10" r="6.5"/><path d="M9.5 17v3.5h5V17"/><circle cx="9.5" cy="10" r="1.25"/><circle cx="14.5" cy="10" r="1.25"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -1,6 +1,9 @@
 import { t, type MessageKey } from '@/i18n';
 import { actionKey, bindingsVersion } from '@/input/bindings';
 import type { TutorialRun } from '@/core/tutorial';
+import { icon } from './icons';
+import './ds.css';
+import './hud.css';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -10,10 +13,11 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
 }
 
 /**
- * The tutorial's card under the objective bar: "Tutorial 3/11", the step's
- * keys (desktop) and what to do, a bar while it fills, a tick when done.
- * On the deploy screen it sits at the bottom. Skipping: Esc and the pause
- * menu on a desktop, the ✕ on a touch screen.
+ * The tutorial's card (hud.css; its own `ds-root`): "Tutorial 3/11", the
+ * step's keys (desktop) and what to do, a bar while it fills, green when
+ * done. Right under the kill feed in a match, in the head of the deploy
+ * screen. Skipping: Esc and the pause menu on a desktop, the close button on
+ * a touch screen.
  */
 export class TutorialPanel {
   readonly root: HTMLDivElement;
@@ -28,12 +32,13 @@ export class TutorialPanel {
     private readonly touch: boolean,
     onSkip: () => void,
   ) {
-    this.root = el('div', 'tut', parent);
+    this.root = el('div', 'tut ds-root', parent);
+    this.root.dataset.dsTheme = 'bfv';
     const top = el('div', 'tut-top', this.root);
     this.head = el('div', 'tut-head', top);
     if (touch) {
       const x = el('button', 'tut-skip', top);
-      x.textContent = '✕';
+      x.innerHTML = icon('close');
       x.title = t('tut.skip');
       x.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -71,7 +76,7 @@ export class TutorialPanel {
       return;
     }
     this.head.textContent = `${t('tut.title')} ${run!.index + 1}/${run!.steps.length}`;
-    if (!this.touch) for (const a of step!.keys) el('span', 'keycap', this.keys).textContent = actionKey(a) || '—';
+    if (!this.touch) for (const a of step!.keys) el('span', 'ds-kbd', this.keys).textContent = actionKey(a) || '—';
     const touchText = `tut.${step!.id}Touch` as MessageKey;
     this.text.textContent = this.touch && t(touchText) !== touchText ? t(touchText) : t(`tut.${step!.id}` as MessageKey);
   }

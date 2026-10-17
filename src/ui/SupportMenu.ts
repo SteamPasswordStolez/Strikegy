@@ -31,7 +31,7 @@ export class SupportMenu {
     SUPPORT_ORDER.forEach((id, i) => {
       const el = document.createElement('button');
       el.className = 'support-row';
-      el.innerHTML = `<span class="support-key">${i + 1}</span><span class="support-name">${t(`support.${id}` as MessageKey)}</span><span class="support-cost">${SUPPORT[id].cost} RP</span>`;
+      el.innerHTML = `<span class="ds-kbd">${i + 1}</span><span class="support-name">${t(`support.${id}` as MessageKey)}</span><span class="support-cost">${SUPPORT[id].cost} RP</span>`;
       const state = document.createElement('span');
       state.className = 'support-state';
       el.appendChild(state);

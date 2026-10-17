@@ -732,6 +732,14 @@ button.mpb-row.sel:hover {
     grid-template-rows: minmax(0, 1fr) minmax(calc(var(--u) * 9), 1fr);
     gap: var(--s2);
   }
+  /* The join / start buttons stay in sight at the column's foot while the facts scroll. */
+  .mpb-go,
+  .mpr-foot {
+    position: sticky;
+    bottom: 0;
+    padding-top: var(--s2);
+    background: linear-gradient(transparent, rgb(12 12 11 / 0.94) var(--s2));
+  }
 }
 
 /* ---------- Narrow (portrait) screens: one column that scrolls ---------- */

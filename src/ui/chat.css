@@ -1,0 +1,223 @@
+/*
+ * Chat on the design system (ui/ChatPanel; ds.css, BFV theme): the waiting
+ * room's box (inside the multiplayer page, dressed further in
+ * multiplayer.css) and the match's (`.chat-hud`, its own `ds-root`): lines
+ * over the game at the left, fading while closed, the box opening on a key.
+ * Names always carry their server tag; the server's notes look different
+ * from what people write, the staff's notices more so.
+ */
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: var(--fs-sm);
+}
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.chat-room {
+  flex: 1;
+}
+.chat-room .chat-log {
+  flex: 1;
+  padding: 2px var(--s1) var(--s2);
+}
+.chat-line {
+  line-height: 1.4;
+}
+.chat-line.sys {
+  font-style: italic;
+  color: var(--ink-2);
+}
+.chat-sys-mark {
+  margin-right: var(--s2);
+  font-size: 0.7em;
+  font-style: normal;
+  color: var(--accent);
+  vertical-align: 1px;
+}
+.chat-who {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.chat-line.sys .chat-who {
+  font-style: normal;
+}
+.chat-tag {
+  margin-left: 2px;
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.chat-who.side-blue,
+.chat-who.ally {
+  color: color-mix(in srgb, var(--ally) 62%, #fff);
+}
+.chat-who.side-red,
+.chat-who.enemy {
+  color: color-mix(in srgb, var(--enemy) 70%, #fff);
+}
+.chat-colon {
+  margin-right: var(--s2);
+  color: var(--ink-2);
+}
+.chat-badge {
+  margin-right: var(--s2);
+  padding: 0 var(--s1);
+  font-size: 0.8em;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--squad) 22%, transparent);
+  color: var(--squad);
+}
+.chat-line.team .chat-text {
+  color: color-mix(in srgb, var(--squad) 35%, #fff);
+}
+.chat-empty {
+  padding: var(--s2) 2px;
+  color: var(--ink-3);
+}
+.chat-form {
+  display: flex;
+  gap: var(--s2);
+}
+.chat-scope {
+  flex: none;
+  min-width: calc(var(--u) * 3.5);
+  padding: 0 var(--s3);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--ink);
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.chat-scope.team {
+  border-color: var(--squad);
+  color: var(--squad);
+}
+.chat-scope:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  height: calc(var(--u) * 2.25);
+  padding: 0 var(--s3);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: 500 var(--fs-sm) / 1 var(--font-ui);
+  user-select: text;
+}
+.chat-input:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+.chat.to-team .chat-input:focus {
+  border-color: var(--squad);
+}
+/* The server's staff: a notice line nobody's chat can look like. */
+.chat-line.notice {
+  font-weight: 700;
+  color: var(--warn);
+}
+.chat-notice-badge {
+  margin-right: var(--s2);
+  padding: 0 var(--s1);
+  font-size: 0.8em;
+  background: var(--warn);
+  color: #1a1400;
+}
+.chat.blocked .chat-input,
+.chat.blocked .chat-send {
+  opacity: 0.5;
+}
+
+/* ---------- In a match ---------- */
+.chat-hud {
+  position: fixed;
+  left: max(var(--s4), env(safe-area-inset-left));
+  bottom: 31%;
+  z-index: 45;
+  width: min(calc(var(--u) * 28), 38vw);
+  max-height: 34vh;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
+}
+.chat-hud .chat-log {
+  justify-content: flex-end;
+  padding: var(--s1);
+  overflow: hidden;
+}
+.chat-hud .chat-line {
+  width: fit-content;
+  max-width: 100%;
+  padding: 1px var(--s2);
+  background: rgb(12 12 11 / 0.5);
+  transition: opacity 0.6s;
+}
+.chat-hud .chat-line.notice {
+  background: rgb(40 30 0 / 0.65);
+}
+.chat-hud:not(.open) .chat-line.old {
+  opacity: 0;
+}
+.chat-hud .chat-form {
+  display: none;
+}
+.chat-hud.open {
+  pointer-events: auto;
+}
+.chat-hud.open .chat-log {
+  overflow-y: auto;
+  background: rgb(12 12 11 / 0.55);
+}
+.chat-hud.open .chat-form {
+  display: flex;
+  margin-top: var(--s1);
+}
+.chat-hud.open .chat-scope,
+.chat-hud.open .chat-input {
+  background: rgb(12 12 11 / 0.82);
+  text-shadow: none;
+}
+.chat-open {
+  display: none;
+}
+.chat-hud.touch {
+  top: calc(var(--mm-size, 150px) + 70px);
+  bottom: auto;
+  width: min(calc(var(--u) * 22), 42vw);
+  max-height: 28vh;
+}
+.chat-hud.touch .chat-open {
+  order: -1;
+  display: grid;
+  place-items: center;
+  align-self: flex-start;
+  width: calc(var(--u) * 2.5);
+  height: calc(var(--u) * 2.5);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: 50%;
+  background: rgb(12 12 11 / 0.6);
+  color: var(--ink);
+  pointer-events: auto;
+}
+body.overlay-up .chat-hud {
+  display: none;
+}
+/* Over the deploy screen: in the empty corner under the kit. */
+body:has(.deploy.on) .chat-hud:not(.touch) {
+  bottom: var(--s4);
+  width: min(calc(var(--u) * 19), 24vw);
+  max-height: 26vh;
+}

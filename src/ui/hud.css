@@ -1,0 +1,1230 @@
+/*
+ * The HUD on the design system (owner, 2026-10-17: "BFV level"; ds.css, BFV
+ * theme; ui/HUD, its own `ds-root`). Emptied like BFV: the objective bar with
+ * both scores at the top, the kill feed top right, the soldier (squad,
+ * health, medkit) bottom left, the gun (name, magazine | reserve, kit) bottom
+ * right, and in the middle only what matters this moment (prompt, points,
+ * zone capture, banners). Sizes step with the unit `--u`, so the HUD keeps
+ * its proportions from 720p to 4K; type sits on the game picture with a
+ * soft dark shadow instead of panels.
+ */
+.hud {
+  /* Side colours lifted for text over the world (the tokens are for fills). */
+  --ally-text: color-mix(in srgb, var(--ally) 62%, #fff);
+  --enemy-text: color-mix(in srgb, var(--enemy) 70%, #fff);
+  --sh: 0 1px 2px rgb(0 0 0 / 0.85), 0 0 calc(var(--u) * 0.6) rgb(0 0 0 / 0.35);
+  --track: rgb(0 0 0 / 0.42);
+  --edge-x: var(--s6);
+  --edge-y: var(--s5);
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  line-height: 1.2;
+  text-shadow: var(--sh);
+}
+.hud .ds-kbd {
+  min-width: calc(var(--u) * 1.625);
+  height: calc(var(--u) * 1.625);
+  font-size: var(--fs-sm);
+  border-color: rgb(239 235 226 / 0.62);
+  background: rgb(12 12 11 / 0.5);
+  text-shadow: none;
+}
+.hud .ds-icon {
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.85));
+}
+
+/* ---------- Crosshair and hit marker ---------- */
+.crosshair {
+  --gap: 8px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transition: opacity 0.05s linear;
+}
+.ch {
+  position: absolute;
+  background: #fff;
+  box-shadow: 0 0 1px 1px rgb(0 0 0 / 0.55);
+}
+.ch-t,
+.ch-b {
+  width: 2px;
+  height: 9px;
+  left: -1px;
+}
+.ch-l,
+.ch-r {
+  width: 9px;
+  height: 2px;
+  top: -1px;
+}
+.ch-t {
+  bottom: var(--gap);
+}
+.ch-b {
+  top: var(--gap);
+}
+.ch-l {
+  right: var(--gap);
+}
+.ch-r {
+  left: var(--gap);
+}
+.ch-dot {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  left: -1px;
+  top: -1px;
+  background: #fff;
+}
+.hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  opacity: 0;
+}
+.hitmarker::before,
+.hitmarker::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  margin-left: -1px;
+  background: linear-gradient(var(--hit-color, #fff) 0 35%, transparent 35% 65%, var(--hit-color, #fff) 65%);
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 0.8));
+}
+.hitmarker::before {
+  transform: rotate(45deg);
+}
+.hitmarker::after {
+  transform: rotate(-45deg);
+}
+.hitmarker.show {
+  opacity: 1;
+}
+.hitmarker.head {
+  --hit-color: var(--accent);
+}
+.hitmarker.kill {
+  --hit-color: var(--danger);
+  transform: scale(1.3);
+}
+
+/* ---------- Scope ---------- */
+/* The reticle stays on the aim point (screen centre); the dark surround is
+   the eye box, which drifts with sway and walking (--kx, --ky are fractions
+   of the lens radius) and shadows one edge of the lens. */
+.scope {
+  --r: 38vmin;
+  --kx: 0;
+  --ky: 0;
+  --zoom: 1;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.scope-lens {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--r) * 2);
+  height: calc(var(--r) * 2);
+  transform: translate(-50%, -50%) scale(var(--zoom));
+  border-radius: 50%;
+  /* Faint blue-green coating tint that deepens toward the edge. */
+  background: radial-gradient(circle, rgb(120 170 190 / 0.03) 55%, rgb(20 45 60 / 0.28) 100%);
+}
+.scope-lens svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.scope-glare {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse 60% 38% at 32% 24%, rgb(255 255 255 / 0.07), transparent 70%),
+    radial-gradient(circle at 70% 78%, rgb(160 110 255 / 0.05), transparent 30%);
+  box-shadow: inset 0 0 2.2vmin rgb(0 0 0 / 0.7);
+}
+.scope-mask {
+  position: absolute;
+  inset: -30%;
+  transform: scale(var(--zoom));
+  background: radial-gradient(
+    circle at calc(50% + var(--r) * var(--kx)) calc(50% + var(--r) * var(--ky)),
+    transparent 0 calc(var(--r) * 0.9),
+    rgb(0 0 0 / 0.55) calc(var(--r) * 0.97),
+    #000 var(--r)
+  );
+}
+.scope-breath {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--r) + var(--s3));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.scope-breath-track {
+  width: calc(var(--u) * 7);
+  height: var(--bar-w);
+  background: var(--track);
+  overflow: hidden;
+}
+.scope-breath-fill {
+  height: 100%;
+  background: var(--ink-2);
+}
+.scope-breath.holding .scope-breath-fill {
+  background: var(--ink);
+}
+.scope-breath.low .scope-breath-fill {
+  background: var(--warn);
+}
+/* Holding the breath too long: black closes in from the edges (--hole, sized
+   to the scope lens), then fills (--fill). */
+.hud-black {
+  --hole: 40vmin;
+  --fill: 0;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgb(0 0 0 / var(--fill)), rgb(0 0 0 / var(--fill))),
+    radial-gradient(circle closest-side, transparent var(--hole), #000 calc(var(--hole) + 18vmin));
+}
+
+/* ---------- The gun (bottom right): name, magazine | reserve, gauge, kit ---------- */
+.hud-br {
+  position: absolute;
+  right: max(var(--edge-x), env(safe-area-inset-right));
+  bottom: max(var(--edge-y), env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+.hud-weapon {
+  font: 600 var(--fs-lg) / 1.1 var(--font-display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hud-ammo {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin-top: var(--s1);
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  line-height: 0.9;
+}
+.ammo-mag {
+  font-size: calc(var(--u) * 4);
+  font-weight: 700;
+}
+.ammo-res {
+  padding-left: var(--s3);
+  border-left: var(--bar-w) solid var(--line-strong);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.hud-ammo.low .ammo-mag {
+  color: var(--danger);
+}
+.hud-ammo.empty .ammo-mag {
+  font: 700 var(--fs-lg) / 1 var(--font-ui);
+  color: var(--danger);
+}
+.hud-magbar {
+  width: calc(var(--u) * 14);
+  height: var(--bar-w);
+  margin-top: var(--s2);
+  background: var(--track);
+}
+.hud-magbar-fill {
+  height: 100%;
+  margin-left: auto;
+  background: var(--ink);
+}
+.hud-ammo.low ~ .hud-magbar .hud-magbar-fill {
+  background: var(--danger);
+}
+.hud-magbar.reloading .hud-magbar-fill {
+  margin-left: 0;
+  background: var(--accent);
+}
+.hud-kit {
+  display: flex;
+  gap: var(--s4);
+  margin-top: var(--s3);
+}
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font: 600 var(--fs-lg) / 1 var(--font-display);
+  white-space: nowrap;
+}
+.hud-chip .chip-icon {
+  width: calc(var(--u) * 1.75);
+  height: calc(var(--u) * 1.75);
+  vertical-align: middle;
+}
+.chip-count {
+  font-variant-numeric: tabular-nums;
+}
+.hud-chip.empty {
+  opacity: 0.4;
+}
+.hud-gadget.on {
+  color: var(--accent);
+}
+.hud-rp {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ---------- The soldier (bottom left): squad, health, medkit ---------- */
+.hud-bl {
+  position: absolute;
+  left: max(var(--edge-x), env(safe-area-inset-left));
+  bottom: max(var(--edge-y), env(safe-area-inset-bottom));
+}
+.hud-squad {
+  margin-bottom: var(--s4);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.hs-title {
+  margin-bottom: var(--s1);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--squad);
+}
+.hs-member {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  line-height: 1.5;
+}
+.hs-member .dot {
+  flex: none;
+  width: calc(var(--u) * 0.375);
+  height: calc(var(--u) * 0.375);
+  transform: rotate(45deg);
+  background: var(--squad);
+}
+.hs-member.m-combat .dot {
+  background: var(--warn);
+}
+.hs-member.m-down .dot {
+  background: var(--danger);
+  animation: hud-blink 0.6s ease-in-out infinite alternate;
+}
+.hs-member.m-dead .dot {
+  background: var(--ink-3);
+}
+.hs-member.m-dead .name {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.hs-member.you .name {
+  color: var(--accent);
+}
+.hud-vitals {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.hud-health {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+  min-width: calc(var(--u) * 3.75);
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.hp-num {
+  font-size: calc(var(--u) * 2.5);
+  font-weight: 700;
+  line-height: 1;
+}
+.hp-label {
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.hp-low .hp-num {
+  color: var(--danger);
+}
+/* Health in four segments, BFV-like. */
+.hud-healthbar {
+  width: calc(var(--u) * 14);
+  height: calc(var(--u) * 0.5);
+  background: var(--track);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 calc(25% - 2px), transparent calc(25% - 2px) 25%);
+  mask: repeating-linear-gradient(90deg, #000 0 calc(25% - 2px), transparent calc(25% - 2px) 25%);
+}
+.hud-healthbar-fill {
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.15s linear;
+}
+.hp-low .hud-healthbar-fill {
+  background: var(--danger);
+  animation: hud-blink 0.9s ease-in-out infinite alternate;
+}
+.hud-medkit {
+  margin-top: var(--s3);
+  color: var(--ink-3);
+}
+.hud-medkit.ready {
+  color: var(--squad);
+}
+
+/* ---------- Objective bar (top middle) ---------- */
+/* Our score and gauge, the zones (our side first), theirs; the mode line under it. */
+.zone-bar {
+  position: absolute;
+  top: max(var(--s4), env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: var(--s3);
+}
+.zb-zones {
+  display: flex;
+  gap: var(--s2);
+}
+.zb-tickets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: calc(var(--u) * 5);
+}
+.zb-ally {
+  align-items: flex-end;
+  color: var(--ally-text);
+}
+.zb-enemy {
+  align-items: flex-start;
+  color: var(--enemy-text);
+}
+.zb-num {
+  font: 700 var(--fs-xl) / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.zb-gauge {
+  width: calc(var(--u) * 7);
+  height: var(--bar-w);
+  background: var(--track);
+}
+.zb-gauge i {
+  display: block;
+  height: 100%;
+  transition: width 0.4s ease-out;
+}
+/* Gauges run out from the middle. */
+.zb-ally .zb-gauge i {
+  margin-left: auto;
+  background: var(--ally);
+}
+.zb-enemy .zb-gauge i {
+  background: var(--enemy);
+}
+/* Zone badges: round, the owner's colour, capture progress round the rim (--p). */
+.zb-zone {
+  --p: 0;
+  --pc: var(--ink);
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 2.25);
+  height: calc(var(--u) * 2.25);
+  border: var(--bar-w) solid rgb(239 235 226 / 0.55);
+  border-radius: 50%;
+  background: rgb(12 12 11 / 0.66);
+}
+.zb-zone::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--u) * -0.4);
+  border-radius: 50%;
+  background: conic-gradient(var(--pc) calc(var(--p) * 360deg), transparent 0);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 78%, #000 80%);
+  mask: radial-gradient(circle closest-side, transparent 78%, #000 80%);
+}
+.zb-zone.push-by-ally {
+  --pc: var(--ally);
+}
+.zb-zone.push-by-enemy {
+  --pc: var(--enemy);
+}
+.zb-zone.own-ally {
+  border-color: var(--ally-text);
+  background: color-mix(in srgb, var(--ally) 82%, #000);
+}
+.zb-zone.own-enemy {
+  border-color: var(--enemy-text);
+  background: color-mix(in srgb, var(--enemy) 82%, #000);
+}
+.zb-zone.contested {
+  animation: zb-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes zb-pulse {
+  to {
+    border-color: var(--accent);
+  }
+}
+.zb-zone.locked {
+  opacity: 0.38;
+  border-style: dashed;
+}
+.zb-id {
+  position: relative;
+  font: 700 var(--fs-lg) / 1 var(--font-display);
+  color: #fff;
+}
+.zb-status {
+  position: absolute;
+  top: calc(100% + var(--s2));
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.zb-status.tone-ally {
+  color: var(--ally-text);
+}
+.zb-status.tone-enemy {
+  color: var(--enemy-text);
+}
+.zb-status.urgent {
+  animation: zb-urgent 0.5s ease-in-out infinite alternate;
+}
+@keyframes zb-urgent {
+  to {
+    color: var(--accent);
+  }
+}
+/* No zones (team deathmatch on the range...): the two kill counts. */
+.hud-score {
+  position: absolute;
+  top: max(var(--s4), env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  font: 700 var(--fs-xl) / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+/* The zone you stand in: its letter and state over a capture bar. */
+.zone-here {
+  position: absolute;
+  top: calc(var(--u) * 4.25);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  width: calc(var(--u) * 16);
+  text-align: center;
+  font-size: var(--fs-md);
+  font-weight: 700;
+}
+.has-zone-status .zone-here {
+  top: calc(var(--u) * 5.75);
+}
+.zone-here.on {
+  display: block;
+}
+.zone-here-track {
+  height: var(--bar-w);
+  margin-top: var(--s1);
+  background: var(--track);
+  overflow: hidden;
+}
+.zone-here-fill {
+  width: 0;
+  height: 100%;
+  background: var(--ink);
+}
+.zone-here.tone-ally .zone-here-fill {
+  background: var(--ally);
+}
+.zone-here.tone-enemy .zone-here-fill {
+  background: var(--enemy);
+}
+.zone-here.tone-ally .zone-here-text {
+  color: var(--ally-text);
+}
+.zone-here.tone-enemy .zone-here-text {
+  color: var(--enemy-text);
+}
+
+/* ---------- Kill feed (top right) ---------- */
+.killfeed {
+  position: absolute;
+  top: max(var(--s4), env(safe-area-inset-top));
+  right: max(var(--s5), env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.killfeed-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 2px var(--s2) 2px var(--s5);
+  background: linear-gradient(90deg, transparent, rgb(12 12 11 / 0.5) var(--s5));
+  animation: kf-in var(--t-base) var(--ease);
+}
+.killfeed-row.mine {
+  background: linear-gradient(90deg, transparent, rgb(233 160 59 / 0.24) var(--s5));
+}
+@keyframes kf-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--s4));
+  }
+}
+.kf-you {
+  color: var(--accent);
+  font-weight: 700;
+}
+.kf-weapon {
+  font: 600 var(--fs-sm) / 1 var(--font-display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.killfeed-row .kf-hs {
+  margin-left: calc(var(--s1) * -1);
+  color: var(--accent);
+}
+.kf-name,
+.kf-red {
+  color: var(--enemy-text);
+}
+.kf-blue {
+  color: var(--ally-text);
+}
+
+/* ---------- Middle of the screen ---------- */
+/* What E does here (revive, get in, hand out a kit), under the crosshair. */
+.hud-prompt {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.hud-prompt.on {
+  display: flex;
+}
+.hud-prompt-text {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.hud-prompt:not(.holding) .hud-prompt-track {
+  display: none;
+}
+.hud-down-track,
+.hud-prompt-track {
+  width: calc(var(--u) * 13);
+  height: var(--bar-w);
+  background: var(--track);
+  overflow: hidden;
+}
+.hud-down-fill,
+.hud-prompt-fill {
+  width: 0;
+  height: 100%;
+  background: var(--squad);
+}
+/* The player's own points under the crosshair, rising and fading. */
+.hud-xp {
+  position: absolute;
+  left: 50%;
+  top: 54%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 2px;
+}
+.xp-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  white-space: nowrap;
+  animation: xp-in var(--t-slow) cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+.xp-pts {
+  font: 700 var(--fs-xl) / 1 var(--font-display);
+  color: var(--accent);
+}
+.xp-what {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+@keyframes xp-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--s2)) scale(0.85);
+  }
+}
+/* Banners (built, revived, call-in on its way): a line with a short rule under it. */
+.hud-notices {
+  position: absolute;
+  top: 33%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+}
+.hud-notice {
+  position: relative;
+  padding-bottom: var(--s2);
+  white-space: nowrap;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  animation: notice-in var(--t-slow) var(--ease);
+}
+.hud-notice::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--u) * 3);
+  height: var(--bar-w);
+  background: currentColor;
+  transform: translateX(-50%);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.8);
+}
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+}
+.hud-notice.n-ally {
+  color: var(--ally-text);
+}
+.hud-notice.n-enemy {
+  color: var(--enemy-text);
+}
+
+/* ---------- Hurt, down, dead ---------- */
+.hud-hurt {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgb(140 0 0 / 0.55) 80%, rgb(90 0 0 / 0.85));
+}
+.hud-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: #fff;
+}
+.damage-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+.damage-arc {
+  position: absolute;
+  left: -70px;
+  top: -130px;
+  width: 140px;
+  height: 260px;
+  transform-origin: 50% 50%;
+}
+.damage-arc::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 0;
+  height: 26px;
+  border-top: 6px solid rgb(255 74 61 / 0.9);
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  filter: drop-shadow(0 0 4px rgb(255 0 0 / 0.6));
+}
+/* Down: the world goes grey and dim behind the countdown. */
+.hud.is-down::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  -webkit-backdrop-filter: grayscale(0.85) brightness(0.7);
+  backdrop-filter: grayscale(0.85) brightness(0.7);
+  background: radial-gradient(ellipse at center, transparent 30%, rgb(60 0 0 / 0.45));
+}
+.hud-down {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  text-align: center;
+}
+.hud-down.on {
+  display: flex;
+}
+.hud-down-text {
+  white-space: pre-line;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.7;
+}
+.hud-down-text::first-line {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  color: var(--enemy-text);
+}
+.hud-down.reviving .hud-down-text {
+  color: var(--squad);
+}
+.hud-down:not(.reviving) .hud-down-fill {
+  background: var(--enemy-text);
+}
+/* Killed: the title big, who did it and the countdown under it. */
+.hud-death {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  display: none;
+  white-space: pre-line;
+  text-align: center;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.7;
+}
+.hud-death-text::first-line {
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  color: var(--danger);
+}
+.hud-death.on {
+  display: block;
+}
+/* Down or dead: the middle is theirs alone (no banners, points or prompts over it). */
+.hud.is-down .hud-notices,
+.hud.is-down .hud-xp,
+.hud:has(.hud-death.on) .hud-notices,
+.hud:has(.hud-death.on) .hud-xp,
+.hud:has(.hud-death.on) .hud-prompt {
+  display: none;
+}
+@keyframes hud-blink {
+  to {
+    opacity: 0.5;
+  }
+}
+
+/* ---------- Minimap (top left) and the squad's call-ins (B) ---------- */
+.minimap {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: max(16px, env(safe-area-inset-top));
+  width: 196px;
+  height: 196px;
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  box-shadow: 0 4px 18px rgb(0 0 0 / 0.5);
+  pointer-events: none;
+}
+.support-menu {
+  position: absolute;
+  left: max(var(--edge-x), env(safe-area-inset-left));
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  flex-direction: column;
+  gap: var(--line-w);
+  min-width: calc(var(--u) * 20);
+  padding: var(--s4);
+  border-top: var(--bar-w) solid var(--sel-bg);
+  background: rgb(12 12 11 / 0.88);
+  text-shadow: none;
+  pointer-events: auto;
+}
+.support-menu.show {
+  display: flex;
+}
+.support-head {
+  margin-bottom: var(--s2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.support-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto calc(var(--u) * 3);
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 0;
+  background: var(--surface-1);
+  color: inherit;
+  font: 600 var(--fs-md) / 1.2 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.support-row:hover:not(.off) {
+  background: var(--surface-2);
+}
+.support-row.off {
+  opacity: 0.4;
+}
+.support-row.on {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.support-row.on .ds-kbd {
+  border-color: var(--sel-ink);
+  background: transparent;
+  color: var(--sel-ink);
+}
+.support-cost {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.support-row.on .support-cost {
+  color: inherit;
+}
+.support-state {
+  text-align: right;
+  font-size: var(--fs-sm);
+  color: var(--warn);
+}
+
+/* ---------- Vehicle views (ui/VehicleView.ts): under the rest of the HUD ---------- */
+.vehicle-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  pointer-events: none;
+}
+.hud.in-sight .crosshair {
+  display: none;
+}
+/* Aboard: the infantry gun's block goes (the vehicle line and its sight say what the seat has). */
+.hud.in-vehicle .hud-weapon,
+.hud.in-vehicle .hud-ammo,
+.hud.in-vehicle .hud-magbar,
+.hud.in-vehicle .hud-kit {
+  display: none;
+}
+
+/* ---------- Developer readouts ---------- */
+.hud-fps {
+  position: absolute;
+  left: 224px;
+  top: 6px;
+  font: 12px ui-monospace, Consolas, monospace;
+  color: #9fef9f;
+}
+
+/* ---------- Touch screens ---------- */
+/* Phones on their side: the gun moves to the top right (buttons own the
+   bottom right); no squad list (the minimap and the deploy screen have it);
+   top middle, top down: zone bar, mode line, kill feed (two rows), the zone
+   you stand in, then the banners. */
+.is-touch .hud-br {
+  top: max(10px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  bottom: auto;
+}
+.is-touch .hud-weapon {
+  font-size: var(--fs-xs);
+}
+.is-touch .hud-ammo {
+  gap: var(--s2);
+}
+.is-touch .ammo-mag {
+  font-size: calc(var(--u) * 2.25);
+}
+.is-touch .ammo-res {
+  padding-left: var(--s2);
+  font-size: var(--fs-md);
+}
+.is-touch .hud-magbar {
+  width: calc(var(--u) * 9);
+  margin-top: var(--s1);
+}
+.is-touch .hud-kit,
+.is-touch .hud-squad {
+  display: none;
+}
+.is-touch .hud-rp {
+  font-size: var(--fs-xs);
+}
+.is-touch .hud-bl {
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: calc(max(14px, env(safe-area-inset-left)) + 130px);
+}
+.is-touch .hp-num {
+  font-size: var(--fs-xl);
+}
+.is-touch .hud-healthbar {
+  width: calc(var(--u) * 9);
+}
+.is-touch .zone-bar {
+  gap: var(--s2);
+}
+.is-touch .zb-zone {
+  width: calc(var(--u) * 2);
+  height: calc(var(--u) * 2);
+}
+.is-touch .zb-id {
+  font-size: var(--fs-md);
+}
+.is-touch .zb-num {
+  font-size: var(--fs-lg);
+}
+.is-touch .zb-gauge {
+  width: calc(var(--u) * 5);
+}
+.is-touch .zb-tickets {
+  min-width: calc(var(--u) * 3.5);
+}
+.is-touch .zb-status {
+  font-size: var(--fs-xs);
+}
+.is-touch .killfeed {
+  top: calc(var(--u) * 3.5);
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  align-items: center;
+  font-size: var(--fs-xs);
+}
+.is-touch .has-zone-status .killfeed {
+  top: calc(var(--u) * 5.25);
+}
+.is-touch .killfeed-row {
+  padding: 1px var(--s2);
+  background: rgb(12 12 11 / 0.45);
+}
+.is-touch .killfeed-row:nth-last-child(n + 3) {
+  display: none;
+}
+.is-touch .zone-here {
+  top: calc(var(--u) * 7.5);
+  width: calc(var(--u) * 15);
+  font-size: var(--fs-xs);
+}
+.is-touch .has-zone-status .zone-here {
+  top: calc(var(--u) * 8.75);
+}
+.is-touch .hud-notices {
+  top: 39%;
+}
+.is-touch .hud-notice {
+  font-size: var(--fs-lg);
+}
+.is-touch .hud-xp {
+  top: 58%;
+}
+.is-touch .xp-pts {
+  font-size: var(--fs-lg);
+}
+.is-touch .hud-prompt {
+  top: 52%;
+  font-size: var(--fs-sm);
+}
+.is-touch .hud-down-text {
+  font-size: var(--fs-sm);
+}
+.is-touch .minimap {
+  width: 128px;
+  height: 128px;
+}
+/* The call-ins open right of their button (beside the minimap), clear of the stick and the buttons. */
+.is-touch .support-menu {
+  left: calc(max(16px, env(safe-area-inset-left)) + 196px);
+  top: calc(max(16px, env(safe-area-inset-top)) + 52px);
+  transform: none;
+  min-width: calc(var(--u) * 17);
+  padding: var(--s2);
+}
+.is-touch .support-row {
+  padding: var(--s1) var(--s2);
+  font-size: var(--fs-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .killfeed-row,
+  .xp-row,
+  .hud-notice {
+    animation: none;
+  }
+}
+
+/* ---------- Tutorial card (ui/TutorialPanel; outside the HUD, its own `ds-root`) ---------- */
+/* Right side under the kill feed (it used to cover the mode line); on the
+   deploy screen in the head's empty middle (deploy.css), on touch screens
+   under the zone bar. */
+.tut {
+  position: fixed;
+  top: calc(var(--u) * 11);
+  right: max(var(--s5), env(safe-area-inset-right));
+  z-index: 45;
+  display: none;
+  width: min(calc(var(--u) * 24), calc(100vw - 32px));
+  padding: var(--s3) var(--s4) 0;
+  border-left: var(--bar-w) solid var(--accent);
+  background: rgb(12 12 11 / 0.86);
+  pointer-events: none;
+}
+.tut.on {
+  display: block;
+  animation: tut-in var(--t-base) var(--ease);
+}
+@keyframes tut-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--u) * -0.4);
+  }
+}
+.overlay-up .tut {
+  display: none;
+}
+.tut.at-deploy {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.tut-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.tut-head {
+  color: var(--accent);
+}
+.tut-skiphint {
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-3);
+}
+.tut-skip {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 2);
+  height: calc(var(--u) * 2);
+  margin: calc(var(--s2) * -1) calc(var(--s2) * -1) calc(var(--s2) * -1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.tut-body {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) 0 var(--s3);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.tut-keys {
+  display: flex;
+  flex: none;
+  gap: var(--s1);
+}
+.tut-keys:empty {
+  display: none;
+}
+.tut-track {
+  height: var(--bar-w);
+  margin: 0 calc(var(--s4) * -1);
+  background: rgb(239 235 226 / 0.12);
+}
+.tut-fill {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+.tut.done .tut-fill {
+  background: var(--squad);
+}
+/* Touch: right under the gun's numbers, off the kill feed in the middle. */
+.is-touch .tut {
+  top: calc(max(10px, env(safe-area-inset-top)) + var(--u) * 5.25);
+  right: max(14px, env(safe-area-inset-right));
+  width: min(calc(var(--u) * 22), 42vw);
+  padding: var(--s2) var(--s3) 0;
+}
+.is-touch .tut.at-deploy {
+  top: max(10px, 1.4vh);
+  right: auto;
+}
+.is-touch .tut-track {
+  margin: 0 calc(var(--s3) * -1);
+}
+.is-touch .tut-body {
+  font-size: var(--fs-sm);
+}

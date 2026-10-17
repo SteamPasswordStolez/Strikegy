@@ -3,6 +3,9 @@ import { bindings, type Action } from '@/input/bindings';
 import { typing } from '@/input/typing';
 import { isMuted, type ChatStore } from '@/net/chat';
 import { CHAT_MAX, type ChatLine, type Side } from '@/net/lobbyProtocol';
+import { icon } from './icons';
+import './ds.css';
+import './chat.css';
 
 /** HUD lines fade after this long while the box is closed (ms). */
 const FADE_MS = 10_000;
@@ -60,7 +63,9 @@ export class ChatPanel {
   constructor(private readonly o: ChatPanelOptions) {
     this.isOpen = o.kind === 'room';
     this.root = document.createElement('div');
-    this.root.className = `chat chat-${o.kind}${this.isOpen ? ' open' : ''}${o.touch ? ' touch' : ''}`;
+    // The match's box is its own `ds-root` (the waiting room's sits in the page's).
+    this.root.className = `chat chat-${o.kind}${this.isOpen ? ' open' : ''}${o.touch ? ' touch' : ''}${o.kind === 'hud' ? ' ds-root' : ''}`;
+    if (o.kind === 'hud') this.root.dataset.dsTheme = 'bfv';
     this.log = el('div', 'chat-log', this.root);
     const form = el('div', 'chat-form', this.root);
     this.scope = el('button', 'chat-scope', form);
@@ -76,12 +81,13 @@ export class ChatPanel {
     this.input.addEventListener('keydown', (e) => this.onInputKey(e));
     if (o.kind === 'hud') this.input.addEventListener('blur', () => this.close());
     if (o.kind === 'room') {
-      const send = el('button', 'lb-btn chat-send', form, t('chat.send'));
+      const send = el('button', 'ds-btn chat-send', form, t('chat.send'));
       send.type = 'button';
       send.addEventListener('click', () => this.submit());
     }
     if (o.kind === 'hud' && o.touch) {
-      const open = el('button', 'chat-open', this.root, '💬');
+      const open = el('button', 'chat-open', this.root);
+      open.innerHTML = icon('chat');
       open.type = 'button';
       open.setAttribute('aria-label', t('chat.open'));
       open.addEventListener('click', () => (this.isOpen ? this.close() : this.open(false)));

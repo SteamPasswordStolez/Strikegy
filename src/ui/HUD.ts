@@ -2,6 +2,9 @@ import { t } from '@/i18n';
 import { actionKey, bindingsVersion } from '@/input/bindings';
 import { playerName } from '@/net/identity';
 import { reticleSvg, type Reticle } from '@/weapons/optics';
+import { icon, type IconName } from './icons';
+import './ds.css';
+import './hud.css';
 
 export interface HudFrame {
   weaponName: string;
@@ -90,28 +93,26 @@ interface DamageArc {
   life: number;
 }
 
-/** Line icons for the kit (24-unit boxes, stroked in the text colour). */
-const KIT_ICON: Record<string, string> = {
-  frag: '<circle cx="11" cy="14" r="6"/><path d="M11 8V5h4l3 3"/><path d="M8.5 12.5h5"/>',
-  flash: '<rect x="8" y="7" width="8" height="13" rx="1"/><path d="M8 11h8M8 15h8M10 7V4h4v3"/>',
-  smoke: '<rect x="7" y="8" width="10" height="12" rx="1.5"/><path d="M9 8V5h6v3M7 12h10"/><path d="M15 4c1.5-1.2 3-1 4 0"/>',
-  panzerfaust: '<path d="M2 15l12-4.5"/><path d="M14 10.5l4.5-2 3 2.5-4.5 2z"/><path d="M6 13.5l1.2 4.5M10 12l1 2.8"/>',
-  riflesmoke: '<path d="M12 3l3 4v8l-3 2.5L9 15V7z"/><path d="M12 17.5V21M9 11h6"/>',
-  beacon: '<path d="M12 21V10M8 21h8"/><path d="M8.5 7.5a5 5 0 0 1 7 0M5.5 4.5a9 9 0 0 1 13 0"/>',
-  mine: '<path d="M4 17h16l-2.5-5h-11z"/><path d="M12 12V9M10 9h4"/>',
-  medkit: '<rect x="4" y="7" width="16" height="12" rx="2"/><path d="M12 10v6M9 13h6M9 7V5h6v2"/>',
+/** The kit's icons (icons.ts): throwables, class gadgets, the medkit. */
+const KIT_ICON: Record<string, IconName> = {
+  frag: 'grenade',
+  flash: 'flash',
+  smoke: 'smoke',
+  panzerfaust: 'rocket',
+  riflesmoke: 'riflesmoke',
+  beacon: 'beacon',
+  mine: 'mine',
+  medkit: 'medkit',
 };
 
 /** An equipment chip: [key] icon ×count (no cap on touch screens); the name is the tooltip. */
-function chip(box: HTMLElement, key: string, label: string, count: number | string, icon: string): void {
+function chip(box: HTMLElement, key: string, label: string, count: number | string, kind: string): void {
   box.replaceChildren();
   box.title = label;
-  if (key) el('span', 'keycap', box).textContent = key;
-  const path = KIT_ICON[icon];
-  if (path) {
-    const i = el('span', 'chip-icon', box);
-    i.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">${path}</svg>`;
-  } else el('span', 'chip-label', box).textContent = label;
+  if (key) el('span', 'ds-kbd', box).textContent = key;
+  const name = KIT_ICON[kind];
+  if (name) box.insertAdjacentHTML('beforeend', icon(name, 'chip-icon'));
+  else el('span', 'chip-label', box).textContent = label;
   el('span', 'chip-count', box).textContent = typeof count === 'number' ? `×${count}` : count;
 }
 
@@ -157,8 +158,6 @@ export class HUD {
   private score: HTMLDivElement;
   private deathText: HTMLDivElement;
   private zoneBar: HTMLDivElement;
-  /** Score bars under the minimap (Modern Warfare style; the zone bar keeps its numbers on touch screens). */
-  private mscore: HTMLDivElement;
   private xp: HTMLDivElement;
   private xpItems: { el: HTMLDivElement; life: number }[] = [];
   private zoneHere: HTMLDivElement;
@@ -182,7 +181,9 @@ export class HUD {
   private readonly touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
   constructor(parent: HTMLElement) {
-    this.root = el('div', 'hud', parent);
+    // On the design system (hud.css, BFV theme): the HUD is its own `ds-root`.
+    this.root = el('div', 'hud ds-root', parent);
+    this.root.dataset.dsTheme = 'bfv';
     this.hurt = el('div', 'hud-hurt', this.root);
     this.scope = el('div', 'scope', this.root);
     const lens = el('div', 'scope-lens', this.scope);
@@ -229,7 +230,6 @@ export class HUD {
     this.squadEl = el('div', 'hud-squad', bottomLeft);
     bottomLeft.prepend(this.squadEl);
     this.zoneBar = el('div', 'zone-bar', this.root);
-    this.mscore = el('div', 'hud-mscore', this.root);
     this.xp = el('div', 'hud-xp', this.root);
     this.zoneHere = el('div', 'zone-here', this.root);
     this.zoneHereText = el('div', 'zone-here-text', this.zoneHere);
@@ -272,7 +272,7 @@ export class HUD {
     a.textContent = k.attacker === 'You' ? playerName(t('feed.you')) : k.attacker;
     if (k.attacker === 'You' || k.victim === 'You') row.classList.add('mine');
     if (k.weapon) el('span', 'kf-weapon', row).textContent = k.weapon;
-    if (k.headshot) el('span', 'kf-hs', row).textContent = '◎';
+    if (k.headshot) row.insertAdjacentHTML('beforeend', icon('headshot', 'kf-hs'));
     el('span', cls(k.victim, k.victimTeam), row).textContent = k.victim === 'You' ? playerName(t('feed.you')) : k.victim;
     this.feedItems.push({ el: row, life: FEED_LIFE });
     while (this.feedItems.length > FEED_MAX) this.feedItems.shift()!.el.remove();
@@ -381,7 +381,7 @@ export class HUD {
       // "Squad RP 550 · B": the key goes in a cap.
       const m = /^(.*) · (\S+)$/.exec(f.rp);
       el('span', 'rp-text', this.rpEl).textContent = m ? m[1]! : f.rp;
-      if (m) el('span', 'keycap', this.rpEl).textContent = m[2]!;
+      if (m) el('span', 'ds-kbd', this.rpEl).textContent = m[2]!;
     });
 
     const hp = Math.ceil(f.health);
@@ -448,7 +448,7 @@ export class HUD {
       // "E · Get in: jeep" / "E (hold) · Revive ...": the key in a cap.
       this.promptText.replaceChildren();
       const keyed = [t('act.holdE'), t('act.pressE')].find((k) => pr.text.startsWith(`${k} · `));
-      if (keyed) el('span', 'keycap', this.promptText).textContent = keyed;
+      if (keyed) el('span', 'ds-kbd', this.promptText).textContent = keyed;
       el('span', 'prompt-what', this.promptText).textContent = keyed ? pr.text.slice(keyed.length + 3) : pr.text;
       this.promptEl.classList.toggle('holding', pr.progress !== null);
       this.promptFill.style.width = `${Math.round((pr.progress ?? 0) * 100)}%`;
@@ -528,18 +528,7 @@ export class HUD {
       }
       score('enemy', z.score.enemies, z.score.fill.enemies);
       if (st) el('div', `zb-status tone-${st.tone}${st.urgent ? ' urgent' : ''}`, this.zoneBar).textContent = st.text;
-      // Score bars under the minimap: ours over theirs.
-      this.mscore.replaceChildren();
-      const row = (side: 'ally' | 'enemy', label: string, text: string, fill: number) => {
-        const r = el('div', `ms-row ms-${side}`, this.mscore);
-        el('span', 'ms-name', r).textContent = label;
-        el('i', '', el('div', 'ms-bar', r)).style.width = `${Math.round(Math.max(0, Math.min(1, fill)) * 100)}%`;
-        el('span', 'ms-num', r).textContent = text;
-      };
-      row('ally', t('hud.allies'), z.score.allies, z.score.fill.allies);
-      row('enemy', t('hud.enemies'), z.score.enemies, z.score.fill.enemies);
     });
-    this.mscore.style.display = z ? '' : 'none';
     const here = z?.here && !dead ? z.here : null;
     const hereKey = here ? `${here.id}|${here.text}|${here.tone}|${Math.round(here.progress * 100)}` : '';
     this.set('zoneHere', hereKey, () => {

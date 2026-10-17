@@ -412,6 +412,8 @@
   display: none;
 }
 .deploy .deploy-member {
+  display: flex;
+  align-items: center;
   min-height: calc(var(--u) * 2.2);
   gap: var(--s2);
   font-size: var(--fs-sm);
@@ -424,6 +426,27 @@
 .deploy .deploy-member.you .name {
   color: var(--ink);
   font-weight: 700;
+}
+/* The mate's state as a small diamond (as in the HUD's squad list). */
+.deploy-member .dot {
+  flex: none;
+  width: calc(var(--u) * 0.375);
+  height: calc(var(--u) * 0.375);
+  transform: rotate(45deg);
+  background: var(--squad);
+}
+.deploy-member.m-combat .dot {
+  background: var(--warn);
+}
+.deploy-member.m-down .dot {
+  background: var(--danger);
+}
+.deploy-member.m-dead .dot {
+  background: var(--ink-3);
+}
+.deploy-member.m-dead .name {
+  opacity: 0.5;
+  text-decoration: line-through;
 }
 .deploy-member .state {
   font-size: var(--fs-xs);
