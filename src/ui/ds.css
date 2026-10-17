@@ -13,8 +13,40 @@
  */
 
 /* ---------- Fonts ---------- */
-/* Pretendard Std (Hangul) and Barlow Condensed (display, numbers) once the
-   owner approves the download; until then the closest system faces stand in. */
+/* Pretendard Std (Kil Hyung-jin, SIL OFL 1.1; Latin + the 2,350 common Hangul
+   syllables, variable weight) and Barlow Condensed (Jeremy Tribby, SIL OFL 1.1;
+   Latin only: numbers, display type, key names). Shipped unmodified in
+   public/assets/fonts with their licences (OFL-*.txt); the system faces after
+   them in the stacks show while they load and for anything they lack. */
+@font-face {
+  font-family: 'Pretendard Std Variable';
+  src: url('/assets/fonts/PretendardStdVariable.woff2') format('woff2-variations');
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/assets/fonts/BarlowCondensed-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/assets/fonts/BarlowCondensed-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 .ds,
 .ds-root {
   --font-ui: 'Pretendard Std Variable', 'Pretendard Std', 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif;

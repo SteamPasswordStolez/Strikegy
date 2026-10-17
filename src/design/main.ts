@@ -7,7 +7,7 @@
 import '@/ui/ds.css';
 import './page.css';
 import { icon, ICON_NAMES, type IconName } from '@/ui/icons';
-import { uiSound, setUiVolume, type UiSound } from '@/audio/uiSounds';
+import { uiSound, setUiVolume, loadUiSounds, type UiSound } from '@/audio/uiSounds';
 
 const FILM = `${import.meta.env.BASE_URL}menu/battle.mp4`;
 const MAPS = ['철문 주둔지', '아르덴 숲', '리옹 초원 전선', '빌바오 공방전', '페르시아 침공'];
@@ -30,7 +30,7 @@ page.innerHTML = `
     <button class="ds-toggle on" data-sound-toggle aria-label="소리"></button>
   </div>
 </header>
-<p class="pg-note ds-faint">글꼴은 아직 내려받지 않아 비슷한 시스템 글꼴(한글: 맑은 고딕, 숫자·영문: Bahnschrift)로 보입니다. 승인하시면 Pretendard와 Barlow Condensed로 바뀝니다. 소리도 지금은 코드로 합성한 임시 소리입니다.</p>
+<p class="pg-note ds-faint">글꼴(Pretendard, Barlow Condensed)과 효과음(Kenney, CC0)이 들어갔습니다. 소리는 페이지를 한 번 누른 뒤부터 납니다(브라우저 규칙).</p>
 
 <section>
   <h2>예시 1 · 메인 메뉴</h2>
@@ -148,7 +148,7 @@ page.innerHTML = `
 
 <section>
   <h2>글꼴과 크기 · 7단계</h2>
-  <p class="ds-dim">한글은 Pretendard(지금은 맑은 고딕으로 대신), 숫자·영문 제목은 Barlow Condensed(지금은 Bahnschrift). 숫자는 폭이 같은 숫자를 써서 점수와 탄약이 흔들리지 않습니다.</p>
+  <p class="ds-dim">한글과 본문은 Pretendard, 숫자·영문 제목·키 이름은 Barlow Condensed. 숫자는 폭이 같은 숫자를 써서 점수와 탄약이 흔들리지 않습니다.</p>
   <div class="box">
     ${(
       [
@@ -272,7 +272,7 @@ page.innerHTML = `
 
 <section>
   <h2>소리</h2>
-  <p class="ds-dim">메뉴의 모든 입력에 짧은 소리가 붙습니다. 지금은 임시로 합성한 소리이고, 승인하시면 녹음된 CC0 소리로 바꿉니다.</p>
+  <p class="ds-dim">메뉴의 모든 입력에 짧은 소리가 붙습니다. Kenney의 CC0 소리 두 팩(150개)에서 길이와 높낮이를 재서 낮고 짧은 기계음 7개를 골랐습니다(모두 합쳐 38 KB). 귀에 맞지 않는 것은 말씀해 주시면 다른 것으로 바꿉니다.</p>
   <div class="wrap">${(
     [
       ['hover', '올리기'],
@@ -289,16 +289,16 @@ page.innerHTML = `
 </section>
 
 <section>
-  <h2>받아야 할 것 · 승인 필요</h2>
-  <p class="ds-dim">아직 아무것도 내려받지 않았습니다. 용량은 서버에 확인한 값입니다.</p>
+  <h2>받은 것</h2>
+  <p class="ds-dim">2026-10-17 승인받아 내려받았습니다. 글꼴은 손대지 않은 원본 그대로, 라이선스 파일과 함께 들어갑니다.</p>
   <div class="box" style="overflow-x:auto">
     <table class="dl">
       <thead><tr><th>무엇</th><th>쓰임</th><th>출처</th><th>라이선스</th><th>게임에 들어가는 용량</th></tr></thead>
       <tbody>
         <tr><td><b>Pretendard Std</b> (가변 굵기, woff2)</td><td>모든 한글·본문</td><td><a href="https://github.com/orioncactus/pretendard" target="_blank" rel="noreferrer">github.com/orioncactus/pretendard</a> v1.3.9</td><td>SIL OFL 1.1</td><td class="num">292 KB</td></tr>
         <tr><td><b>Barlow Condensed</b> 500 · 600 · 700 (라틴, woff2)</td><td>숫자, 영문 제목, 키 이름</td><td><a href="https://fonts.google.com/specimen/Barlow+Condensed" target="_blank" rel="noreferrer">Google Fonts</a> (Jeremy Tribby)</td><td>SIL OFL 1.1</td><td class="num">66 KB<br><span class="ds-faint">21 + 22 + 22</span></td></tr>
-        <tr><td><b>Kenney Interface Sounds</b> (100개)</td><td>메뉴 효과음 6~8개를 골라 씀</td><td><a href="https://kenney.nl/assets/interface-sounds" target="_blank" rel="noreferrer">kenney.nl</a></td><td>CC0</td><td class="num">받는 파일 835 KB<br><span class="ds-faint">골라 넣으면 약 50 KB</span></td></tr>
-        <tr><td><b>Kenney UI Audio</b> (50개)</td><td>위와 같음 (고를 폭을 넓히려고)</td><td><a href="https://kenney.nl/assets/ui-audio" target="_blank" rel="noreferrer">kenney.nl</a></td><td>CC0</td><td class="num">받는 파일 412 KB<br><span class="ds-faint">골라 넣으면 포함</span></td></tr>
+        <tr><td><b>Kenney Interface Sounds</b> (100개)</td><td>목록 이동 · 선택 · 뒤로 · 화면 열기 · 오류 · 게임 시작</td><td><a href="https://kenney.nl/assets/interface-sounds" target="_blank" rel="noreferrer">kenney.nl</a></td><td>CC0</td><td class="num">받는 파일 835 KB<br><span class="ds-faint">고른 7개: 38 KB</span></td></tr>
+        <tr><td><b>Kenney UI Audio</b> (50개)</td><td>올리기 소리 1개</td><td><a href="https://kenney.nl/assets/ui-audio" target="_blank" rel="noreferrer">kenney.nl</a></td><td>CC0</td><td class="num">받는 파일 412 KB<br><span class="ds-faint">위 38 KB에 포함</span></td></tr>
       </tbody>
     </table>
     <p class="ds-faint" style="margin:var(--s3) 0 0;font-size:var(--fs-sm)">Pretendard Std는 자주 쓰는 한글 2,350자만 들어 있습니다. 드문 글자가 들어간 이름은 그 글자만 시스템 글꼴로 나옵니다.</p>
@@ -389,6 +389,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---------- Behaviour: picking in groups, sounds ----------
+// The recorded clips load on the first press (browsers start audio only after one).
+for (const ev of ['pointerdown', 'keydown'] as const) document.addEventListener(ev, () => void loadUiSounds(), { once: true });
 let soundOn = true;
 setUiVolume(0.8);
 const play = (k: UiSound): void => {

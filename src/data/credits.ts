@@ -1,12 +1,13 @@
 /**
  * Third-party assets the game ships, for the main menu's credits page. CC-BY
- * works must be credited (author, work, licence); the CC0 ones are listed
+ * works must be credited (author, work, licence) and the OFL fonts ship with
+ * their licence texts (public/assets/fonts/OFL-*.txt); the CC0 ones are listed
  * as thanks. Keep in step with sounds.manifest.json and assets.manifest.json.
  */
 export interface Credit {
   work: string;
   author: string;
-  license: 'CC-BY 3.0' | 'CC0';
+  license: 'CC-BY 3.0' | 'CC0' | 'OFL 1.1';
   url: string;
 }
 
@@ -18,6 +19,8 @@ export const CREDITS: readonly Credit[] = [
   { work: 'Muffled Distant Explosion', author: 'NenadSimic', license: 'CC0', url: 'https://opengameart.org/content/muffled-distant-explosion' },
   { work: 'The Free Firearm Sound Library', author: 'Jaszczak, Nelson, Heras, Nanney', license: 'CC0', url: 'https://opengameart.org' },
   { work: 'Basic Sound Effects, gun reload sounds, equipment clicks, forest birds', author: 'OpenGameArt contributors', license: 'CC0', url: 'https://opengameart.org' },
-  { work: 'Impact Sounds', author: 'Kenney', license: 'CC0', url: 'https://kenney.nl' },
+  { work: 'Pretendard (font)', author: 'Kil Hyung-jin', license: 'OFL 1.1', url: 'https://github.com/orioncactus/pretendard' },
+  { work: 'Barlow Condensed (font)', author: 'Jeremy Tribby', license: 'OFL 1.1', url: 'https://github.com/jpt/barlow' },
+  { work: 'Impact Sounds, Interface Sounds, UI Audio', author: 'Kenney', license: 'CC0', url: 'https://kenney.nl' },
   { work: 'Textures, skies (HDRIs) and models', author: 'Poly Haven', license: 'CC0', url: 'https://polyhaven.com' },
 ];

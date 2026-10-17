@@ -44,5 +44,12 @@
   "cannon_far": 1,
   "explosion_big": 1,
   "explosion_big_far": 1,
-  "rumble_far": 1
+  "rumble_far": 1,
+  "ui_hover": 1,
+  "ui_move": 1,
+  "ui_select": 1,
+  "ui_back": 1,
+  "ui_open": 1,
+  "ui_error": 1,
+  "ui_start": 1
 }

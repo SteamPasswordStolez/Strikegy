@@ -105,6 +105,18 @@
       "file": "c0/voice",
       "license": "Generated: ElevenLabs eleven-v4 via OpenRouter (owner's account), voices AE2gO77ACenpl2kFLuMg (Yoon) / wMrz30qBeYiSkAtnZGtn (staff major); check commercial terms before release",
       "note": "Cutscene C0 (owner approved 2026-10-11); raw in assets-src/sounds/c0, mixed offline, not in the game build yet."
+    },
+    "kenney_interface": {
+      "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+      "file": "kenney_interface.zip",
+      "extract": "kenney_interface",
+      "license": "CC0 — Kenney Interface Sounds"
+    },
+    "kenney_ui": {
+      "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+      "file": "kenney_ui.zip",
+      "extract": "kenney_ui",
+      "license": "CC0 — Kenney UI Audio"
     }
   },
   "sounds": {
@@ -328,6 +340,34 @@
       "src": "muffled_distant_explosion.wav",
       "dur": 4,
       "rate": 16000
+    },
+    "ui_hover": {
+      "src": "kenney_ui/Audio/rollover2.ogg",
+      "dur": 0.06
+    },
+    "ui_move": {
+      "src": "kenney_interface/Audio/tick_002.ogg",
+      "dur": 0.03
+    },
+    "ui_select": {
+      "src": "kenney_interface/Audio/select_002.ogg",
+      "dur": 0.05
+    },
+    "ui_back": {
+      "src": "kenney_interface/Audio/back_002.ogg",
+      "dur": 0.08
+    },
+    "ui_open": {
+      "src": "kenney_interface/Audio/maximize_008.ogg",
+      "dur": 0.23
+    },
+    "ui_error": {
+      "src": "kenney_interface/Audio/error_004.ogg",
+      "dur": 0.11
+    },
+    "ui_start": {
+      "src": "kenney_interface/Audio/confirmation_001.ogg",
+      "dur": 0.3
     }
   }
 }

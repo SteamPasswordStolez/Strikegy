@@ -1,15 +1,51 @@
 /**
  * Menu sounds (design system, 2026-10-17): every hover, step, pick, back and
- * screen change answers with a short sound, the way BF / CoD menus do. These
- * are synthesised stand-ins; recorded CC0 ones replace them once the owner
- * approves the download (docs/design/ui-audit.md).
+ * screen change answers with a short sound, the way BF / CoD menus do.
+ * Recorded CC0 clips from Kenney's Interface Sounds / UI Audio (`ui_*` in
+ * sounds.manifest.json, built by `npm run sounds`); until they have loaded,
+ * or if they fail to, a synthesised stand-in plays instead.
  */
 export type UiSound = 'hover' | 'move' | 'select' | 'back' | 'open' | 'error' | 'start';
+
+const KINDS: readonly UiSound[] = ['hover', 'move', 'select', 'back', 'open', 'error', 'start'];
+/** Level of each clip (the clips are all normalised to a -1 dB peak). */
+const LEVEL: Record<UiSound, number> = { hover: 0.22, move: 0.3, select: 0.45, back: 0.45, open: 0.35, error: 0.45, start: 0.6 };
 
 let ctx: AudioContext | null = null;
 let out: GainNode | null = null;
 let volume = 0.8;
 let noise: AudioBuffer | null = null;
+const clips = new Map<UiSound, AudioBuffer>();
+let loading: Promise<void> | null = null;
+
+/** Fetches and decodes the recorded clips (once; later calls share the first). */
+export function loadUiSounds(): Promise<void> {
+  const a = context();
+  if (!a) return Promise.resolve();
+  loading ??= Promise.all(
+    KINDS.map(async (k) => {
+      try {
+        const res = await fetch(`${import.meta.env.BASE_URL}assets/sounds/ui_${k}.wav`);
+        if (!res.ok) return;
+        clips.set(k, await a.ctx.decodeAudioData(await res.arrayBuffer()));
+      } catch {
+        // The synthesised stand-in keeps playing for this one.
+      }
+    }),
+  ).then(() => undefined);
+  return loading;
+}
+
+function playClip(c: AudioContext, dest: AudioNode, buf: AudioBuffer, gain: number): void {
+  const s = c.createBufferSource();
+  s.buffer = buf;
+  // A touch of pitch variety so repeated hovers don't sound like a loop.
+  s.playbackRate.value = 0.97 + Math.random() * 0.06;
+  const g = c.createGain();
+  g.gain.value = gain;
+  s.connect(g).connect(dest);
+  s.start();
+}
 
 function context(): { ctx: AudioContext; out: GainNode } | null {
   if (!ctx) {
@@ -75,11 +111,19 @@ export function uiSound(kind: UiSound): void {
   if (!a) return;
   const { ctx: c, out: o } = a;
   const t = c.currentTime + 0.002;
+  if (kind === 'hover') {
+    // Rapid sweeps over a list would chatter: at most one tick per 40 ms.
+    if (t - lastHover < 0.04) return;
+    lastHover = t;
+  }
+  const clip = clips.get(kind);
+  if (clip) {
+    playClip(c, o, clip, LEVEL[kind]);
+    return;
+  }
+  void loadUiSounds();
   switch (kind) {
     case 'hover':
-      // Rapid sweeps over a list would chatter: at most one tick per 40 ms.
-      if (t - lastHover < 0.04) return;
-      lastHover = t;
       hiss(c, o, t, 0.018, 0.06, 5200, 5200, 2.5);
       break;
     case 'move':
