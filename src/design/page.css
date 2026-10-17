@@ -1,0 +1,431 @@
+/* Layout of the design-system sample page (/design/, dev only). Uses ds.css tokens. */
+html {
+  background: var(--bg);
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  transition: background var(--t-slow) var(--ease);
+}
+#page {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: var(--s6) var(--s5) var(--s8);
+}
+.pg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding-bottom: var(--s5);
+  border-bottom: var(--line-w) solid var(--line);
+}
+.pg-head p {
+  margin: var(--s2) 0 0;
+  max-width: 60ch;
+}
+.pg-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  align-items: center;
+}
+.pg-note {
+  margin-top: var(--s4);
+  font-size: var(--fs-sm);
+}
+section {
+  margin-top: var(--s8);
+}
+section > h2 {
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+section > p {
+  margin: 0 0 var(--s5);
+  max-width: 70ch;
+}
+
+/* Preview frames: a 1920x1080 screen scaled to the page (16 px unit at 1920 wide). */
+.mock {
+  container-type: inline-size;
+  border: var(--line-w) solid var(--line);
+  background: #000;
+}
+.mock {
+  position: relative;
+}
+.mock-full-btn {
+  position: absolute;
+  right: 0;
+  top: calc(-1 * var(--s7));
+}
+/* "Full screen": the mock fills the window, as the real screen would. */
+.mock.full {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  border: 0;
+}
+.mock.full .mock-screen {
+  width: min(100vw, calc(100vh * 16 / 9));
+  --u: min(calc(100vw / 120), calc(100vh * 16 / 9 / 120));
+}
+.mock.full .mock-full-btn {
+  display: none;
+}
+.mock-screen {
+  --u: calc(100cqw / 120);
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  color: var(--ink);
+}
+.mock-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mock-shade-left {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgb(0 0 0 / 0.6) 0%, transparent 30%),
+    linear-gradient(90deg, rgb(0 0 0 / 0.82) 0%, rgb(0 0 0 / 0.55) 32%, transparent 62%);
+}
+.mock-shade-full {
+  position: absolute;
+  inset: 0;
+  background: var(--shade);
+}
+
+/* Main menu mock. */
+.mm {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  padding: var(--s7) var(--s8);
+}
+.mm-mark {
+  font: 700 var(--fs-2xl) / 1 var(--font-display);
+  letter-spacing: 0.06em;
+}
+.mm-sub {
+  margin-top: var(--s2);
+}
+.mm-top-right {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+}
+.mm-profile {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  height: calc(var(--u) * 2.75);
+  padding: 0 var(--s4);
+  background: var(--surface-1);
+  border: var(--line-w) solid var(--line);
+}
+.mm-tag {
+  color: var(--ink-3);
+  font-family: var(--font-display);
+}
+.mm-icon-btn {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 2.75);
+  height: calc(var(--u) * 2.75);
+  padding: 0;
+  font-size: var(--fs-lg);
+}
+.mm-menu {
+  align-self: center;
+  margin-left: calc(var(--s5) * -1);
+}
+.mm-menu .ds-menu-item.hero {
+  margin-bottom: var(--s3);
+}
+.mm-feature {
+  align-self: end;
+  width: calc(var(--u) * 24);
+}
+.mm-feature .ds-card {
+  justify-content: space-between;
+}
+.mm-feature-top {
+  display: flex;
+  justify-content: space-between;
+}
+.mm-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--s5);
+  padding-top: var(--s5);
+  border-top: var(--line-w) solid var(--line);
+}
+
+/* Setup mock. */
+.su {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: calc(var(--u) * 26) 1fr calc(var(--u) * 26);
+  grid-template-rows: auto auto 1fr auto;
+  gap: 0 var(--s6);
+  padding: var(--s6) var(--s7);
+}
+.su-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin-bottom: var(--s5);
+}
+.su-tabs {
+  grid-column: 1 / -1;
+  margin-bottom: var(--s5);
+}
+.su-modes {
+  overflow: hidden;
+}
+.su-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-height: 0;
+}
+.su-map .ds-card.big {
+  flex: 1;
+  aspect-ratio: auto;
+  padding: var(--s5);
+}
+.su-map-name {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1;
+}
+.su-facts {
+  display: flex;
+  gap: var(--s6);
+  margin-top: var(--s3);
+}
+.su-facts .ds-num {
+  display: block;
+  font-size: var(--fs-xl);
+  line-height: 1.1;
+}
+.su-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--s2);
+}
+.su-strip .ds-card {
+  padding: var(--s2);
+}
+.su-strip .ds-card-name {
+  font-size: var(--fs-sm);
+}
+.su-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.su-mode-title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+.su-set {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s3) 0;
+  border-top: var(--line-w) solid var(--line);
+}
+.su-set > span {
+  font-weight: 600;
+}
+.su-side .ds-btn.primary {
+  margin-top: auto;
+  width: 100%;
+}
+.su-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--s5);
+  margin-top: var(--s5);
+}
+
+/* Sample blocks. */
+.grid {
+  display: grid;
+  gap: var(--s5);
+}
+.grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+}
+.box {
+  padding: var(--s5);
+  background: var(--surface-1);
+  border: var(--line-w) solid var(--line);
+}
+.box > .ds-label {
+  display: block;
+  margin-bottom: var(--s4);
+}
+.wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  align-items: center;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.stack > .ds-seg,
+.stack > .ds-stepper {
+  align-self: flex-start;
+}
+
+.type-row {
+  display: grid;
+  grid-template-columns: 9em 1fr;
+  align-items: baseline;
+  gap: var(--s4);
+  padding: var(--s3) 0;
+  border-bottom: var(--line-w) solid var(--line);
+}
+.type-row:last-child {
+  border-bottom: 0;
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--s3);
+}
+.swatch {
+  border: var(--line-w) solid var(--line);
+}
+.swatch i {
+  display: block;
+  height: 56px;
+}
+.swatch div {
+  padding: var(--s2) var(--s3);
+  font-size: var(--fs-xs);
+}
+.swatch b {
+  display: block;
+  font-size: var(--fs-sm);
+}
+
+.spaces {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s4);
+}
+.spaces i {
+  display: block;
+  background: var(--ink-2);
+}
+.spaces span {
+  display: block;
+  margin-top: var(--s2);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+
+.icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--line-w);
+}
+.icons div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s4) var(--s2);
+  background: var(--surface-1);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+.icons .ds-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--ink);
+}
+
+.rules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: r;
+}
+.rules li {
+  counter-increment: r;
+  display: grid;
+  grid-template-columns: 2.2em 1fr;
+  padding: var(--s3) 0;
+  border-bottom: var(--line-w) solid var(--line);
+}
+.rules li::before {
+  content: counter(r, decimal-leading-zero);
+  font-family: var(--font-display);
+  color: var(--ink-3);
+}
+.rules b {
+  display: block;
+}
+
+.dl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.dl th,
+.dl td {
+  padding: var(--s3) var(--s3);
+  text-align: left;
+  border-bottom: var(--line-w) solid var(--line);
+  vertical-align: top;
+}
+.dl th {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.dl a {
+  color: var(--ink);
+}
+.dl td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  #page {
+    padding: var(--s5) var(--s4) var(--s7);
+  }
+  .type-row {
+    grid-template-columns: 1fr;
+    gap: var(--s1);
+  }
+  .grid.two {
+    grid-template-columns: 1fr;
+  }
+}

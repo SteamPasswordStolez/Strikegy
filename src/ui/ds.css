@@ -1,0 +1,702 @@
+/*
+ * Strikegy design system (owner, 2026-10-17: "the UI feels like AI slop, not
+ * BF / CoD"; audit in docs/design/ui-audit.md). Everything here is a token or
+ * a `ds-` part; screens are rebuilt on these instead of picking values one by
+ * one. Sample page: /design/ (dev only).
+ *
+ * Rules the tokens encode:
+ * - one unit, `--u`, that grows with the screen (16 px at 1080p); every size,
+ *   gap and line is a step of it, so the UI keeps its proportions from 720p to 4K;
+ * - 7 type sizes, 8 spacing steps, 2 corner radii, 3 durations, one easing;
+ * - colours as roles (surface / ink / line / accent / sides), two themes;
+ * - square corners, flat panels, no glow, no gradients except image shades.
+ */
+
+/* ---------- Fonts ---------- */
+/* Pretendard Std (Hangul) and Barlow Condensed (display, numbers) once the
+   owner approves the download; until then the closest system faces stand in. */
+.ds,
+.ds-root {
+  --font-ui: 'Pretendard Std Variable', 'Pretendard Std', 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif;
+  --font-display: 'Barlow Condensed', 'Bahnschrift SemiCondensed', 'Bahnschrift', 'DIN Condensed', 'Arial Narrow', var(--font-ui);
+
+  /* ---------- Unit ---------- */
+  --u: clamp(13px, calc(100vh / 67.5), 24px);
+
+  /* ---------- Type: 7 sizes ---------- */
+  --fs-xs: calc(var(--u) * 0.75); /* caps labels, key hints */
+  --fs-sm: calc(var(--u) * 0.875); /* secondary text */
+  --fs-md: var(--u); /* body */
+  --fs-lg: calc(var(--u) * 1.25); /* row titles, buttons */
+  --fs-xl: calc(var(--u) * 1.75); /* section titles, big numbers */
+  --fs-2xl: calc(var(--u) * 2.75); /* screen titles */
+  --fs-hero: calc(var(--u) * 4.5); /* wordmark, victory */
+
+  /* ---------- Space: 8 steps ---------- */
+  --s1: calc(var(--u) * 0.25);
+  --s2: calc(var(--u) * 0.5);
+  --s3: calc(var(--u) * 0.75);
+  --s4: var(--u);
+  --s5: calc(var(--u) * 1.5);
+  --s6: calc(var(--u) * 2);
+  --s7: calc(var(--u) * 3);
+  --s8: calc(var(--u) * 4);
+
+  /* Lines and corners. */
+  --line-w: max(1px, calc(var(--u) * 0.0625));
+  --bar-w: max(2px, calc(var(--u) * 0.1875));
+  --r-0: 0;
+  --r-1: max(2px, calc(var(--u) * 0.125));
+
+  /* ---------- Motion ---------- */
+  --t-fast: 120ms;
+  --t-base: 200ms;
+  --t-slow: 320ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Themes ---------- */
+/* Colours sit on the root only (a nested `.ds` that re-scales the unit, e.g. a
+   preview frame, inherits them). BFV-like: warm white on charcoal, the picked
+   item a solid light slab, amber for the one call to action. */
+.ds-root,
+[data-ds-theme='bfv'] {
+  --bg: #0c0c0b;
+  --surface-1: rgb(20 20 19 / 0.78); /* panels over the picture */
+  --surface-2: rgb(44 43 40 / 0.82); /* hover, inputs */
+  --surface-3: rgb(70 68 63 / 0.9); /* pressed, tracks */
+  --ink: #efebe2;
+  --ink-2: rgb(239 235 226 / 0.68);
+  --ink-3: rgb(239 235 226 / 0.42);
+  --line: rgb(239 235 226 / 0.14);
+  --line-strong: rgb(239 235 226 / 0.32);
+  --sel-bg: #efebe2;
+  --sel-ink: #121210;
+  --accent: #e9a03b;
+  --accent-ink: #171106;
+  --ally: #4fa3ff;
+  --enemy: #ff5b3a;
+  --squad: #86d36e;
+  --warn: #f2c94c;
+  --danger: #ff4a3d;
+  --shade: rgb(8 8 7 / 0.72);
+}
+
+/* Battlefield 2042-like (the look picked on 2026-10-12), on the same parts. */
+[data-ds-theme='2042'] {
+  --bg: #050c18;
+  --surface-1: rgb(8 18 34 / 0.74);
+  --surface-2: rgb(18 36 60 / 0.82);
+  --surface-3: rgb(30 56 88 / 0.9);
+  --ink: #f2f7fb;
+  --ink-2: rgb(226 238 248 / 0.68);
+  --ink-3: rgb(226 238 248 / 0.4);
+  --line: rgb(150 225 255 / 0.14);
+  --line-strong: rgb(150 225 255 / 0.34);
+  --sel-bg: #00e5ff;
+  --sel-ink: #03141f;
+  --accent: #00e5ff;
+  --accent-ink: #03141f;
+  --ally: #4c9dff;
+  --enemy: #f2453a;
+  --squad: #74e08a;
+  --warn: #ffd166;
+  --danger: #ff5a4f;
+  --shade: rgb(4 10 20 / 0.72);
+}
+
+/* ---------- Type helpers ---------- */
+.ds-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ds-num {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.ds-title {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.ds-dim {
+  color: var(--ink-2);
+}
+.ds-faint {
+  color: var(--ink-3);
+}
+
+/* ---------- Icons ---------- */
+.ds-icon {
+  width: 1.25em;
+  height: 1.25em;
+  flex: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  fill: none;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  vertical-align: -0.22em;
+}
+
+/* ---------- Panel ---------- */
+.ds-panel {
+  background: var(--surface-1);
+  border: var(--line-w) solid var(--line);
+  border-radius: var(--r-0);
+}
+
+/* ---------- Buttons ---------- */
+.ds-btn {
+  --h: calc(var(--u) * 2.75);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  height: var(--h);
+  padding: 0 var(--s5);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: 600 var(--fs-md) / 1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+.ds-btn:hover,
+.ds-btn:focus-visible {
+  background: var(--sel-bg);
+  border-color: var(--sel-bg);
+  color: var(--sel-ink);
+  outline: none;
+}
+.ds-btn:active {
+  transform: translateY(1px);
+}
+.ds-btn.primary {
+  --h: calc(var(--u) * 3.5);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  padding: 0 var(--s6);
+}
+.ds-btn.primary:hover,
+.ds-btn.primary:focus-visible {
+  filter: brightness(1.1);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.ds-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+  padding: 0 var(--s3);
+}
+.ds-btn.ghost:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+  color: var(--ink);
+}
+.ds-btn[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.ds-btn .ds-kbd {
+  margin-left: var(--s2);
+}
+
+/* ---------- Main menu list: one big entry, the rest quieter ---------- */
+.ds-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ds-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s4) var(--s2) var(--s5);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    padding var(--t-base) var(--ease);
+}
+.ds-menu-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: var(--bar-w);
+  background: var(--sel-bg);
+  transform: scaleY(0);
+  transition: transform var(--t-base) var(--ease);
+}
+.ds-menu-item:hover,
+.ds-menu-item.sel {
+  color: var(--ink);
+  padding-left: var(--s6);
+}
+.ds-menu-item:hover::before,
+.ds-menu-item.sel::before {
+  transform: scaleY(1);
+}
+.ds-menu-item.hero {
+  font-size: calc(var(--fs-2xl) * 1.25);
+  color: var(--ink);
+}
+.ds-menu-item.small {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+/* ---------- Tabs ---------- */
+.ds-tabs {
+  display: flex;
+  gap: var(--s5);
+  border-bottom: var(--line-w) solid var(--line);
+}
+.ds-tab {
+  position: relative;
+  padding: var(--s2) 0 var(--s3);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease);
+}
+.ds-tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--line-w) * -1);
+  height: var(--bar-w);
+  background: var(--sel-bg);
+  transform: scaleX(0);
+  transition: transform var(--t-base) var(--ease);
+}
+.ds-tab:hover {
+  color: var(--ink-2);
+}
+.ds-tab.sel {
+  color: var(--ink);
+}
+.ds-tab.sel::after {
+  transform: scaleX(1);
+}
+
+/* ---------- Rows (lists of modes, settings, rooms) ---------- */
+.ds-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  min-height: calc(var(--u) * 3.25);
+  padding: var(--s2) var(--s4);
+  background: var(--surface-1);
+  border-left: var(--bar-w) solid transparent;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.ds-row + .ds-row {
+  margin-top: var(--line-w);
+}
+.ds-row:hover {
+  background: var(--surface-2);
+}
+.ds-row.sel {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.ds-row.sel .ds-dim,
+.ds-row.sel .ds-faint,
+.ds-row.sel .ds-row-side,
+.ds-row.sel .ds-label {
+  color: inherit;
+  opacity: 0.7;
+}
+.ds-row.off {
+  opacity: 0.38;
+  pointer-events: none;
+}
+.ds-row-main {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.ds-row-side {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- Choices: segmented, stepper, toggle, slider, input ---------- */
+.ds-seg {
+  display: inline-flex;
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  overflow: hidden;
+}
+.ds-seg button {
+  min-width: calc(var(--u) * 5);
+  height: calc(var(--u) * 2.25);
+  padding: 0 var(--s4);
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: 600 var(--fs-sm) / 1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.ds-seg button + button {
+  border-left: var(--line-w) solid var(--line);
+}
+.ds-seg button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.ds-seg button.sel {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+
+.ds-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.ds-stepper button {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 2.25);
+  height: calc(var(--u) * 2.25);
+  border: var(--line-w) solid var(--line);
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.ds-stepper button:hover {
+  background: var(--sel-bg);
+  color: var(--sel-ink);
+}
+.ds-stepper output {
+  min-width: calc(var(--u) * 6);
+  text-align: center;
+  font-size: var(--fs-lg);
+}
+
+.ds-toggle {
+  position: relative;
+  width: calc(var(--u) * 2.75);
+  height: calc(var(--u) * 1.5);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--t-base) var(--ease);
+}
+.ds-toggle::after {
+  content: '';
+  position: absolute;
+  top: calc(var(--u) * 0.1875);
+  left: calc(var(--u) * 0.1875);
+  width: calc(var(--u) * 1);
+  height: calc(var(--u) * 1);
+  background: var(--ink-2);
+  transition:
+    transform var(--t-base) var(--ease),
+    background var(--t-base) var(--ease);
+}
+.ds-toggle.on {
+  background: var(--sel-bg);
+  border-color: var(--sel-bg);
+}
+.ds-toggle.on::after {
+  transform: translateX(calc(var(--u) * 1.25));
+  background: var(--sel-ink);
+}
+
+.ds-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: calc(var(--u) * 1.5);
+  background: transparent;
+  cursor: pointer;
+  --p: 50%;
+}
+.ds-slider::-webkit-slider-runnable-track {
+  height: var(--bar-w);
+  background: linear-gradient(90deg, var(--ink) var(--p), var(--surface-3) var(--p));
+}
+.ds-slider::-moz-range-track {
+  height: var(--bar-w);
+  background: linear-gradient(90deg, var(--ink) var(--p), var(--surface-3) var(--p));
+}
+.ds-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: calc(var(--u) * 0.5);
+  height: calc(var(--u) * 1.25);
+  margin-top: calc(var(--u) * -0.53);
+  background: var(--ink);
+  border: 0;
+  border-radius: 0;
+}
+.ds-slider::-moz-range-thumb {
+  width: calc(var(--u) * 0.5);
+  height: calc(var(--u) * 1.25);
+  background: var(--ink);
+  border: 0;
+  border-radius: 0;
+}
+
+.ds-input {
+  width: 100%;
+  height: calc(var(--u) * 2.75);
+  padding: 0 var(--s4);
+  border: var(--line-w) solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: 500 var(--fs-md) / 1 var(--font-ui);
+  outline: none;
+  transition: border-color var(--t-fast) var(--ease);
+}
+.ds-input::placeholder {
+  color: var(--ink-3);
+}
+.ds-input:focus {
+  border-color: var(--ink);
+}
+
+/* ---------- Small things ---------- */
+/* Key hints: the key alone, never words inside the cap. */
+.ds-kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: calc(var(--u) * 1.5);
+  height: calc(var(--u) * 1.5);
+  padding: 0 var(--s1);
+  border: var(--line-w) solid var(--line-strong);
+  border-bottom-width: max(2px, calc(var(--line-w) * 2));
+  border-radius: var(--r-1);
+  font: 600 var(--fs-xs) / 1 var(--font-display);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.ds-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  height: calc(var(--u) * 1.375);
+  padding: 0 var(--s2);
+  border-radius: var(--r-1);
+  font: 700 var(--fs-xs) / 1 var(--font-ui);
+  letter-spacing: 0.04em;
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.ds-badge.ally {
+  background: var(--ally);
+  color: #04101f;
+}
+.ds-badge.enemy {
+  background: var(--enemy);
+  color: #1d0703;
+}
+.ds-badge.accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.ds-badge.line {
+  background: transparent;
+  border: var(--line-w) solid var(--line-strong);
+  color: var(--ink-2);
+}
+
+.ds-progress {
+  position: relative;
+  height: var(--bar-w);
+  background: var(--surface-3);
+  overflow: hidden;
+  --p: 0.4;
+}
+.ds-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--ink);
+  transform-origin: left;
+  transform: scaleX(var(--p));
+  transition: transform var(--t-slow) var(--ease);
+}
+
+/* Weapon stats: label, bar in steps, value. */
+.ds-stat {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 5) 1fr calc(var(--u) * 2.5);
+  align-items: center;
+  gap: var(--s3);
+  font-size: var(--fs-sm);
+}
+.ds-stat-bar {
+  height: calc(var(--u) * 0.375);
+  background: repeating-linear-gradient(90deg, var(--ink) 0 calc(10% - 2px), transparent calc(10% - 2px) 10%);
+  -webkit-mask: linear-gradient(90deg, #000 var(--p), rgb(0 0 0 / 0.18) var(--p));
+  mask: linear-gradient(90deg, #000 var(--p), rgb(0 0 0 / 0.18) var(--p));
+}
+.ds-stat .ds-num {
+  text-align: right;
+  font-size: var(--fs-md);
+}
+
+/* Toast: one line, a coloured edge, gone after a few seconds. */
+.ds-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s5) var(--s3) var(--s4);
+  background: var(--surface-1);
+  border-left: var(--bar-w) solid var(--warn);
+  font-size: var(--fs-md);
+  backdrop-filter: blur(12px);
+}
+.ds-toast.danger {
+  border-left-color: var(--danger);
+}
+
+/* Dialog: a plain block, title, body, buttons right. */
+.ds-dialog {
+  width: min(100%, calc(var(--u) * 28));
+  padding: var(--s6);
+  background: var(--bg);
+  border: var(--line-w) solid var(--line);
+  border-top: var(--bar-w) solid var(--sel-bg);
+}
+.ds-dialog h3 {
+  margin: 0 0 var(--s3);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+.ds-dialog p {
+  margin: 0 0 var(--s6);
+  color: var(--ink-2);
+}
+.ds-dialog .ds-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s3);
+}
+
+/* Map / mode card: picture, shade at the bottom, name over it. */
+.ds-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  aspect-ratio: 16 / 9;
+  padding: var(--s4);
+  overflow: hidden;
+  background: var(--surface-2) center / cover;
+  border: var(--line-w) solid var(--line);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-base) var(--ease);
+}
+.ds-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 40%, var(--shade));
+}
+.ds-card > * {
+  position: relative;
+}
+.ds-card:hover {
+  border-color: var(--line-strong);
+}
+.ds-card.sel {
+  border: var(--bar-w) solid var(--sel-bg);
+}
+.ds-card-name {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+
+/* Ping bars. */
+.ds-ping {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: calc(var(--u) * 0.875);
+}
+.ds-ping i {
+  width: 3px;
+  background: var(--ink-3);
+}
+.ds-ping i:nth-child(1) {
+  height: 35%;
+}
+.ds-ping i:nth-child(2) {
+  height: 65%;
+}
+.ds-ping i:nth-child(3) {
+  height: 100%;
+}
+.ds-ping.good i {
+  background: var(--squad);
+}
+.ds-ping.mid i:nth-child(-n + 2) {
+  background: var(--warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds *,
+  .ds-root * {
+    transition: none !important;
+  }
+}
