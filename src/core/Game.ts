@@ -74,6 +74,7 @@ import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay } from '@/ui/Overlay';
 import { Briefing } from '@/audio/briefing/Briefing';
+import { voiceLangFor } from '@/audio/briefing/cues';
 import { BriefingDirector } from '@/modes/briefingDirector';
 import { SettingsPanel } from '@/ui/SettingsPanel';
 import { TutorialPanel } from '@/ui/TutorialPanel';
@@ -3584,7 +3585,7 @@ export class Game {
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
     if (!this.options.net) this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
     // The battle briefing (owner, 2026-10-17): the strip and HQ's radio take the news below.
-    this.briefing = new Briefing(this.hud.root, this.audio, this.settings.locale, this.settings.subtitles, ASSET_BASE);
+    this.briefing = new Briefing(this.hud.root, this.audio, this.settings.locale, this.settings.subtitles, ASSET_BASE, voiceLangFor(map.meta.id));
     this.briefDirector = new BriefingDirector(this.briefing, zm, {
       myTeam: this.myTeam,
       myId: this.myId,

@@ -1,94 +1,94 @@
-﻿file,cue,variant,zone,speaker,voice,tag,tts_ko,subtitle_ko,subtitle_en
-start.zone_1.mp3,start.zone,1,,hq,brian,[firm],"[firm] 전 부대, 거점을 확보하라.","전 부대, 거점을 확보하라.","All units, take the objectives."
-start.zone_2.mp3,start.zone,2,,hq,brian,[firm],[firm] 작전 개시. 거점을 장악한다.,작전 개시. 거점을 장악한다.,Operation is go. Seize the objectives.
-start.attack_1.mp3,start.attack,1,,hq,brian,[firm],[firm] 공격 개시. 첫 번째 섹터를 돌파하라.,공격 개시. 첫 번째 섹터를 돌파하라.,Begin the attack. Break through the first sector.
-start.attack_2.mp3,start.attack,2,,hq,brian,[firm],[firm] 전진하라. 적 방어선을 뚫는다.,전진하라. 적 방어선을 뚫는다.,Move out. We break their line.
-start.defend_1.mp3,start.defend,1,,hq,brian,[urgent],[urgent] 적이 몰려온다. 방어선을 지켜라.,적이 몰려온다. 방어선을 지켜라.,They are coming. Hold the line.
-start.defend_2.mp3,start.defend,2,,hq,brian,[urgent],[urgent] 진지를 사수하라. 한 발도 물러서지 마라.,진지를 사수하라. 한 발도 물러서지 마라.,Hold your positions. Not one step back.
-start.tdm_1.mp3,start.tdm,1,,hq,brian,[firm],[firm] 적을 섬멸하라.,적을 섬멸하라.,Wipe them out.
-start.killconfirm_1.mp3,start.killconfirm,1,,hq,brian,[firm],[firm] 적을 쓰러뜨리고 인식표를 회수하라.,적을 쓰러뜨리고 인식표를 회수하라.,Take them down and collect the tags.
-start.fortress_1.mp3,start.fortress,1,,hq,brian,[calm],[calm] 건설 단계다. 진지를 구축하라.,건설 단계다. 진지를 구축하라.,Build phase. Dig in.
-start.escortAttack_1.mp3,start.escortAttack,1,,hq,brian,[firm],[firm] 장갑차를 호송한다. 길을 열어라.,장갑차를 호송한다. 길을 열어라.,We escort the carrier. Clear the way.
-start.escortDefend_1.mp3,start.escortDefend,1,,hq,brian,[urgent],[urgent] 적 장갑차가 온다. 여기서 막아라.,적 장갑차가 온다. 여기서 막아라.,Enemy carrier inbound. Stop it here.
-fortress.built_1.mp3,fortress.built,1,,hq,brian,[firm],[firm] 건설 끝. 전투 개시!,건설 끝. 전투 개시!,Building is over. Fight!
-end.win_1.mp3,end.win,1,,hq,brian,[relieved],[relieved] 작전 성공. 잘 싸웠다.,작전 성공. 잘 싸웠다.,Mission accomplished. Well fought.
-end.win_2.mp3,end.win,2,,hq,brian,[relieved],[relieved] 적이 물러간다. 우리가 이겼다.,적이 물러간다. 우리가 이겼다.,They are pulling back. We won.
-end.lose_1.mp3,end.lose,1,,hq,brian,[tense],[tense] 작전 실패. 철수한다.,작전 실패. 철수한다.,Mission failed. We are pulling out.
-end.lose_2.mp3,end.lose,2,,hq,brian,[tense],[tense] 더는 버틸 수 없다. 후퇴하라.,더는 버틸 수 없다. 후퇴하라.,We can not hold. Fall back.
-zone.taken.A_1.mp3,zone.taken,1,A,hq,brian,[firm],[firm] 거점 알파 확보.,거점 알파 확보.,Objective Alpha is ours.
-zone.taken.B_1.mp3,zone.taken,1,B,hq,brian,[firm],[firm] 거점 브라보 확보.,거점 브라보 확보.,Objective Bravo is ours.
-zone.taken.C_1.mp3,zone.taken,1,C,hq,brian,[firm],[firm] 거점 찰리 확보.,거점 찰리 확보.,Objective Charlie is ours.
-zone.taken.D_1.mp3,zone.taken,1,D,hq,brian,[firm],[firm] 거점 델타 확보.,거점 델타 확보.,Objective Delta is ours.
-zone.taken.E_1.mp3,zone.taken,1,E,hq,brian,[firm],[firm] 거점 에코 확보.,거점 에코 확보.,Objective Echo is ours.
-zone.taken.F_1.mp3,zone.taken,1,F,hq,brian,[firm],[firm] 거점 폭스트롯 확보.,거점 폭스트롯 확보.,Objective Foxtrot is ours.
-zone.taken.G_1.mp3,zone.taken,1,G,hq,brian,[firm],[firm] 거점 골프 확보.,거점 골프 확보.,Objective Golf is ours.
-zone.lost.A_1.mp3,zone.lost,1,A,hq,brian,[urgent],"[urgent] 거점 알파, 적에게 넘어갔다!","거점 알파, 적에게 넘어갔다!",We lost objective Alpha!
-zone.lost.B_1.mp3,zone.lost,1,B,hq,brian,[urgent],"[urgent] 거점 브라보, 적에게 넘어갔다!","거점 브라보, 적에게 넘어갔다!",We lost objective Bravo!
-zone.lost.C_1.mp3,zone.lost,1,C,hq,brian,[urgent],"[urgent] 거점 찰리, 적에게 넘어갔다!","거점 찰리, 적에게 넘어갔다!",We lost objective Charlie!
-zone.lost.D_1.mp3,zone.lost,1,D,hq,brian,[urgent],"[urgent] 거점 델타, 적에게 넘어갔다!","거점 델타, 적에게 넘어갔다!",We lost objective Delta!
-zone.lost.E_1.mp3,zone.lost,1,E,hq,brian,[urgent],"[urgent] 거점 에코, 적에게 넘어갔다!","거점 에코, 적에게 넘어갔다!",We lost objective Echo!
-zone.lost.F_1.mp3,zone.lost,1,F,hq,brian,[urgent],"[urgent] 거점 폭스트롯, 적에게 넘어갔다!","거점 폭스트롯, 적에게 넘어갔다!",We lost objective Foxtrot!
-zone.lost.G_1.mp3,zone.lost,1,G,hq,brian,[urgent],"[urgent] 거점 골프, 적에게 넘어갔다!","거점 골프, 적에게 넘어갔다!",We lost objective Golf!
-zone.attacked_1.mp3,zone.attacked,1,,hq,brian,[urgent],[urgent] 우리 거점이 공격받고 있다!,우리 거점이 공격받고 있다!,One of our objectives is under attack!
-zone.attacked_2.mp3,zone.attacked,2,,hq,brian,[urgent],[urgent] 거점에 적이 들어왔다!,거점에 적이 들어왔다!,Enemy on our objective!
-zones.allOurs_1.mp3,zones.allOurs,1,,hq,brian,[firm],[firm] 모든 거점을 장악했다. 이대로 지켜라.,모든 거점을 장악했다. 이대로 지켜라.,We hold every objective. Keep it that way.
-zones.allTheirs_1.mp3,zones.allTheirs,1,,hq,brian,[urgent],[urgent] 적이 모든 거점을 쥐었다! 반격하라!,적이 모든 거점을 쥐었다! 반격하라!,They hold every objective! Counterattack!
-lead.gained_1.mp3,lead.gained,1,,hq,brian,[firm],[firm] 우리가 앞서기 시작했다.,우리가 앞서기 시작했다.,We are taking the lead.
-lead.gained_2.mp3,lead.gained,2,,hq,brian,[firm],[firm] 흐름을 잡았다. 밀어붙여라.,흐름을 잡았다. 밀어붙여라.,We have the momentum. Push on.
-lead.lost_1.mp3,lead.lost,1,,hq,brian,[urgent],[urgent] 적이 앞서고 있다!,적이 앞서고 있다!,The enemy is ahead!
-lead.lost_2.mp3,lead.lost,2,,hq,brian,[urgent],[urgent] 밀리고 있다. 거점을 되찾아라!,밀리고 있다. 거점을 되찾아라!,We are losing ground. Take the objectives back!
-win.near_1.mp3,win.near,1,,hq,brian,[firm],[firm] 승리가 눈앞이다. 끝까지 지켜라.,승리가 눈앞이다. 끝까지 지켜라.,Victory is in sight. Hold on.
-lose.near_1.mp3,lose.near,1,,hq,brian,[urgent],[urgent] 패배 직전이다! 지금 막아야 한다!,패배 직전이다! 지금 막아야 한다!,We are about to lose! Stop them now!
-tickets.low_1.mp3,tickets.low,1,,hq,brian,[tense],[tense] 증원 병력이 얼마 남지 않았다.,증원 병력이 얼마 남지 않았다.,Reinforcements are running low.
-tickets.last_1.mp3,tickets.last,1,,hq,brian,[urgent],[urgent] 마지막 증원이다. 아껴서 싸워라!,마지막 증원이다. 아껴서 싸워라!,Last reinforcements. Make them count!
-tickets.enemyLow_1.mp3,tickets.enemyLow,1,,hq,brian,[firm],[firm] 적 증원이 바닥나고 있다. 몰아쳐라!,적 증원이 바닥나고 있다. 몰아쳐라!,Enemy reinforcements are running out. Press them!
-sector.won_1.mp3,sector.won,1,,hq,brian,[firm],[firm] 섹터 장악! 이제 지켜 내라.,섹터 장악! 이제 지켜 내라.,Sector taken! Now hold it.
-sector.won_2.mp3,sector.won,2,,hq,brian,[firm],[firm] 섹터를 빼앗았다. 방어 태세로!,섹터를 빼앗았다. 방어 태세로!,The sector is ours. Dig in!
-sector.lost_1.mp3,sector.lost,1,,hq,brian,[urgent],[urgent] 섹터를 잃었다. 되찾아라!,섹터를 잃었다. 되찾아라!,We lost the sector. Take it back!
-attack.heldUs_1.mp3,attack.heldUs,1,,hq,brian,[firm],[firm] 방어 성공. 이제 우리가 공격한다.,방어 성공. 이제 우리가 공격한다.,We held them. Now we attack.
-attack.heldThem_1.mp3,attack.heldThem,1,,hq,brian,[tense],[tense] 공격 실패. 다음 섹터를 지켜라.,공격 실패. 다음 섹터를 지켜라.,The attack failed. Hold the next sector.
-timer.lowAttack_1.mp3,timer.lowAttack,1,,hq,brian,[urgent],[urgent] 공격 시간이 얼마 없다! 서둘러라!,공격 시간이 얼마 없다! 서둘러라!,We are almost out of time! Move!
-timer.lowDefend_1.mp3,timer.lowDefend,1,,hq,brian,[firm],[firm] 조금만 더 버텨라!,조금만 더 버텨라!,Hold a little longer!
-final.attack_1.mp3,final.attack,1,,hq,brian,[firm],[firm] 마지막 섹터다. 여기서 끝낸다!,마지막 섹터다. 여기서 끝낸다!,The last sector. We finish it here!
-final.defend_1.mp3,final.defend,1,,hq,brian,[urgent],[urgent] 최후의 방어선이다. 물러서지 마라!,최후의 방어선이다. 물러서지 마라!,This is our last line. No retreat!
-breakthrough_1.mp3,breakthrough,1,,hq,brian,[firm],[firm] 섹터 돌파! 다음 목표로 전진!,섹터 돌파! 다음 목표로 전진!,Sector broken! On to the next objective!
-breakthrough_2.mp3,breakthrough,2,,hq,brian,[firm],[firm] 방어선을 뚫었다. 계속 밀어라!,방어선을 뚫었다. 계속 밀어라!,We are through. Keep pushing!
-breached_1.mp3,breached,1,,hq,brian,[urgent],[urgent] 방어선이 뚫렸다. 다음 방어선으로!,방어선이 뚫렸다. 다음 방어선으로!,They broke through. Fall back to the next line!
-breached_2.mp3,breached,2,,hq,brian,[urgent],[urgent] 섹터를 잃었다. 후퇴해서 다시 막는다!,섹터를 잃었다. 후퇴해서 다시 막는다!,Sector lost. We regroup and hold again!
-charge.armedUs_1.mp3,charge.armedUs,1,,hq,brian,[firm],[firm] 폭약 설치 완료. 해체하지 못하게 지켜라!,폭약 설치 완료. 해체하지 못하게 지켜라!,Charge planted. Keep them off it!
-charge.armedThem_1.mp3,charge.armedThem,1,,hq,brian,[urgent],[urgent] 적이 폭약을 설치했다! 당장 해체하라!,적이 폭약을 설치했다! 당장 해체하라!,They planted a charge! Defuse it now!
-charge.defusedUs_1.mp3,charge.defusedUs,1,,hq,brian,[firm],[firm] 폭약 해체 완료.,폭약 해체 완료.,Charge defused.
-charge.defusedThem_1.mp3,charge.defusedThem,1,,hq,brian,[urgent],[urgent] 적이 폭약을 해체했다! 다시 설치하라!,적이 폭약을 해체했다! 다시 설치하라!,They defused our charge! Plant again!
-charge.blownUs_1.mp3,charge.blownUs,1,,hq,brian,[firm],[firm] 목표 파괴!,목표 파괴!,Target destroyed!
-charge.blownThem_1.mp3,charge.blownThem,1,,hq,brian,[tense],[tense] 목표가 파괴됐다!,목표가 파괴됐다!,We lost the target!
-round.attack_1.mp3,round.attack,1,,hq,brian,[firm],[firm] 이번 라운드는 공격이다. 폭약을 설치하라.,이번 라운드는 공격이다. 폭약을 설치하라.,We attack this round. Plant the charge.
-round.defend_1.mp3,round.defend,1,,hq,brian,[firm],[firm] 이번 라운드는 방어다. 두 지점을 지켜라.,이번 라운드는 방어다. 두 지점을 지켜라.,We defend this round. Guard both sites.
-round.won_1.mp3,round.won,1,,hq,brian,[relieved],[relieved] 라운드 승리.,라운드 승리.,Round won.
-round.lost_1.mp3,round.lost,1,,hq,brian,[tense],[tense] 라운드를 내줬다.,라운드를 내줬다.,Round lost.
-round.match_1.mp3,round.match,1,,hq,brian,[tense],[tense] 매치 포인트다. 이번에 끝낸다.,매치 포인트다. 이번에 끝낸다.,Match point. We end it now.
-lastAlive_1.mp3,lastAlive,1,,hq,brian,[calm],[calm] 너 혼자 남았다. 침착하게.,너 혼자 남았다. 침착하게.,You are the last one. Stay calm.
-hill.A_1.mp3,hill,1,A,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 알파.,하드포인트 이동. 새 위치는 알파.,The hardpoint moved. New position: Alpha.
-hill.B_1.mp3,hill,1,B,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 브라보.,하드포인트 이동. 새 위치는 브라보.,The hardpoint moved. New position: Bravo.
-hill.C_1.mp3,hill,1,C,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 찰리.,하드포인트 이동. 새 위치는 찰리.,The hardpoint moved. New position: Charlie.
-hill.D_1.mp3,hill,1,D,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 델타.,하드포인트 이동. 새 위치는 델타.,The hardpoint moved. New position: Delta.
-hill.E_1.mp3,hill,1,E,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 에코.,하드포인트 이동. 새 위치는 에코.,The hardpoint moved. New position: Echo.
-hill.F_1.mp3,hill,1,F,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 폭스트롯.,하드포인트 이동. 새 위치는 폭스트롯.,The hardpoint moved. New position: Foxtrot.
-hill.G_1.mp3,hill,1,G,hq,brian,[firm],[firm] 하드포인트 이동. 새 위치는 골프.,하드포인트 이동. 새 위치는 골프.,The hardpoint moved. New position: Golf.
-hill.soon_1.mp3,hill.soon,1,,hq,brian,[calm],[calm] 하드포인트가 곧 옮겨 간다.,하드포인트가 곧 옮겨 간다.,The hardpoint is about to move.
-payload.moving_1.mp3,payload.moving,1,,hq,brian,[firm],[firm] 장갑차 전진 중. 엄호하라!,장갑차 전진 중. 엄호하라!,The carrier is moving. Cover it!
-payload.stopped_1.mp3,payload.stopped,1,,hq,brian,[urgent],[urgent] 장갑차가 멈췄다! 주변을 정리하라!,장갑차가 멈췄다! 주변을 정리하라!,The carrier stopped! Clear the area!
-payload.held_1.mp3,payload.held,1,,hq,brian,[firm],[firm] 장갑차를 막았다. 계속 붙잡아라.,장갑차를 막았다. 계속 붙잡아라.,We stopped the carrier. Keep it pinned.
-checkpoint.us_1.mp3,checkpoint.us,1,,hq,brian,[firm],[firm] 체크포인트 통과!,체크포인트 통과!,Checkpoint passed!
-checkpoint.them_1.mp3,checkpoint.them,1,,hq,brian,[urgent],[urgent] 적 장갑차가 체크포인트를 넘었다!,적 장갑차가 체크포인트를 넘었다!,The enemy carrier passed a checkpoint!
-ffa.start_1.mp3,ffa.start,1,,announcer,callum,[firm],[firm] 모두가 적이다. 살아남아라.,모두가 적이다. 살아남아라.,Everyone is your enemy. Stay alive.
-ffa.lead_1.mp3,ffa.lead,1,,announcer,callum,[firm],[firm] 선두다.,선두다.,You have the lead.
-ffa.leadLost_1.mp3,ffa.leadLost,1,,announcer,callum,[firm],[firm] 선두를 빼앗겼다.,선두를 빼앗겼다.,You lost the lead.
-ffa.near_1.mp3,ffa.near,1,,announcer,callum,[firm],[firm] 승리까지 얼마 남지 않았다.,승리까지 얼마 남지 않았다.,Almost there.
-ffa.win_1.mp3,ffa.win,1,,announcer,callum,[firm],[firm] 승리!,승리!,Victory!
-ffa.lose_1.mp3,ffa.lose,1,,announcer,callum,[calm],[calm] 경기 종료.,경기 종료.,Match over.
-gungame.last_1.mp3,gungame.last,1,,announcer,callum,[firm],[firm] 마지막 무기다!,마지막 무기다!,Final weapon!
-gungame.demoted_1.mp3,gungame.demoted,1,,announcer,callum,[firm],[firm] 강등!,강등!,Demoted!
-lastman.shrink_1.mp3,lastman.shrink,1,,announcer,callum,[firm],[firm] 구역이 좁혀진다. 안쪽으로 이동하라.,구역이 좁혀진다. 안쪽으로 이동하라.,The zone is closing. Move inside.
-lastman.shrink_2.mp3,lastman.shrink,2,,announcer,callum,[firm],[firm] 안전 구역이 줄어든다. 서둘러라.,안전 구역이 줄어든다. 서둘러라.,The safe zone is shrinking. Hurry.
-lastman.storm_1.mp3,lastman.storm,1,,announcer,callum,[urgent],[urgent] 구역 밖이다! 빨리 들어가라!,구역 밖이다! 빨리 들어가라!,You are outside the zone! Get in!
-lastman.few_1.mp3,lastman.few,1,,announcer,callum,[tense],[tense] 생존자가 얼마 남지 않았다.,생존자가 얼마 남지 않았다.,Only a few are left.
+﻿file,cue,variant,zone,speaker,voice,subtitle_ko,en,de,fr,fa,es,nl
+start.zone_1.mp3,start.zone,1,,hq,brian,"전 부대, 거점을 확보하라.","All units, take the objectives.",An alle Einheiten: Nehmt die Punkte ein.,À toutes les unités : prenez les objectifs.,به همه‌ی واحدها: اهداف را تصرف کنید.,A todas las unidades: tomad los objetivos.,Aan alle eenheden: neem de doelen in.
+start.zone_2.mp3,start.zone,2,,hq,brian,작전 개시. 거점을 장악한다.,Operation's a go. Seize the objectives.,Operation läuft. Sichert die Punkte.,Opération lancée. Emparez-vous des objectifs.,عملیات آغاز شد. اهداف را بگیرید.,Comienza la operación. Haceos con los objetivos.,De operatie begint. Verover de doelen.
+start.attack_1.mp3,start.attack,1,,hq,brian,공격 개시. 첫 번째 섹터를 돌파하라.,Begin the attack. Break through the first sector.,Angriff beginnt. Durchbrecht den ersten Sektor.,L'assaut commence. Percez le premier secteur.,حمله آغاز شد. بخش اول را بشکنید.,Comienza el ataque. Romped el primer sector.,De aanval begint. Breek door de eerste sector.
+start.attack_2.mp3,start.attack,2,,hq,brian,전진하라. 적 방어선을 뚫는다.,Move out. We break their line.,Vorrücken. Wir brechen ihre Linie.,En avant. On brise leur ligne.,پیش‌روی کنید. خط دشمن را می‌شکنیم.,Avanzad. Vamos a romper su línea.,Voorwaarts. We breken hun linie.
+start.defend_1.mp3,start.defend,1,,hq,brian,적이 몰려온다. 방어선을 지켜라.,They're coming. Hold the line.,Sie kommen. Haltet die Linie.,Ils arrivent. Tenez la ligne.,دارند می‌آیند. خط را نگه دارید.,Ya vienen. Mantened la línea.,Ze komen eraan. Houd de linie.
+start.defend_2.mp3,start.defend,2,,hq,brian,진지를 사수하라. 한 발도 물러서지 마라.,Hold your positions. Not one step back.,Stellung halten. Keinen Schritt zurück.,Tenez vos positions. Pas un pas en arrière.,مواضعتان را حفظ کنید. یک قدم هم عقب نروید.,Mantened las posiciones. Ni un paso atrás.,Houd jullie posities. Geen stap terug.
+start.tdm_1.mp3,start.tdm,1,,hq,brian,적을 섬멸하라.,Wipe them out.,Vernichtet den Feind.,Éliminez-les.,دشمن را نابود کنید.,Acabad con ellos.,Schakel ze uit.
+start.killconfirm_1.mp3,start.killconfirm,1,,hq,brian,적을 쓰러뜨리고 인식표를 회수하라.,Take them down and collect the tags.,Schaltet sie aus und sammelt die Erkennungsmarken ein.,Abattez-les et ramassez les plaques.,آن‌ها را بزنید و پلاک‌ها را جمع کنید.,Abatidlos y recoged las placas.,Schakel ze uit en verzamel de identiteitsplaatjes.
+start.fortress_1.mp3,start.fortress,1,,hq,brian,건설 단계다. 진지를 구축하라.,Build phase. Dig in.,Bauphase. Grabt euch ein.,Préparez les défenses. Retranchez-vous.,مرحله‌ی ساخت. سنگر بگیرید.,Fase de construcción. Atrincheraos.,Bouwfase. Graaf je in.
+start.escortAttack_1.mp3,start.escortAttack,1,,hq,brian,장갑차를 호송한다. 길을 열어라.,We're escorting the carrier. Clear the way.,Wir eskortieren den Transporter. Macht den Weg frei.,On escorte le blindé. Ouvrez la route.,خودروی زرهی را اسکورت می‌کنیم. راه را باز کنید.,Escoltamos el blindado. Abrid camino.,We escorteren het pantservoertuig. Maak de weg vrij.
+start.escortDefend_1.mp3,start.escortDefend,1,,hq,brian,적 장갑차가 온다. 여기서 막아라.,Enemy carrier inbound. Stop it here.,Feindlicher Transporter im Anmarsch. Haltet ihn hier auf.,Blindé ennemi en approche. Arrêtez-le ici.,خودروی زرهی دشمن نزدیک می‌شود. همین‌جا متوقفش کنید.,Blindado enemigo en camino. Detenedlo aquí.,Vijandelijk pantservoertuig in aantocht. Stop het hier.
+fortress.built_1.mp3,fortress.built,1,,hq,brian,건설 끝. 전투 개시!,Building is over. Fight!,Bauphase vorbei. Zum Kampf!,Construction terminée. Au combat !,ساخت تمام شد. به نبرد!,Se acabó la construcción. ¡Al combate!,De bouw is klaar. Ten strijde!
+end.win_1.mp3,end.win,1,,hq,brian,작전 성공. 잘 싸웠다.,Mission accomplished. Well fought.,Auftrag erfüllt. Gut gekämpft.,Mission accomplie. Bien combattu.,مأموریت انجام شد. خوب جنگیدید.,Misión cumplida. Buen combate.,Missie geslaagd. Goed gevochten.
+end.win_2.mp3,end.win,2,,hq,brian,적이 물러간다. 우리가 이겼다.,They're pulling back. We won.,Sie ziehen sich zurück. Wir haben gewonnen.,Ils se replient. Nous avons gagné.,دارند عقب‌نشینی می‌کنند. ما پیروز شدیم.,Se están retirando. Hemos ganado.,Ze trekken zich terug. We hebben gewonnen.
+end.lose_1.mp3,end.lose,1,,hq,brian,작전 실패. 철수한다.,Mission failed. We're pulling out.,Auftrag gescheitert. Wir ziehen ab.,Mission échouée. On se retire.,مأموریت شکست خورد. عقب می‌کشیم.,Misión fallida. Nos retiramos.,Missie mislukt. We trekken ons terug.
+end.lose_2.mp3,end.lose,2,,hq,brian,더는 버틸 수 없다. 후퇴하라.,We can't hold. Fall back.,Wir können nicht halten. Rückzug.,On ne peut plus tenir. Repliez-vous.,دیگر نمی‌توانیم مقاومت کنیم. عقب‌نشینی کنید.,No podemos aguantar. Retirada.,We houden het niet. Terugtrekken.
+zone.taken.A_1.mp3,zone.taken,1,A,hq,brian,거점 알파 확보.,Objective Alpha is ours.,Punkt Alpha eingenommen.,Objectif Alpha pris.,هدف آلفا تصرف شد.,Objetivo Alfa tomado.,Doel Alfa ingenomen.
+zone.taken.B_1.mp3,zone.taken,1,B,hq,brian,거점 브라보 확보.,Objective Bravo is ours.,Punkt Bravo eingenommen.,Objectif Bravo pris.,هدف براوو تصرف شد.,Objetivo Bravo tomado.,Doel Bravo ingenomen.
+zone.taken.C_1.mp3,zone.taken,1,C,hq,brian,거점 찰리 확보.,Objective Charlie is ours.,Punkt Charlie eingenommen.,Objectif Charlie pris.,هدف چارلی تصرف شد.,Objetivo Charlie tomado.,Doel Charlie ingenomen.
+zone.taken.D_1.mp3,zone.taken,1,D,hq,brian,거점 델타 확보.,Objective Delta is ours.,Punkt Delta eingenommen.,Objectif Delta pris.,هدف دلتا تصرف شد.,Objetivo Delta tomado.,Doel Delta ingenomen.
+zone.taken.E_1.mp3,zone.taken,1,E,hq,brian,거점 에코 확보.,Objective Echo is ours.,Punkt Echo eingenommen.,Objectif Écho pris.,هدف اکو تصرف شد.,Objetivo Eco tomado.,Doel Echo ingenomen.
+zone.taken.F_1.mp3,zone.taken,1,F,hq,brian,거점 폭스트롯 확보.,Objective Foxtrot is ours.,Punkt Foxtrott eingenommen.,Objectif Fox-trot pris.,هدف فاکس‌تروت تصرف شد.,Objetivo Foxtrot tomado.,Doel Foxtrot ingenomen.
+zone.taken.G_1.mp3,zone.taken,1,G,hq,brian,거점 골프 확보.,Objective Golf is ours.,Punkt Golf eingenommen.,Objectif Golf pris.,هدف گلف تصرف شد.,Objetivo Golf tomado.,Doel Golf ingenomen.
+zone.lost.A_1.mp3,zone.lost,1,A,hq,brian,"거점 알파, 적에게 넘어갔다!",We lost objective Alpha!,Punkt Alpha verloren!,Objectif Alpha perdu !,هدف آلفا از دست رفت!,¡Hemos perdido el objetivo Alfa!,Doel Alfa verloren!
+zone.lost.B_1.mp3,zone.lost,1,B,hq,brian,"거점 브라보, 적에게 넘어갔다!",We lost objective Bravo!,Punkt Bravo verloren!,Objectif Bravo perdu !,هدف براوو از دست رفت!,¡Hemos perdido el objetivo Bravo!,Doel Bravo verloren!
+zone.lost.C_1.mp3,zone.lost,1,C,hq,brian,"거점 찰리, 적에게 넘어갔다!",We lost objective Charlie!,Punkt Charlie verloren!,Objectif Charlie perdu !,هدف چارلی از دست رفت!,¡Hemos perdido el objetivo Charlie!,Doel Charlie verloren!
+zone.lost.D_1.mp3,zone.lost,1,D,hq,brian,"거점 델타, 적에게 넘어갔다!",We lost objective Delta!,Punkt Delta verloren!,Objectif Delta perdu !,هدف دلتا از دست رفت!,¡Hemos perdido el objetivo Delta!,Doel Delta verloren!
+zone.lost.E_1.mp3,zone.lost,1,E,hq,brian,"거점 에코, 적에게 넘어갔다!",We lost objective Echo!,Punkt Echo verloren!,Objectif Écho perdu !,هدف اکو از دست رفت!,¡Hemos perdido el objetivo Eco!,Doel Echo verloren!
+zone.lost.F_1.mp3,zone.lost,1,F,hq,brian,"거점 폭스트롯, 적에게 넘어갔다!",We lost objective Foxtrot!,Punkt Foxtrott verloren!,Objectif Fox-trot perdu !,هدف فاکس‌تروت از دست رفت!,¡Hemos perdido el objetivo Foxtrot!,Doel Foxtrot verloren!
+zone.lost.G_1.mp3,zone.lost,1,G,hq,brian,"거점 골프, 적에게 넘어갔다!",We lost objective Golf!,Punkt Golf verloren!,Objectif Golf perdu !,هدف گلف از دست رفت!,¡Hemos perdido el objetivo Golf!,Doel Golf verloren!
+zone.attacked_1.mp3,zone.attacked,1,,hq,brian,우리 거점이 공격받고 있다!,One of our objectives is under attack!,Einer unserer Punkte wird angegriffen!,Un de nos objectifs est attaqué !,یکی از اهداف ما زیر حمله است!,¡Están atacando uno de nuestros objetivos!,Een van onze doelen wordt aangevallen!
+zone.attacked_2.mp3,zone.attacked,2,,hq,brian,거점에 적이 들어왔다!,Enemy on our objective!,Feind an unserem Punkt!,Ennemi sur notre objectif !,دشمن روی هدف ماست!,¡Enemigo en nuestro objetivo!,Vijand op ons doel!
+zones.allOurs_1.mp3,zones.allOurs,1,,hq,brian,모든 거점을 장악했다. 이대로 지켜라.,We hold every objective. Keep it that way.,Alle Punkte gehören uns. Haltet sie.,Nous tenons tous les objectifs. Gardez-les.,همه‌ی اهداف دست ماست. نگهشان دارید.,Tenemos todos los objetivos. Mantenedlos.,We hebben alle doelen. Houd ze vast.
+zones.allTheirs_1.mp3,zones.allTheirs,1,,hq,brian,적이 모든 거점을 쥐었다! 반격하라!,They hold every objective! Counterattack!,Der Feind hält alle Punkte! Gegenangriff!,Ils tiennent tous les objectifs ! Contre-attaque !,دشمن همه‌ی اهداف را گرفته! ضدحمله کنید!,¡Tienen todos los objetivos! ¡Contraataque!,Zij hebben alle doelen! Tegenaanval!
+lead.gained_1.mp3,lead.gained,1,,hq,brian,우리가 앞서기 시작했다.,We're taking the lead.,Wir gehen in Führung.,Nous prenons l'avantage.,داریم جلو می‌افتیم.,Nos ponemos por delante.,We nemen de leiding.
+lead.gained_2.mp3,lead.gained,2,,hq,brian,흐름을 잡았다. 밀어붙여라.,We have the momentum. Push on.,Wir haben den Schwung. Weiter so.,Nous avons l'élan. Continuez.,ابتکار عمل با ماست. ادامه دهید.,Tenemos el impulso. Seguid así.,We hebben het momentum. Ga door.
+lead.lost_1.mp3,lead.lost,1,,hq,brian,적이 앞서고 있다!,The enemy's ahead!,Der Feind liegt vorn!,L'ennemi mène !,دشمن جلوتر است!,¡El enemigo va por delante!,De vijand staat voor!
+lead.lost_2.mp3,lead.lost,2,,hq,brian,밀리고 있다. 거점을 되찾아라!,We're losing ground. Take those objectives back!,Wir verlieren an Boden. Holt die Punkte zurück!,Nous perdons du terrain. Reprenez les objectifs !,داریم زمین می‌بازیم. اهداف را پس بگیرید!,Estamos perdiendo terreno. ¡Recuperad los objetivos!,We verliezen terrein. Herover de doelen!
+win.near_1.mp3,win.near,1,,hq,brian,승리가 눈앞이다. 끝까지 지켜라.,Victory is in sight. Hold on.,Der Sieg ist in Sicht. Durchhalten.,La victoire est proche. Tenez bon.,پیروزی نزدیک است. مقاومت کنید.,La victoria está cerca. Aguantad.,De overwinning is in zicht. Volhouden.
+lose.near_1.mp3,lose.near,1,,hq,brian,패배 직전이다! 지금 막아야 한다!,We're about to lose! Stop them now!,Wir verlieren gleich! Haltet sie jetzt auf!,Nous allons perdre ! Arrêtez-les maintenant !,داریم می‌بازیم! همین حالا متوقفشان کنید!,¡Estamos a punto de perder! ¡Detenedlos ya!,We staan op verliezen! Stop ze nu!
+tickets.low_1.mp3,tickets.low,1,,hq,brian,증원 병력이 얼마 남지 않았다.,Reinforcements are running low.,Die Verstärkung wird knapp.,Les renforts s'épuisent.,نیروی کمکی رو به اتمام است.,Se están acabando los refuerzos.,De versterkingen raken op.
+tickets.last_1.mp3,tickets.last,1,,hq,brian,마지막 증원이다. 아껴서 싸워라!,Last reinforcements. Make them count!,Letzte Verstärkung. Jeder zählt!,Derniers renforts. Ne les gaspillez pas !,آخرین نیروی کمکی. حیفشان نکنید!,Últimos refuerzos. ¡Que cuenten!,Laatste versterkingen. Laat ze tellen!
+tickets.enemyLow_1.mp3,tickets.enemyLow,1,,hq,brian,적 증원이 바닥나고 있다. 몰아쳐라!,Enemy reinforcements are running out. Press them!,Dem Feind geht die Verstärkung aus. Setzt nach!,L'ennemi est à court de renforts. Pressez-les !,نیروی کمکی دشمن تمام می‌شود. فشار بیاورید!,Al enemigo se le acaban los refuerzos. ¡Presionad!,De vijand heeft bijna geen versterkingen meer. Zet door!
+sector.won_1.mp3,sector.won,1,,hq,brian,섹터 장악! 이제 지켜 내라.,Sector taken! Now hold it.,Sektor genommen! Jetzt halten.,"Secteur pris ! Maintenant, tenez-le.",بخش تصرف شد! حالا نگهش دارید.,¡Sector tomado! Ahora mantenedlo.,Sector ingenomen! Houd hem nu vast.
+sector.won_2.mp3,sector.won,2,,hq,brian,섹터를 빼앗았다. 방어 태세로!,The sector is ours. Dig in!,Der Sektor gehört uns. Eingraben!,Le secteur est à nous. Retranchez-vous !,بخش مال ماست. سنگر بگیرید!,El sector es nuestro. ¡Atrincheraos!,De sector is van ons. Graaf je in!
+sector.lost_1.mp3,sector.lost,1,,hq,brian,섹터를 잃었다. 되찾아라!,We lost the sector. Take it back!,Sektor verloren. Holt ihn zurück!,Secteur perdu. Reprenez-le !,بخش از دست رفت. پسش بگیرید!,Hemos perdido el sector. ¡Recuperadlo!,Sector verloren. Herover hem!
+attack.heldUs_1.mp3,attack.heldUs,1,,hq,brian,방어 성공. 이제 우리가 공격한다.,We held them. Now we attack.,Wir haben sie aufgehalten. Jetzt greifen wir an.,On les a arrêtés. À nous d'attaquer.,جلویشان را گرفتیم. حالا ما حمله می‌کنیم.,Los hemos detenido. Ahora atacamos nosotros.,We hebben ze tegengehouden. Nu vallen wij aan.
+attack.heldThem_1.mp3,attack.heldThem,1,,hq,brian,공격 실패. 다음 섹터를 지켜라.,The attack failed. Hold the next sector.,Angriff gescheitert. Haltet den nächsten Sektor.,L'assaut a échoué. Tenez le secteur suivant.,حمله شکست خورد. بخش بعدی را نگه دارید.,El ataque ha fallado. Mantened el siguiente sector.,De aanval is mislukt. Houd de volgende sector.
+timer.lowAttack_1.mp3,timer.lowAttack,1,,hq,brian,공격 시간이 얼마 없다! 서둘러라!,We're almost out of time! Move!,Die Zeit läuft ab! Bewegung!,Le temps presse ! Bougez !,وقت تقریباً تمام است! حرکت کنید!,¡Se nos acaba el tiempo! ¡Moveos!,De tijd raakt op! Opschieten!
+timer.lowDefend_1.mp3,timer.lowDefend,1,,hq,brian,조금만 더 버텨라!,Hold a little longer!,Nur noch ein bisschen halten!,Tenez encore un peu !,کمی دیگر مقاومت کنید!,¡Aguantad un poco más!,Nog even volhouden!
+final.attack_1.mp3,final.attack,1,,hq,brian,마지막 섹터다. 여기서 끝낸다!,The last sector. We finish it here!,Der letzte Sektor. Hier machen wir Schluss!,Le dernier secteur. On termine ici !,آخرین بخش. همین‌جا تمامش می‌کنیم!,El último sector. ¡Aquí acabamos!,De laatste sector. Hier maken we het af!
+final.defend_1.mp3,final.defend,1,,hq,brian,최후의 방어선이다. 물러서지 마라!,This is our last line. No retreat!,Das ist unsere letzte Linie. Kein Rückzug!,C'est notre dernière ligne. Pas de repli !,این آخرین خط ماست. عقب‌نشینی ممنوع!,Es nuestra última línea. ¡Sin retirada!,Dit is onze laatste linie. Geen terugtocht!
+breakthrough_1.mp3,breakthrough,1,,hq,brian,섹터 돌파! 다음 목표로 전진!,Sector broken! On to the next objective!,Sektor durchbrochen! Weiter zum nächsten Ziel!,Secteur percé ! Vers l'objectif suivant !,بخش شکسته شد! به سوی هدف بعدی!,¡Sector roto! ¡Al siguiente objetivo!,Sector doorbroken! Door naar het volgende doel!
+breakthrough_2.mp3,breakthrough,2,,hq,brian,방어선을 뚫었다. 계속 밀어라!,We're through. Keep pushing!,Wir sind durch. Weiter vorstoßen!,On est passés. Continuez à pousser !,عبور کردیم. پیش بروید!,Hemos pasado. ¡Seguid empujando!,We zijn erdoor. Blijf doordrukken!
+breached_1.mp3,breached,1,,hq,brian,방어선이 뚫렸다. 다음 방어선으로!,They broke through. Fall back to the next line!,Sie sind durchgebrochen. Zurück zur nächsten Linie!,Ils ont percé. Repliez-vous sur la ligne suivante !,خط را شکستند. به خط بعدی عقب بروید!,Han roto la línea. ¡Replegaos a la siguiente!,Ze zijn doorgebroken. Terug naar de volgende linie!
+breached_2.mp3,breached,2,,hq,brian,섹터를 잃었다. 후퇴해서 다시 막는다!,Sector lost. We regroup and hold again!,Sektor verloren. Neu formieren und wieder halten!,Secteur perdu. On se regroupe et on tient à nouveau !,بخش از دست رفت. دوباره جمع می‌شویم و مقاومت می‌کنیم!,Sector perdido. ¡Nos reagrupamos y volvemos a aguantar!,Sector verloren. Hergroeperen en weer standhouden!
+charge.armedUs_1.mp3,charge.armedUs,1,,hq,brian,폭약 설치 완료. 해체하지 못하게 지켜라!,Charge planted. Keep them off it!,Sprengladung gelegt. Haltet sie davon fern!,Charge posée. Tenez-les à distance !,خرج انفجاری کار گذاشته شد. دورشان نگه دارید!,Carga colocada. ¡Mantenedlos lejos!,Lading geplaatst. Houd ze erbij weg!
+charge.armedThem_1.mp3,charge.armedThem,1,,hq,brian,적이 폭약을 설치했다! 당장 해체하라!,They planted a charge! Defuse it now!,Sie haben eine Ladung gelegt! Sofort entschärfen!,Ils ont posé une charge ! Désamorcez-la tout de suite !,خرج انفجاری کار گذاشتند! فوراً خنثی‌اش کنید!,¡Han colocado una carga! ¡Desactivadla ya!,Ze hebben een lading geplaatst! Ontmantel hem nu!
+charge.defusedUs_1.mp3,charge.defusedUs,1,,hq,brian,폭약 해체 완료.,Charge defused.,Ladung entschärft.,Charge désamorcée.,خرج انفجاری خنثی شد.,Carga desactivada.,Lading ontmanteld.
+charge.defusedThem_1.mp3,charge.defusedThem,1,,hq,brian,적이 폭약을 해체했다! 다시 설치하라!,They defused our charge! Plant again!,Sie haben unsere Ladung entschärft! Neu legen!,Ils ont désamorcé notre charge ! Reposez-en une !,خرج ما را خنثی کردند! دوباره کار بگذارید!,¡Han desactivado nuestra carga! ¡Colocad otra!,Ze hebben onze lading ontmanteld! Plaats een nieuwe!
+charge.blownUs_1.mp3,charge.blownUs,1,,hq,brian,목표 파괴!,Target destroyed!,Ziel zerstört!,Cible détruite !,هدف نابود شد!,¡Objetivo destruido!,Doel vernietigd!
+charge.blownThem_1.mp3,charge.blownThem,1,,hq,brian,목표가 파괴됐다!,We lost the target!,Wir haben das Ziel verloren!,Nous avons perdu la cible !,هدف را از دست دادیم!,¡Hemos perdido el objetivo!,We zijn het doel kwijt!
+round.attack_1.mp3,round.attack,1,,hq,brian,이번 라운드는 공격이다. 폭약을 설치하라.,We attack this round. Plant the charge.,Diese Runde greifen wir an. Legt die Ladung.,On attaque cette manche. Posez la charge.,این دور حمله می‌کنیم. خرج را کار بگذارید.,Esta ronda atacamos. Colocad la carga.,Deze ronde vallen we aan. Plaats de lading.
+round.defend_1.mp3,round.defend,1,,hq,brian,이번 라운드는 방어다. 두 지점을 지켜라.,We defend this round. Guard both sites.,Diese Runde verteidigen wir. Bewacht beide Ziele.,On défend cette manche. Gardez les deux sites.,این دور دفاع می‌کنیم. از هر دو نقطه محافظت کنید.,Esta ronda defendemos. Vigilad los dos puntos.,Deze ronde verdedigen we. Bewaak beide plekken.
+round.won_1.mp3,round.won,1,,hq,brian,라운드 승리.,We won the round.,Wir haben die Runde gewonnen.,Nous avons gagné la manche.,این دور را بردیم.,Hemos ganado la ronda.,We hebben de ronde gewonnen.
+round.lost_1.mp3,round.lost,1,,hq,brian,라운드를 내줬다.,We lost the round.,Wir haben die Runde verloren.,Nous avons perdu la manche.,این دور را باختیم.,Hemos perdido la ronda.,We hebben de ronde verloren.
+round.match_1.mp3,round.match,1,,hq,brian,매치 포인트다. 이번에 끝낸다.,Match point. We end it now.,Matchball. Wir beenden es jetzt.,Balle de match. On termine maintenant.,دور تعیین‌کننده. همین حالا تمامش می‌کنیم.,Punto de partido. Acabamos ahora.,Matchpunt. We maken het nu af.
+lastAlive_1.mp3,lastAlive,1,,hq,brian,너 혼자 남았다. 침착하게.,You're the last one. Stay calm.,Du bist der Letzte. Ruhig bleiben.,Tu es le dernier. Reste calme.,تو آخرین نفری. آرام باش.,Eres el último. Mantén la calma.,Je bent de laatste. Blijf kalm.
+hill.A_1.mp3,hill,1,A,hq,brian,하드포인트 이동. 새 위치는 알파.,The hardpoint moved. New position: Alpha.,Der Hardpoint ist verlegt. Neue Position: Alpha.,Le point fort a bougé. Nouvelle position : Alpha.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: آلفا.,El punto clave se ha movido. Nueva posición: Alfa.,Het sleutelpunt is verplaatst. Nieuwe positie: Alfa.
+hill.B_1.mp3,hill,1,B,hq,brian,하드포인트 이동. 새 위치는 브라보.,The hardpoint moved. New position: Bravo.,Der Hardpoint ist verlegt. Neue Position: Bravo.,Le point fort a bougé. Nouvelle position : Bravo.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: براوو.,El punto clave se ha movido. Nueva posición: Bravo.,Het sleutelpunt is verplaatst. Nieuwe positie: Bravo.
+hill.C_1.mp3,hill,1,C,hq,brian,하드포인트 이동. 새 위치는 찰리.,The hardpoint moved. New position: Charlie.,Der Hardpoint ist verlegt. Neue Position: Charlie.,Le point fort a bougé. Nouvelle position : Charlie.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: چارلی.,El punto clave se ha movido. Nueva posición: Charlie.,Het sleutelpunt is verplaatst. Nieuwe positie: Charlie.
+hill.D_1.mp3,hill,1,D,hq,brian,하드포인트 이동. 새 위치는 델타.,The hardpoint moved. New position: Delta.,Der Hardpoint ist verlegt. Neue Position: Delta.,Le point fort a bougé. Nouvelle position : Delta.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: دلتا.,El punto clave se ha movido. Nueva posición: Delta.,Het sleutelpunt is verplaatst. Nieuwe positie: Delta.
+hill.E_1.mp3,hill,1,E,hq,brian,하드포인트 이동. 새 위치는 에코.,The hardpoint moved. New position: Echo.,Der Hardpoint ist verlegt. Neue Position: Echo.,Le point fort a bougé. Nouvelle position : Écho.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: اکو.,El punto clave se ha movido. Nueva posición: Eco.,Het sleutelpunt is verplaatst. Nieuwe positie: Echo.
+hill.F_1.mp3,hill,1,F,hq,brian,하드포인트 이동. 새 위치는 폭스트롯.,The hardpoint moved. New position: Foxtrot.,Der Hardpoint ist verlegt. Neue Position: Foxtrott.,Le point fort a bougé. Nouvelle position : Fox-trot.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: فاکس‌تروت.,El punto clave se ha movido. Nueva posición: Foxtrot.,Het sleutelpunt is verplaatst. Nieuwe positie: Foxtrot.
+hill.G_1.mp3,hill,1,G,hq,brian,하드포인트 이동. 새 위치는 골프.,The hardpoint moved. New position: Golf.,Der Hardpoint ist verlegt. Neue Position: Golf.,Le point fort a bougé. Nouvelle position : Golf.,نقطه‌ی کلیدی جابه‌جا شد. موقعیت جدید: گلف.,El punto clave se ha movido. Nueva posición: Golf.,Het sleutelpunt is verplaatst. Nieuwe positie: Golf.
+hill.soon_1.mp3,hill.soon,1,,hq,brian,하드포인트가 곧 옮겨 간다.,The hardpoint is about to move.,Der Hardpoint wird gleich verlegt.,Le point fort va bientôt bouger.,نقطه‌ی کلیدی به‌زودی جابه‌جا می‌شود.,El punto clave va a moverse.,Het sleutelpunt wordt zo verplaatst.
+payload.moving_1.mp3,payload.moving,1,,hq,brian,장갑차 전진 중. 엄호하라!,The carrier is moving. Cover it!,Der Transporter rollt. Deckung geben!,Le blindé avance. Couvrez-le !,خودروی زرهی حرکت می‌کند. پوشش بدهید!,El blindado avanza. ¡Cubridlo!,Het pantservoertuig rijdt. Geef dekking!
+payload.stopped_1.mp3,payload.stopped,1,,hq,brian,장갑차가 멈췄다! 주변을 정리하라!,The carrier stopped! Clear the area!,Der Transporter steht! Räumt die Gegend!,Le blindé est arrêté ! Dégagez la zone !,خودروی زرهی متوقف شد! منطقه را پاک‌سازی کنید!,¡El blindado se ha parado! ¡Despejad la zona!,Het pantservoertuig staat stil! Maak de omgeving vrij!
+payload.held_1.mp3,payload.held,1,,hq,brian,장갑차를 막았다. 계속 붙잡아라.,We stopped the carrier. Keep it pinned.,Wir haben den Transporter gestoppt. Festhalten.,On a stoppé le blindé. Bloquez-le.,خودروی زرهی را متوقف کردیم. نگهش دارید.,Hemos parado el blindado. Mantenedlo inmovilizado.,We hebben het pantservoertuig gestopt. Houd het vast.
+checkpoint.us_1.mp3,checkpoint.us,1,,hq,brian,체크포인트 통과!,Checkpoint passed!,Kontrollpunkt passiert!,Point de contrôle franchi !,از ایست بازرسی عبور کردیم!,¡Punto de control superado!,Controlepost gepasseerd!
+checkpoint.them_1.mp3,checkpoint.them,1,,hq,brian,적 장갑차가 체크포인트를 넘었다!,The enemy carrier passed a checkpoint!,Der feindliche Transporter hat einen Kontrollpunkt passiert!,Le blindé ennemi a franchi un point de contrôle !,خودروی زرهی دشمن از ایست بازرسی رد شد!,¡El blindado enemigo ha pasado un punto de control!,Het vijandelijke pantservoertuig is een controlepost gepasseerd!
+ffa.start_1.mp3,ffa.start,1,,announcer,callum,모두가 적이다. 살아남아라.,Everyone's your enemy. Stay alive.,Jeder ist dein Feind. Bleib am Leben.,Tout le monde est ton ennemi. Reste en vie.,همه دشمن تو هستند. زنده بمان.,Todos son tus enemigos. Sigue con vida.,Iedereen is je vijand. Blijf in leven.
+ffa.lead_1.mp3,ffa.lead,1,,announcer,callum,선두다.,You have the lead.,Du führst.,Tu mènes.,تو جلویی.,Vas primero.,Jij staat voor.
+ffa.leadLost_1.mp3,ffa.leadLost,1,,announcer,callum,선두를 빼앗겼다.,You lost the lead.,Du hast die Führung verloren.,Tu as perdu la première place.,جایگاه اول را از دست دادی.,Has perdido el primer puesto.,Je bent de leiding kwijt.
+ffa.near_1.mp3,ffa.near,1,,announcer,callum,승리까지 얼마 남지 않았다.,Almost there.,Fast geschafft.,Presque.,تقریباً رسیدی.,Ya casi está.,Je bent er bijna.
+ffa.win_1.mp3,ffa.win,1,,announcer,callum,승리!,Victory!,Sieg!,Victoire !,پیروزی!,¡Victoria!,Overwinning!
+ffa.lose_1.mp3,ffa.lose,1,,announcer,callum,경기 종료.,Match over.,Spiel vorbei.,Partie terminée.,بازی تمام شد.,Fin de la partida.,Wedstrijd voorbij.
+gungame.last_1.mp3,gungame.last,1,,announcer,callum,마지막 무기다!,Final weapon!,Letzte Waffe!,Dernière arme !,آخرین سلاح!,¡Última arma!,Nog één wapen te gaan!
+gungame.demoted_1.mp3,gungame.demoted,1,,announcer,callum,강등!,Demoted!,Herabgestuft!,Rétrogradé !,تنزل!,¡Degradado!,Gedegradeerd!
+lastman.shrink_1.mp3,lastman.shrink,1,,announcer,callum,구역이 좁혀진다. 안쪽으로 이동하라.,The zone is closing. Move inside.,Die Zone schließt sich. Nach innen bewegen.,La zone se referme. Rentrez à l'intérieur.,منطقه دارد بسته می‌شود. به داخل بروید.,La zona se cierra. Moveos hacia dentro.,De zone sluit. Ga naar binnen.
+lastman.shrink_2.mp3,lastman.shrink,2,,announcer,callum,안전 구역이 줄어든다. 서둘러라.,The safe zone is shrinking. Hurry.,Die sichere Zone schrumpft. Beeilung.,La zone sûre rétrécit. Dépêchez-vous.,منطقه‌ی امن کوچک می‌شود. عجله کنید.,La zona segura se reduce. Daos prisa.,De veilige zone krimpt. Schiet op.
+lastman.storm_1.mp3,lastman.storm,1,,announcer,callum,구역 밖이다! 빨리 들어가라!,You're outside the zone! Get in!,Du bist außerhalb der Zone! Rein da!,Tu es hors de la zone ! Rentre !,بیرون از منطقه‌ای! برگرد داخل!,¡Estás fuera de la zona! ¡Entra!,Je bent buiten de zone! Naar binnen!
+lastman.few_1.mp3,lastman.few,1,,announcer,callum,생존자가 얼마 남지 않았다.,Only a few are left.,Nur noch wenige übrig.,Il n'en reste plus que quelques-uns.,فقط چند نفر باقی مانده‌اند.,Solo quedan unos pocos.,Er zijn er nog maar een paar over.

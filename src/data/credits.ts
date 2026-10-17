@@ -7,7 +7,7 @@
 export interface Credit {
   work: string;
   author: string;
-  license: 'CC-BY 3.0' | 'CC0' | 'OFL 1.1';
+  license: 'CC-BY 3.0' | 'CC0' | 'OFL 1.1' | 'ElevenLabs';
   url: string;
 }
 
@@ -22,5 +22,7 @@ export const CREDITS: readonly Credit[] = [
   { work: 'Pretendard (font)', author: 'Kil Hyung-jin', license: 'OFL 1.1', url: 'https://github.com/orioncactus/pretendard' },
   { work: 'Barlow Condensed (font)', author: 'Jeremy Tribby', license: 'OFL 1.1', url: 'https://github.com/jpt/barlow' },
   { work: 'Impact Sounds, Interface Sounds, UI Audio', author: 'Kenney', license: 'CC0', url: 'https://kenney.nl' },
+  // Battle briefing radio voices, generated (eleven-v4-turbo via OpenRouter; check the commercial terms before release).
+  { work: 'Battle briefing voices (brian, callum)', author: 'ElevenLabs', license: 'ElevenLabs', url: 'https://elevenlabs.io' },
   { work: 'Textures, skies (HDRIs) and models', author: 'Poly Haven', license: 'CC0', url: 'https://polyhaven.com' },
 ];

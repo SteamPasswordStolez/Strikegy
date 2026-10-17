@@ -119,6 +119,21 @@ export const PHONETIC: Record<'ko' | 'en', Record<string, string>> = {
   en: { A: 'Alpha', B: 'Bravo', C: 'Charlie', D: 'Delta', E: 'Echo', F: 'Foxtrot', G: 'Golf' },
 };
 
+/** Languages the radio speaks (voice files in public/assets/voice/<lang>/). */
+export const VOICE_LANGS = ['en', 'de', 'fr', 'fa', 'es', 'nl'] as const;
+export type VoiceLang = (typeof VOICE_LANGS)[number];
+
+/**
+ * The radio's language by map (owner, 2026-10-17: Iron Gate German, Lyon French,
+ * Persia Persian, Ardennes Dutch / Flemish, Bilbao Spanish; English elsewhere).
+ * Subtitles stay in the player's own language.
+ */
+export const VOICE_BY_MAP: Record<string, VoiceLang> = { iron_gate: 'de', lyon: 'fr', persia: 'fa', ardennes: 'nl', bilbao: 'es' };
+
+export function voiceLangFor(mapId: string): VoiceLang {
+  return VOICE_BY_MAP[mapId] ?? 'en';
+}
+
 /** The rules that keep the radio from chattering (owner, 2026-10-17: "BFV 정도"). */
 export const BRIEF_RULES = {
   /** Quiet seconds after a line before the next (priority 1 doesn't wait). */

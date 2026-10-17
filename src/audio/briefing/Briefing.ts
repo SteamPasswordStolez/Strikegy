@@ -2,7 +2,7 @@ import { t, type Locale, type MessageKey } from '@/i18n';
 import type { AudioSystem } from '../AudioSystem';
 import { playRadio, type RadioLine } from '../radio';
 import { CriticalStrip, type CritTone } from '@/ui/CriticalStrip';
-import { CUES, PHONETIC, voiceFile, ZONE_LETTERS, type CueId } from './cues';
+import { CUES, PHONETIC, voiceFile, ZONE_LETTERS, type CueId, type VoiceLang } from './cues';
 import { BriefingScheduler } from './scheduler';
 import { VoiceBank } from './voiceBank';
 
@@ -27,12 +27,15 @@ export class Briefing {
   constructor(
     hud: HTMLElement,
     private readonly audio: AudioSystem,
+    /** The subtitles' language (the player's). */
     private readonly locale: Locale,
     private subtitles: boolean,
     base: string,
+    /** The radio's language (the map's: `voiceLangFor`). */
+    voice: VoiceLang,
   ) {
     this.strip = new CriticalStrip(hud);
-    this.bank = new VoiceBank(`${base}voice/${locale}/`);
+    this.bank = new VoiceBank(`${base}voice/${voice}/`);
   }
 
   /** Loads the voice files these cues can use (all zone letters for zone cues). */

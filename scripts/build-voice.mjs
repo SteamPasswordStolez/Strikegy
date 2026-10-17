@@ -8,12 +8,12 @@
 // The radio sound is added in the game, so the files stay clean.
 //
 //   npm run voice                 every language folder there is
-//   npm run voice -- ko           just Korean
+//   npm run voice -- de           just German
 // Needs ffmpeg / ffprobe on PATH.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { allVoiceFiles } from '../src/audio/briefing/cues.ts';
+import { VOICE_LANGS, allVoiceFiles } from '../src/audio/briefing/cues.ts';
 
 const SRC = path.join('assets-src', 'voice');
 const OUT = path.join('public', 'assets', 'voice');
@@ -25,7 +25,10 @@ function run(cmd, args) {
   return r;
 }
 
-const langs = process.argv[2] ? [process.argv[2]] : fs.existsSync(SRC) ? fs.readdirSync(SRC).filter((d) => fs.statSync(path.join(SRC, d)).isDirectory()) : [];
+// The radio's languages only (assets-src/voice/test holds voice auditions; ko was the first
+// try, before the owner chose English and the maps' own languages).
+const LANGS = VOICE_LANGS;
+const langs = process.argv[2] ? [process.argv[2]] : fs.existsSync(SRC) ? LANGS.filter((d) => fs.existsSync(path.join(SRC, d))) : [];
 if (!langs.length) {
   console.log(`nothing to do: put the generated lines in ${SRC}/<lang>/ (e.g. ${SRC}/ko/zone.taken.B_1.mp3)`);
   process.exit(0);
