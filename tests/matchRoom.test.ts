@@ -460,10 +460,15 @@ describe('a match room when frames come unevenly (2026-10-18)', () => {
     room.tick();
     const s = room.sim.soldiers.get(1000)!;
     const mv = room.sim.vehicles!;
-    const at = s.player.feet.clone().add(new THREE.Vector3(3, 0, 0));
+    // Beside the soldier, clear of the base's own vehicles (the deploy spot is random: a pad jeep could stand right there).
+    let at = s.player.feet.clone().add(new THREE.Vector3(3, 0, 0));
+    for (let k = 0; k < 24 && mv.world.vehicles.some((o) => o.pos.distanceTo(at) < 12); k++) {
+      const a = (k / 24) * Math.PI * 2;
+      at = s.player.feet.clone().add(new THREE.Vector3(Math.cos(a) * (14 + k), 0, Math.sin(a) * (14 + k)));
+    }
     const v = mv.world.spawn('jeep', at, 0, 'blue');
     for (let i = 0; i < 90; i++) room.tick();
-    // At the jeep itself: the deploy spot is random and a base vehicle could be nearer than 3 m.
+    // At the jeep itself.
     s.player.teleport(v.pos, 0);
     expect(mv.tryEnter(s)).toBe(true);
     expect(s.ride?.v).toBe(v);
