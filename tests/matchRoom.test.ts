@@ -9,6 +9,8 @@ import { decodeInputs, decodeSnapshot, encodeInputs, encodeInputFrame, packInput
 import { Layer } from '@/physics/PhysicsWorld';
 import { LobbyCore, SEAT_GRACE, type Conn, type MatchHost } from '../server/lobby';
 import { MatchRoom } from '../server/matchRoom';
+import { parseRtc } from '../server/rtc';
+import { DOWN } from '@/data/classes';
 
 /** A player's end of a match: what came in. */
 function line() {
@@ -419,5 +421,74 @@ describe('lobby seats', () => {
     core.matchOver(room);
     expect(b2.last('room')!.room.state).toBe('lobby');
     expect(calls).toContain(`stop ${room}`);
+  });
+});
+
+describe('a match room when frames come unevenly (2026-10-18)', () => {
+  it('a downed player holding give-up goes even when the browser sends one frame in four ticks', async () => {
+    const room = await MatchRoom.create({ room: 'r-down', map: 'lyon', mode: 'zone' });
+    const a = line();
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
+    room.ready('ua');
+    room.deploy('ua', 'base', { cls: 'assault' });
+    room.tick();
+    const s = room.sim.soldiers.get(1000)!;
+    expect(s.alive && s.deployed).toBe(true);
+    s.damage(999, null, 'bullet');
+    expect(s.downed).toBe(true);
+    const held = createInputState();
+    held.jumpHeld = true;
+    let seq = 0;
+    let ticks = 0;
+    for (; ticks < 60 * (DOWN.giveUpHold + 1) && s.downed; ticks++) {
+      if (ticks % 4 === 0) room.binary('ua', encodeInputs([packInput(held, ++seq, room.sim.tick, 0, 0, 0, 0)]));
+      room.tick();
+    }
+    expect(s.downed).toBe(false);
+    expect(s.alive).toBe(false);
+    // About the hold time, not the bleed-out.
+    expect(ticks / 60).toBeLessThan(DOWN.giveUpHold + 0.5);
+    room.dispose();
+  });
+
+  it("a driver's vehicle falls back to the server's physics when their frames stop, and goes back to them after", async () => {
+    const room = await MatchRoom.create({ room: 'r-drive', map: 'lyon', mode: 'zone' });
+    const a = line();
+    room.join({ uid: 'ua', name: 'alpha' }, a.line);
+    room.ready('ua');
+    room.deploy('ua', 'base', { cls: 'assault' });
+    room.tick();
+    const s = room.sim.soldiers.get(1000)!;
+    const mv = room.sim.vehicles!;
+    const at = s.player.feet.clone().add(new THREE.Vector3(3, 0, 0));
+    const v = mv.world.spawn('jeep', at, 0, 'blue');
+    for (let i = 0; i < 90; i++) room.tick();
+    expect(mv.tryEnter(s)).toBe(true);
+    expect(s.ride?.seat).toBe(0);
+    expect(v.remote).toBe(true);
+    // The browser has it 2.5 m up (over a bump), then goes quiet.
+    let seq = 0;
+    const idle = createInputState();
+    const up = v.pos.clone().setY(v.pos.y + 2.5);
+    const drive = { vehicle: v.id, x: up.x, y: up.y, z: up.z, qx: v.quat.x, qy: v.quat.y, qz: v.quat.z, qw: v.quat.w, vx: 0, vy: 0, vz: 0, throttle: 0 };
+    room.binary('ua', encodeInputFrame([packInput(idle, ++seq, room.sim.tick, 0, 0, 0, 0)], drive));
+    room.tick();
+    room.tick();
+    expect(v.pos.y).toBeCloseTo(up.y, 1);
+    for (let i = 0; i < 120; i++) room.tick();
+    expect(v.remote).toBe(false);
+    expect(v.pos.y).toBeLessThan(up.y - 1.5);
+    // Frames again: the browser drives it from where it has it.
+    const back = v.pos.clone();
+    room.binary('ua', encodeInputFrame([packInput(idle, seq + 1, room.sim.tick, 0, 0, 0, 0)], { ...drive, x: back.x, y: back.y, z: back.z }));
+    room.tick();
+    expect(v.remote).toBe(true);
+    room.dispose();
+  });
+
+  it('the channel check messages are read as such, not as a new channel', () => {
+    expect(parseRtc('{"t":"rtc","rx":false}')).toEqual({ rx: false });
+    expect(parseRtc('{"t":"rtc","rx":true}')).toEqual({ rx: true });
+    expect(parseRtc('{"t":"rtc"}')).toEqual({ ask: true });
   });
 });

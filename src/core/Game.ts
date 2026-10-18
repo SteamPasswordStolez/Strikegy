@@ -1405,7 +1405,8 @@ export class Game {
       r.at = now;
       r.count = net.snapshots;
     }
-    return ` · ${net.link.udp ? 'UDP' : 'TCP'} ${r.perSecond}/s`;
+    // Out and in separately: either way may fall back to the WebSocket on its own.
+    return ` · ↑${net.link.udp ? 'UDP' : 'TCP'} ↓${net.link.udpIn ? 'UDP' : 'TCP'} ${r.perSecond}/s`;
   }
 
   /** What the local view does when its soldier is hurt, goes down, gets up or dies. */

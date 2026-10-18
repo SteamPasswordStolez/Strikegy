@@ -46,6 +46,19 @@ export function edgeRtcSetup(publicIp: string, port: number): RtcSetup {
 const BACKLOG = 64 * 1024;
 /** Largest message a browser may send down the channel (an input frame is well under 1 KB). */
 const MAX_IN = 16 * 1024;
+/**
+ * Whether the channel really gets through (2026-10-18: a channel can stay
+ * "open" while nothing crosses it any more, a home router's NAT entry gone or
+ * the Wi-Fi changed, and both ends kept sending into it: the F3 line read
+ * "UDP 0/s" and the match stood still). Each end counts the channel as heard
+ * while something came down it within `UDP_RX` ms and tells the other end
+ * over the WebSocket when that changes (`{t:'rtc', rx}`); each end sends down
+ * the channel only while the other end hears it, else by the WebSocket with a
+ * copy down the channel every `UDP_PROBE` ms so the other end notices when it
+ * gets through again. The same numbers in `ServerLink`.
+ */
+export const UDP_RX = 600;
+export const UDP_PROBE = 250;
 
 /**
  * A browser's answer, rebuilt from the few fields a data channel needs, each
@@ -88,12 +101,19 @@ export class ServerRtc {
   private readonly dc: DataChannel;
   private open = false;
   private closed = false;
+  /** When something last came down the channel, whether that counts as heard (and the browser was told), whether the browser hears us. */
+  private lastIn = -Infinity;
+  private heard = false;
+  private peerHears = false;
+  private lastProbe = -Infinity;
+  private readonly sendText: (msg: ServerMsg) => void;
 
   constructor(
     setup: RtcSetup,
     send: (msg: ServerMsg) => void,
     onBinary: (data: Uint8Array) => void,
   ) {
+    this.sendText = send;
     this.pc = new PeerConnection('player', { ...setup.config, maxMessageSize: MAX_IN });
     const fix = (s: string): string => (setup.rewrite ? s.split(setup.rewrite.from).join(setup.rewrite.to) : s);
     this.pc.onLocalDescription((sdp, type) => send({ t: 'rtc', sdp: fix(sdp), type: type as 'offer' }));
@@ -111,6 +131,8 @@ export class ServerRtc {
     this.dc.onMessage((msg) => {
       if (typeof msg === 'string' || msg.byteLength > MAX_IN) return;
       const u8 = msg instanceof ArrayBuffer ? new Uint8Array(msg) : new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+      this.lastIn = Date.now();
+      this.report();
       onBinary(u8);
     });
   }
@@ -121,7 +143,11 @@ export class ServerRtc {
    * that came from (so nobody can make the server send packets to an address
    * of their choosing, inside the cloud or anyone else's).
    */
-  remote(msg: { sdp?: string; type?: string; cand?: string; mid?: string }): void {
+  remote(msg: { sdp?: string; type?: string; cand?: string; mid?: string; rx?: boolean }): void {
+    if (typeof msg.rx === 'boolean') {
+      this.peerHears = msg.rx;
+      return;
+    }
     if (this.closed || !msg.sdp || msg.type !== 'answer' || this.pc.remoteDescription()) return;
     const sdp = cleanAnswer(msg.sdp);
     if (!sdp) return;
@@ -132,12 +158,31 @@ export class ServerRtc {
     }
   }
 
-  /** Sends over UDP if the channel is up and not backed up; false: use the WebSocket. */
+  /** Whether the channel is heard from now; the browser is told when that changes. */
+  private report(): void {
+    const heard = this.open && !this.closed && Date.now() - this.lastIn < UDP_RX;
+    if (heard === this.heard) return;
+    this.heard = heard;
+    this.sendText({ t: 'rtc', rx: heard });
+  }
+
+  /**
+   * Sends over UDP if the channel is up, the browser hears it and it isn't
+   * backed up; false: use the WebSocket (while the browser doesn't hear it, a
+   * copy still goes down the channel now and then: see `UDP_RX`).
+   */
   send(data: Uint8Array): boolean {
     if (!this.open || this.closed) return false;
+    this.report();
     try {
       if (this.dc.bufferedAmount() > BACKLOG) return false;
-      return this.dc.sendMessageBinary(data);
+      if (this.peerHears) return this.dc.sendMessageBinary(data);
+      const now = Date.now();
+      if (now - this.lastProbe >= UDP_PROBE) {
+        this.lastProbe = now;
+        this.dc.sendMessageBinary(data);
+      }
+      return false;
     } catch {
       return false;
     }
@@ -161,15 +206,16 @@ export class ServerRtc {
  * gateway or the edge handles itself. Returns the parsed fields, `ask` for a
  * new channel, or null when it isn't one (or is malformed).
  */
-export function parseRtc(text: string): { ask: true } | { sdp?: string; type?: string; cand?: string; mid?: string } | null {
+export function parseRtc(text: string): { ask: true } | { sdp?: string; type?: string; cand?: string; mid?: string; rx?: boolean } | null {
   if (!text.startsWith('{"t":"rtc"') || text.length > 20000) return null;
-  let m: { sdp?: unknown; type?: unknown; cand?: unknown; mid?: unknown };
+  let m: { sdp?: unknown; type?: unknown; cand?: unknown; mid?: unknown; rx?: unknown };
   try {
     m = JSON.parse(text) as typeof m;
   } catch {
     return null;
   }
   const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
+  if (typeof m.rx === 'boolean') return { rx: m.rx };
   if (m.sdp === undefined && m.cand === undefined) return { ask: true };
   return { sdp: str(m.sdp, 16000), type: str(m.type, 8), cand: str(m.cand, 512), mid: str(m.mid, 16) };
 }

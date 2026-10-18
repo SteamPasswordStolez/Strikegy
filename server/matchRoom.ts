@@ -326,14 +326,17 @@ export class MatchRoom {
     seat.lastFrameAt = this.sim.time;
     for (const inp of list) this.clampView(seat, inp);
     const tail = decodeTail(data);
-    if (tail?.drive) seat.drive = tail.drive;
-    if (tail?.bots) this.takeBots(seat, tail.bots);
+    let fresh = false;
     for (const inp of list) {
       // In order, no repeats (a reconnect starts the count again).
       if (inp.seq <= seat.lastSeq && seat.lastSeq - inp.seq < 1e6) continue;
       seat.lastSeq = inp.seq;
+      fresh = true;
       if (seat.queue.length < QUEUE_MAX) seat.queue.push(inp);
     }
+    // The driven vehicle's place only from a frame with something new (not a late or second copy putting it back).
+    if (tail?.drive && fresh) seat.drive = tail.drive;
+    if (tail?.bots) this.takeBots(seat, tail.bots);
   }
 
   // ---------------------------------------------------------------------------
@@ -397,7 +400,9 @@ export class MatchRoom {
         seat.ack = inp.seq;
       }
       // No input this tick: down and waiting still bleed out; on the field, nothing moves.
-      if (!take && !(s.alive && s.deployed)) sim.stepSoldier(s, null);
+      // Down, the keys stay as last sent: browsers' frames come unevenly, and a tick without
+      // one used to let go of the give-up key, so holding it often never got there (2026-10-18).
+      if (!take && !(s.alive && s.deployed)) sim.stepSoldier(s, s.downed ? { state: seat.input, yaw: s.player.yaw, pitch: s.player.pitch } : null);
       this.applyBots(seat, maxRewind);
       // The vehicle this player drives: where their browser has it.
       if (seat.drive && sim.vehicles) {

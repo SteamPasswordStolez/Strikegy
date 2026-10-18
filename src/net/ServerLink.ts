@@ -15,6 +15,9 @@ export class ServerError extends Error {
 
 /** Bytes waiting on the data channel past which match data goes by the WebSocket instead. */
 const UDP_BACKLOG = 64 * 1024;
+/** The channel counts as heard while something came down it within this (ms); a copy goes down it this often while the server doesn't hear it (server/rtc.ts `UDP_RX`). */
+const UDP_RX = 600;
+const UDP_PROBE = 250;
 
 /**
  * The browser's end of the game server's WebSocket: hello, then typed
@@ -32,6 +35,11 @@ export class ServerLink {
   private dc: RTCDataChannel | null = null;
   private readonly pendingCandidates: RTCIceCandidateInit[] = [];
   private udpAsked = false;
+  /** When something last came down the channel, whether that counts as heard (and the server was told), whether the server hears us. */
+  private lastIn = -Infinity;
+  private heard = false;
+  private peerHears = false;
+  private lastProbe = -Infinity;
 
   private constructor(private readonly ws: WebSocket) {
     ws.binaryType = 'arraybuffer';
@@ -64,16 +72,34 @@ export class ServerLink {
     this.send({ t: 'rtc' });
   }
 
-  /** The data channel is up. */
+  /** Match data goes out over UDP: the channel is up and the server hears it. */
   get udp(): boolean {
-    return this.dc?.readyState === 'open';
+    return this.dc?.readyState === 'open' && this.peerHears;
+  }
+
+  /** Match data comes in over UDP (the channel is heard from). */
+  get udpIn(): boolean {
+    return this.heard;
+  }
+
+  /** Whether the channel is heard from now; the server is told when that changes. */
+  private report(): void {
+    const heard = this.dc?.readyState === 'open' && performance.now() - this.lastIn < UDP_RX;
+    if (heard === this.heard) return;
+    this.heard = heard;
+    this.send({ t: 'rtc', rx: heard });
   }
 
   private async onRtc(m: Extract<ServerMsg, { t: 'rtc' }>): Promise<void> {
+    if (typeof m.rx === 'boolean') {
+      this.peerHears = m.rx;
+      return;
+    }
     try {
       if (m.sdp && m.type === 'offer') {
         this.pc?.close();
         // STUN on the relay: this browser's public address, so the relay lets its packets through.
+        this.peerHears = false;
         const pc = (this.pc = new RTCPeerConnection({ iceServers: m.stun ? [{ urls: `stun:${m.stun}` }] : [] }));
         pc.ondatachannel = (e) => {
           const dc = e.channel;
@@ -84,9 +110,12 @@ export class ServerLink {
           };
           dc.onclose = () => {
             if (this.dc === dc) this.dc = null;
+            this.report();
           };
           dc.onmessage = (ev) => {
             if (ev.data instanceof ArrayBuffer) {
+              this.lastIn = performance.now();
+              this.report();
               const data = new Uint8Array(ev.data);
               this.binaryListeners.forEach((fn) => fn(data));
             }
@@ -145,13 +174,25 @@ export class ServerLink {
     if (this.open) this.ws.send(JSON.stringify(msg));
   }
 
-  /** Match data (inputs): over UDP when `reliable` is false and the channel is up, else the WebSocket. */
+  /**
+   * Match data (inputs): over UDP when `reliable` is false, the channel is up
+   * and the server hears it, else the WebSocket (with now and then a copy
+   * down the channel, so the server notices when it gets through again).
+   */
   sendBinary(data: Uint8Array, reliable = true): void {
+    this.report();
     const dc = this.dc;
     if (!reliable && dc && dc.readyState === 'open' && dc.bufferedAmount < UDP_BACKLOG) {
       try {
-        dc.send(data as Uint8Array<ArrayBuffer>);
-        return;
+        if (this.peerHears) {
+          dc.send(data as Uint8Array<ArrayBuffer>);
+          return;
+        }
+        const now = performance.now();
+        if (now - this.lastProbe >= UDP_PROBE) {
+          this.lastProbe = now;
+          dc.send(data as Uint8Array<ArrayBuffer>);
+        }
       } catch {
         /* the WebSocket then */
       }

@@ -474,6 +474,8 @@ export class NetMatch {
   private readonly offs: (() => void)[] = [];
   /** Snapshots received (for the F3 panel), and the last one's own part. */
   snapshots = 0;
+  /** The newest snapshot tick taken (older ones arriving later are dropped). */
+  private lastSnap: number | null = null;
   lastSelf: Snapshot['self'] = null;
   /** The size of the last correction (m), for the perf panel. */
   lastCorrection = 0;
@@ -609,7 +611,7 @@ export class NetMatch {
     this.unacked.push(...this.outbox);
     if (this.unacked.length > REDUNDANT * 4) this.unacked.splice(0, this.unacked.length - REDUNDANT * 4);
     // What bots did must arrive (the WebSocket); the rest may go over UDP, with the last few inputs again.
-    const reliable = !this.link.udp || (bots?.events.length ?? 0) > 0;
+    const reliable = (bots?.events.length ?? 0) > 0;
     this.link.sendBinary(encodeInputFrame(this.link.udp ? this.unacked.slice(-REDUNDANT) : this.outbox, drive, bots), reliable);
     this.outbox.length = 0;
   }
@@ -635,6 +637,9 @@ export class NetMatch {
   private onFrame(data: Uint8Array): void {
     const snap = decodeSnapshot(data);
     if (!snap) return;
+    // Late or twice (UDP keeps no order, and a copy may come both ways while the channel is checked): worth nothing.
+    if (this.lastSnap !== null && snap.tick <= this.lastSnap && this.lastSnap - snap.tick < 600) return;
+    this.lastSnap = snap.tick;
     this.snapshots++;
     // Clock: follow arrivals quickly when they come early, slowly when late (jitter).
     const sample = snap.tick - (performance.now() * TICK_HZ) / 1000;

@@ -41,6 +41,13 @@ export const JET_GUN = { cone: 0.21, assist: 0.031 };
 const CHUTE_HEIGHT = 12;
 /** A driver's browser may move its vehicle this much faster than it can go, plus this many metres, before the move is refused. */
 const DRIVE_SLACK = { speed: 1.6, metres: 3 };
+/**
+ * A person-driven vehicle whose browser has sent no place for this long (s)
+ * goes back to the server's own physics until it does again: it used to stay
+ * a kinematic body where it was last put, a tank hanging in the air over the
+ * bump it was crossing when that browser's frames stopped (2026-10-18).
+ */
+const DRIVE_QUIET = 1;
 
 /** Where someone looking at `yaw` / `pitch` looks (unit vector). */
 export function viewDir(yaw: number, pitch: number, out = new THREE.Vector3()): THREE.Vector3 {
@@ -185,6 +192,12 @@ export class MatchVehicles {
   step(dt: number): void {
     this.botTanks();
     this.botJets();
+    // Drivers gone quiet: their vehicles fall and roll on their own meanwhile.
+    for (const [id, at] of this.driveAt) {
+      const v = this.world.get(id);
+      if (!v) this.driveAt.delete(id);
+      else if (v.remote && this.sim.time - at > DRIVE_QUIET) v.setRemote(false);
+    }
     this.world.step(dt, this.driveInputs, this.walkers());
   }
 
@@ -359,8 +372,10 @@ export class MatchVehicles {
    */
   applyDrive(s: Soldier, d: NetDrive): boolean {
     const r = s.ride;
-    if (!r || r.seat !== 0 || (r.v.id & 0xffff) !== d.vehicle || r.v.wrecked || !r.v.remote) return true;
+    if (!r || r.seat !== 0 || (r.v.id & 0xffff) !== d.vehicle || r.v.wrecked || !this.driveAt.has(r.v.id)) return true;
     const v = r.v;
+    // Back from a quiet spell: the driver's browser has it again.
+    if (!v.remote) v.setRemote(true);
     const now = this.sim.time;
     const since = Math.max(1 / 60, now - (this.driveAt.get(v.id) ?? now));
     const top = v.flight ? v.spec.flight!.maxSpeed * 1.3 : v.spec.top;
