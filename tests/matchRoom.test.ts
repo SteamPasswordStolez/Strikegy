@@ -463,7 +463,10 @@ describe('a match room when frames come unevenly (2026-10-18)', () => {
     const at = s.player.feet.clone().add(new THREE.Vector3(3, 0, 0));
     const v = mv.world.spawn('jeep', at, 0, 'blue');
     for (let i = 0; i < 90; i++) room.tick();
+    // At the jeep itself: the deploy spot is random and a base vehicle could be nearer than 3 m.
+    s.player.teleport(v.pos, 0);
     expect(mv.tryEnter(s)).toBe(true);
+    expect(s.ride?.v).toBe(v);
     expect(s.ride?.seat).toBe(0);
     expect(v.remote).toBe(true);
     // The browser has it 2.5 m up (over a bump), then goes quiet.
