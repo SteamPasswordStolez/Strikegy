@@ -40,6 +40,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
 /** Modes a map offers (Zone whenever it has zones, skirmish always). */
 function modesOf(map: MapDef | undefined): LobbyMode[] {
   const out: LobbyMode[] = [];
+  // A fleet map plays its fleet battle only.
+  if (map?.modes?.fleet) return ['fleet'];
   if (!map || (map.zones?.length ?? 0) > 0) {
     out.push('zone');
     if (map?.modes?.frontline) out.push('frontline');

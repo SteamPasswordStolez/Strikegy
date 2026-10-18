@@ -12,7 +12,8 @@ const DEG = Math.PI / 180;
 
 describe('vehicle spots stay in play', () => {
   // Bilbao's tank spots (deploying in a tank) were up to 9 m outside the outline (2026-10-12).
-  for (const { id } of MAPS) {
+  // A fleet map has only its own warships (no motor pool, call-ins or bikes).
+  for (const { id } of MAPS.filter((m) => m.id !== 'coral_reach')) {
     it(`${id}: pads, tank spots, motorbikes and call-ins are inside the playable outline`, async () => {
       const map = parseMap(JSON.parse(readFileSync(`public/maps/${id}.json`, 'utf8')));
       const physics = await PhysicsWorld.create();

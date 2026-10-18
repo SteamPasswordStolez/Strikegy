@@ -920,6 +920,8 @@ export class BotManager implements BotServices {
 
   /** Bot warship crews (helm, gunners); its `stationGun` is set by the game. */
   readonly ships: ShipCrews;
+  /** Fleet battle: every bot crews the side's ships (no cap), straight from wherever it is. */
+  fleet = false;
   /** Bot carrier pilots and flight controllers (step 6). */
   readonly carrierPilots: CarrierPilots;
   /** Launches a carrier plane of `kind` onto carrier `v` for a bot's squad; what stopped it, or null (set by the game / server). */
@@ -2099,7 +2101,7 @@ export class BotManager implements BotServices {
       const b = e.bot;
       if (!b.alive || b.riding || b.puppet) continue;
       // A side with warships: bots back at the base crew them (straight aboard, like deploying into a seat).
-      if (b.feet.distanceTo(this.teams[b.team].base) < VEHICLE_BASE && this.crewShip(b, vw)) continue;
+      if ((this.fleet || b.feet.distanceTo(this.teams[b.team].base) < VEHICLE_BASE) && this.crewShip(b, vw)) continue;
       // A landing force's soldier on its ship (no craft had room when they came back): into one as soon as one has.
       if (this.landing === b.team && b.feet.distanceTo(this.teams[b.team].base) < 90) {
         this.boardFromShip(b, vw);
@@ -2161,7 +2163,7 @@ export class BotManager implements BotServices {
     }
     if (!best) return false;
     const side = this.entries.filter((x) => x.bot.team === b.team).length;
-    if (crew >= Math.ceil(side * SHIP_AI.crewShare)) return false;
+    if (!this.fleet && crew >= Math.ceil(side * SHIP_AI.crewShare)) return false;
     this.seatBot(b, best.v, best.seat);
     return true;
   }

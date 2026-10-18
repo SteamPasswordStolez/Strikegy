@@ -490,7 +490,7 @@ const SHIP_BYTES = 8;
 const qAngle = (a: number): number => Math.max(-127, Math.min(127, Math.round((Math.atan2(Math.sin(a), Math.cos(a)) / Math.PI) * 127)));
 
 /** The vehicles of a tick (shared by every receiver). */
-export function encodeVehicles(list: readonly NetVehicle[]): Uint8Array {
+export function encodeVehicles(list: readonly NetVehicle[], range = 1024): Uint8Array {
   const n = Math.min(255, list.length);
   let size = 1;
   for (let i = 0; i < n; i++) {
@@ -506,9 +506,9 @@ export function encodeVehicles(list: readonly NetVehicle[]): Uint8Array {
     v.setUint16(o, x.id & 0xffff);
     v.setUint8(o + 2, Math.max(0, VEHICLE_KINDS.indexOf(x.kind)));
     v.setUint8(o + 3, x.flags);
-    v.setUint16(o + 4, qX(x.x));
+    v.setUint16(o + 4, qX(x.x, range));
     v.setUint16(o + 6, qY(x.y));
-    v.setUint16(o + 8, qX(x.z));
+    v.setUint16(o + 8, qX(x.z, range));
     v.setInt16(o + 10, qUnit(x.qx));
     v.setInt16(o + 12, qUnit(x.qy));
     v.setInt16(o + 14, qUnit(x.qz));
@@ -540,7 +540,7 @@ export function encodeVehicles(list: readonly NetVehicle[]): Uint8Array {
   return buf;
 }
 
-function decodeVehicles(v: DataView, o: number): { list: NetVehicle[]; end: number } | null {
+function decodeVehicles(v: DataView, o: number, range: number): { list: NetVehicle[]; end: number } | null {
   if (v.byteLength < o + 1) return null;
   const n = v.getUint8(o);
   o += 1;
@@ -557,9 +557,9 @@ function decodeVehicles(v: DataView, o: number): { list: NetVehicle[]; end: numb
       id: v.getUint16(o),
       kind,
       flags: v.getUint8(o + 3),
-      x: v.getUint16(o + 4) / XZ_Q - 1024,
+      x: dqX(v.getUint16(o + 4), range),
       y: v.getUint16(o + 6) / Y_Q - 256,
-      z: v.getUint16(o + 8) / XZ_Q - 1024,
+      z: dqX(v.getUint16(o + 8), range),
       qx: v.getInt16(o + 10) / 32767,
       qy: v.getInt16(o + 12) / 32767,
       qz: v.getInt16(o + 14) / 32767,
@@ -588,7 +588,7 @@ function decodeVehicles(v: DataView, o: number): { list: NetVehicle[]; end: numb
 const THING_BYTES = 9;
 
 /** The moving things of a tick (shared by every receiver, like the soldiers). */
-export function encodeThings(list: readonly NetThing[]): Uint8Array {
+export function encodeThings(list: readonly NetThing[], range = 1024): Uint8Array {
   const n = Math.min(65535, list.length);
   const buf = new Uint8Array(2 + n * THING_BYTES);
   const v = new DataView(buf.buffer);
@@ -598,9 +598,9 @@ export function encodeThings(list: readonly NetThing[]): Uint8Array {
     const t = list[i]!;
     v.setUint16(o, t.id);
     v.setUint8(o + 2, t.kind);
-    v.setUint16(o + 3, qX(t.x));
+    v.setUint16(o + 3, qX(t.x, range));
     v.setUint16(o + 5, qY(t.y));
-    v.setUint16(o + 7, qX(t.z));
+    v.setUint16(o + 7, qX(t.z, range));
     o += THING_BYTES;
   }
   return buf;
@@ -608,17 +608,28 @@ export function encodeThings(list: readonly NetThing[]): Uint8Array {
 
 const SOLDIER_BYTES = 16;
 const SELF_BYTES = 32;
-/** Positions as u16 over ±1024 m (x, z) and -256..768 m (y). */
-const XZ_Q = 65535 / 2048;
+/**
+ * Positions as u16 over ±`range` m (x, z) and -256..768 m (y). The range is
+ * the map's (`xzRange`: 1, 2, 4 or 8 km either way; 3 cm steps on the
+ * usual maps, 12.5 cm on the 6 km sea), carried in the snapshot's head.
+ */
 const Y_Q = 65535 / 1024;
-const qX = (x: number): number => Math.max(0, Math.min(65535, Math.round((x + 1024) * XZ_Q)));
+const qX = (x: number, range: number): number => Math.max(0, Math.min(65535, Math.round((x + range) * (65535 / (2 * range)))));
+const dqX = (u: number, range: number): number => (u * (2 * range)) / 65535 - range;
 const qY = (y: number): number => Math.max(0, Math.min(65535, Math.round((y + 256) * Y_Q)));
+
+/** The x / z range snapshots use for a map whose world reaches `extent` m from the middle (aircraft fly further out). */
+export function xzRange(extent: number): number {
+  let r = 1024;
+  while (r < extent && r < 8192) r *= 2;
+  return r;
+}
 
 /**
  * The part of a snapshot every receiver shares (encoded once a tick, then
  * each receiver's own header goes in front: `snapshotFor`).
  */
-export function encodeSoldiers(list: readonly NetSoldier[]): Uint8Array {
+export function encodeSoldiers(list: readonly NetSoldier[], range = 1024): Uint8Array {
   const n = Math.min(65535, list.length);
   const buf = new Uint8Array(2 + n * SOLDIER_BYTES);
   const v = new DataView(buf.buffer);
@@ -628,9 +639,9 @@ export function encodeSoldiers(list: readonly NetSoldier[]): Uint8Array {
     const s = list[i]!;
     v.setUint16(o, s.id);
     v.setUint16(o + 2, s.flags);
-    v.setUint16(o + 4, qX(s.x));
+    v.setUint16(o + 4, qX(s.x, range));
     v.setUint16(o + 6, qY(s.y));
-    v.setUint16(o + 8, qX(s.z));
+    v.setUint16(o + 8, qX(s.z, range));
     v.setUint16(o + 10, qYaw(s.yaw));
     v.setInt8(o + 12, Math.max(-127, Math.min(127, Math.round((s.pitch / (Math.PI / 2)) * 127))));
     v.setUint8(o + 13, weaponIndex(s.weapon));
@@ -642,13 +653,14 @@ export function encodeSoldiers(list: readonly NetSoldier[]): Uint8Array {
 }
 
 /** A whole snapshot frame for one receiver. */
-export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8Array, things: Uint8Array = EMPTY_THINGS, vehicles: Uint8Array = EMPTY_VEHICLES): Uint8Array {
+export function snapshotFor(tick: number, self: NetSelf | null, soldiers: Uint8Array, things: Uint8Array = EMPTY_THINGS, vehicles: Uint8Array = EMPTY_VEHICLES, range = 1024): Uint8Array {
   const head = 6 + (self ? SELF_BYTES : 0);
   const buf = new Uint8Array(head + soldiers.byteLength + things.byteLength + vehicles.byteLength);
   const v = new DataView(buf.buffer);
   v.setUint8(0, FRAME.snapshot);
   v.setUint32(1, tick);
-  v.setUint8(5, self ? 1 : 0);
+  // Bit 0: a self part follows; bits 1-2: the x / z range (1024 m << k).
+  v.setUint8(5, (self ? 1 : 0) | (Math.round(Math.log2(range / 1024)) << 1));
   if (self) {
     v.setUint32(6, self.ack);
     v.setFloat32(10, self.x);
@@ -677,7 +689,8 @@ export function decodeSnapshot(data: Uint8Array): Snapshot | null {
   const tick = v.getUint32(1);
   let o = 6;
   let self: NetSelf | null = null;
-  if (v.getUint8(5)) {
+  const range = 1024 << ((v.getUint8(5) >> 1) & 3);
+  if (v.getUint8(5) & 1) {
     if (data.byteLength < o + SELF_BYTES + 2) return null;
     const reserve = v.getUint16(36);
     self = {
@@ -702,9 +715,9 @@ export function decodeSnapshot(data: Uint8Array): Snapshot | null {
     soldiers.push({
       id: v.getUint16(o),
       flags: v.getUint16(o + 2),
-      x: v.getUint16(o + 4) / XZ_Q - 1024,
+      x: dqX(v.getUint16(o + 4), range),
       y: v.getUint16(o + 6) / Y_Q - 256,
-      z: v.getUint16(o + 8) / XZ_Q - 1024,
+      z: dqX(v.getUint16(o + 8), range),
       yaw: v.getUint16(o + 10) / YAW_Q,
       pitch: (v.getInt8(o + 12) / 127) * (Math.PI / 2),
       weapon: weaponAt(v.getUint8(o + 13)),
@@ -718,10 +731,10 @@ export function decodeSnapshot(data: Uint8Array): Snapshot | null {
   if (data.byteLength < o + m * THING_BYTES) return null;
   const things: NetThing[] = [];
   for (let i = 0; i < m; i++) {
-    things.push({ id: v.getUint16(o), kind: v.getUint8(o + 2), x: v.getUint16(o + 3) / XZ_Q - 1024, y: v.getUint16(o + 5) / Y_Q - 256, z: v.getUint16(o + 7) / XZ_Q - 1024 });
+    things.push({ id: v.getUint16(o), kind: v.getUint8(o + 2), x: dqX(v.getUint16(o + 3), range), y: v.getUint16(o + 5) / Y_Q - 256, z: dqX(v.getUint16(o + 7), range) });
     o += THING_BYTES;
   }
-  const veh = decodeVehicles(v, o);
+  const veh = decodeVehicles(v, o, range);
   if (!veh || veh.end !== data.byteLength) return null;
   return { tick, self, soldiers, things, vehicles: veh.list };
 }

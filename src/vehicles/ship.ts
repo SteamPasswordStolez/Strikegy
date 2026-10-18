@@ -412,3 +412,28 @@ export function contacts(v: Vehicle, kind: StationKind, all: readonly Vehicle[])
   }
   return out.sort((a, b) => a.range - b.range);
 }
+
+/**
+ * Fleet battle (step 7): a ship of `team`'s to come out on, afloat, picked
+ * at random weighted by its free stations (where one is needed most); null
+ * when the side has none left.
+ */
+export function fleetShip(all: readonly Vehicle[], team: Team, rand: () => number): Vehicle | null {
+  const ships = all.filter((v) => v.ship && !v.wrecked && v.ship.sinking < 0 && (v.team ?? v.home) === team);
+  if (!ships.length) return null;
+  const weight = ships.map((v) => 1 + v.spec.seats.filter((s, i) => s.station && !v.seats[i]).length);
+  let r = rand() * weight.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < ships.length; i++) if ((r -= weight[i]!) <= 0) return ships[i]!;
+  return ships[ships.length - 1]!;
+}
+
+/** Every warship as the fleet battle counts it (`FleetRules.observeFleet`). */
+export function fleetState(all: readonly Vehicle[]): { team: Team; health: number; max: number; afloat: boolean }[] {
+  const out: { team: Team; health: number; max: number; afloat: boolean }[] = [];
+  for (const v of all) {
+    const team = v.home;
+    if (!v.ship || !team) continue;
+    out.push({ team, health: v.health, max: v.spec.health, afloat: !v.wrecked });
+  }
+  return out;
+}

@@ -7,6 +7,7 @@
  * Players are known by their hidden browser id (`uid`), so a player who drops
  * out and comes back within the grace time gets the same soldier back.
  */
+import { AIRSPACE } from '../src/vehicles/vehicleData.ts';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import * as THREE from 'three';
@@ -27,6 +28,7 @@ import {
   decodeTail,
   decodeInputs,
   encodeSoldiers,
+  xzRange,
   encodeThings,
   encodeVehicles,
   snapshotFor,
@@ -185,6 +187,12 @@ export class MatchRoom {
   readonly stepMs: number[] = [];
   /** Who may know about which enemy (anti-wallhack). */
   private readonly sight: Sight;
+
+  /** The x / z range of this map's snapshots (aircraft go `AIRSPACE.margin` past the map's edge). */
+  private get xz(): number {
+    const [w, d] = this.sim.world.map.world.size;
+    return xzRange(Math.max(w, d) / 2 + AIRSPACE.margin + 100);
+  }
 
   private constructor(
     sim: MatchSim,
@@ -595,7 +603,8 @@ export class MatchRoom {
     this.sight.step(viewers);
     const flying = [...this.sim.throwables.all()].map((g) => ({ id: g.id & 0x7fff, kind: THING[g.type] as number, x: g.x, y: g.y, z: g.z }));
     for (const g of this.sim.gadgets.shotsInFlight()) flying.push({ id: 0x8000 | (g.id & 0x3fff), kind: THING[g.kind], x: g.pos.x, y: g.pos.y, z: g.pos.z });
-    const vehicles = encodeVehicles((this.sim.vehicles?.world.vehicles ?? []).map(netVehicle));
+    const range = this.xz;
+    const vehicles = encodeVehicles((this.sim.vehicles?.world.vehicles ?? []).map(netVehicle), range);
     const ENEMY_HIDDEN = SF.needMedkit | SF.needAmmo;
     for (const seat of this.seats.values()) {
       if (!seat.conn || !seat.ready) continue;
@@ -608,13 +617,13 @@ export class MatchRoom {
         // An enemy: only when known, and without its health or what it is short of.
         else if (this.sight.knows(s.id, x.n.id)) mine.push({ ...x.n, health: 0, flags: x.n.flags & ~ENEMY_HIDDEN });
       }
-      const shared = encodeSoldiers(mine);
+      const shared = encodeSoldiers(mine, range);
       // Placed gadgets: the side's own, and the enemy's only up close (a mine is small, a beacon not much bigger).
       const eye = s.player.feet;
       const placed = [...flying];
       for (const b of this.sim.gadgets.beacons) if (b.owner.team === team || (s.deployed && b.pos.distanceTo(eye) < 60)) placed.push({ id: 0x8000 | (b.id & 0x3fff), kind: THING.beacon, x: b.pos.x, y: b.pos.y, z: b.pos.z });
       for (const m of this.sim.gadgets.mines) if (m.owner.team === team || (s.deployed && m.pos.distanceTo(eye) < 20)) placed.push({ id: 0x8000 | (m.id & 0x3fff), kind: THING.mine, x: m.pos.x, y: m.pos.y, z: m.pos.z });
-      const things = encodeThings(placed);
+      const things = encodeThings(placed, range);
       const p = s.player;
       const w = s.weapons;
       const st = w.state;
@@ -636,6 +645,7 @@ export class MatchRoom {
           shared,
           things,
           vehicles,
+          range,
         ),
       );
     }

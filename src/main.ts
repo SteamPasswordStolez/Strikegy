@@ -153,7 +153,7 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void, n
     : null;
   // ?mode=zone|frontline|conquest|hardpoint|tdm|killconfirm|ffa|gungame|rush|snd|escort|fortress|lastman|skirmish (default: the map's own mode on maps with zones); ?tickets=300
   const mode =
-    (['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress', 'lastman', 'skirmish'] as const).find(
+    (['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress', 'lastman', 'skirmish', 'fleet'] as const).find(
       (m) => m === params.get('mode'),
     ) ?? 'auto';
   const tickets = Number(params.get('tickets')) || undefined;

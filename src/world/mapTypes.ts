@@ -171,12 +171,14 @@ export interface TargetDef {
 /** Sectors are lists of zone ids; a sector is held when one side holds all of its zones. */
 export interface MapModes {
   /** The mode a bot match starts in when none is asked for (default zone). */
-  default?: 'zone' | 'frontline' | 'conquest';
+  default?: 'zone' | 'frontline' | 'conquest' | 'fleet';
   zone?: { target?: number };
   /** Sectors from the blue base to the red one; attack timer and match clock in seconds. */
   frontline?: { sectors: string[][]; attackTime?: number; matchTime?: number };
   /** Sectors in attack order. */
   conquest?: { attacker: Team; sectors: string[][] };
+  /** Fleet battle (a sea map's own mode): the match clock in seconds. A map with it plays only that. */
+  fleet?: { time?: number };
 }
 
 export interface MapDef {

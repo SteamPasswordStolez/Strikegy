@@ -55,6 +55,9 @@ for (let i = 0; i < steps && !over; i++) {
       return list.length ? `${list.length} up, nearest ${list[0]!.toFixed(0)} m, median ${list[Math.floor(list.length / 2)]!.toFixed(0)} m` : 'none up';
     };
     console.log(`${at()}  · red goal ${goal ? `${goal.x.toFixed(0)},${goal.z.toFixed(0)}` : '-'} · red ${d('red')} · blue ${d('blue')}`);
+    // Fleet battle: each side's fleet health left and ships afloat.
+    const fm = zm.match as unknown as { afloat?: Record<string, number>; points?: Record<string, number> };
+    if (fm.afloat && fm.points) console.log(`${at()}  · fleet blue ${fm.points.blue!.toFixed(1)} % (${fm.afloat.blue} afloat) · red ${fm.points.red!.toFixed(1)} % (${fm.afloat.red} afloat)`);
   }
 }
 console.log(`downs ${downs} (${((downs / sim.time) * 60).toFixed(1)} a minute), tickets ${JSON.stringify(zm.match.tickets)}`);

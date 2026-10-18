@@ -1,4 +1,4 @@
-import { deckSpawn } from '@/vehicles/ship';
+import { deckSpawn, fleetShip, fleetState } from '@/vehicles/ship';
 import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
 import { Bot, setNextBotId } from '@/ai/Bot';
@@ -22,7 +22,7 @@ import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { simplifyInput } from '@/modes/simple';
 import { Fortifications } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
-import { EscortRules, GunGameRules, LastStandRules, type ModeKind } from '@/modes/matchRules';
+import { EscortRules, FleetRules, GunGameRules, LastStandRules, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
 import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
 import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
@@ -701,6 +701,9 @@ export class MatchSim {
       this.gadgets.useBeacon(beacon);
       at = { pos: nav?.randomAround(beacon.pos, 1.5) ?? beacon.pos.clone(), yaw: beacon.mesh.rotation.y };
     }
+    // Fleet battle: people come out on one of the side's ships, whatever they picked (bots wait at the base islet for a station).
+    const fleet = this.zoneMode?.match instanceof FleetRules && this.soldiers.has(selfId) && kind !== 'ship' && kind !== 'veh' && this.vehicles ? fleetShip(this.vehicles.world.vehicles, team, Math.random) : null;
+    if (fleet) at = deckSpawn(fleet, Math.random);
     const ship = kind === 'ship' ? this.vehicles?.world.get(Number(ref)) : undefined;
     if (ship?.ship && !ship.wrecked && (ship.team ?? ship.home) === team) at = deckSpawn(ship, Math.random);
     const mate = kind === 'mate' ? this.squadOf(selfId)?.members.find((m) => String(m.id) === ref && m.id !== selfId) : undefined;
@@ -882,6 +885,12 @@ export class MatchSim {
     for (const s of this.soldiers.values()) s.syncBoxes();
     this.bots?.step(dt);
     this.fort?.step();
+    // Fleet battle: the rules count the ships; a sunk one stays gone, bots crew what is left.
+    if (this.zoneMode?.match instanceof FleetRules && this.vehicles) {
+      this.vehicles.world.fleet = true;
+      if (this.bots) this.bots.fleet = true;
+      this.zoneMode.observeFleet(fleetState(this.vehicles.world.vehicles));
+    }
     this.zoneMode?.step(dt, [...this.fighters()]);
     const em = this.zoneMode?.match;
     if (this.escort && em instanceof EscortRules) this.escort.step(em);

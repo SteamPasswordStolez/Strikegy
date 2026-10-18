@@ -19,18 +19,19 @@ export const MAPS: readonly MapEntry[] = [
   { id: 'bilbao', team: 12 },
   { id: 'persia', team: 4 },
   { id: 'ashfall', team: 64 },
+  { id: 'coral_reach', team: 40 },
 ];
 
 /** The practice range: no bots, every weapon. */
 export const RANGE_ID = 'sandbox';
 
 /** Players a side the lobby steps through (the owner wants up to 150v150). */
-export const TEAM_SIZES = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 100, 150] as const;
+export const TEAM_SIZES = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 100, 150] as const;
 
 /** From this many a side the lobby warns that it needs a strong PC. */
 export const BIG_TEAM = 48;
 
-export type LobbyMode = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'lastman' | 'skirmish';
+export type LobbyMode = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'lastman' | 'skirmish' | 'fleet';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 /** The side the player fights on; random is settled when the match starts. */
 export type LobbySide = 'random' | 'blue' | 'red';

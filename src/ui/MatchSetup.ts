@@ -28,7 +28,7 @@ import './matchSetup.css';
 export type ModeGroupId = 'objective' | 'attack' | 'team' | 'solo' | 'practice';
 
 export const MODE_GROUPS: readonly { id: ModeGroupId; modes: readonly LobbyMode[] }[] = [
-  { id: 'objective', modes: ['zone', 'frontline', 'conquest', 'hardpoint'] },
+  { id: 'objective', modes: ['zone', 'frontline', 'conquest', 'hardpoint', 'fleet'] },
   { id: 'attack', modes: ['rush', 'snd', 'escort', 'fortress'] },
   { id: 'team', modes: ['tdm', 'killconfirm'] },
   { id: 'solo', modes: ['ffa', 'gungame', 'lastman'] },

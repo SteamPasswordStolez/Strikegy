@@ -3,7 +3,7 @@ import type { GameBus } from '@/core/events';
 import type { NavWorld } from '@/ai/NavWorld';
 import type { MapDef, SpawnPoint, Team } from '@/world/mapTypes';
 import { ZoneRules, type ZoneRulesOptions, type ZoneState } from './zoneRules';
-import { ChargeRules, ConquestRules, LAST_STAND, LOOT_WEAPONS, LastStandRules, type Crate, DOMINATION, DominationRules, DeathmatchRules, ESCORT, EscortRules, FFA, FORTRESS, FREE_SPAWN_MODES, FortressRules, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, halfOwners, hardpointRoute, killTarget, polyline, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
+import { ChargeRules, ConquestRules, LAST_STAND, LOOT_WEAPONS, LastStandRules, type Crate, DOMINATION, DominationRules, DeathmatchRules, ESCORT, EscortRules, FFA, FORTRESS, FREE_SPAWN_MODES, FortressRules, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, halfOwners, hardpointRoute, killTarget, polyline, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind, FleetRules } from './matchRules';
 import { MATCH, setMatchFlags, type MatchFlags } from './matchFlags';
 import { simpleAllowed } from '@/net/lobbyProtocol';
 import type { VehicleNav } from '@/ai/NavWorld';
@@ -57,11 +57,15 @@ function modeFlags(kind: ModeKind): Partial<MatchFlags> {
   if (kind === 'lastman') return { ffa: true, revive: false, respawn: Infinity, squads: false, vehicles: false, callIns: false };
   // One life a round: back only when the next round starts (Game / MatchSim respawn everyone then).
   if (kind === 'snd') return { revive: false, respawn: Infinity, vehicles: false, callIns: false };
+  // At sea the call-ins (barrages, crates, the rocket truck) have nothing to land on: planes come from the carriers.
+  if (kind === 'fleet') return { callIns: false };
   return {};
 }
 
 /** Modes `map` offers: Zone always, Frontline / Conquest when it sets them up, the zone-anywhere modes when it has zones. */
 export function modesOf(map: MapDef): ModeKind[] {
+  // A fleet map plays its fleet battle only (its zones are hidden).
+  if (map.modes?.fleet) return ['fleet'];
   const out: ModeKind[] = ['zone'];
   if (map.modes?.frontline) out.push('frontline');
   if (map.modes?.conquest) out.push('conquest');
@@ -85,13 +89,14 @@ export function pickMode(map: MapDef, asked?: ModeKind, quiet = false): ModeKind
   if (asked && offered.includes(asked)) return asked;
   if (asked && !quiet) console.warn(`[strikegy] ${map.meta.id} has no ${asked} mode; playing its default`);
   const d = map.modes?.default;
-  return d && offered.includes(d) ? d : 'zone';
+  return d && offered.includes(d) ? d : offered[0]!;
 }
 
 function createMatch(kind: ModeKind, map: MapDef, opts: ZoneModeOptions): MatchRules {
   const size = opts.teamSize ?? { blue: 12, red: 12 };
   const per = (n: number) => ({ blue: opts.tickets ?? Math.round(n * size.blue), red: opts.tickets ?? Math.round(n * size.red) });
   const m = map.modes;
+  if (kind === 'fleet') return new FleetRules(m?.fleet?.time);
   if (kind === 'frontline' && m?.frontline) {
     return new FrontlineRules({
       sectors: m.frontline.sectors,
@@ -255,6 +260,13 @@ export class ZoneMode {
   onDeath(team: Team): void {
     if (this.match.ended) return;
     this.match.onDeath(team);
+    this.announce();
+  }
+
+  /** Fleet battle: the ships as they are now (a fleet gone ends the match, told to everyone). */
+  observeFleet(ships: Parameters<FleetRules['observeFleet']>[0]): void {
+    if (!(this.match instanceof FleetRules)) return;
+    this.match.observeFleet(ships);
     this.announce();
   }
 

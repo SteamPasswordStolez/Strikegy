@@ -87,6 +87,8 @@ export class VehicleWorld {
   air: { center: THREE.Vector3; radius: number } | null = null;
   /** Water under boats (the sea and rivers), or null on dry maps. */
   water: ((x: number, z: number) => number) | null = null;
+  /** Fleet battle: warships lost are not brought back. */
+  fleet = false;
   /** This world keeps the vehicles' health (false in a browser playing on the game server: its snapshots do). */
   authority = true;
   private readonly byHandle = new Map<number, Vehicle>();
@@ -381,6 +383,8 @@ export class VehicleWorld {
         if (v && v.empty && !v.wrecked && !v.ship && v.pos.distanceTo(home) > BIKES.abandonDistance && this.time - v.usedAt > abandon) this.remove(v);
         continue;
       }
+      // Fleet battle: a sunk warship is gone for good.
+      if (this.fleet && b.kind && VEHICLES[b.kind].ship && b.lostAt > -Infinity) continue;
       // Landing craft come back quickly: the landing force rides nothing else.
       if (this.time < b.lostAt + (b.kind === 'lcvp' ? LANDING.respawn : BIKES.respawn)) continue;
       const kind = b.kind ?? 'bike';

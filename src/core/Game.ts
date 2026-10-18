@@ -56,7 +56,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
-import { contacts, deckSpawn, layGun, lookPoint } from '@/vehicles/ship';
+import { contacts, deckSpawn, fleetShip, fleetState, layGun, lookPoint } from '@/vehicles/ship';
 import { CARRIER_PLANES, DECK, PLANE_COST, isCarrierPlane, launchBlock, planeCap } from '@/vehicles/carrierPlanes';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
@@ -88,7 +88,7 @@ import { TutorialPanel } from '@/ui/TutorialPanel';
 import { STEPS, TutorialRun, loadSeen, saveSeen, stepsFor, type TutorialProbe } from '@/core/tutorial';
 import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
-import { LastStandRules, ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
+import { FleetRules, LastStandRules, ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
 import { VehicleView, type VehicleViewKind, type VehicleViewState } from '@/ui/VehicleView';
 import { LastStandVisuals } from '@/modes/lastStandVisuals';
@@ -1836,6 +1836,12 @@ export class Game {
     this.bots?.step(dt);
     this.fort?.step();
     this.botsResupplyPlayer();
+    // Fleet battle: the rules count the ships; a sunk one stays gone, bots crew what is left.
+    if (this.zoneMode?.match instanceof FleetRules && this.vehicles) {
+      this.vehicles.fleet = true;
+      if (this.bots) this.bots.fleet = true;
+      if (!this.net) this.zoneMode.observeFleet(fleetState(this.vehicles.vehicles));
+    }
     if (!this.net) this.zoneMode?.step(dt, this.combatants());
     this.stepEscort();
     if (!this.net) this.stepStorm(dt);
@@ -4231,6 +4237,11 @@ export class Game {
         return this.spawnFor(team, 'base', selfId);
       }
     }
+    // Fleet battle: people come out on one of the side's ships, whatever they picked.
+    if (selfId === this.myId && this.zoneMode?.match instanceof FleetRules && kind !== 'ship' && kind !== 'veh') {
+      const v = this.vehicles ? fleetShip(this.vehicles.vehicles, team, Math.random) : null;
+      if (v) return deckSpawn(v, Math.random);
+    }
     if (kind === 'ship') {
       const v = this.vehicles?.get(Number(id));
       if (v?.ship && !v.wrecked && (v.team ?? v.home) === team) return deckSpawn(v, Math.random);
@@ -4347,7 +4358,9 @@ export class Game {
     const out: DeployOption[] = [];
     const base = this.baseCenter(this.myTeam);
     const zm = this.zoneMode;
-    out.push({ key: 'base', kind: 'base', label: t(zm?.solo ? 'spawn.anywhere' : 'spawn.base'), x: base.x, z: base.z, blocked: null, warn: null });
+    // Fleet battle: aboard the side's ships only (the base islet is where spare bots wait).
+    const fleetShips = zm?.match instanceof FleetRules && this.vehicles ? this.vehicles.vehicles.some((v) => v.ship && !v.wrecked && (v.team ?? v.home) === this.myTeam) : false;
+    if (!fleetShips) out.push({ key: 'base', kind: 'base', label: t(zm?.solo ? 'spawn.anywhere' : 'spawn.base'), x: base.x, z: base.z, blocked: null, warn: null });
     for (const o of zm?.spawnOptions(this.myTeam) ?? []) {
       if (o.id === 'base') continue;
       const z = zm!.zone(o.id)!;
@@ -4588,6 +4601,7 @@ export class Game {
     const m = this.zoneMode!.match;
     if (m instanceof SoloRules) return null;
     if (m instanceof SearchDestroyRules) return `${t('snd.rounds')} ${m.wins[team]}`;
+    if (m instanceof FleetRules) return `${t('fleet.points')} ${Math.floor(m.points[team])}%`;
     if (m instanceof PointsRules) return `${t('hud.points')} ${Math.floor(m.points[team])}`;
     const tk = m.tickets[team];
     return tk === null ? null : `${t('hud.tickets')} ${tk}`;
@@ -4656,6 +4670,11 @@ export class Game {
       const moves = t('mode.hillMoves').replace('{z}', m.zoneId).replace('{t}', clockText(m.moveIn));
       const tone = m.holder ? (m.holder === this.myTeam ? 'ally' : 'enemy') : 'neutral';
       return { text: `${mode} · ${moves} · ${target} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`, tone, urgent: m.moveIn < 10 };
+    }
+    if (m instanceof FleetRules) {
+      const us = this.myTeam;
+      const text = t('fleet.status').replace('{us}', String(m.afloat[us])).replace('{them}', String(m.afloat[otherTeam(us)])).replace('{t}', clockText(m.timeLeft));
+      return { text: `${mode} · ${text}`, tone: m.afloat[us] < m.afloat[otherTeam(us)] ? 'enemy' : 'neutral', urgent: m.timeLeft < 60 || m.afloat[us] <= 1 };
     }
     if (m instanceof PointsRules && Number.isFinite(m.timeLimit)) {
       return { text: `${mode} · ${target} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`, tone: 'neutral', urgent: m.timeLeft < 60 };
@@ -4814,6 +4833,7 @@ export class Game {
       const who = m.winnerId === this.myId ? playerName(t('feed.you')) : (this.scores.get(m.winnerId ?? -1)?.name ?? '?');
       return `${reason} · ${t('match.winnerIs').replace('{name}', who)} · ${t('mode.place').replace('{n}', String(s.place)).replace('{total}', String(s.total))}`;
     }
+    if (m instanceof FleetRules) return `${reason} · ${t('fleet.points')} ${Math.floor(m.points[us])}% : ${Math.floor(m.points[them])}%`;
     if (m instanceof PointsRules) return `${reason} · ${t('hud.points')} ${Math.floor(m.points[us])} : ${Math.floor(m.points[them])}`;
     const tk = (team: Team) => (m.tickets[team] === null ? '∞' : String(m.tickets[team]));
     return `${reason} · ${t('match.tickets')} ${tk(us)} : ${tk(them)}`;

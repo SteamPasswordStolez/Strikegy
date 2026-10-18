@@ -22,9 +22,9 @@ import { ZoneRules, type ZoneEvent, type ZoneState } from './zoneRules';
  *   when those run out.
  */
 
-export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'lastman';
+export type ModeKind = 'zone' | 'frontline' | 'conquest' | 'hardpoint' | 'tdm' | 'killconfirm' | 'ffa' | 'gungame' | 'rush' | 'snd' | 'escort' | 'fortress' | 'lastman' | 'fleet';
 
-export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress', 'lastman'];
+export const MODE_KINDS: readonly ModeKind[] = ['zone', 'frontline', 'conquest', 'hardpoint', 'tdm', 'killconfirm', 'ffa', 'gungame', 'rush', 'snd', 'escort', 'fortress', 'lastman', 'fleet'];
 
 /** Modes where the zones are no front: soldiers spawn at any zone with no enemy near it (owner, 2026-10-12). */
 export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killconfirm'];
@@ -33,7 +33,7 @@ export const FREE_SPAWN_MODES: readonly ModeKind[] = ['hardpoint', 'tdm', 'killc
 export const SOLO_MODES: readonly ModeKind[] = ['ffa', 'gungame', 'lastman'];
 
 /** How a match ended. */
-export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds' | 'delivered' | 'survived';
+export type EndReason = 'points' | 'tickets' | 'front' | 'time' | 'sectors' | 'rounds' | 'delivered' | 'survived' | 'fleet';
 
 /** Something worth announcing. */
 export type ModeEvent =
@@ -187,6 +187,77 @@ export abstract class PointsRules extends MatchRules {
     const { blue, red } = this.points;
     if ((blue >= this.target || red >= this.target) && blue !== red) this.end(blue > red ? 'blue' : 'red', 'points');
     else if (this.clock >= this.timeLimit && Math.floor(blue) !== Math.floor(red)) this.end(blue > red ? 'blue' : 'red', 'time');
+  }
+}
+
+/**
+ * Fleet battle (2026-10-19, big maps plan step 7; plan section 3): each side's
+ * warships are its only spawn points, a sunk ship is gone, sinking the whole
+ * enemy fleet wins; after `FLEET.time` the side with more of its fleet's
+ * health left wins. `points` is each side's fleet health left (% of what it
+ * started with, the HUD's bars), fed by the game from its ships every step
+ * (`observeFleet`).
+ */
+export const FLEET = { time: 1800 };
+
+export class FleetRules extends PointsRules {
+  readonly kind = 'fleet';
+  /** Ships still afloat per side, and what each side's fleet started with (health). */
+  readonly afloat: Record<Team, number> = { blue: 0, red: 0 };
+  readonly startHealth: Record<Team, number> = { blue: 0, red: 0 };
+
+  constructor(time: number = FLEET.time) {
+    super(100, time);
+    this.points.blue = 100;
+    this.points.red = 100;
+  }
+
+  /** The zones are only there for the engine: hidden, and nobody takes them. */
+  start(zones: ZoneRules): void {
+    for (const z of zones.zones) {
+      z.hidden = true;
+      z.locked = true;
+    }
+  }
+
+  /** The ships as they are now: each side's health left and how many are afloat. */
+  observeFleet(ships: readonly { team: Team; health: number; max: number; afloat: boolean }[]): void {
+    const health = { blue: 0, red: 0 };
+    const max = { blue: 0, red: 0 };
+    this.afloat.blue = 0;
+    this.afloat.red = 0;
+    for (const s of ships) {
+      max[s.team] += s.max;
+      if (!s.afloat) continue;
+      health[s.team] += Math.max(0, s.health);
+      this.afloat[s.team]++;
+    }
+    for (const t of ['blue', 'red'] as const) {
+      // A fleet is counted from when it first shows up (its ships come out on the first steps).
+      this.startHealth[t] = Math.max(this.startHealth[t], max[t]);
+      this.points[t] = this.startHealth[t] > 0 ? (100 * health[t]) / this.startHealth[t] : 100;
+    }
+    if (this.ended || !this.startHealth.blue || !this.startHealth.red) return;
+    if (!this.afloat.blue || !this.afloat.red) {
+      if (this.afloat.blue !== this.afloat.red) this.end(this.afloat.blue ? 'blue' : 'red', 'fleet');
+    }
+  }
+
+  step(dt: number): ModeEvent[] {
+    this.tickClock(dt);
+    return [];
+  }
+
+  /** Ends only on the clock (more fleet left wins) or a fleet gone (`observeFleet`). */
+  protected override judge(): void {
+    if (this.ended || this.clock < this.timeLimit) return;
+    const { blue, red } = this.points;
+    if (Math.floor(blue) !== Math.floor(red)) this.end(blue > red ? 'blue' : 'red', 'time');
+  }
+
+  order(team: Team): string[] {
+    void team;
+    return [];
   }
 }
 
