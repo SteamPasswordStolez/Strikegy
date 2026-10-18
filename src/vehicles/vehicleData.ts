@@ -19,10 +19,11 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 import { BATTLESHIP, CARRIER, DESTROYER, NAVAL_GUNS, SUBMARINE } from './warships';
+import { CARRIER_PLANE_SPECS, PLANE_GUNS, type CarrierPlaneKind } from './carrierPlanes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol' | 'dd' | 'cv' | 'bb' | 'ss';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol' | 'dd' | 'cv' | 'bb' | 'ss' | CarrierPlaneKind;
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'naval5in' | 'naval6in' | 'naval16in' | 'aa40' | 'torpedo' | 'depthcharge' | 'deckgun';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'naval5in' | 'naval6in' | 'naval16in' | 'aa40' | 'torpedo' | 'depthcharge' | 'deckgun' | 'planeMg' | 'rearMg' | 'bomb' | 'airTorpedo' | 'airDepth' | 'planeRockets';
 /** Tank kinds (one limit for all of them). */
 export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
 /** Jet kinds (one limit for all of them). */
@@ -105,6 +106,8 @@ export interface VehicleSpec {
   deck?: { parts: readonly { half: readonly [number, number, number]; pos: readonly [number, number, number] }[] };
   /** A warship (see warships.ts): damage control, flooding, fires, the helm's rules. */
   ship?: ShipSpec;
+  /** A carrier plane (see carrierPlanes.ts): launched from a carrier's deck for `cost` RP. */
+  plane?: { cost: number };
 }
 
 /** What makes a vehicle a warship. */
@@ -598,6 +601,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   cv: CARRIER,
   bb: BATTLESHIP,
   ss: SUBMARINE,
+  ...CARRIER_PLANE_SPECS,
 };
 
 /** A gun that fires a shell (flies and drops) instead of a hitscan round. */
@@ -606,6 +610,8 @@ export interface ShellSpec {
   speed: number;
   gravity: number;
   lob?: boolean;
+  /** Dropped from a plane: it leaves with the plane's own velocity (bombs, aerial torpedoes, depth charges). */
+  drop?: boolean;
 }
 
 export interface VehicleGunSpec {
@@ -629,6 +635,8 @@ export interface VehicleGunSpec {
   torpedo?: boolean;
   /** A depth charge: sinks and goes off under water (hurts submarines). */
   depth?: boolean;
+  /** Rounds carried (carrier planes: refilled on the deck); none: no limit. */
+  ammo?: number;
 }
 
 export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
@@ -650,6 +658,7 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   aam: { rpm: 60, damage: 999, spread: 0, range: 1500, vsVehicle: 320, blast: 4, burst: 2, cool: 14, shell: { speed: 260, gravity: 0 }, homing: true },
   jetrockets: { rpm: 600, damage: 999, spread: 0.9, range: 1000, vsVehicle: 220, blast: 5, burst: 14, cool: 12, shell: { speed: 230, gravity: 2 } },
   ...NAVAL_GUNS,
+  ...PLANE_GUNS,
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */

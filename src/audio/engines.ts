@@ -58,6 +58,13 @@ const VOICE: Record<EngineKind, EngineVoice> = {
   cv: { sample: 'engine_heavy', rate: [0.45, 0.7], idle: 14, top: 40, speed: 17, gain: 0.8, ref: 70, rumble: 400 },
   bb: { sample: 'engine_heavy', rate: [0.42, 0.66], idle: 14, top: 38, speed: 15, gain: 0.85, ref: 70, rumble: 380 },
   ss: { sample: 'engine_heavy', rate: [0.6, 0.95], idle: 20, top: 48, speed: 10.5, gain: 0.5, ref: 25, rumble: 600 },
+  // Carrier planes: radial piston engines (the propeller loop, pitched by kind).
+  cvfighter: { sample: 'prop_loop', rate: [0.9, 1.35], idle: 60, top: 140, speed: 105, gain: 0.7, ref: 45, rumble: 2200 },
+  cvdive: { sample: 'prop_loop', rate: [0.8, 1.2], idle: 55, top: 120, speed: 88, gain: 0.7, ref: 45, rumble: 2000 },
+  cvtorp: { sample: 'prop_loop', rate: [0.75, 1.1], idle: 50, top: 110, speed: 80, gain: 0.75, ref: 45, rumble: 1800 },
+  cvscout: { sample: 'prop_loop', rate: [0.85, 1.25], idle: 58, top: 130, speed: 95, gain: 0.6, ref: 40, rumble: 2100 },
+  cvasw: { sample: 'prop_loop', rate: [0.75, 1.1], idle: 50, top: 110, speed: 82, gain: 0.75, ref: 45, rumble: 1800 },
+  cvcas: { sample: 'prop_loop', rate: [0.85, 1.3], idle: 58, top: 135, speed: 98, gain: 0.7, ref: 45, rumble: 2100 },
   recon: { sample: 'prop_loop', rate: [1, 1], idle: 90, top: 90, speed: 60, gain: 0.6, ref: 45, rumble: 3000 },
 };
 

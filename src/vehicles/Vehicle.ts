@@ -5,6 +5,7 @@ import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld
 import type { Team } from '@/world/mapTypes';
 import { AIRSPACE, VEHICLES, VEHICLE_GUNS, engineForce, vehicleDamage, type VehicleGunId, type VehicleGunSpec, type StationKind, type VehicleKind, type VehicleSpec } from './vehicleData';
 import { ShipState } from './ship';
+import { DECK } from './carrierPlanes';
 import { buildVehicleModel, type VehicleModel } from './vehicleModels';
 
 /** Driving input for one step: throttle and steering -1..1, handbrake. */
@@ -38,6 +39,8 @@ export interface Mount {
   heat: number;
   overheated: boolean;
   nextShot: number;
+  /** Rounds left (carrier planes; Infinity: no limit). */
+  ammo: number;
   /** The hull's heading when the gun was last aimed (the gun holds its bearing as the hull turns under it). */
   hullYaw?: number;
 }
@@ -89,6 +92,8 @@ export class Vehicle implements Damageable {
   arrivedAt = -Infinity;
   /** Only this combatant may take the driver's seat (a called-in rocket tank: its squad leader), or null. */
   driverOnly: number | null = null;
+  /** A carrier plane kept for whoever launched it until then (VehicleWorld time). */
+  keptUntil = 0;
   /** Guns by seat (null for seats without one), and second weapons (missiles, rocket pods). */
   readonly mounts: (Mount | null)[];
   readonly altMounts: (Mount | null)[];
@@ -126,7 +131,7 @@ export class Vehicle implements Damageable {
     const spec = (this.spec = VEHICLES[kind]);
     this.health = spec.health;
     this.seats = spec.seats.map(() => null);
-    const mount = (seat: number, id: VehicleGunId | undefined): Mount | null => (id ? { seat, id, gun: VEHICLE_GUNS[id], yaw: 0, pitch: 0, heat: 0, overheated: false, nextShot: 0 } : null);
+    const mount = (seat: number, id: VehicleGunId | undefined): Mount | null => (id ? { seat, id, gun: VEHICLE_GUNS[id], yaw: 0, pitch: 0, heat: 0, overheated: false, nextShot: 0, ammo: VEHICLE_GUNS[id].ammo ?? Infinity } : null);
     this.mounts = spec.seats.map((s, seat) => mount(seat, s.gun));
     this.altMounts = spec.seats.map((s, seat) => mount(seat, s.alt));
     this.wheelSpin = spec.wheels.map(() => 0);
@@ -471,6 +476,15 @@ export class Vehicle implements Damageable {
   private fly(dt: number, input: DriveInput | null): void {
     const f = this.flight!;
     const spec = this.spec.flight!;
+    // A carrier plane: rolling on a carrier's deck, or brought down onto one by the landing aid.
+    if (this.spec.plane && !this.crashed) {
+      if (!this.deck && !this.wrecked) this.catchDeck();
+      if (this.deck) {
+        this.rollOnDeck(dt, input);
+        if (this.deck) return;
+      }
+      if (!this.wrecked && this.landingAid(dt, input)) return;
+    }
     const piloted = !!input && !this.wrecked;
     let wantYaw = input?.aimYaw ?? f.yaw;
     let wantPitch = THREE.MathUtils.clamp(input?.aimPitch ?? (piloted ? 0 : -0.25), -1.2, 1.2);
@@ -506,11 +520,18 @@ export class Vehicle implements Damageable {
     const next = this.pos.clone().add(step);
     // Crash: anything solid along the way (with a little reach for the nose).
     if (!this.crashed && len > 0) {
-      const hit = this.physics.raycast(this.pos, step.clone().divideScalar(len), len + this.spec.half[2] * 0.6, Layer.WORLD);
+      const hit = this.physics.raycast(this.pos, step.clone().divideScalar(len), len + this.spec.half[2] * 0.6, Layer.WORLD, undefined, this.clearOf?.body);
       if (hit) {
         this.health = 0;
         this.crashed = true;
         next.set(hit.point.x, hit.point.y + this.spec.half[1], hit.point.z);
+      }
+      // Into the sea (it is no collider): down for good.
+      const level = this.water?.(next.x, next.z) ?? NaN;
+      if (!this.crashed && Number.isFinite(level) && next.y - this.spec.half[1] * 0.6 < level) {
+        this.health = 0;
+        this.crashed = true;
+        next.y = level;
       }
     }
     if (this.crashed) {
@@ -523,6 +544,207 @@ export class Vehicle implements Damageable {
   }
   /** Came down on something (stays put as a wreck). */
   crashed = false;
+
+  /** A carrier plane on a carrier's deck: where on it (carrier frame), heading on it, rolling speed, the wires holding it. */
+  deck: { carrier: Vehicle; x: number; z: number; yaw: number; speed: number; arrest: boolean } | null = null;
+  /** The carriers a plane may land on (set by its world). */
+  carriers: (() => readonly Vehicle[]) | null = null;
+  /** Just off a carrier's bow: its hull doesn't count as something to crash into for a moment. */
+  private clearOf: Vehicle | null = null;
+  private clearUntil = 0;
+  private flyTime = 0;
+  /** The landing aid has it (carrier, or null); waved off until (fly time). */
+  approach: Vehicle | null = null;
+  private waveOffUntil = 0;
+  /** Seconds a plane has stood still on a carrier's deck (it is repaired and rearmed at `DECK.rearm`). */
+  parkedFor = 0;
+
+  /** Height of a plane's centre over the deck when its wheels are on it. */
+  private get gear(): number {
+    return this.spec.half[1] + 0.82;
+  }
+
+  private sideOf(c: Vehicle): boolean {
+    const mine = this.team ?? this.home;
+    const theirs = c.team ?? c.home;
+    return !mine || !theirs || mine === theirs;
+  }
+
+  /** Puts a plane on `c`'s deck at (x, z) of its frame, facing `yaw` from its bow, standing. */
+  parkOn(c: Vehicle, x: number, z: number, yaw = 0): void {
+    this.deck = { carrier: c, x, z, yaw, speed: 0, arrest: false };
+    const at = c.toWorld(new THREE.Vector3(x, c.spec.half[1] + this.gear, z), new THREE.Vector3());
+    const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw).premultiply(c.quat);
+    this.snap(at, q);
+    this.velocity.copy(c.velocity);
+    if (this.flight) {
+      this.flight.yaw = c.yaw + yaw;
+      this.flight.pitch = 0;
+      this.flight.roll = 0;
+      this.flight.speed = 0;
+      this.flight.throttle = 0;
+    }
+  }
+
+  /** Standing or rolling slowly on a friendly carrier's deck (put there from outside, or out of a seat): onto it. */
+  private catchDeck(): void {
+    for (const c of this.carriers?.() ?? []) {
+      if (c.wrecked || !this.sideOf(c)) continue;
+      const l = c.toLocal(this.tmpDeck.copy(this.pos));
+      const [hx, hy, hz] = c.spec.half;
+      const above = l.y - hy - this.gear;
+      if (Math.abs(l.x) > hx - 0.5 || Math.abs(l.z) > hz - 1 || above < -0.6 || above > 2.5) continue;
+      const rel = this.tmpDeck2.copy(this.velocity).sub(c.velocity);
+      if (rel.length() > 12) continue;
+      const fwd = this.tmpDeck.set(0, 0, -1).applyQuaternion(this.quat);
+      const yaw = Math.atan2(Math.sin(Math.atan2(-fwd.x, -fwd.z) - c.yaw), Math.cos(Math.atan2(-fwd.x, -fwd.z) - c.yaw));
+      this.deck = { carrier: c, x: l.x, z: l.z, yaw, speed: Math.max(0, rel.dot(fwd)), arrest: false };
+      return;
+    }
+  }
+
+  /**
+   * On the deck: W rolls it toward the bow (the throttle up), it brakes by
+   * itself otherwise (and hard on the wires after a landing), A/D turn it a
+   * little; past the bow it flies, at its speed plus the carrier's (too slow
+   * and it drops into the sea). The deck carries it.
+   */
+  private rollOnDeck(dt: number, input: DriveInput | null): void {
+    const d = this.deck!;
+    const c = d.carrier;
+    const f = this.flight!;
+    const spec = this.spec.flight!;
+    if (c.wrecked) {
+      this.deck = null;
+      return;
+    }
+    const piloted = !!input && !this.wrecked;
+    if (piloted) f.throttle = THREE.MathUtils.clamp(f.throttle + input.throttle * dt * 0.7, 0, 1);
+    if (d.arrest) {
+      d.speed = Math.max(0, d.speed - DECK.arrest * dt);
+      if (d.speed === 0) d.arrest = false;
+    } else if (piloted && f.throttle > 0.3) d.speed += DECK.accel * f.throttle * dt;
+    else d.speed = Math.max(0, d.speed - DECK.brake * dt);
+    if (piloted && d.speed > 0.5) d.yaw = THREE.MathUtils.clamp(d.yaw - input.steer * 0.35 * dt, -0.5, 0.5);
+    else if (d.speed > 0.5) d.yaw *= Math.exp(-dt);
+    d.x += -Math.sin(d.yaw) * d.speed * dt;
+    d.z += -Math.cos(d.yaw) * d.speed * dt;
+    const [hx, hy, hz] = c.spec.half;
+    if (d.z > hz - 1) {
+      d.z = hz - 1;
+      d.speed = 0;
+    }
+    if (d.z < -hz || Math.abs(d.x) > hx) {
+      // Off the bow (or the side): flying, or falling.
+      const total = d.speed + c.forwardSpeed() * Math.cos(d.yaw);
+      f.yaw = c.yaw + d.yaw;
+      f.roll = 0;
+      f.speed = total >= spec.minSpeed * 0.7 ? Math.max(spec.minSpeed, total) : total;
+      f.pitch = total >= spec.minSpeed * 0.7 ? 0.1 : -0.15;
+      this.deck = null;
+      this.clearOf = c;
+      this.clearUntil = this.flyTime + 3;
+      this.parkedFor = 0;
+      return;
+    }
+    // Where the deck will be after this step (the carrier moves on in it).
+    const local = this.tmpDeck.set(d.x, hy + this.gear, d.z);
+    const at = c.toWorld(local, this.tmpDeck2).addScaledVector(c.velocity, dt);
+    const q = this.tmpDeckQ.setFromAxisAngle(UP, d.yaw).premultiply(c.quat);
+    this.body.setNextKinematicTranslation(at);
+    this.body.setNextKinematicRotation(q);
+    const fwd = this.tmpDeck.set(-Math.sin(c.yaw + d.yaw), 0, -Math.cos(c.yaw + d.yaw));
+    this.velocity.copy(c.velocity).addScaledVector(fwd, d.speed);
+    f.yaw = c.yaw + d.yaw;
+    f.pitch = 0;
+    f.roll = 0;
+    f.speed = d.speed;
+    f.turningBack = false;
+  }
+
+  /**
+   * The landing aid (plan section 3): a plane coming up behind a friendly
+   * carrier's stern, lined up with it, low and not too fast, is flown down a
+   * glide slope onto the deck and caught by the wires. Pulling up hard or
+   * opening the throttle wide waves it off. True while it has the plane.
+   */
+  private landingAid(dt: number, input: DriveInput | null): boolean {
+    this.flyTime += dt;
+    if (this.clearOf && this.flyTime > this.clearUntil) this.clearOf = null;
+    const f = this.flight!;
+    if (this.flyTime < this.waveOffUntil) return false;
+    let c = this.approach;
+    if (c && (c.wrecked || !this.inCorridor(c, 1.3))) c = null;
+    if (!c) for (const o of this.carriers?.() ?? []) if (!o.wrecked && this.sideOf(o) && this.inCorridor(o, 1)) c = o;
+    if (c && !this.approach && this.clearOf === c) c = null;
+    this.approach = c;
+    if (!c) return false;
+    if (input && ((input.aimPitch ?? 0) > 0.45 || (input.throttle > 0 && f.throttle > 0.95))) {
+      this.approach = null;
+      this.waveOffUntil = this.flyTime + 6;
+      return false;
+    }
+    if (input) f.throttle = THREE.MathUtils.clamp(f.throttle + input.throttle * dt * 0.7, 0, 1);
+    const [, hy, hz] = c.spec.half;
+    const l = c.toLocal(this.tmpDeck.copy(this.pos));
+    const touch = hz * 0.45;
+    const cSpeed = c.forwardSpeed();
+    // Slowing to an approach speed over the deck's.
+    const rel = Math.max(18, f.speed - cSpeed - 12 * dt);
+    l.z -= rel * dt;
+    l.x *= Math.exp(-1.6 * dt);
+    const want = hy + this.gear + Math.max(0, (l.z - touch) * DECK.slope);
+    l.y += THREE.MathUtils.clamp(want - l.y, -6 * dt, 6 * dt);
+    if (l.z <= touch && l.y <= hy + this.gear + 0.6) {
+      this.deck = { carrier: c, x: l.x, z: l.z, yaw: 0, speed: rel, arrest: true };
+      this.approach = null;
+      return true;
+    }
+    const at = c.toWorld(l, this.tmpDeck2).addScaledVector(c.velocity, dt);
+    f.yaw = c.yaw;
+    f.pitch = -Math.atan(DECK.slope) * 0.5;
+    f.roll *= Math.exp(-3 * dt);
+    f.speed = rel + cSpeed;
+    f.turningBack = false;
+    const fwd = this.tmpDeck.set(-Math.sin(f.yaw), 0, -Math.cos(f.yaw));
+    this.velocity.copy(fwd).multiplyScalar(f.speed);
+    this.body.setNextKinematicTranslation(at);
+    this.body.setNextKinematicRotation(this.tmpDeckQ.setFromEuler(new THREE.Euler(f.pitch, f.yaw, f.roll, 'YXZ')));
+    return true;
+  }
+
+  /** Behind `c`'s stern, lined up, low and slow enough for the landing aid (`slack` widens it once it has the plane). */
+  private inCorridor(c: Vehicle, slack: number): boolean {
+    const f = this.flight!;
+    const l = c.toLocal(this.tmpDeck.copy(this.pos));
+    const [, hy, hz] = c.spec.half;
+    const h = l.y - hy;
+    if (l.z < hz * 0.45 - 5 || l.z > hz + DECK.approach * slack || Math.abs(l.x) > DECK.halfWidth * slack) return false;
+    if (h < 0 || h > DECK.height * slack) return false;
+    if (Math.abs(Math.atan2(Math.sin(f.yaw - c.yaw), Math.cos(f.yaw - c.yaw))) > 0.35 * slack) return false;
+    return f.speed - c.forwardSpeed() < DECK.maxRel * slack;
+  }
+
+  /** On the deck long enough: repaired and rearmed. */
+  rearm(): void {
+    this.health = this.spec.health;
+    for (const m of [...this.mounts, ...this.altMounts]) if (m) m.ammo = m.gun.ammo ?? Infinity;
+  }
+
+  /** Standing on a carrier's deck (for a plane moved from outside: by where it is and how it moves). */
+  get parked(): boolean {
+    if (this.deck) return this.deck.speed < 0.5;
+    for (const c of this.carriers?.() ?? []) {
+      if (c.wrecked) continue;
+      const l = c.toLocal(this.tmpDeck.copy(this.pos));
+      const [hx, hy, hz] = c.spec.half;
+      if (Math.abs(l.x) < hx && Math.abs(l.z) < hz && Math.abs(l.y - hy - this.gear) < 1 && this.tmpDeck2.copy(this.velocity).sub(c.velocity).length() < 1.5) return true;
+    }
+    return false;
+  }
+  private readonly tmpDeck = new THREE.Vector3();
+  private readonly tmpDeck2 = new THREE.Vector3();
+  private readonly tmpDeckQ = new THREE.Quaternion();
 
   /** After the physics step. */
   afterStep(): void {
@@ -789,8 +1011,9 @@ export class Vehicle implements Damageable {
     const g = m.gun;
     if (m.overheated || !firing) m.heat = Math.max(0, m.heat - dt / g.cool);
     if (m.overheated && m.heat <= 0) m.overheated = false;
-    if (!firing || m.overheated || time < m.nextShot) return false;
+    if (!firing || m.overheated || time < m.nextShot || m.ammo <= 0) return false;
     m.nextShot = time + 60 / g.rpm;
+    m.ammo--;
     if (!alt) this.seatShots[seat] = (this.seatShots[seat]! + 1) & 0xff;
     if (g.burst > 1) {
       m.heat += 1 / g.burst;

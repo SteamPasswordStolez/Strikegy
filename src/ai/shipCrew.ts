@@ -43,7 +43,7 @@ export const SHIP_AI = {
 };
 
 /** The order bots take a ship's stations in: the helm first, then what fights. */
-const STATION_ORDER: readonly StationKind[] = ['helm', 'fire', 'main', 'engine', 'secondary', 'dc', 'torpedo', 'aa', 'deckgun', 'asw', 'periscope', 'sonar', 'flight', 'catapult'];
+const STATION_ORDER: readonly StationKind[] = ['helm', 'fire', 'main', 'flight', 'engine', 'secondary', 'dc', 'torpedo', 'aa', 'deckgun', 'asw', 'periscope', 'sonar', 'catapult'];
 
 /** A ship's free station for a bot (by `STATION_ORDER`), or -1. */
 export function botStation(spec: VehicleSpec, free: (seat: number) => boolean): number {
@@ -221,7 +221,8 @@ export class ShipCrews {
       let best: Vehicle | null = null;
       let bestD = SHIP_AI.aaRange;
       for (const o of all) {
-        if (!o.flight || o.wrecked || (o.team ?? o.home) === team) continue;
+        // Flying ones (a plane standing on a deck is the ship gunners' business, not the AA's).
+        if (!o.flight || o.wrecked || o.deck || (o.team ?? o.home) === team) continue;
         const d = o.pos.distanceTo(v.pos);
         if (d < bestD) {
           bestD = d;

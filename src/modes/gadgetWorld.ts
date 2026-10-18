@@ -16,6 +16,8 @@ import { VEHICLE_GUNS, type VehicleGunId } from '@/vehicles/vehicleData';
  * `DEPTH.fuse` m (or on what it strikes).
  */
 const TORPEDO_RUN = 0.9;
+/** How fast a torpedo runs once in the water (m/s; a ship's and an aircraft's alike). */
+const TORPEDO_SPEED = 25;
 const DEPTH = { sink: 4, fuse: 14 } as const;
 
 /** Who fired or placed something (the player or a bot). */
@@ -149,7 +151,7 @@ export class GadgetWorld {
     this.group.add(mesh);
     const spec = VEHICLE_GUNS[gun as VehicleGunId] as (typeof VEHICLE_GUNS)[VehicleGunId] | undefined;
     const mode = spec?.torpedo ? 'torpedo' : spec?.depth ? 'depth' : undefined;
-    const life = homing ? 8 : mode === 'torpedo' && spec?.shell ? spec.range / spec.shell.speed : 14;
+    const life = homing ? 8 : mode === 'torpedo' && spec ? spec.range / TORPEDO_SPEED + 20 : 14;
     if (mode) mesh.scale.set(2.2, 4, 2.2);
     this.shots.push({ id: this.nextId++, kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life, mesh, gun, homing, ignore, mode });
   }
@@ -243,7 +245,7 @@ export class GadgetWorld {
         if (s.mode === 'torpedo') {
           // Running at its depth along the way it was aimed.
           s.pos.y = level - TORPEDO_RUN;
-          const speed = VEHICLE_GUNS[s.gun as VehicleGunId]?.shell?.speed ?? 25;
+          const speed = TORPEDO_SPEED;
           const h = Math.hypot(s.vel.x, s.vel.z) || 1;
           s.vel.set((s.vel.x / h) * speed, 0, (s.vel.z / h) * speed);
         } else {

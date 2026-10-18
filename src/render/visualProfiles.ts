@@ -366,6 +366,9 @@ export class Atmosphere {
    */
   update(focus: THREE.Vector3, time: number): boolean {
     if (this.sky) this.sky.material.uniforms.time!.value = time;
+    // The sky box (1 km) goes with the camera: left where it was built, a camera
+    // more than 500 m from the map's middle (the big maps) saw holes in the sky.
+    (this.photoSky ?? this.sky)?.position.copy(focus);
     if (!this.sun || this.staticShadows) return false;
     const step = Math.max(this.texel, Math.round((this.opts.shadowExtent * 0.25) / this.texel) * this.texel);
     const fx = Math.round(focus.x / step) * step;

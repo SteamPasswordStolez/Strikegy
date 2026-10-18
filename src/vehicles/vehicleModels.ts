@@ -5,6 +5,7 @@ import { KitBuilder, type KitMaterial } from '@/world/modelKits';
 import { VEHICLES, type VehicleKind } from './vehicleData';
 import { bakeInto } from './vehicleLooks';
 import { buildBattleship, buildCarrier, buildDestroyer, buildSubmarine } from './warshipModels';
+import { isCarrierPlane, type CarrierPlaneKind } from './carrierPlanes';
 
 /**
  * Procedural vehicle models. Origin is the chassis centre, forward is -z.
@@ -118,7 +119,62 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'cv') return buildCarrier(team);
   if (kind === 'bb') return buildBattleship(team);
   if (kind === 'ss') return buildSubmarine(team);
+  if (isCarrierPlane(kind)) return buildCarrierPlane(kind, team);
   return buildBike(team);
+}
+
+/**
+ * A WW2-style carrier plane (2026-10-19, big maps plan step 6): radial engine
+ * cowling and propeller at the nose (front -z), a tapered fuselage, low wings
+ * with a little dihedral, the tail with its hook; one or two seats under a
+ * framed canopy; what it carries under the belly or the wings by kind.
+ */
+function buildCarrierPlane(kind: CarrierPlaneKind, team: Team | null): VehicleModel {
+  const spec = VEHICLES[kind];
+  const L = spec.half[2] * 2;
+  const span = spec.flight!.wings.half[0] * 2;
+  const two = spec.seats.length > 1;
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  const n = -L / 2;
+  // Fuselage: fat behind the engine, tapering to the tail.
+  fuselage(b, 'paint', [[0.62, n + 0.5], [0.72, n + 1.3], [0.74, n + 3], [0.66, n + L * 0.55], [0.42, n + L * 0.8], [0.16, n + L - 0.1], [0.05, n + L]], [0, 0, 0], 1.05, 16);
+  // Cowling and the propeller: hub, three blades, a faint disc for the spin.
+  fuselage(b, 'dark', [[0.5, n + 0.05], [0.72, n + 0.3], [0.74, n + 1.1], [0.66, n + 1.4]], [0, 0, 0], 1, 16);
+  b.cyl('metal', 0.04, 0.18, 0.5, [0, 0, n - 0.15], [-Math.PI / 2, 0, 0], 10);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + 0.3;
+    b.box('dark', [0.16, 1.55, 0.05], [Math.sin(a) * 0.8, Math.cos(a) * 0.8, n - 0.1], [0, 0, -a]);
+  }
+  // Canopy: a framed greenhouse, longer for two.
+  const c0 = -1.5;
+  const c1 = two ? 1.9 : 0.3;
+  b.tinted('#3a2e18', () => b.sphere('glass', 0.48, [0, 0.62, (c0 + c1) / 2], [1, 0.9, (c1 - c0) / 0.96]));
+  for (let z = c0 + 0.3; z < c1; z += 0.8) b.tube('dark', [[-0.44, 0.55, z], [-0.3, 1.05, z], [0.3, 1.05, z], [0.44, 0.55, z]], 0.015, 6, 4);
+  // Wings: low, tapered, a little dihedral; ailerons darker; the tailplane and fin; tail hook.
+  const root0 = n + L * 0.3;
+  for (const s of [-1, 1]) {
+    panel(b, 'paint', [[s * 0.65, root0], [s * span * 0.5, root0 + 0.7], [s * span * 0.5, root0 + 1.6], [s * 0.65, root0 + 2.6]], -0.35 + 0.0, 0.2);
+    b.box('dark', [span * 0.18, 0.05, 0.3], [s * span * 0.36, -0.28, root0 + 2.0]);
+    panel(b, 'paint', [[s * 0.2, n + L - 1.6], [s * 2.3, n + L - 1.1], [s * 2.3, n + L - 0.5], [s * 0.2, n + L - 0.2]], 0.15, 0.08);
+    // Fixed main gear legs and wheels (folded up in the air would need a pivot: they stay out).
+    b.rod('dark', [s * 1.6, -0.45, root0 + 0.6], [s * 1.7, -1.3, root0 + 0.4], 0.06, 6);
+    b.cyl('rubber', 0.32, 0.32, 0.16, [s * 1.7, -1.4, root0 + 0.4], [0, 0, Math.PI / 2], 12);
+  }
+  const fin = new KitBuilder();
+  fin.profile('paint', [[n + L - 2.1, 0.2], [n + L - 0.1, 0.2], [n + L - 0.3, 1.9], [n + L - 1.1, 2.0]], 0.09);
+  for (const p of fin.pieces) b.pieces.push(p);
+  b.rod('metal', [0, -0.25, n + L - 0.8], [0, -0.75, n + L - 0.1], 0.03, 4);
+  // What it carries.
+  if (kind === 'cvdive') b.tinted('#3d4136', () => b.cyl('paint', 0.22, 0.22, 1.9, [0, -0.9, root0 + 1.2], [Math.PI / 2, 0, 0], 12));
+  if (kind === 'cvtorp') b.tinted('#5c5f58', () => b.cyl('paint', 0.28, 0.28, 4.6, [0, -0.95, root0 + 1.0], [Math.PI / 2, 0, 0], 12));
+  if (kind === 'cvasw') for (const s of [-1, 1]) for (const z of [0.6, 1.8]) b.tinted('#3d4136', () => b.cyl('paint', 0.24, 0.24, 0.7, [s * 2.4, -0.7, root0 + z], [0, 0, Math.PI / 2], 10));
+  if (kind === 'cvcas') for (const s of [-1, 1]) for (let k = 0; k < 4; k++) b.cyl('dark', 0.07, 0.07, 1.4, [s * (2.2 + k * 0.6), -0.6, root0 + 1.0], [Math.PI / 2, 0, 0], 6);
+  if (kind === 'cvscout') b.rod('metal', [0, 0.9, 1.2], [0, 1.9, 1.4], 0.025, 4);
+  bakeInto(root, b, team, 'air');
+  const mounts: (MountNodes | null)[] = [fixedMount(root, 0, -0.3, n - 0.4)];
+  if (two) mounts.push(fixedMount(root, 0, 0.8, c1 - 0.2));
+  return { root, wheels: [], mounts };
 }
 
 /** Merges each node's plain mesh children by material (pivots and their children stay apart), all the way down. */

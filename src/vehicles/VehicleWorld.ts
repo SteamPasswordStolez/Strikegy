@@ -7,6 +7,7 @@ import type { Boundary } from '@/world/terrain';
 import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, VEHICLES, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
 import { SHIP, spotShips, stationNear } from './ship';
+import { DECK, type CarrierPlaneKind } from './carrierPlanes';
 
 /** A base pad: where it is and what it brings out. */
 export interface PadSpot extends PadState {
@@ -47,9 +48,13 @@ export interface VehicleHooks {
   destroyed(v: Vehicle, by: DamageSource | null): void;
   /** `v` ran `victim` over. */
   roadkill(v: Vehicle, victim: Walker): void;
+  /** Points for someone manning a warship's station or flying a carrier plane (`SHIP.duty` a second): a fleet's RP. */
+  duty?(id: number, points: number): void;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
+/** How long a person's newly launched carrier plane waits for them (s). */
+const PLANE_KEEP = 40;
 /** Ids for vehicles (clear of combatant ids). */
 const FIRST_ID = 50000;
 /** Seconds a wreck burns before it's cleared, and how long an empty vehicle may stand unused. */
@@ -156,6 +161,7 @@ export class VehicleWorld {
       v.airRadius = this.air.radius;
     }
     v.water = this.water;
+    if (v.spec.plane) v.carriers = () => this.vehicles.filter((c) => c.kind === 'cv');
     v.usedAt = this.time;
     this.vehicles.push(v);
     for (const c of [v.collider, v.wingCollider, ...v.parts]) {
@@ -181,7 +187,8 @@ export class VehicleWorld {
    * that `ok` allows. Null when there is none.
    */
   enterAt(p: THREE.Vector3, ok: (v: Vehicle, seat: number) => boolean): { v: Vehicle; seat: number } | null {
-    const v = this.nearest(p);
+    // Something standing on a ship's deck (a carrier's planes) comes before the ship's stations.
+    const v = this.nearest(p, ENTER_REACH, (o) => !o.spec.ship) ?? this.nearest(p);
     if (!v) return null;
     if (v.spec.ship) {
       const seat = stationNear(v.spec, (q) => v.toLocal(q), p, (i) => !v.seats[i] && ok(v, i));
@@ -192,12 +199,12 @@ export class VehicleWorld {
   }
 
   /** The closest vehicle with a free seat whose hull is within reach of `p`. */
-  nearest(p: THREE.Vector3, reach = ENTER_REACH): Vehicle | null {
+  nearest(p: THREE.Vector3, reach = ENTER_REACH, only?: (v: Vehicle) => boolean): Vehicle | null {
     let best: Vehicle | null = null;
     let bestD = Infinity;
     const local = new THREE.Vector3();
     for (const v of this.vehicles) {
-      if (v.wrecked || v.seats.every((s) => s)) continue;
+      if (v.wrecked || v.seats.every((s) => s) || (only && !only(v))) continue;
       // Distance to the hull box.
       local.copy(p).sub(v.pos).applyQuaternion(v.quat.clone().invert());
       const [hx, hy, hz] = v.spec.half;
@@ -211,6 +218,35 @@ export class VehicleWorld {
       }
     }
     return best;
+  }
+
+  /** Carrier planes `team` has out (not wrecked). */
+  planesUp(team: Team): number {
+    return this.vehicles.filter((v) => v.spec.plane && !v.wrecked && v.home === team).length;
+  }
+
+  /**
+   * A carrier plane of `kind` for `team` on carrier `c`'s deck, at the first
+   * clear spot aft (planes are launched from the stern end so they have the
+   * whole deck to roll down); null when the deck is full there.
+   */
+  launchPlane(c: Vehicle, kind: CarrierPlaneKind, team: Team, keepFor: number | null = null): Vehicle | null {
+    const hz = c.spec.half[2];
+    const spots: [number, number][] = [];
+    for (let k = 0; k < 4; k++) for (const x of [-8, 5]) spots.push([x, hz - 20 - k * 22]);
+    for (const [x, z] of spots) {
+      const at = c.toWorld(new THREE.Vector3(x, c.spec.half[1] + 2, z), new THREE.Vector3());
+      if (this.vehicles.some((o) => o.spec.plane && !o.wrecked && o.pos.distanceTo(at) < 11)) continue;
+      const v = this.spawn(kind, at, c.yaw, team);
+      v.parkOn(c, x, z);
+      // Launched by a person: theirs to fly for a while (bots keep out of its cockpit).
+      if (keepFor !== null) {
+        v.driverOnly = keepFor;
+        v.keptUntil = this.time + PLANE_KEEP;
+      }
+      return v;
+    }
+    return null;
   }
 
   /** How many of `kind` belonging to `team` are out (not wrecked). */
@@ -230,6 +266,14 @@ export class VehicleWorld {
       v.drive(dt, inputs.get(v.id) ?? null);
       // A warship's fires and flooding, where its health is kept (the game server's world, solo play; not a browser in a match there).
       if (this.authority) v.stepShip(dt);
+      // On duty aboard a warship or in a carrier plane: points (squad RP for the planes, call-ins).
+      if (this.authority && (v.ship || v.spec.plane) && !v.wrecked && this.hooks.duty) for (const o of v.seats) if (o) this.hooks.duty(o.id, SHIP.duty * dt);
+      // A carrier plane standing on the deck: repaired and rearmed after a while.
+      if (v.spec.plane && !v.wrecked) {
+        if (v.driverOnly !== null && (this.time > v.keptUntil || v.seats[0])) v.driverOnly = null;
+        v.parkedFor = v.parked ? v.parkedFor + dt : 0;
+        if (v.parkedFor >= DECK.rearm && v.parkedFor - dt < DECK.rearm) v.rearm();
+      }
       if (!v.wrecked && v.health <= 0) this.wreck(v);
     }
     // Warships look and listen for each other once a second (dived submarines are only seen when found).
@@ -240,7 +284,7 @@ export class VehicleWorld {
     for (let i = this.vehicles.length - 1; i >= 0; i--) {
       const v = this.vehicles[i]!;
       // Warships stay out empty (they are the fleet, not something one leaves lying about).
-      const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v) && !v.spec.ship;
+      const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v) && !v.spec.ship && !(v.spec.plane && v.parked);
       // Aircraft nobody flies: they come down; wrecks in the air fall and are cleared on landing.
       if (this.time > v.removeAt || unused || v.pos.y < -50) this.remove(v);
       else if (v.flight && v.crashed && !v.wrecked) v.health = 0;
@@ -256,7 +300,8 @@ export class VehicleWorld {
       v.syncModel(alpha);
       if (!eye || !v.model.setFar) continue;
       // Merged far look past FAR_LOOK (with a little hysteresis so it doesn't flicker).
-      const d2 = v.pos.distanceToSquared(eye);
+      // A warship by its hull (one stands on a carrier's deck 120 m from its middle).
+      const d2 = v.spec.ship ? v.hullDistance(eye) ** 2 : v.pos.distanceToSquared(eye);
       v.farLook = v.farLook ? d2 > (FAR_LOOK - 5) ** 2 : d2 > (FAR_LOOK + 5) ** 2;
       // Small parts (bolts, vision blocks, track guides) only up close.
       v.fineLook = v.fineLook ? d2 < (FINE_LOOK + 3) ** 2 : d2 < (FINE_LOOK - 3) ** 2;

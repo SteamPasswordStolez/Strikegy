@@ -35,6 +35,8 @@ export const SHIP = {
   flood: { lift: 0.55, pump: 0.025, selfPump: 0.006, spread: 0.004, torpedo: 0.22 },
   repair: 12,
   engine: { unmanned: 0.75, overdrive: 0.15, overdriveTime: 15, cooldown: 90, fireChance: 0.08 },
+  /** Points a second for someone at a station or in a carrier plane (a fleet's RP: a squad of four on duty buys a plane in about a minute and a half). */
+  duty: 1,
   /** Sinking: the buoyancy fades out over this long (s). */
   sinkTime: 25,
   /** A hit this close (m) to a station may knock it out, with this chance. */
@@ -351,7 +353,7 @@ export function deckSpawn(v: Vehicle, rand: () => number): { pos: THREE.Vector3;
  * - and any ship has a dived submarine within `close` m of it.
  * Surfaced ships are always in plain sight (they need no marking).
  */
-export const SPOT = { asw: 1200, sonarShips: 3000, sonarSubs: 1500, periscope: 5000, periscopeDepth: 12, close: 200, hold: 12 };
+export const SPOT = { asw: 1200, sonarShips: 3000, sonarSubs: 1500, periscope: 5000, periscopeDepth: 12, close: 200, hold: 12, scoutShips: 3000, scoutSubs: 900, planeSubs: 1300 };
 
 /** Whether `v` can be targeted by `team` at `time`: anything afloat, a dived submarine only while marked. */
 export function shipVisible(v: Vehicle, team: Team, time: number): boolean {
@@ -361,6 +363,20 @@ export function shipVisible(v: Vehicle, team: Team, time: number): boolean {
 /** One round of looking and listening for every warship's manned stations (see `SPOT`); returns nothing, marks `spottedUntil`. */
 export function spotShips(all: readonly Vehicle[], time: number): void {
   for (const v of all) {
+    // From the air (step 6): a scout plane sees ships far off and a submarine at periscope depth near;
+    // the anti-submarine plane sees dived submarines below it.
+    if (v.spec.plane && !v.wrecked && !v.deck && v.seats[0]) {
+      const team = v.team ?? v.home;
+      if (!team || (v.kind !== 'cvscout' && v.kind !== 'cvasw')) continue;
+      for (const o of all) {
+        if (!o.spec.boat || o.wrecked || (o.team ?? o.home) === team) continue;
+        const d = Math.hypot(o.pos.x - v.pos.x, o.pos.z - v.pos.z);
+        const sub = !!o.ship?.dived;
+        const found = v.kind === 'cvscout' ? (sub ? o.ship!.depth <= SPOT.periscopeDepth && d < SPOT.scoutSubs : d < SPOT.scoutShips) : sub && d < SPOT.planeSubs;
+        if (found) o.spottedUntil[team] = Math.max(o.spottedUntil[team], time + SPOT.hold);
+      }
+      continue;
+    }
     if (!v.ship || v.wrecked) continue;
     const team = v.team ?? v.home;
     if (!team) continue;

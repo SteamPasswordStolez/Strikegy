@@ -20,6 +20,7 @@ import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { layGun, lookPoint } from '@/vehicles/ship';
+import { CARRIER_PLANES, PLANE_COST, isCarrierPlane, launchBlock, planeCap, type CarrierPlaneKind } from '@/vehicles/carrierPlanes';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import type { MapDef, Team } from '@/world/mapTypes';
@@ -165,7 +166,7 @@ export class MatchVehicles {
     map: MapDef,
     size: number,
   ) {
-    this.world = vehicleWorldFor(sim.physics, sim.registry, { destroyed: (v, by) => this.destroyed(v, by), roadkill: (v, w) => this.roadkill(v, w) }, map, size, sim.world.water);
+    this.world = vehicleWorldFor(sim.physics, sim.registry, { destroyed: (v, by) => this.destroyed(v, by), roadkill: (v, w) => this.roadkill(v, w), duty: (id, p) => sim.scores.award(id, p) }, map, size, sim.world.water);
     const bots = sim.bots;
     if (bots) {
       bots.vehicles = this.world;
@@ -174,6 +175,7 @@ export class MatchVehicles {
       bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
       bots.ships.stationGun = (v, seat, target, trigger, dt, shooter) => this.shipGun(v, seat, target, trigger, dt, shooter);
       bots.ships.bounds = sim.world.terrain.boundary;
+      bots.launchPlane = (v, kind, bot) => this.launchPlane(v, kind, bot.id, bot.team);
     }
   }
 
@@ -240,9 +242,43 @@ export class MatchVehicles {
    * someone else. -1 when there's none.
    */
   deploySeat(v: Vehicle, team: Team, id: number): number {
-    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || v.kind === 'rocket')) return -1;
+    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || isCarrierPlane(v.kind) || v.kind === 'rocket')) return -1;
     if ((v.team ?? v.home) !== team) return -1;
     return v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.sim.bots?.claimedSeat(v.id, i));
+  }
+
+  /** The plane kind each person at a flight control station has picked (index into CARRIER_PLANES). */
+  private readonly flightPick = new Map<number, number>();
+
+  /** People and bots on `team` now. */
+  sideCount(team: Team): number {
+    let n = 0;
+    for (const s of this.sim.soldiers.values()) if (s.team === team) n++;
+    return n + (this.sim.bots?.bots.filter((b) => b.team === team).length ?? 0);
+  }
+
+  /**
+   * A carrier plane of `kind` launched onto carrier `v`'s deck for `who`'s
+   * squad (its RP pays), under the side's cap; what stopped it, or null.
+   */
+  launchPlane(v: Vehicle, kind: CarrierPlaneKind, who: number, team: Team, keep = false): string | null {
+    const sq = this.sim.squadOf(who);
+    const up = this.world.planesUp(team);
+    const block = launchBlock(kind, sq ? this.sim.squadRp(sq) : 0, up, planeCap(this.sideCount(team)), !!sq);
+    if (block) return block;
+    if (!this.world.launchPlane(v, kind, team, keep ? who : null)) return 'noRoom';
+    this.sim.support.pay(`${sq!.team}:${sq!.name}`, PLANE_COST[kind]);
+    return null;
+  }
+
+  /** A person at flight control: 1-6 / the wheel pick a plane, the trigger launches it. */
+  private flightStation(s: Soldier, v: Vehicle, input: InputState): void {
+    const n = CARRIER_PLANES.length;
+    let pick = this.flightPick.get(s.id) ?? 0;
+    if (input.weaponSlot >= 0 && input.weaponSlot < n) pick = input.weaponSlot;
+    else if (input.weaponCycle !== 0) pick = (pick + Math.sign(input.weaponCycle) + n) % n;
+    this.flightPick.set(s.id, pick);
+    if (input.firePressed) this.launchPlane(v, CARRIER_PLANES[pick]!, s.id, s.team, true);
   }
 
   /** Just deployed with a vehicle key: a new tank or jet, or a free seat in one of the side's ('tank:<kind>', 'jet:<kind>', 'veh:<id>'). */
@@ -330,7 +366,10 @@ export class MatchVehicles {
     }
     const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === s.id);
     const want = input.weaponSlot;
-    if (want >= 0 && want < v.seats.length && free(want)) this.seat(s, v, want);
+    // A warship's stations are walked up to (the number keys pick a plane at flight control instead).
+    if (v.ship) {
+      if (v.spec.seats[r.seat]!.station?.kind === 'flight') this.flightStation(s, v, input);
+    } else if (want >= 0 && want < v.seats.length && free(want)) this.seat(s, v, want);
     else if (input.weaponCycle !== 0) {
       const n = v.seats.length;
       const dir = Math.sign(input.weaponCycle);
@@ -490,6 +529,11 @@ export class MatchVehicles {
         const time = THREE.MathUtils.clamp(2 + flat / 120, 2.5, 7);
         vel = new THREE.Vector3(d.x / time, d.y / time + 0.5 * sh.gravity * time, d.z / time);
         vel.addScaledVector(right, (Math.random() - 0.5) * flat * gun.spread * DEG);
+      } else if (sh.drop) {
+        // Let go under the belly: it falls away with the plane's own way on.
+        const belly = v.pos.clone().addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(v.quat), -1.4);
+        gadgets.fireShell(belly, v.velocity.clone().setY(v.velocity.y - 2), sh.gravity, { ...shooter, squad: null }, m.id, undefined, v.body);
+        return;
       } else vel = dir.clone().multiplyScalar(sh.speed).add(v.flight ? v.velocity : new THREE.Vector3());
       gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, owner, m.id, undefined, v.body);
       return;

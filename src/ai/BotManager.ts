@@ -36,6 +36,7 @@ import type { TacticalMap } from './tactics';
 import { DangerMap } from './danger';
 import { Crowns } from './foliage';
 import { SHIP_AI, ShipCrews, botStation } from './shipCrew';
+import { CarrierPilots } from './carrierPilot';
 import { core } from '@/wasm/core';
 import { CROWD_AIR, CROWD_ARMOUR, CROWD_BOT, CROWD_FIRING, CROWD_HAS_GOAL, Crowd } from './crowd';
 
@@ -515,6 +516,7 @@ export class BotManager implements BotServices {
   ) {
     this.humans = typeof player === 'function' ? player : () => [player];
     this.ships = new ShipCrews(physics);
+    this.carrierPilots = new CarrierPilots();
     this.skill = SKILLS[opts.difficulty];
     this.damageScale = DAMAGE_SCALE[opts.difficulty];
     const plain = (team: Team) => opts.plain === team || opts.plain === 'both';
@@ -913,10 +915,15 @@ export class BotManager implements BotServices {
   setWater(water: WaterMap): void {
     this.water = water.any ? water : null;
     this.ships.level = (x, z) => water.levelAt(x, z);
+    this.carrierPilots.level = (x, z) => water.levelAt(x, z);
   }
 
   /** Bot warship crews (helm, gunners); its `stationGun` is set by the game. */
   readonly ships: ShipCrews;
+  /** Bot carrier pilots and flight controllers (step 6). */
+  readonly carrierPilots: CarrierPilots;
+  /** Launches a carrier plane of `kind` onto carrier `v` for a bot's squad; what stopped it, or null (set by the game / server). */
+  launchPlane: ((v: Vehicle, kind: import('@/vehicles/carrierPlanes').CarrierPlaneKind, bot: Bot) => string | null) | null = null;
 
   foliage(from: THREE.Vector3, to: THREE.Vector3): number {
     return this.crowns ? this.crowns.depth(from.x, from.y, from.z, to.x, to.y, to.z) : 0;
@@ -2134,6 +2141,14 @@ export class BotManager implements BotServices {
    * bots crew them. False when it didn't.
    */
   private crewShip(b: Bot, vw: VehicleWorld): boolean {
+    // A carrier plane standing on the side's deck with nobody at the controls (or no rear gunner): fly it.
+    for (const v of vw.vehicles) {
+      if (!v.spec.plane || v.wrecked || v.home !== b.team || !v.parked || v.driverOnly !== null) continue;
+      const seat = v.seats.findIndex((o, i) => !o && !this.claimed(v.id, i) && (i === 0 || !!v.seats[0]));
+      if (seat < 0) continue;
+      this.seatBot(b, v, seat);
+      return true;
+    }
     let best: { v: Vehicle; seat: number; aboard: number } | null = null;
     let crew = 0;
     for (const v of vw.vehicles) {
@@ -2269,10 +2284,30 @@ export class BotManager implements BotServices {
     v.seatEye(r.seat, this.tmp);
     bot.carry(this.tmp, v.velocity);
     const role = v.spec.seats[r.seat]!.role;
+    // A carrier plane's pilot.
+    if (v.spec.plane && role === 'driver') {
+      const out: DriveInput = { throttle: 0, steer: 0, brake: false, aimYaw: v.flight!.yaw, aimPitch: 0 };
+      this.driveInputs.set(v.id, out);
+      const o = this.carrierPilots.fly(v, this.vehicles!.vehicles, bot.team, this.time, out);
+      const shooter = { id: bot.id, name: bot.name, team: bot.team };
+      if (v.pullTrigger(0, o.fire, this.time, STEP)) this.fireMount?.(v, 0, shooter, null);
+      if (v.altMounts[0] && v.pullTrigger(0, o.alt, this.time, STEP, true)) this.fireMount?.(v, 0, shooter, null, true);
+      if (o.fire || o.alt) bot.firingUntil = this.time + 0.5;
+      return;
+    }
     // A warship's crew stays at its stations (bots don't swim).
     if (v.ship) {
       const shooter = { id: bot.id, name: bot.name, team: bot.team };
       const all = this.vehicles!.vehicles;
+      if (v.spec.seats[r.seat]!.station?.kind === 'flight') {
+        // Flight control: a plane now and then while the squad has the RP and the side is under its cap.
+        const rp = this.support?.rp(bot) ?? 0;
+        if (this.launchPlane && this.carrierPilots.mayLaunch(v, this.time, rp)) {
+          this.carrierPilots.launchedFrom(v, this.time);
+          this.launchPlane(v, this.carrierPilots.pickKind(all, bot.team, Math.random), bot);
+        }
+        return;
+      }
       if (role === 'driver') {
         const out: DriveInput = { throttle: 0, steer: 0, brake: false };
         this.driveInputs.set(v.id, out);

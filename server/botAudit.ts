@@ -26,6 +26,8 @@ type Any = Record<string, any>; // eslint-disable-line @typescript-eslint/no-exp
 const bm = bots as unknown as Any;
 
 const count = (m: Map<string, number>, k: string, n = 1) => m.set(k, (m.get(k) ?? 0) + n);
+const planeState = new Map<number, 'deck' | 'air'>();
+const planes = { launched: 0, landed: 0 };
 const kills = new Map<string, number>();
 const grenades = new Map<string, number>();
 const gadgets = new Map<string, number>();
@@ -116,6 +118,13 @@ for (let i = 0; i < steps; i++) {
       }
       continue;
     }
+    // Carrier planes: launched, landed back on a deck.
+    if (v.spec.plane) {
+      const was = planeState.get(v.id);
+      if (was === undefined) planes.launched++;
+      if (was === 'air' && v.deck) planes.landed++;
+      planeState.set(v.id, v.deck ? 'deck' : 'air');
+    }
     const driver = v.seats[0];
     const p = lastPos.get(v.id);
     lastPos.set(v.id, { x: v.pos.x, z: v.pos.z });
@@ -153,6 +162,7 @@ console.log(`  stuck spots (10 m cells): ${[...hotspots].sort((a, b) => b[1] - a
 for (const [kind, s] of [...vstat].sort()) {
   console.log(`${kind}: crewed ${Math.round(s.crewed)} s, moving ${pct(s.moving, s.crewed)}, ${s.km.toFixed(2)} km, stuck tries ${s.tries}, wrecks ${s.wrecks} (crashed ${s.crashed})${s.air ? `, in the air ${pct(s.air, s.crewed)}` : ''}`);
 }
+if (planes.launched) console.log(`carrier planes: ${planes.launched} launched, ${planes.landed} landings`);
 console.log(`vehicle stuck spots: ${[...vstuck].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => `${k} x${n}`).join(', ') || '-'}`);
 console.log(`kills: ${list(kills)}`);
 console.log(`grenades: ${list(grenades)}; gadgets by class: ${list(gadgets)}; medkits ${medkits}; revives ${revives}`);

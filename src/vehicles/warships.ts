@@ -21,8 +21,9 @@ export const NAVAL_GUNS: Record<'naval5in' | 'naval6in' | 'naval16in' | 'aa40' |
   naval6in: { rpm: 12, damage: 999, spread: 0.5, range: 5000, vsVehicle: 1800, blast: 7, burst: 1, cool: 5, shell: { speed: 540, gravity: 9.8 } },
   // Battleship main battery: a 16-inch salvo every 30 s, 600 m/s, ~6 km.
   naval16in: { rpm: 2, damage: 999, spread: 0.35, range: 6500, vsVehicle: 9000, blast: 14, burst: 1, cool: 30, shell: { speed: 600, gravity: 9.8 } },
-  // Twin 40 mm AA: fast, airburst-ish (small blast), against aircraft mostly.
-  aa40: { rpm: 240, damage: 80, spread: 0.6, range: 2200, vsVehicle: 70, blast: 2.5, burst: 40, cool: 4, shell: { speed: 880, gravity: 9.8 } },
+  // Twin 40 mm AA: fast, airburst-ish (small blast), against aircraft mostly; a wide cone (2026-10-19:
+  // tighter, a pair of mounts shot every plane down in a second or two).
+  aa40: { rpm: 240, damage: 80, spread: 1.1, range: 2200, vsVehicle: 22, blast: 2.5, burst: 40, cool: 4, shell: { speed: 880, gravity: 9.8 } },
   // Torpedo: 25 m/s along the surface, a big hole and flooding.
   torpedo: { rpm: 3, damage: 999, spread: 0.4, range: 3500, vsVehicle: 20000, blast: 8, burst: 1, cool: 20, shell: { speed: 25, gravity: 0 }, torpedo: true },
   // Depth charges: rolled off the stern, they sink and go off at depth.

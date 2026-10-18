@@ -57,6 +57,7 @@ import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walke
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { contacts, deckSpawn, layGun, lookPoint } from '@/vehicles/ship';
+import { CARRIER_PLANES, DECK, PLANE_COST, isCarrierPlane, launchBlock, planeCap } from '@/vehicles/carrierPlanes';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
 import { loadTactics } from '@/ai/tacticsLoad';
@@ -1643,6 +1644,7 @@ export class Game {
     this.interact = null;
     if (input.viewToggle) this.rideThird = !this.rideThird;
     const spec = v.spec.seats[seat]!;
+    if (spec.station?.kind === 'flight') this.flightStation(v, input);
     if (spec.role === 'driver' && net.drive === v) v.drive(dt, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
     if (v.ship && spec.gun) {
       // Laid here for the look; the server lays and fires its own (from the seat's look).
@@ -1897,6 +1899,7 @@ export class Game {
       {
         destroyed: (v, by) => this.vehicleDestroyed(v, by),
         roadkill: (v, victim) => this.roadkill(v, victim),
+        duty: (id, p) => this.scores.award(id, p),
       },
       pads,
       bikes,
@@ -1916,6 +1919,15 @@ export class Game {
       bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
       bots.ships.stationGun = (v, seat, target, trigger, dt, shooter) => this.shipGun(v, seat, target, trigger, dt, shooter);
       bots.ships.bounds = this.boundary;
+      bots.launchPlane = (v, kind, bot) => {
+        const sq = this.squads.find((q) => q.team === bot.team && q.has(bot.id));
+        const vw = this.vehicles!;
+        const block = launchBlock(kind, sq ? this.squadRpOf(sq) : 0, vw.planesUp(bot.team), planeCap(this.sideCount(bot.team)), !!sq);
+        if (block) return block;
+        if (!vw.launchPlane(v, kind, bot.team)) return 'noRoom';
+        this.support.pay(`${sq!.team}:${sq!.name}`, PLANE_COST[kind]);
+        return null;
+      };
     }
     if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
   }
@@ -1973,7 +1985,7 @@ export class Game {
    * first unless it is kept for someone else. -1 when there's none.
    */
   private freeSeatFor(v: Vehicle, team: Team, id: number): number {
-    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || v.kind === 'rocket' || v.kind === 'lcvp')) return -1;
+    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || isCarrierPlane(v.kind) || v.kind === 'rocket' || v.kind === 'lcvp')) return -1;
     if ((v.team ?? v.home) !== team) return -1;
     return v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.bots?.claimedSeat(v.id, i));
   }
@@ -2176,7 +2188,10 @@ export class Game {
     if (input.viewToggle) this.rideThird = !this.rideThird;
     const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
     const want = input.weaponSlot;
-    if (want >= 0 && want < v.seats.length && free(want)) this.enterSeat(v, want);
+    // A warship's stations are walked up to (the number keys pick a plane at flight control instead).
+    if (v.ship) {
+      if (v.spec.seats[r.seat]!.station?.kind === 'flight') this.flightStation(v, input);
+    } else if (want >= 0 && want < v.seats.length && free(want)) this.enterSeat(v, want);
     else if (input.weaponCycle !== 0) {
       // The wheel (touch: the seat button): the next free seat that way round.
       const n = v.seats.length;
@@ -2327,6 +2342,50 @@ export class Game {
     }
   }
 
+  /** The plane kind the flight control station has picked (index into CARRIER_PLANES). */
+  private flightPick = 0;
+
+  /** People and bots on `team` now (carrier planes: a quarter of them may fly). */
+  private sideCount(team: Team): number {
+    return (this.bots?.bots.filter((b) => b.team === team).length ?? 0) + (this.myTeam === team ? 1 : 0);
+  }
+
+  /** Flight control: 1-6 / the wheel pick a plane, the trigger launches it onto the deck (the squad's RP). */
+  private flightStation(v: Vehicle, input: InputState): void {
+    const n = CARRIER_PLANES.length;
+    if (input.weaponSlot >= 0 && input.weaponSlot < n) this.flightPick = input.weaponSlot;
+    else if (input.weaponCycle !== 0) this.flightPick = (this.flightPick + Math.sign(input.weaponCycle) + n) % n;
+    if (!input.firePressed || this.net || !this.vehicles) return;
+    const kind = CARRIER_PLANES[this.flightPick]!;
+    const sq = this.playerSquad;
+    const up = this.vehicles.planesUp(this.myTeam);
+    const cap = planeCap(this.sideCount(this.myTeam));
+    const block = launchBlock(kind, sq ? this.squadRpOf(sq) : 0, up, cap, !!sq);
+    if (block) {
+      this.hud.notify(t(`flight.${block}` as MessageKey).replace('{n}', String(up)).replace('{cap}', String(cap)), 'enemy');
+      return;
+    }
+    const plane = this.vehicles.launchPlane(v, kind, this.myTeam, this.myId);
+    if (!plane) {
+      this.hud.notify(t('flight.noRoom'), 'enemy');
+      return;
+    }
+    this.support.pay(`${sq!.team}:${sq!.name}`, PLANE_COST[kind]);
+    this.hud.notify(t('flight.launched').replace('{plane}', t(`vehicle.${kind}` as MessageKey)), 'ally');
+  }
+
+  /** The ride line's carrier plane part: on the deck / the landing aid / rearming, the rounds left. */
+  private planeLine(v: Vehicle, seat: number): string[] {
+    const out: string[] = [];
+    if (v.parked && v.parkedFor < DECK.rearm && (v.health < v.spec.health || v.mounts.some((m) => m && m.ammo < (m.gun.ammo ?? Infinity)))) out.push(t('plane.landed').replace('{s}', String(Math.ceil(DECK.rearm - v.parkedFor))));
+    else if (v.deck && seat === 0) out.push(t('plane.deck'));
+    else if (v.approach) out.push(t('plane.approach'));
+    const ammo = [v.mounts[seat], v.altMounts[seat]].filter((m) => m && Number.isFinite(m.ammo)).map((m) => `${t(`vehicleGun.${m!.id}` as MessageKey)} ${m!.ammo}`);
+    if (ammo.length) out.push(t('plane.ammo').replace('{list}', ammo.join(' · ')));
+    if (seat === 0 && v.mounts[0] && v.mounts[0].ammo <= 0 && !v.deck) out.push(t('plane.noAmmo'));
+    return out;
+  }
+
   /** The ride line's warship part: telegraph and speed, depth and air, fires, flooding, stations out. */
   private shipLine(v: Vehicle, seat: number): string[] {
     const s = v.ship!;
@@ -2345,6 +2404,13 @@ export class Game {
     }
     if (s.dived && kind === 'helm') out.push(t('ship.dived'));
     if (!this.touch && kind === 'helm') out.push(t(v.spec.ship?.sub ? 'ship.controlsSub' : 'ship.controls'));
+    if (kind === 'flight' && this.vehicles) {
+      const k = CARRIER_PLANES[this.flightPick]!;
+      const sq = this.playerSquad;
+      const rp = sq ? this.squadRpOf(sq) : 0;
+      const line = t('flight.pick').replace('{plane}', t(`vehicle.${k}` as MessageKey)).replace('{cost}', String(PLANE_COST[k])).replace('{rp}', String(Math.floor(rp)));
+      out.push(line.replace('{n}', String(this.vehicles.planesUp(this.myTeam))).replace('{cap}', String(planeCap(this.sideCount(this.myTeam)))));
+    }
     if (kind === 'engine') out.push(s.time < s.overdriveUntil ? t('ship.overdriveOn') : s.time < s.overdriveReady ? t('ship.overdriveWait') : t('ship.overdriveReady'));
     return out;
   }
@@ -2446,6 +2512,11 @@ export class Game {
         const time = THREE.MathUtils.clamp(2 + flat / 120, 2.5, 7);
         vel = new THREE.Vector3(d.x / time, d.y / time + 0.5 * sh.gravity * time, d.z / time);
         vel.addScaledVector(right, (Math.random() - 0.5) * flat * gun.spread * DEG);
+      } else if (sh.drop) {
+        // Let go under the belly: it falls away with the plane's own way on.
+        const belly = v.pos.clone().addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(v.quat), -1.4);
+        this.gadgets.fireShell(belly, v.velocity.clone().setY(v.velocity.y - 2), sh.gravity, { ...shooter, squad: null }, m.id, undefined, v.body);
+        return;
       } else vel = dir.clone().multiplyScalar(sh.speed).add(v.flight ? v.velocity : new THREE.Vector3());
       this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id, undefined, v.body);
       if (m.id === 'rockets') this.audio.gadget('rocket', byPlayer ? null : muzzle);
@@ -3652,11 +3723,12 @@ export class Game {
       const station = v.spec.seats[seat]!.station;
       const parts = [`${t(`vehicle.${v.kind}`)} · ${station ? t(`station.${station.kind}`) : t(`seat.${role}`)}`];
       if (v.ship) parts.push(...this.shipLine(v, seat));
+      if (v.spec.plane) parts.push(...this.planeLine(v, seat));
       const mount = v.mounts[seat];
       if (mount?.overheated) parts.push(t('vehicle.overheat'));
       if (v.reloadLeft(seat, this.simTime) > 0) parts.push(t('vehicle.reloading'));
       parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
-      if (n > 1 && !this.touch) parts.push(t('vehicle.seats').replace('{keys}', `${actionKey('slot1')}–${actionKey(`slot${Math.min(9, n)}` as Action)}`));
+      if (n > 1 && !this.touch && !v.ship) parts.push(t('vehicle.seats').replace('{keys}', `${actionKey('slot1')}–${actionKey(`slot${Math.min(9, n)}` as Action)}`));
       if (!this.touch) parts.push(t('vehicle.view'));
       const f = v.flight;
       // In the cockpit the instruments say it; from outside the line does.

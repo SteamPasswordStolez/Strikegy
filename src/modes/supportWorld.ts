@@ -115,6 +115,11 @@ export class SupportWorld {
     return out;
   }
 
+  /** A squad pays `cost` RP for something that isn't a call-in (a carrier plane). */
+  pay(squad: string, cost: number): void {
+    this.spentBy.set(squad, this.spent(squad) + cost);
+  }
+
   spent(squad: string): number {
     return this.spentBy.get(squad) ?? 0;
   }
