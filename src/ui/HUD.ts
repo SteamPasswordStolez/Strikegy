@@ -251,9 +251,26 @@ export class HUD {
     apply();
   }
 
-  showHit(headshot: boolean, killed: boolean): void {
-    this.hitmarker.className = `hitmarker show${headshot ? ' head' : ''}${killed ? ' kill' : ''}`;
-    this.hitTimer = killed ? 0.35 : 0.15;
+  /**
+   * A round of ours landed: the marker pops out and fades (gunplay audit,
+   * 2026-10-18), bigger for heavier hits; headshots amber, kills red and longer.
+   */
+  showHit(headshot: boolean, killed: boolean, damage = 25): void {
+    const m = this.hitmarker;
+    m.className = `hitmarker show${headshot ? ' head' : ''}${killed ? ' kill' : ''}`;
+    const size = (killed ? 1.3 : 1) * (0.85 + Math.min(0.5, damage / 120));
+    this.hitTimer = killed ? 0.5 : 0.24;
+    if (!m.animate) return;
+    m.getAnimations().forEach((a) => a.cancel());
+    m.animate(
+      [
+        { transform: `scale(${size * 1.45})`, opacity: 1 },
+        { transform: `scale(${size})`, opacity: 1, offset: 0.25 },
+        { transform: `scale(${size})`, opacity: 0.9, offset: 0.6 },
+        { transform: `scale(${size * 0.92})`, opacity: 0 },
+      ],
+      { duration: this.hitTimer * 1000, easing: 'ease-out' },
+    );
   }
 
   /** Registers incoming damage from a world-space direction (yaw where 0 = -Z), or null for undirected. */

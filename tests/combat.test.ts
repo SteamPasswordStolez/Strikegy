@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { recoilKick, recoilScale } from '@/weapons/recoil';
+import { gunPattern, recoilKick, recoilScale } from '@/weapons/recoil';
+import { Spring } from '@/weapons/spring';
 import { GRENADES, flashDuration, flashIntensity, fragDamage } from '@/combat/explosions';
 import { HEALTH, Health, fallDamage } from '@/player/health';
 import { WEAPONS } from '@/weapons/weaponData';
@@ -23,6 +24,37 @@ describe('recoil', () => {
 
   it('keeps horizontal kick bounded by the spec', () => {
     for (let i = 0; i < 40; i++) expect(Math.abs(recoilKick(spec, i, 0.77).yaw)).toBeLessThanOrEqual(spec.side * 1.2 + 1e-9);
+  });
+
+  it('pulls each gun its own way every spray (learnable: the seed only jitters)', () => {
+    const akm = WEAPONS.ar2.recoil;
+    const spray = (seed: number) => Array.from({ length: 25 }, (_, i) => recoilKick(akm, i, seed, gunPattern('ar2')).yaw).reduce((a, b) => a + b, 0);
+    const sprays = [0.11, 0.42, 0.77, 0.93].map(spray);
+    // The AKM leans right (negative yaw) whatever the seed, by about the same amount.
+    for (const y of sprays) expect(y).toBeLessThan(0);
+    expect(Math.max(...sprays) - Math.min(...sprays)).toBeLessThan(Math.abs(sprays[0]!) * 0.6);
+    expect(gunPattern('ar1')).not.toBe(gunPattern('ar2'));
+  });
+
+  it('sights are exact: no aimed cone but the shotgun pellet cone, and every gun kicks its own way', () => {
+    for (const w of Object.values(WEAPONS)) expect(w.class === 'sg' ? w.spreadAds > 0 : w.spreadAds === 0).toBe(true);
+    expect(WEAPONS.sr2.kick.rise).toBeGreaterThan(WEAPONS.smg1.kick.rise * 5);
+  });
+
+  it('springs peak at the kick and settle back to rest', () => {
+    const sp = new Spring(16);
+    sp.kick(0.1);
+    let peak = 0;
+    for (let i = 0; i < 120; i++) {
+      sp.step(1 / 120);
+      peak = Math.max(peak, sp.x);
+    }
+    expect(peak).toBeCloseTo(0.1, 2);
+    expect(Math.abs(sp.x)).toBeLessThan(0.001);
+    // A long frame doesn't blow it up.
+    sp.kick(0.1);
+    sp.step(0.5);
+    expect(Math.abs(sp.x)).toBeLessThan(0.1);
   });
 
   it('is reduced by aiming and crouching', () => {

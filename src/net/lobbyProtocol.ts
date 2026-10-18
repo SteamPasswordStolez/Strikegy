@@ -238,7 +238,7 @@ export type MatchEvent =
       victimId?: number;
     }
   /** To the shooter: a hit marker. */
-  | { k: 'hit'; head: boolean; killed: boolean }
+  | { k: 'hit'; head: boolean; killed: boolean; dmg?: number }
   /** To whoever was hurt: the damage indicator. */
   | { k: 'hurt'; amount: number; from: [number, number, number] | null; cause: 'bullet' | 'explosion' | 'fall' | 'storm' }
   /** To the soldier's player: on the field at `pos`, spread drawn from `seed`. */
@@ -461,6 +461,17 @@ const isSide = (v: unknown): v is Side => v === 'blue' || v === 'red';
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
 
+/**
+ * Modes that can't be played with the simplified controls (owner, 2026-10-18:
+ * fortress is about building, which the simplified controls take away).
+ */
+export const NO_SIMPLE_MODES: readonly string[] = ['fortress'];
+
+/** Whether a mode offers the simplified controls. */
+export function simpleAllowed(mode: string): boolean {
+  return !NO_SIMPLE_MODES.includes(mode);
+}
+
 /** Checks settings from a client; returns a clean copy or null. */
 export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!isObj(raw)) return null;
@@ -488,7 +499,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
     botShare,
     teamPick: (teamPick as TeamPick | undefined) ?? 'random',
     chat: chat !== false,
-    simple: simple === true,
+    simple: simple === true && simpleAllowed(mode),
   };
 }
 

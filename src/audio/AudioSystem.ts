@@ -27,6 +27,47 @@ const VOICES: Record<WeaponClass, GunVoice> = {
   pistol: { cutoff: 6000, thump: 135, decay: 0.12, gain: 0.45, tail: 0.25 },
 };
 
+/**
+ * Each gun's own voice on its class's recording (gunplay audit, 2026-10-18:
+ * four rifles sounded alike): the playback rate (lower = heavier) and how much
+ * of the low thump goes under it. Until each gun has its own recording.
+ */
+const GUN_VOICE: Record<string, { rate: number; thump: number }> = {
+  ar1: { rate: 1, thump: 1 },
+  ar2: { rate: 0.9, thump: 1.25 },
+  ar3: { rate: 1.04, thump: 0.95 },
+  ar4: { rate: 1.08, thump: 0.85 },
+  smg1: { rate: 1.12, thump: 0.8 },
+  smg2: { rate: 0.98, thump: 1 },
+  smg3: { rate: 1, thump: 1 },
+  smg4: { rate: 0.9, thump: 1.2 },
+  lmg1: { rate: 1.06, thump: 0.95 },
+  lmg2: { rate: 0.86, thump: 1.35 },
+  lmg3: { rate: 0.97, thump: 1.05 },
+  sg1: { rate: 1, thump: 1 },
+  sg2: { rate: 0.94, thump: 1.15 },
+  sg3: { rate: 1.07, thump: 0.9 },
+  dmr1: { rate: 1.08, thump: 0.9 },
+  dmr2: { rate: 1, thump: 1 },
+  dmr3: { rate: 0.9, thump: 1.25 },
+  sr1: { rate: 1.03, thump: 1 },
+  sr2: { rate: 0.87, thump: 1.4 },
+  sr3: { rate: 1.1, thump: 0.9 },
+  pistol1: { rate: 1, thump: 1 },
+  pistol2: { rate: 0.86, thump: 1.3 },
+  pistol3: { rate: 1.08, thump: 0.85 },
+};
+
+/**
+ * Where the listener stands, for the echo of their own gun (`setSpace`,
+ * gunplay audit): `enclosed` 0 open .. 1 a room with a ceiling, `wall` the
+ * mean distance to the walls round about (m, Infinity when nothing is near).
+ */
+export interface ListenerSpace {
+  enclosed: number;
+  wall: number;
+}
+
 /** Filter band and length describing how each surface sounds when struck. */
 const SURFACE_SOUND: Record<ImpactSurface, { type: BiquadFilterType; freq: number; q: number; len: number; ring?: number[] }> = {
   dirt: { type: 'lowpass', freq: 900, q: 0.7, len: 0.08 },
@@ -155,6 +196,9 @@ export class AudioSystem {
   /** Playing voices by source key (a shooter, a walker, a spot being hit). */
   private keyed = new Map<string, Voice>();
   private listenerPos = { x: 0, y: 0, z: 0 };
+  private space: ListenerSpace = { enclosed: 0, wall: Infinity };
+  /** When the last bullet crack played (they come in bursts). */
+  private crackAt = 0;
   /** World sounds skipped or cut for louder ones (F3). */
   private culled = 0;
   private culledRate = { at: 0, count: 0, perSecond: 0 };
@@ -567,12 +611,22 @@ export class AudioSystem {
 
   // ---------- weapons ----------
 
-  gunshot(cls: WeaponClass, ads: boolean, suppressed = false): void {
+  /** The listener's surroundings (the game probes them a few times a second). */
+  setSpace(space: ListenerSpace): void {
+    this.space = space;
+  }
+
+  gunshot(cls: WeaponClass, ads: boolean, suppressed = false, weaponId = ''): void {
     if (!this.ready) return;
-    const t = this.ctx!.currentTime;
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
     const v = VOICES[cls];
-    const pitch = rand(0.94, 1.06);
-    const out = this.out(null, suppressed ? v.tail * 0.3 : v.tail);
+    const gv = GUN_VOICE[weaponId] ?? { rate: 1, thump: 1 };
+    const pitch = rand(0.97, 1.03) * gv.rate;
+    // Indoors the long tail gives way to a short, hard room (gunplay audit, 2026-10-18).
+    const sp = this.space;
+    const tail = (suppressed ? v.tail * 0.3 : v.tail) * (1 - 0.55 * sp.enclosed);
+    const out = this.shotEcho(this.out(null, tail), suppressed ? 0.3 : 1);
     this.excite(suppressed ? 0.02 : 0.08);
     const g = v.gain * (ads ? 0.92 : 1);
     if (suppressed) {
@@ -580,9 +634,11 @@ export class AudioSystem {
       this.noiseBurst(out, t, 0.06, g * 0.45, { type: 'lowpass', freq: 1500 * pitch, endFreq: 260 }, pitch);
       this.tone(out, t, v.thump * 1.6 * pitch, 0.07, g * 0.3, 'sine', v.thump * 0.5);
       this.tone(out, t + 0.01, 2600 * pitch, 0.02, g * 0.1, 'square');
-    } else if (this.sample(`gun_${cls}`, out, t, 0.95, rand(0.97, 1.03))) {
-      // Recordings are taken beside the shooter; a little sub thump restores first-person weight.
-      this.tone(out, t, v.thump * 2 * pitch, 0.1, g * 0.35, 'sine', v.thump * 0.5);
+    } else if (this.sample(`gun_${cls}`, out, t, 0.95, pitch)) {
+      // Recordings are taken beside the shooter; a sub thump restores first-person weight.
+      this.tone(out, t, v.thump * 2 * pitch, 0.1, g * 0.4 * gv.thump, 'sine', v.thump * 0.5);
+      // The action cycling, close to the ear.
+      this.mechClick(out, t + 0.012, 2600 * pitch, 0.05);
     } else {
       // Transient crack, body, low thump and a hint of mechanism.
       this.noiseBurst(out, t, 0.012, g * 0.9, { type: 'highpass', freq: 2500 });
@@ -596,6 +652,64 @@ export class AudioSystem {
       this.tone(out, d, rand(4800, 6200), 0.035, 0.03, 'triangle');
       this.tone(out, d + rand(0.06, 0.12), rand(5200, 6800), 0.025, 0.02, 'triangle');
     }
+  }
+
+  /**
+   * Routes one's own shot through an early reflection off the walls round
+   * about (a slap in a street or a room, nothing in the open): returns the
+   * node to play the shot into.
+   */
+  private shotEcho(out: AudioNode, amount: number): AudioNode {
+    const sp = this.space;
+    const ctx = this.ctx!;
+    const near = Number.isFinite(sp.wall) ? Math.max(0, 1 - sp.wall / 28) : 0;
+    const level = (0.32 * near + 0.18 * sp.enclosed) * amount;
+    if (level < 0.02) return out;
+    const shot = ctx.createGain();
+    shot.connect(out);
+    const delay = ctx.createDelay(0.25);
+    delay.delayTime.value = Math.min(0.2, Math.max(0.012, (2 * Math.min(sp.wall, 30)) / SOUND_SPEED));
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = 2200 + 2200 * sp.enclosed;
+    const g = ctx.createGain();
+    g.gain.value = level;
+    shot.connect(delay).connect(tone).connect(g).connect(out);
+    // The nodes go when the shot has played out.
+    setTimeout(() => shot.disconnect(), 2500);
+    return shot;
+  }
+
+  /**
+   * The last rounds in the magazine (gunplay audit, 2026-10-18; Modern
+   * Warfare's low-ammo rattle): a hollow, lighter click under the shot.
+   */
+  lowAmmo(cls: WeaponClass): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const out = this.out(null, 0.02);
+    const { pitch: p } = HANDLING[cls];
+    this.mechClick(out, t + 0.03, 4200 * p, 0.09);
+    this.tone(out, t + 0.03, 1900 * p, 0.05, 0.035, 'triangle');
+  }
+
+  /**
+   * A round passing the listener's head (gunplay audit, 2026-10-18): the
+   * supersonic crack, sharper the closer, and a short whizz on near misses.
+   * `pos` is the closest point of its path, `miss` how far it passed (m).
+   */
+  crack(pos: THREE.Vector3, miss: number): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    if (t - this.crackAt < 0.05) return;
+    this.crackAt = t;
+    const out = this.out(pos, 0.12, 2, 0.3, 1.5);
+    if (!out) return;
+    const close = Math.max(0, 1 - miss / 4);
+    this.noiseBurst(out, t, 0.006, 0.5 + 0.5 * close, { type: 'highpass', freq: 2200 });
+    this.noiseBurst(out, t + 0.002, 0.03, 0.22 + 0.25 * close, { type: 'bandpass', freq: 3800, q: 1.2 });
+    if (miss < 2) this.noiseBurst(out, t + 0.004, 0.14, 0.12 * close + 0.04, { type: 'bandpass', freq: 2400, q: 3, endFreq: 650 });
   }
 
   /** Someone else's gunfire at a world position (bots, M3). */
@@ -1084,15 +1198,29 @@ export class AudioSystem {
 
   // ---------- feedback ----------
 
+  /**
+   * One's own round landed (gunplay audit, 2026-10-18; they were chimes): a
+   * short dry tick over a dull body thud; a headshot rings like a struck
+   * helmet; a kill lands a heavier, lower blow.
+   */
   hit(headshot: boolean, killed: boolean): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     const out = this.out(null, 0);
+    // The tick.
+    this.noiseBurst(out, t, 0.009, 0.32, { type: 'bandpass', freq: 4200, q: 1.4 });
+    this.tone(out, t, 2900, 0.018, 0.05, 'square');
+    // The body.
+    if (!this.sample('hit_rubber', out, t, 0.45, rand(0.85, 0.95))) this.tone(out, t, 140, 0.06, 0.25, 'sine', 70);
+    if (headshot) {
+      this.noiseBurst(out, t + 0.004, 0.05, 0.22, { type: 'bandpass', freq: 3100, q: 6 });
+      this.tone(out, t + 0.004, 2350, 0.11, 0.09, 'triangle', 2050);
+    }
     if (killed) {
-      this.tone(out, t, 660, 0.12, 0.25, 'triangle');
-      this.tone(out, t + 0.06, 990, 0.16, 0.22, 'triangle');
-    } else if (headshot) this.tone(out, t, 1800, 0.08, 0.2, 'triangle');
-    else this.tone(out, t, 1200, 0.04, 0.12, 'square');
+      this.tone(out, t + 0.02, 95, 0.18, 0.4, 'sine', 48);
+      this.noiseBurst(out, t + 0.02, 0.11, 0.3, { type: 'lowpass', freq: 1300, endFreq: 300 });
+      this.noiseBurst(out, t + 0.05, 0.012, 0.25, { type: 'bandpass', freq: 3200, q: 1.5 });
+    }
   }
 
   /** Zone captured (good) or lost (bad): a short two-note cue. */

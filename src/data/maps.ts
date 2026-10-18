@@ -1,3 +1,5 @@
+import { simpleAllowed } from '@/net/lobbyProtocol';
+
 /**
  * Maps the lobby offers, in its order, with the team size each plays best at
  * (players a side; the player counts on their side). Names and blurbs are in
@@ -49,11 +51,12 @@ export interface LobbyPick {
  * practice range takes no bots.
  */
 export function matchQuery(p: LobbyPick, roll: () => number = Math.random): string {
-  const simple = p.simple ? '&simple=1' : '';
+  const on = !!p.simple && simpleAllowed(p.mode);
+  const simple = on ? '&simple=1' : '';
   if (p.map === RANGE_ID) return `?map=${RANGE_ID}&bots=0${simple}`;
   const side = p.side === 'random' ? (roll() < 0.5 ? 'blue' : 'red') : p.side;
   const q = new URLSearchParams({ map: p.map, bots: `${Math.max(0, p.team - 1)}v${p.team}`, mode: p.mode, difficulty: p.difficulty, side });
-  if (p.simple) q.set('simple', '1');
+  if (on) q.set('simple', '1');
   return `?${q.toString()}`;
 }
 

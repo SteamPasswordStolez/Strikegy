@@ -5,6 +5,7 @@ import type { MapDef, SpawnPoint, Team } from '@/world/mapTypes';
 import { ZoneRules, type ZoneRulesOptions, type ZoneState } from './zoneRules';
 import { ChargeRules, ConquestRules, LAST_STAND, LOOT_WEAPONS, LastStandRules, type Crate, DOMINATION, DominationRules, DeathmatchRules, ESCORT, EscortRules, FFA, FORTRESS, FREE_SPAWN_MODES, FortressRules, FreeForAllRules, FrontlineRules, GUN_GAME, GunGameRules, HardpointRules, KillConfirmRules, RUSH, RushRules, SOLO_MODES, SearchDestroyRules, halfOwners, hardpointRoute, killTarget, polyline, rushPlan, sndHalves, type Charge, type MatchRules, type ModeKind } from './matchRules';
 import { MATCH, setMatchFlags, type MatchFlags } from './matchFlags';
+import { simpleAllowed } from '@/net/lobbyProtocol';
 import type { VehicleNav } from '@/ai/NavWorld';
 
 const DEG = Math.PI / 180;
@@ -39,11 +40,12 @@ const FREE_SPAWN_CLEAR = 30;
 
 /**
  * What a match of `kind` allows (see `matchFlags`), with the simplified
- * controls on top when `simple` (`null`: no zone mode, e.g. the range).
+ * controls on top when `simple` and the mode offers them (`null`: no zone
+ * mode, e.g. the range).
  */
 export function matchFlagsFor(kind: ModeKind | null, simple = false): Partial<MatchFlags> {
   const flags = kind ? modeFlags(kind) : {};
-  return simple ? { ...flags, simple: true, revive: false, callIns: false, melee: kind === 'gungame' } : flags;
+  return simple && (!kind || simpleAllowed(kind)) ? { ...flags, simple: true, revive: false, callIns: false, melee: kind === 'gungame' } : flags;
 }
 
 /** What a mode allows: the free-for-all modes have no sides, squads, vehicles or revives. */

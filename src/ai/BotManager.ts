@@ -9,7 +9,7 @@ import type { AudioSystem } from '@/audio/AudioSystem';
 import type { Effects } from '@/render/Effects';
 import { LAYER_FX } from '@/render/layers';
 import type { Flora, SpawnPoint, Team } from '@/world/mapTypes';
-import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { BOT_ADS_SPREAD, WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
 import { WeaponState } from '@/weapons/WeaponState';
 import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
@@ -598,6 +598,14 @@ export class BotManager implements BotServices {
 
     bus.on('combat:kill', (e) => {
       if (e.attackerTeam && e.attackerTeam !== e.victimTeam) this.teams[e.attackerTeam].kills++;
+    });
+    // Whoever's round it was (bots, the player, the server's word), the body reacts.
+    bus.on('combat:hit', (e) => {
+      for (const [c, entry] of this.byBot) {
+        if (c.id !== e.targetId) continue;
+        entry.model.onHit(e.damage, e.part === 'head');
+        break;
+      }
     });
     // Explosions nearby rattle everyone (either side), frags more than the rest.
     bus.on('grenade:detonate', (e) => {
@@ -2969,7 +2977,9 @@ export class BotManager implements BotServices {
     this.remote?.shot(bot, dir);
     const eye = bot.eyePos(new THREE.Vector3());
     const moving = Math.min(1, bot.horizontalSpeed / 4.6);
-    const spread = (def.spreadAds + (def.spreadHip - def.spreadAds) * (bot.crouching ? 0.1 : 0.35) + moving * 1.2) * DEG;
+    // Bots keep the old aimed cone (players' sights are exact now, see BOT_ADS_SPREAD).
+    const ads = def.class === 'sg' ? def.spreadAds : BOT_ADS_SPREAD[def.class];
+    const spread = (ads + (def.spreadHip - ads) * (bot.crouching ? 0.1 : 0.35) + moving * 1.2) * DEG;
     const right = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
     const up = new THREE.Vector3().crossVectors(right, dir).normalize();
     const pellets = def.pellets ?? 1;
@@ -3010,8 +3020,6 @@ export class BotManager implements BotServices {
               victimId: owner.id,
             });
           }
-          const hitEntry = this.byBot.get(owner as Bot);
-          hitEntry?.model.onHit();
         }
       } else if (hit && !cast && (pellets === 1 || Math.random() < 0.4)) {
         this.bus.emit('combat:impact', {
@@ -3234,7 +3242,7 @@ export class BotManager implements BotServices {
     for (const e of this.entries) {
       const b = e.bot;
       if (b.alive && !e.wasAlive) this.refreshModel(e);
-      if (!b.alive && e.wasAlive) e.model.onDeath();
+      if (!b.alive && e.wasAlive) e.model.onDeath(b.horizontalSpeed);
       e.wasAlive = b.alive;
       pos.lerpVectors(b.prevFeet, b.feet, alpha);
       // Aboard: sitting (a jeep gunner stands), hidden inside armour.

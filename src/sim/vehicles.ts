@@ -18,7 +18,6 @@ import { t } from '@/i18n';
 import type { InputState } from '@/input/InputState';
 import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
-import { DRAW_TIME } from '@/weapons/WeaponController';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { VehicleWorld, callInSpot, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
@@ -291,7 +290,7 @@ export class MatchVehicles {
     }
     s.player.dismount(spot);
     s.boxes.setEnabled(s.alive && !s.downed);
-    s.weapons.drawTimer = DRAW_TIME;
+    s.weapons.redraw();
     this.onSeat(s, null, -1, false);
   }
 

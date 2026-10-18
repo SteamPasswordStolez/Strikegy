@@ -15,7 +15,7 @@ import { MultiplayerMenu } from './MultiplayerMenu';
 import { askName } from './NameDialog';
 import { loadIdentity } from '@/net/identity';
 import { inRoom } from '@/core/session';
-import type { MatchStart } from '@/net/lobbyProtocol';
+import { simpleAllowed, type MatchStart } from '@/net/lobbyProtocol';
 import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
@@ -479,10 +479,12 @@ export class Lobby {
         this.saveAndRender();
       },
     });
-    fields.push(simpleField(!!p.simple, (on) => {
-      p.simple = on;
-      this.saveAndRender();
-    }));
+    // Fortress is about building, which the simplified controls take away.
+    if (simpleAllowed(p.mode))
+      fields.push(simpleField(!!p.simple, (on) => {
+        p.simple = on;
+        this.saveAndRender();
+      }));
     renderMatchSetup(body, {
       mode: p.mode,
       map: p.map,

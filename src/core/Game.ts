@@ -61,8 +61,9 @@ import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type 
 import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
-import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
-import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import { WeaponController } from '@/weapons/WeaponController';
+import { WEAPONS, type ShotKick, type WeaponId } from '@/weapons/weaponData';
+import { Spring } from '@/weapons/spring';
 import { ViewModel } from '@/weapons/ViewModel';
 import { opticFor } from '@/weapons/optics';
 import { BREATH, SWAY_AMP, createBreath, scopeSway, stepBreath } from '@/weapons/breath';
@@ -172,6 +173,16 @@ function boomSize(kind: string): BoomSize {
   if (kind === 'artillery' || kind === 'howitzer' || kind === 'wreck' || kind === 'charge') return 'heavy';
   return 'grenade';
 }
+/**
+ * How much of a spray's recoil the view keeps once the trigger is let go
+ * (`WeaponController.viewKeep`; owner, 2026-10-18: Modern Warfare style, one
+ * pulls it down oneself, except on touch screens, where it eases back more).
+ */
+const VIEW_KEEP = { desktop: 0.9, touch: 0.4 } as const;
+/** Rays for the listener's surroundings (m): up for a ceiling, round about for walls, a wall this near closes a room. */
+const SPACE_PROBE = { up: 10, round: 30, room: 9 } as const;
+/** Being shot knocks the aim up: rad a point of damage, at most, and the share down the sights. */
+const FLINCH = { perDamage: 0.0005, max: 0.025, ads: 0.6 } as const;
 /** Camera shake by blast size (big shells shake from further off). */
 const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1.1, shell: 1.4, heavy: 1.8 };
 
@@ -280,6 +291,8 @@ export class Game {
   private flashPeak = 0;
   /** Camera shake amplitude in radians. */
   private shake = 0;
+  /** The camera's punch from one's own shots (up, roll, sideways; the aim stays put). */
+  private readonly punch = { pitch: new Spring(), roll: new Spring(), yaw: new Spring() };
   private deathBlend = 0;
   /** Class loadouts picked on the deploy screen (kept per class across matches). */
   private readonly loadouts = new LoadoutStore();
@@ -609,6 +622,10 @@ export class Game {
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
     this.effects = new Effects(r.scene, this.physics, q.dynamicLights);
+    // Someone else's rounds cracking past one's head.
+    this.effects.onPass = (at, miss) => {
+      if (this.player.alive) this.audio.crack(at, miss);
+    };
     this.throwables = new Throwables(r.scene, this.physics, this.bus);
     this.gadgets = new GadgetWorld(this.physics, this.registry, {
       explode: (kind, point, owner) => this.blast(kind, point, owner, t(kind === 'rocket' ? 'gadget.assault' : 'gadget.mine')),
@@ -665,6 +682,7 @@ export class Game {
       combatClock: () => this.bots?.time ?? this.simTime,
     });
     this.me.hooks = this.soldierHooks();
+    this.me.weapons.viewKeep = this.touch ? VIEW_KEEP.touch : VIEW_KEEP.desktop;
     if (this.options.net) this.me.authority = false;
     this.player.water = water;
     this.playerSpawns = map.spawns.filter(ownSpawn);
@@ -895,7 +913,7 @@ export class Game {
     await r.precompile();
     for (const id of this.weapons.loadout) {
       this.viewModel.setWeapon(WEAPONS[id]);
-      this.viewModel.onFire(false);
+      this.viewModel.onFire(false, WEAPONS[id].kick);
       this.viewModel.update({
         dt: 0.016,
         adsBlend: 0,
@@ -929,8 +947,14 @@ export class Game {
       const quiet = !!WEAPONS[e.weaponId as WeaponId].suppressed;
       // A suppressed gun is only heard close by.
       this.bots?.alert(this.player.feet, quiet ? 22 : 70, this.playerCombatant);
-      this.audio.gunshot(cls(e.weaponId), e.ads, quiet);
-      this.viewModel.onFire(e.ads);
+      this.audio.gunshot(cls(e.weaponId), e.ads, quiet, e.weaponId);
+      // The last rounds sound different (Modern Warfare's low-ammo rattle).
+      const ws = this.weapons.state;
+      const def = WEAPONS[e.weaponId as WeaponId];
+      if (def.magSize >= 8 && ws.ammo > 0 && ws.ammo <= Math.max(2, Math.round(def.magSize * 0.17))) this.audio.lowAmmo(def.class);
+      const kick = WEAPONS[e.weaponId as WeaponId].kick;
+      this.viewModel.onFire(e.ads, kick);
+      this.punchCamera(kick, e.ads);
       this.muzzleEffects(e.weaponId, true);
     });
     bus.on('weapon:cycle', (e) => {
@@ -957,7 +981,7 @@ export class Game {
     bus.on('combat:hit', (e) => {
       // On the game server the hit marker waits for its word (`onNetEvents`).
       if (e.byPlayer && !this.net) {
-        this.hud.showHit(e.part === 'head', e.killed);
+        this.hud.showHit(e.part === 'head', e.killed, e.damage);
         this.audio.hit(e.part === 'head', e.killed);
       }
       if (e.targetId !== this.myId) {
@@ -989,6 +1013,15 @@ export class Game {
   }
 
   /** Muzzle flash on a shot; casing ejection on shot (or on cycle for pump/bolt guns). */
+  /** One's own shot jolts the camera (only the look: the aim is `WeaponController.recoil`). */
+  private punchCamera(k: ShotKick, ads: boolean): void {
+    const p = this.punch;
+    p.pitch.rate = p.roll.rate = p.yaw.rate = k.settle;
+    p.pitch.kick(k.punch * (ads ? 0.75 : 1));
+    p.roll.kick((Math.random() < 0.5 ? -1 : 1) * k.punch * (0.6 + Math.random() * 0.5));
+    p.yaw.kick((Math.random() - 0.5) * k.punch * 0.6);
+  }
+
   private muzzleEffects(weaponId: string, shot: boolean): void {
     const def = WEAPONS[weaponId as WeaponId];
     const manual = def.fireMode === 'pump' || def.fireMode === 'bolt';
@@ -1321,7 +1354,7 @@ export class Game {
     this.updateViewModel(dt, lookYaw, lookPitch);
     this.viewModel.muzzleWorld(this.renderer.camera, this.tmpMuzzle);
     this.effects.viewer.copy(this.renderer.camera.position);
-    this.effects.spawnShots(w.traces, this.tmpMuzzle);
+    this.effects.spawnShots(w.traces, this.tmpMuzzle, true);
     this.effects.update(simDt);
     this.flashLeft = Math.max(0, this.flashLeft - simDt);
     this.audio.updateVitals(p.health.value, p.alive);
@@ -1359,8 +1392,15 @@ export class Game {
   /** What the local view does when its soldier is hurt, goes down, gets up or dies. */
   private soldierHooks(): SoldierHooks {
     return {
-      hurt: (amount, from) => {
+      hurt: (amount, from, cause) => {
         const p = this.player;
+        // Flinch (gunplay audit, 2026-10-18, Modern Warfare style): a round
+        // knocks the aim up a little, less down the sights; the look moves,
+        // so the game server gets it with the next input.
+        if (cause === 'bullet' && !this.ride) {
+          const f = Math.min(FLINCH.max, amount * FLINCH.perDamage) * (this.weapons.adsBlend > 0.5 ? FLINCH.ads : 1);
+          p.applyLook((Math.random() - 0.5) * f * 0.8, f);
+        }
         if (this.touch) navigator.vibrate?.(Math.min(60, 15 + amount));
         let yaw: number | null = null;
         if (from) {
@@ -1522,7 +1562,7 @@ export class Game {
     if (p.alive && this.deployed && this.ride) this.netRide(dt, input, net);
     else if (p.alive && this.deployed && me.chute) {
       // Under the canopy: the same drift the server runs; the gun still works.
-      if (me.stepChute(dt, input, this.physics)) w.drawTimer = DRAW_TIME;
+      if (me.stepChute(dt, input, this.physics)) w.redraw();
       else w.step(dt, input, p, false);
       net.stepped(n.seq, p.feet);
     } else if (p.alive && this.deployed) {
@@ -1613,7 +1653,7 @@ export class Game {
         p.ride(new THREE.Vector3(x, y + p.eyeHeight, z), this.me.chute);
         this.audio.gadget('place', null);
       } else p.dismount(e.pos ? new THREE.Vector3(...e.pos) : p.feet.clone());
-      this.weapons.drawTimer = DRAW_TIME;
+      this.weapons.redraw();
       net.respawned();
       return;
     }
@@ -2071,7 +2111,7 @@ export class Game {
     }
     this.player.dismount(spot);
     this.playerBoxes.setEnabled(this.player.alive);
-    this.weapons.drawTimer = DRAW_TIME;
+    this.weapons.redraw();
   }
 
   /**
@@ -2176,7 +2216,7 @@ export class Game {
       this.chute!.visible = false;
       this.chute = null;
       p.dismount(new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z));
-      this.weapons.drawTimer = DRAW_TIME;
+      this.weapons.redraw();
       return;
     }
     const eye = p.feet.clone().add(step).setY(p.feet.y + step.y + p.eyeHeight);
@@ -3012,12 +3052,16 @@ export class Game {
     else this.showRideModel(null);
 
     this.shake *= Math.exp(-7 * dt);
-    const sx = (Math.random() - 0.5) * this.shake;
-    const sy = (Math.random() - 0.5) * this.shake;
+    const pu = this.punch;
+    pu.pitch.step(dt);
+    pu.roll.step(dt);
+    pu.yaw.step(dt);
+    const sx = (Math.random() - 0.5) * this.shake + pu.pitch.x;
+    const sy = (Math.random() - 0.5) * this.shake + pu.yaw.x;
     // Scope sway (breath.ts) is part of the aim, so the view follows it too.
     // (set by rideCamera above)
     const gv = this.gunView as { yaw: number; pitch: number } | null;
-    cam.rotation.set((gv ? gv.pitch : p.pitch + w.recoil.pitch + w.sway.pitch) + sx, (gv ? gv.yaw : p.yaw + w.recoil.yaw + w.sway.yaw) + sy, this.deathBlend * (gone ? 0.7 : 0.25) + this.camRoll, 'YXZ');
+    cam.rotation.set((gv ? gv.pitch : p.pitch + w.recoil.pitch + w.sway.pitch) + sx, (gv ? gv.yaw : p.yaw + w.recoil.yaw + w.sway.yaw) + sy, this.deathBlend * (gone ? 0.7 : 0.25) + this.camRoll + pu.roll.x, 'YXZ');
     let fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend;
     if (this.ride && p.alive && !this.rideThird) fov = this.rideFov(this.ride.v, dt);
     if (Math.abs(cam.fov - fov) > 0.01) {
@@ -3029,7 +3073,40 @@ export class Game {
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.tmpUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);
+    this.probeSpace(cam.position, dt);
     this.updateEngines(cam.position);
+  }
+
+  private spaceIn = 0;
+  private readonly spaceDir = new THREE.Vector3();
+
+  /**
+   * What is round the listener, for the echo of their own gun (gunplay audit,
+   * 2026-10-18): a ray up for a ceiling and eight round about for walls, four
+   * times a second.
+   */
+  private probeSpace(at: THREE.Vector3, dt: number): void {
+    this.spaceIn -= dt;
+    if (this.spaceIn > 0) return;
+    this.spaceIn = 0.25;
+    const d = this.spaceDir;
+    const roof = this.physics.raycast(at, d.set(0, 1, 0), SPACE_PROBE.up, Layer.WORLD);
+    let hits = 0;
+    let sum = 0;
+    let near = 0;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const h = this.physics.raycast(at, d.set(Math.cos(a), 0, Math.sin(a)), SPACE_PROBE.round, Layer.WORLD);
+      if (!h) continue;
+      hits++;
+      sum += h.distance;
+      if (h.distance < SPACE_PROBE.room) near++;
+    }
+    const walls = near / 8;
+    this.audio.setSpace({
+      enclosed: roof ? 0.35 + 0.65 * walls : 0.25 * walls,
+      wall: hits >= 2 ? sum / hits : Infinity,
+    });
   }
 
   /** Sky, shadows, trees, clutter, grass and snow around wherever the camera is. */
@@ -3312,12 +3389,13 @@ export class Game {
       speed: p.horizontalSpeed(),
       grounded: p.grounded,
       sprinting: p.sprinting,
+      sprintOut: w.sprintOutLeft,
       lookDYaw: lookYaw,
       lookDPitch: lookPitch,
       reloading: w.state.reloading,
       reloadProgress: w.state.reloadProgress,
       magReload: w.def.reloadStyle === 'mag',
-      drawProgress: p.alive && this.deployed ? 1 - w.drawTimer / DRAW_TIME : 0,
+      drawProgress: p.alive && this.deployed ? w.drawProgress : 0,
       // Scoped in, or down on the ground: no gun on screen.
       hideForScope: (!!w.def.scope && w.adsBlend > 0.95) || this.playerDowned || !!this.ride,
       meleeT: w.meleeProgress,
@@ -4782,7 +4860,7 @@ export class Game {
           });
           break;
         case 'hit':
-          this.hud.showHit(e.head, e.killed);
+          this.hud.showHit(e.head, e.killed, e.dmg);
           this.audio.hit(e.head, e.killed);
           break;
         case 'hurt':

@@ -5,7 +5,7 @@ import { loadIdentity, seatId } from '@/net/identity';
 import { ServerLink, ServerError } from '@/net/ServerLink';
 import { serverUrls } from '@/net/servers';
 import { chatOf, isMuted, setMuted } from '@/net/chat';
-import { hasSides, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
+import { hasSides, simpleAllowed, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
 import { ChatPanel, nameView } from './ChatPanel';
 import { modeName, renderMatchSetup, simpleField, stepGroup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
 import { uiSound } from '@/audio/uiSounds';
@@ -729,12 +729,13 @@ export class MultiplayerMenu {
         },
       );
     }
-    fields.push(
-      simpleField(f.simple, (on) => {
-        f.simple = on;
-        redraw();
-      }),
-    );
+    if (simpleAllowed(f.mode))
+      fields.push(
+        simpleField(f.simple, (on) => {
+          f.simple = on;
+          redraw();
+        }),
+      );
     fields.push({
       kind: 'choice',
       id: 'chat',

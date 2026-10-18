@@ -69,7 +69,7 @@ describe('computeDamage', () => {
   it('applies headshot and limb multipliers', () => {
     expect(computeDamage(30, 'head', 1.5)).toBe(45);
     expect(computeDamage(30, 'body', 1.5)).toBe(30);
-    expect(computeDamage(30, 'limb', 1.5)).toBeCloseTo(25.5);
+    expect(computeDamage(30, 'limb', 1.5)).toBeCloseTo(28.5);
   });
 });
 

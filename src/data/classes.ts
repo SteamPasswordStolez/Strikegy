@@ -138,7 +138,7 @@ export function weaponStats(w: WeaponDef): { damage: number; rate: number; range
   const interval = Math.max(60 / w.rpm, (w.cycleMs ?? 0) / 1000);
   // Bursts: rpm is the pace of trigger pulls, each firing `count` rounds.
   const rate = w.burst ? (w.rpm / 60) * w.burst.count : 1 / interval;
-  const handling = 1 - (w.adsTime - 0.12) / 0.2 - (w.reloadTime - 1.5) / 8;
+  const handling = 1 - (w.adsTime - 0.14) / 0.34 - (w.reloadTime - 1.5) / 8;
   const clamp = (v: number) => Math.max(0.04, Math.min(1, v));
   return {
     damage: clamp(perShot / 110),

@@ -39,6 +39,7 @@ describe('names and settings', () => {
     // Simplified controls: a yes / no; rooms from older clients play the full controls.
     expect(cleanSettings({ ...ok, simple: true })?.simple).toBe(true);
     expect(cleanSettings({ ...ok, simple: 'yes' })).toBeNull();
+    expect(cleanSettings({ ...ok, mode: 'fortress', simple: true })?.simple).toBe(false);
     const { simple: _drop, ...old } = ok;
     void _drop;
     expect(cleanSettings(old)?.simple).toBe(false);

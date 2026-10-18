@@ -6,6 +6,8 @@ import { MATCH, setMatchFlags } from '@/modes/matchFlags';
 import { simplifyInput } from '@/modes/simple';
 import { matchFlagsFor } from '@/modes/ZoneMode';
 import { MatchSim } from '@/sim/MatchSim';
+import { matchQuery } from '@/data/maps';
+import { simpleAllowed } from '@/net/lobbyProtocol';
 import { parseMap } from '@/world/validateMap';
 
 const lyon = () => parseMap(JSON.parse(readFileSync('public/maps/lyon.json', 'utf8')));
@@ -16,6 +18,13 @@ describe('simplified controls (owner, 2026-10-18)', () => {
     expect(matchFlagsFor('gungame', true)).toMatchObject({ simple: true, ffa: true, melee: true });
     expect(matchFlagsFor(null, true)).toMatchObject({ simple: true });
     expect(matchFlagsFor('zone')).toEqual({});
+  });
+
+  it('fortress has no simplified version (owner, 2026-10-18: it is about building)', () => {
+    expect(simpleAllowed('fortress')).toBe(false);
+    expect(matchFlagsFor('fortress', true).simple).toBeUndefined();
+    expect(matchQuery({ map: 'iron_gate', mode: 'fortress', team: 6, difficulty: 'normal', side: 'blue', simple: true })).not.toContain('simple');
+    expect(matchQuery({ map: 'iron_gate', mode: 'zone', team: 6, difficulty: 'normal', side: 'blue', simple: true })).toContain('simple=1');
   });
 
   it('drop gadgets, medkits, building, call-ins, breath, inspect and melee from the input; keep the rest', () => {

@@ -6,7 +6,17 @@ import type { ShotTrace } from '@/weapons/WeaponController';
 import { ParticleLayer } from './Particles';
 import { LAYER_FX } from './layers';
 
-const TRACER_LIFE = 0.06;
+/**
+ * Tracers fly (gunplay audit, 2026-10-18; they used to flash the whole way at
+ * once, like a laser): a streak this long (m) at this speed (m/s, slower than
+ * a real round so the eye catches it).
+ */
+const TRACER = { speed: 650, streak: 9 } as const;
+/** Rounds passing this close to the viewer crack (m), unless fired from nearer than `PASS_FROM_M`. */
+const PASS_M = 4;
+const PASS_FROM_M = 8;
+/** One's own gun shows every n-th round as a tracer (tracer rounds in the belt). */
+const OWN_TRACER_EVERY = 3;
 const MAX_TRACERS = 32;
 const MAX_DECALS = 160;
 const DECAL_SIZE = 0.09;
@@ -44,7 +54,13 @@ const MUZZLE_SMOKE_M = 50;
 
 interface Tracer {
   line: THREE.Line;
-  life: number;
+  /** Flying while the streak's tail is short of the end. */
+  live: boolean;
+  from: THREE.Vector3;
+  dir: THREE.Vector3;
+  length: number;
+  /** Distance of the streak's head from `from`. */
+  head: number;
 }
 
 interface Casing {
@@ -136,16 +152,18 @@ export class Effects {
     private readonly physics: PhysicsWorld,
     dynamicLights: number,
   ) {
-    const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe3a0, transparent: true, opacity: 0.8, depthWrite: false });
+    // Head bright, tail dark: added onto the scene, the dark end disappears.
+    const tracerMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
     for (let i = 0; i < MAX_TRACERS; i++) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-      const line = new THREE.Line(geo, tracerMat.clone());
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array([1, 0.86, 0.55, 0.12, 0.07, 0.02]), 3));
+      const line = new THREE.Line(geo, tracerMat);
       line.frustumCulled = false;
       line.visible = false;
       line.layers.set(LAYER_FX);
       scene.add(line);
-      this.tracers.push({ line, life: 0 });
+      this.tracers.push({ line, live: false, from: new THREE.Vector3(), dir: new THREE.Vector3(), length: 0, head: 0 });
     }
 
     const decalMat = new THREE.MeshBasicMaterial({
@@ -237,10 +255,27 @@ export class Effects {
     this.updateCasings(0);
   }
 
-  /** Consumes shot traces; `muzzle` is where tracers visually start. */
-  spawnShots(traces: ShotTrace[], muzzle: THREE.Vector3): void {
+  private ownRound = 0;
+  /**
+   * Someone else's round passed the viewer within `PASS_M` (gunplay audit,
+   * 2026-10-18: the crack of a near miss): the closest point of its path and
+   * how far it passed.
+   */
+  onPass: ((at: THREE.Vector3, miss: number) => void) | null = null;
+  private readonly passAt = new THREE.Vector3();
+
+  /**
+   * Consumes shot traces; `muzzle` is where tracers visually start. `own`: the
+   * player's gun, where only every few rounds is a tracer.
+   */
+  spawnShots(traces: ShotTrace[], muzzle: THREE.Vector3, own = false): void {
     for (const t of traces) {
-      if (traces.length <= 2 || Math.random() < 0.3) this.addTracer(muzzle, t.to);
+      if (own) {
+        if (this.ownRound++ % OWN_TRACER_EVERY === 0) this.addTracer(muzzle, t.to);
+      } else {
+        if (traces.length <= 2 || Math.random() < 0.3) this.addTracer(muzzle, t.to);
+        if (this.onPass) this.checkPass(t.from, t.to);
+      }
     }
     traces.length = 0;
   }
@@ -329,10 +364,11 @@ export class Effects {
     }
   }
 
-  /** Bullet striking a soldier: a small puff of dust and fabric. */
+  /** Bullet striking a soldier: a red mist with droplets and a puff of fabric dust (readable from afar). */
   bodyHit(point: THREE.Vector3): void {
     if (!this.within(point, IMPACT_PARTICLES_M)) return;
-    for (let i = 0; i < 4; i++) {
+    this.soft.spawn({ pos: point.clone(), life: 0.28, size: 0.1, endSize: 0.45, color: 0x7a1a14, alpha: 0.55, drag: 4 });
+    for (let i = 0; i < 7; i++) {
       this.soft.spawn({
         pos: point.clone(),
         vel: randomDir(this.tmpVec).multiplyScalar(rand(0.6, 1.8)),
@@ -441,14 +477,42 @@ export class Effects {
   private addTracer(from: THREE.Vector3, to: THREE.Vector3): void {
     const tr = this.tracers[this.tracerCursor]!;
     this.tracerCursor = (this.tracerCursor + 1) % MAX_TRACERS;
-    const pos = tr.line.geometry.getAttribute('position') as THREE.BufferAttribute;
-    // Start a little ahead of the muzzle so the line doesn't cover the gun.
-    const start = from.clone().lerp(to, Math.min(0.5, 1.5 / Math.max(1, from.distanceTo(to))));
-    pos.setXYZ(0, start.x, start.y, start.z);
-    pos.setXYZ(1, to.x, to.y, to.z);
-    pos.needsUpdate = true;
-    tr.life = TRACER_LIFE;
+    // Start a little ahead of the muzzle so the streak doesn't cover the gun.
+    const dist = from.distanceTo(to);
+    const skip = Math.min(dist * 0.5, 1.5);
+    tr.dir.subVectors(to, from).divideScalar(Math.max(1e-6, dist));
+    tr.from.copy(from).addScaledVector(tr.dir, skip);
+    tr.length = dist - skip;
+    tr.head = 0;
+    tr.live = true;
+    this.placeTracer(tr);
     tr.line.visible = true;
+  }
+
+  /** A round's path from `from` to `to`: did it pass close by the viewer (and not from right beside them)? */
+  private checkPass(from: THREE.Vector3, to: THREE.Vector3): void {
+    const v = this.viewer;
+    const dir = this.tmpVec2.subVectors(to, from);
+    const len = dir.length();
+    if (len < 1e-3 || from.distanceToSquared(v) < PASS_FROM_M * PASS_FROM_M) return;
+    dir.divideScalar(len);
+    const along = this.tmpVec.subVectors(v, from).dot(dir);
+    // It has to reach the viewer (a round stopping short of them isn't heard passing).
+    if (along <= 0 || along > len + 0.5) return;
+    this.passAt.copy(from).addScaledVector(dir, Math.min(along, len));
+    const miss = this.passAt.distanceTo(v);
+    if (miss < PASS_M) this.onPass!(this.passAt, miss);
+  }
+
+  private placeTracer(tr: Tracer): void {
+    const pos = tr.line.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const head = Math.min(tr.head, tr.length);
+    const tail = Math.max(0, tr.head - TRACER.streak);
+    const h = this.tmpVec.copy(tr.from).addScaledVector(tr.dir, head);
+    pos.setXYZ(0, h.x, h.y, h.z);
+    h.copy(tr.from).addScaledVector(tr.dir, Math.min(tail, head));
+    pos.setXYZ(1, h.x, h.y, h.z);
+    pos.needsUpdate = true;
   }
 
   private addDecal(point: THREE.Vector3, normal: THREE.Vector3, color: number, size: number): void {
@@ -471,10 +535,12 @@ export class Effects {
   update(dt: number): void {
     this.time += dt;
     for (const tr of this.tracers) {
-      if (tr.life <= 0) continue;
-      tr.life -= dt;
-      (tr.line.material as THREE.LineBasicMaterial).opacity = Math.max(0, tr.life / TRACER_LIFE) * 0.8;
-      if (tr.life <= 0) tr.line.visible = false;
+      if (!tr.live) continue;
+      tr.head += TRACER.speed * dt;
+      if (tr.head - TRACER.streak >= tr.length) {
+        tr.live = false;
+        tr.line.visible = false;
+      } else this.placeTracer(tr);
     }
 
     for (const l of this.lights) {

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ModelLibrary } from '@/render/models';
-import type { WeaponDef } from './weaponData';
+import type { ShotKick, WeaponDef } from './weaponData';
+import { Spring } from './spring';
 import { gunMaterials, type P } from './gunKit';
 import { buildGun, buildOptic } from './gunModels';
 import type { GadgetId } from '@/data/gadgets';
@@ -49,6 +50,8 @@ export interface ViewModelFrame {
   speed: number;
   grounded: boolean;
   sprinting: boolean;
+  /** 0..1 of the sprint-out still to go (`WeaponController.sprintOutLeft`). */
+  sprintOut?: number;
   lookDYaw: number;
   lookDPitch: number;
   reloading: boolean;
@@ -82,8 +85,15 @@ export class ViewModel {
   private adsZ = -ADS_EYE.rifle;
   private bobPhase = 0;
   private sway = new THREE.Vector2();
+  /** The gun shoved back by the last shots (m), and how fast it comes forward again. */
   private kick = 0;
-  private kickRot = 0;
+  private kickSettle = 16;
+  /** Muzzle rise, twist and sideways jump of each shot (`WeaponDef.kick`). */
+  private readonly rise = new Spring();
+  private readonly roll = new Spring();
+  private readonly turn = new Spring();
+  private readonly adsSettle = new Spring(11);
+  private lastAds = 0;
   private flashTimer = 0;
   private sprintBlend = 0;
   private reloadBlend = 0;
@@ -440,9 +450,19 @@ export class ViewModel {
     this.landDip = Math.min(0.06, impactSpeed * 0.006);
   }
 
-  onFire(ads: boolean): void {
-    this.kick = Math.min(this.kick + (ads ? 0.025 : 0.04), 0.08);
-    this.kickRot = Math.min(this.kickRot + (ads ? 0.03 : 0.07), 0.2);
+  /**
+   * A shot: each gun kicks its own way (gunplay audit, 2026-10-18). Down the
+   * sights the gun stays nearer the eye, so less of it shows.
+   */
+  onFire(ads: boolean, k: ShotKick): void {
+    const back = k.back * (ads ? 0.6 : 1);
+    this.kick = Math.min(this.kick + back, back * 2.4);
+    this.kickSettle = k.settle * 1.15;
+    for (const sp of [this.rise, this.roll, this.turn]) sp.rate = k.settle;
+    this.rise.kick(k.rise * (ads ? 0.4 : 1));
+    const side = Math.random() < 0.5 ? -1 : 1;
+    this.roll.kick(side * k.roll * (0.6 + Math.random() * 0.4) * (ads ? 0.5 : 1));
+    this.turn.kick((Math.random() - 0.5) * k.roll * 0.5 * (ads ? 0.4 : 1));
     this.flashTimer = 0.04;
     this.slideT = 0;
     this.flash.rotation.z = Math.random() * Math.PI;
@@ -453,6 +473,12 @@ export class ViewModel {
     const ease = (rate: number) => 1 - Math.exp(-rate * dt);
 
     this.sprintBlend += ((f.sprinting ? 1 : 0) - this.sprintBlend) * ease(10);
+    // Coming out of a sprint the gun is up exactly when it may fire.
+    if (f.sprintOut && f.sprintOut > 0) this.sprintBlend = f.sprintOut * f.sprintOut * (3 - 2 * f.sprintOut);
+    // Reaching the sights the gun settles with a small dip.
+    if (f.adsBlend >= 0.97 && this.lastAds < 0.97) this.adsSettle.kick(1);
+    this.lastAds = f.adsBlend;
+    this.adsSettle.step(dt);
     this.reloadBlend += ((f.reloading ? 1 : 0) - this.reloadBlend) * ease(10);
 
     // Bob scales with ground speed and fades while aiming.
@@ -466,8 +492,10 @@ export class ViewModel {
     this.sway.x += (THREE.MathUtils.clamp(f.lookDYaw * 0.35, -0.03, 0.03) - this.sway.x) * ease(22);
     this.sway.y += (THREE.MathUtils.clamp(f.lookDPitch * 0.35, -0.03, 0.03) - this.sway.y) * ease(22);
 
-    this.kick *= Math.exp(-18 * dt);
-    this.kickRot *= Math.exp(-14 * dt);
+    this.kick *= Math.exp(-this.kickSettle * dt);
+    this.rise.step(dt);
+    this.roll.step(dt);
+    this.turn.step(dt);
     this.landDip *= Math.exp(-8 * dt);
 
     // Support hand: works the magazine / handle, loads shells, checks the mag on inspect.
@@ -555,12 +583,13 @@ export class ViewModel {
     pos.y -= (1 - f.drawProgress) * 0.25 + throwDip * 0.28 + this.landDip + this.toolBlend * 0.5;
     pos.z += stroke * (this.pump ? 0.01 : 0.025);
     pos.z += this.kick;
+    pos.y -= this.adsSettle.x * 0.004;
     pos.add(extraPos);
     this.root.position.copy(pos);
     this.root.rotation.set(
-      this.kickRot + this.sway.y * swayScale + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.2 - throwDip * 0.5 - this.toolBlend * 0.9 + extraRot.x,
-      this.sway.x * swayScale + rp.rot[1] * this.reloadBlend + this.sprintBlend * 0.6 - throwDip * 0.3 + extraRot.y,
-      rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.25 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
+      this.rise.x - this.adsSettle.x * 0.01 + this.sway.y * swayScale + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.2 - throwDip * 0.5 - this.toolBlend * 0.9 + extraRot.x,
+      this.turn.x + this.sway.x * swayScale + rp.rot[1] * this.reloadBlend + this.sprintBlend * 0.6 - throwDip * 0.3 + extraRot.y,
+      this.roll.x + rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.25 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
     );
 
     this.flashTimer -= dt;

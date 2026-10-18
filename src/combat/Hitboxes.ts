@@ -30,7 +30,8 @@ export interface Damageable {
   applyDamage(amount: number, part: HitPart, source?: DamageSource, kind?: DamageKind): boolean;
 }
 
-export const PART_MULT: Record<HitPart, number> = { head: 1, body: 1, limb: 0.85 };
+/** Body part multipliers (limbs near full, Modern Warfare style: gunplay audit, 2026-10-18). */
+export const PART_MULT: Record<HitPart, number> = { head: 1, body: 1, limb: 0.95 };
 
 /** Maps physics collider handles to the damageable entity and body part they belong to. */
 export class HitboxRegistry {

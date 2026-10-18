@@ -237,7 +237,11 @@ export class SoldierModel {
   private readonly muzzleLocal: THREE.Vector3;
   private phase = 0;
   private flinch = 0;
+  /** Which way a hit twists the torso (-1 / 1). */
+  private flinchSide = 1;
   private deathSide = 1;
+  /** How the body falls: 0 back, 1 forward (running), 2 crumpling onto a side. */
+  private deathKind = 0;
 
   constructor(team: Team, def: WeaponDef) {
     const key = `${team}:${def.id}`;
@@ -300,12 +304,17 @@ export class SoldierModel {
       }
   }
 
-  onHit(): void {
-    this.flinch = 1;
+  /** A round struck: the torso rocks back and twists, harder for heavier hits (gunplay audit, 2026-10-18). */
+  onHit(damage = 25, head = false): void {
+    this.flinch = Math.min(1.6, this.flinch + 0.5 + damage / 50 + (head ? 0.4 : 0));
+    this.flinchSide = Math.random() < 0.5 ? -1 : 1;
   }
 
-  onDeath(): void {
+  /** Death (or going down): one of a few falls; running carries the body forward. */
+  onDeath(speed = 0): void {
     this.deathSide = Math.random() < 0.5 ? -1 : 1;
+    const r = Math.random();
+    this.deathKind = speed > 4 ? (r < 0.75 ? 1 : 2) : r < 0.4 ? 0 : r < 0.7 ? 2 : 1;
   }
 
   /** Updates the pose; `pos` is the interpolated feet position. */
@@ -313,7 +322,7 @@ export class SoldierModel {
     const bones = this.bones;
     this.root.position.copy(pos);
     this.root.rotation.y = p.yaw;
-    this.flinch = Math.max(0, this.flinch - p.dt * 6);
+    this.flinch = Math.max(0, this.flinch - p.dt * 7);
 
     const moving = Math.min(1, p.speed / 4.5);
     this.phase += p.dt * (4 + p.speed * 1.6) * (moving > 0.05 ? 1 : 0);
@@ -331,9 +340,10 @@ export class SoldierModel {
     bones[B.ShinL]!.rotation.x = -lift - c * 1.2;
     bones[B.ShinR]!.rotation.x = -liftR - c * 1.5;
     // Lean forward when crouched; a hit rocks the torso back.
-    bones[B.Spine]!.rotation.set(-c * 0.25 + this.flinch * 0.2, 0, Math.sin(this.phase) * 0.04 * moving);
-    bones[B.Aim]!.rotation.x = p.aimPitch + c * 0.25 + this.flinch * 0.15;
-    bones[B.Head]!.rotation.x = p.aimPitch * 0.6 + c * 0.2;
+    const fl = this.flinch;
+    bones[B.Spine]!.rotation.set(-c * 0.25 + fl * 0.22, fl * this.flinchSide * 0.18, Math.sin(this.phase) * 0.04 * moving + fl * this.flinchSide * 0.08);
+    bones[B.Aim]!.rotation.x = p.aimPitch + c * 0.25 + fl * 0.2;
+    bones[B.Head]!.rotation.x = p.aimPitch * 0.6 + c * 0.2 + fl * 0.15;
     if (p.seated) {
       hips.position.y = JOINTS[B.Hips][1] - 0.45;
       bones[B.ThighL]!.rotation.x = bones[B.ThighR]!.rotation.x = 1.45;
@@ -342,11 +352,15 @@ export class SoldierModel {
 
     const root = bones[B.Root]!;
     if (p.deadFor >= 0) {
-      // Knees give, then the body topples to one side and back.
-      const t = Math.min(1, p.deadFor / 0.55);
+      // Knees give, then the body topples: back, forward onto the face, or
+      // crumpling round onto a side.
+      const t = Math.min(1, p.deadFor / (this.deathKind === 1 ? 0.5 : 0.6));
       const e = t * t;
-      root.rotation.set(e * 1.35, 0, this.deathSide * e * 0.35);
-      root.position.y = -e * 0.1;
+      const s = this.deathSide;
+      if (this.deathKind === 1) root.rotation.set(-e * 1.45, 0, s * e * 0.2);
+      else if (this.deathKind === 2) root.rotation.set(e * 0.35, s * e * 0.6, s * e * 1.4);
+      else root.rotation.set(e * 1.35, 0, s * e * 0.35);
+      root.position.y = -e * (this.deathKind === 2 ? 0.2 : 0.1);
       bones[B.ShinL]!.rotation.x = Math.min(bones[B.ShinL]!.rotation.x, -1.2 * Math.min(1, t * 2));
       bones[B.ShinR]!.rotation.x = Math.min(bones[B.ShinR]!.rotation.x, -0.9 * Math.min(1, t * 2));
       bones[B.Aim]!.rotation.x = -0.6 * t;

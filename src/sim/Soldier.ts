@@ -15,7 +15,7 @@ import { fallDamage } from '@/player/health';
 import { GrenadeInventory } from '@/weapons/Throwables';
 import type { GrenadeType } from '@/combat/explosions';
 import { GADGETS, classGadget, type GadgetId } from '@/data/gadgets';
-import { DRAW_TIME, WeaponController } from '@/weapons/WeaponController';
+import { WeaponController } from '@/weapons/WeaponController';
 import type { WeaponId } from '@/weapons/weaponData';
 import type { Team } from '@/world/mapTypes';
 import { COMBAT_WINDOW } from '@/modes/squads';
@@ -366,7 +366,7 @@ export class Soldier {
     this.boxes.setEnabled(true);
     this.reviveShieldUntil = this.now() + DOWN.reviveShield;
     this.killedBy = null;
-    this.weapons.drawTimer = DRAW_TIME;
+    this.weapons.redraw();
     this.hooks.revived?.(by);
   }
 

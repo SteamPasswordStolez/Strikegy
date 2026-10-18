@@ -116,7 +116,11 @@
 }
 .hitmarker.kill {
   --hit-color: var(--danger);
-  transform: scale(1.3);
+}
+.hitmarker.kill::before,
+.hitmarker.kill::after {
+  width: 3px;
+  margin-left: -1.5px;
 }
 
 /* ---------- Scope ---------- */

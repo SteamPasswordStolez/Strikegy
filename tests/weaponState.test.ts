@@ -96,10 +96,26 @@ describe('WeaponState', () => {
 });
 
 describe('damageAtDistance', () => {
-  it('is full damage up close and 60% at max range', () => {
-    const w = WEAPONS.ar1;
+  it('steps down by distance for each kind of gun (Modern Warfare style)', () => {
+    const ar = WEAPONS.ar1;
+    expect(damageAtDistance(ar, 10)).toBe(ar.damage);
+    expect(damageAtDistance(ar, 40)).toBe(ar.damage);
+    expect(damageAtDistance(ar, 60)).toBeCloseTo(ar.damage * 0.85);
+    expect(damageAtDistance(ar, 500)).toBeCloseTo(ar.damage * 0.65);
+    // Submachine guns lose a quarter past 20 m; marksman rifles keep theirs.
+    expect(damageAtDistance(WEAPONS.smg1, 30)).toBeCloseTo(WEAPONS.smg1.damage * 0.75);
+    expect(damageAtDistance(WEAPONS.dmr1, 300)).toBe(WEAPONS.dmr1.damage);
+  });
+
+  it('shotgun pellets fade evenly to 60% at their range', () => {
+    const w = WEAPONS.sg1;
     expect(damageAtDistance(w, 10)).toBe(w.damage);
     expect(damageAtDistance(w, w.range)).toBeCloseTo(w.damage * 0.6);
     expect(damageAtDistance(w, w.range * 3)).toBeCloseTo(w.damage * 0.6);
+  });
+
+  it('keeps the close-range kill the same (bullets to kill up close)', () => {
+    const btk = (id: keyof typeof WEAPONS) => Math.ceil(100 / damageAtDistance(WEAPONS[id], 5));
+    expect([btk('ar1'), btk('ar2'), btk('smg1'), btk('lmg1')]).toEqual([4, 4, 6, 5]);
   });
 });

@@ -11,12 +11,11 @@ import type { HitPart } from '@/core/events';
 import { MOVE } from '@/player/movement';
 import type { Player } from '@/player/Player';
 import { WeaponState } from './WeaponState';
-import { recoilKick, recoilScale } from './recoil';
+import { gunPattern, recoilKick, recoilScale } from './recoil';
 import { WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from './weaponData';
 import { INSPECT_CUES, MELEE_STRIKE_T } from './viewAnims';
 
 const DEG = Math.PI / 180;
-export const DRAW_TIME = 0.35;
 const BLOOM_MAX = 3;
 const BLOOM_DECAY = 6;
 const RECOIL_RECOVERY = 6;
@@ -99,7 +98,10 @@ export class WeaponController {
   readonly recoil = { pitch: 0, yaw: 0 };
   /** Scope sway in radians (set by the game each step, see `breath.ts`); the shot follows it. */
   readonly sway = { pitch: 0, yaw: 0 };
-  drawTimer = DRAW_TIME;
+  drawTimer = 0.35;
+  /** Coming up out of a sprint (s left of `WeaponDef.sprintOut`): no firing or aiming yet. */
+  sprintOut = 0;
+  private wasSprinting = false;
   sinceShot = 10;
   /** Shots resolved since the render side last drained them (tracers). */
   readonly traces: ShotTrace[] = [];
@@ -132,6 +134,14 @@ export class WeaponController {
   rand: () => number = Math.random;
   /** Judges shots instead of the physics hitboxes (see `ShotCaster`). */
   shotCaster: ShotCaster | null = null;
+  /**
+   * How much of the recoil the owner's view keeps once a spray stops (gunplay
+   * audit, owner 2026-10-18: Modern Warfare style, one pulls the gun down
+   * oneself). The rest slides back. 0 everywhere but the browser playing the
+   * soldier: there the kept part moves the look itself (`Player.applyLook`),
+   * which the game server gets with the next input, so its aim agrees.
+   */
+  viewKeep = 0;
 
   constructor(
     loadout: WeaponId[],
@@ -186,8 +196,25 @@ export class WeaponController {
     this.recoil.pitch = this.recoil.yaw = 0;
     this.bloom = 0;
     this.adsBlend = 0;
-    this.drawTimer = DRAW_TIME;
+    this.redraw();
     this.meleeTime = this.inspectTime = -1;
+    this.sprintOut = 0;
+    this.wasSprinting = false;
+  }
+
+  /** The gun in hand is (re)drawn: out of a vehicle, off a parachute, a switch. */
+  redraw(): void {
+    this.drawTimer = this.def.drawTime;
+  }
+
+  /** 0..1 through taking the gun out. */
+  get drawProgress(): number {
+    return 1 - this.drawTimer / this.def.drawTime;
+  }
+
+  /** 0..1 of the sprint-out still to go (the view model lifts the gun with it). */
+  get sprintOutLeft(): number {
+    return this.sprintOut / this.def.sprintOut;
   }
 
   /** 0..1 through the melee swing, or -1. */
@@ -204,10 +231,13 @@ export class WeaponController {
   spread(player: Player): number {
     const d = this.def;
     const base = d.spreadHip + (d.spreadAds - d.spreadHip) * this.adsBlend;
-    const move = Math.min(1, player.horizontalSpeed() / MOVE.walkSpeed) * 1.2 * (1 - 0.75 * this.adsBlend);
+    // Down the sights rounds go where the sight is: moving and sustained fire
+    // only open up hip fire (the recoil one sees does the rest).
+    const hip = 1 - this.adsBlend;
+    const move = Math.min(1, player.horizontalSpeed() / MOVE.walkSpeed) * 1.2 * hip;
     const air = player.grounded ? 0 : 3;
     const stance = player.crouching && player.grounded ? 0.8 : 1;
-    return (base + this.bloom * (1 - 0.5 * this.adsBlend)) * stance + move + air;
+    return (base + this.bloom * hip) * stance + move + air;
   }
 
   /** Blocks firing/aiming (e.g. while throwing a grenade or dead). */
@@ -217,9 +247,13 @@ export class WeaponController {
     const s = this.state;
     const d = this.def;
     this.drawTimer = Math.max(0, this.drawTimer - dt);
+    // Out of a sprint (stopped, or ended by the trigger / sights) the gun comes up first.
+    if (this.wasSprinting && !player.sprinting) this.sprintOut = d.sprintOut;
+    this.wasSprinting = player.sprinting;
+    this.sprintOut = Math.max(0, this.sprintOut - dt);
     this.stepMelee(dt, input, player, blocked);
     const meleeing = this.meleeTime >= 0;
-    const ready = this.drawTimer === 0 && !player.sprinting && !blocked && !meleeing;
+    const ready = this.drawTimer === 0 && this.sprintOut === 0 && !player.sprinting && !blocked && !meleeing;
     const wantAds = input.ads && ready && !(s.reloading && d.reloadStyle === 'mag');
     const adsRate = dt / d.adsTime;
     this.adsBlend = THREE.MathUtils.clamp(this.adsBlend + (wantAds ? adsRate : -adsRate), 0, 1);
@@ -246,9 +280,12 @@ export class WeaponController {
     this.sinceShot += dt;
     this.bloom = Math.max(0, this.bloom - BLOOM_DECAY * dt * (this.sinceShot > 0.08 ? 1 : 0.2));
     if (this.sinceShot > 0.12) {
-      const k = Math.exp(-RECOIL_RECOVERY * dt);
-      this.recoil.pitch *= k;
-      this.recoil.yaw *= k;
+      const k = 1 - Math.exp(-RECOIL_RECOVERY * dt);
+      const dPitch = this.recoil.pitch * k;
+      const dYaw = this.recoil.yaw * k;
+      this.recoil.pitch -= dPitch;
+      this.recoil.yaw -= dYaw;
+      if (this.viewKeep > 0) player.applyLook(dYaw * this.viewKeep, dPitch * this.viewKeep);
     }
   }
 
@@ -368,7 +405,7 @@ export class WeaponController {
     this.state.cancelReload();
     this.inspectTime = -1;
     this.index = next;
-    this.drawTimer = DRAW_TIME;
+    this.redraw();
     this.adsBlend = 0;
     this.bloom = 0;
     this.cycleTimer = -1;
@@ -411,7 +448,7 @@ export class WeaponController {
     }
 
     this.bloom = Math.min(BLOOM_MAX, this.bloom + d.bloomPerShot);
-    const kick = recoilKick(d.recoil, this.shotIndex, this.spraySeed);
+    const kick = recoilKick(d.recoil, this.shotIndex, this.spraySeed, gunPattern(d.id));
     const scale = recoilScale({ adsBlend: this.adsBlend, crouched: player.crouching && player.grounded });
     this.recoil.pitch = Math.min(MAX_RECOIL_PITCH, this.recoil.pitch + kick.pitch * DEG * scale);
     this.recoil.yaw += kick.yaw * DEG * scale;

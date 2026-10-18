@@ -792,7 +792,7 @@ export class MatchSim {
     if (s.ride && (!s.alive || s.downed)) this.vehicles?.leave(s, false);
     if (s.alive && s.deployed && s.ride) this.vehicles!.stepRide(s, input, dt);
     else if (s.alive && s.deployed && s.chute) {
-      if (s.stepChute(dt, input, this.physics)) s.weapons.drawTimer = 0.35;
+      if (s.stepChute(dt, input, this.physics)) s.weapons.redraw();
       else s.weapons.step(dt, input, s.player, false);
     } else if (s.alive && s.deployed) {
       // In the order the browser predicts it (Game.netStep).

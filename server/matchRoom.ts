@@ -734,7 +734,7 @@ export class MatchRoom {
     bus.on('combat:hit', (e) => {
       const by = e.attackerId === undefined ? undefined : this.byId.get(e.attackerId);
       if (!by) return;
-      by.events.push({ k: 'hit', head: e.part === 'head', killed: e.killed });
+      by.events.push({ k: 'hit', head: e.part === 'head', killed: e.killed, dmg: Math.round(e.damage) });
       // Aimbot signs: nearly every hit a headshot from afar, many right after a snap of the aim.
       by.hits++;
       if (e.part === 'head' && e.point.distanceTo(by.soldier.player.feet) > 30) by.farHeads++;
