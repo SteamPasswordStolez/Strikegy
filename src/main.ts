@@ -5,8 +5,11 @@ import { Lobby } from '@/ui/Lobby';
 import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
 import { loadSettings } from '@/core/Settings';
 import { MAPS } from '@/data/maps';
+import { watchInstall } from '@/ui/install';
 
 const container = document.getElementById('app')!;
+// The browser's "install app" event comes early: catch it before the menu is up.
+watchInstall();
 const fetchGame = () => import('@/core/Game');
 // A tab opened before a new deploy asks for the old build's game chunk, which is gone (Pages
 // keeps the page cached for 10 min, the new build has new chunk names): reload once to get

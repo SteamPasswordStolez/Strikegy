@@ -92,3 +92,18 @@
     animation: none;
   }
 }
+
+/* "Install as an app" on iPhones / iPads (Lobby.iosInstallHelp): the steps, the share icon inline. */
+.dlg-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  line-height: 1.45;
+}
+.dlg-steps .ds-icon {
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.2em;
+}

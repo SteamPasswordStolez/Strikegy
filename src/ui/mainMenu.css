@@ -197,3 +197,12 @@
     animation: none;
   }
 }
+.mm-install {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.mm-install .ds-icon {
+  width: 1.15em;
+  height: 1.15em;
+}

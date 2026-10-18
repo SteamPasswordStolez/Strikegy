@@ -7,6 +7,8 @@
 const PATHS = {
   play: '<path d="M7 4 19 12 7 20Z"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
+  install: '<path d="M12 3v11M7.5 9.5 12 14l4.5-4.5"/><path d="M4 16v4h16v-4"/>',
+  share: '<path d="M12 15V3M8 7l4-4 4 4"/><path d="M7 10H5v11h14V10h-2"/>',
   multiplayer:
     '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.2c2.2.6 3.5 2.6 3.5 5.8"/>',
   target: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.5"/><path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5"/>',

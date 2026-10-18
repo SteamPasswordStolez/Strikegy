@@ -13,6 +13,8 @@ import { renderHint } from './Overlay';
 import { SettingsPanel } from './SettingsPanel';
 import { MultiplayerMenu } from './MultiplayerMenu';
 import { askName } from './NameDialog';
+import { installState, onInstallChange, promptInstall } from './install';
+import './dialogs.css';
 import { loadIdentity } from '@/net/identity';
 import { inRoom } from '@/core/session';
 import { simpleAllowed, type MatchStart } from '@/net/lobbyProtocol';
@@ -106,6 +108,10 @@ export class Lobby {
     private readonly onSetting: (key: keyof Settings) => void = () => {},
   ) {
     setLocale(this.settings.locale);
+    // The install button comes and goes with the browser's install event.
+    onInstallChange(() => {
+      if (this.screen === 'main') this.render();
+    });
     const saved = loadJSON<Partial<LobbyPick>>(PICK_KEY) ?? {};
     const entry = MAPS.find((m) => m.id === saved.map);
     this.pick = {
@@ -363,11 +369,51 @@ export class Lobby {
   // ---------------------------------------------------------------------------
   // Main: the name and the entries
 
+  /** iPhone / iPad: there is no install button in the browser; the share menu adds the game to the home screen. */
+  private iosInstallHelp(): void {
+    const shade = el('div', 'dlg-shade ds-root', this.root);
+    shade.dataset.dsTheme = 'bfv';
+    const box = el('div', 'ds-dialog dlg', shade);
+    el('h3', '', box).textContent = t('install.title');
+    const steps = el('ol', 'dlg-steps', box);
+    const share = el('li', '', steps);
+    share.append(t('install.ios1'), ' ');
+    share.insertAdjacentHTML('beforeend', icon('share'));
+    el('li', '', steps).textContent = t('install.ios2');
+    el('li', '', steps).textContent = t('install.ios3');
+    const row = el('div', 'ds-actions', box);
+    const ok = el('button', 'ds-btn primary', row);
+    ok.textContent = t('lobby.hint.ok');
+    const close = () => {
+      uiSound('back');
+      shade.remove();
+    };
+    ok.addEventListener('click', close);
+    shade.addEventListener('click', (e) => {
+      if (e.target === shade) close();
+    });
+    ok.focus();
+  }
+
   private renderMain(body: HTMLElement): void {
     body.classList.add('mm-body');
     const top = el('div', 'mm-top', body);
     el('div', 'mm-wordmark', top).textContent = t('title');
     const corner = el('div', 'mm-corner', top);
+    // Install as an app (the browser's own dialog; on iPhones / iPads how to add it to the home screen).
+    const inst = installState();
+    if (inst !== 'none') {
+      const b = el('button', 'ds-btn ghost mm-lang mm-install', corner);
+      b.innerHTML = icon('install');
+      el('span', '', b).textContent = t('install.button');
+      b.title = t('install.title');
+      b.addEventListener('pointerenter', () => uiSound('hover'));
+      b.addEventListener('click', () => {
+        uiSound('open');
+        if (inst === 'prompt') void promptInstall();
+        else this.iosInstallHelp();
+      });
+    }
     const lang = el('button', 'ds-btn ghost mm-lang', corner);
     lang.textContent = t('lobby.otherLanguage');
     lang.title = t('lobby.language');
