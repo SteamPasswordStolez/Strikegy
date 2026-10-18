@@ -11,6 +11,7 @@
  */
 import type { InputState } from '@/input/InputState';
 import { VEHICLES, type VehicleKind } from '@/vehicles/vehicleData';
+import type { ShipNet } from '@/vehicles/ship';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 
 export const FRAME = { input: 1, snapshot: 2 } as const;
@@ -471,6 +472,8 @@ export interface NetVehicle {
   driverOnly: number;
   /** Per seat: who sits there (-1: nobody), the gun's yaw / pitch on the hull and its rounds fired (wraps at 256). */
   seats: { id: number; yaw: number; pitch: number; shots: number }[];
+  /** Warships: helm, depth, damage control (after the seats, `SHIP_BYTES`). */
+  ship?: ShipNet;
 }
 
 export interface Snapshot {
@@ -483,13 +486,17 @@ export interface Snapshot {
 
 const VEHICLE_BYTES = 21;
 const SEAT_BYTES = 5;
+const SHIP_BYTES = 8;
 const qAngle = (a: number): number => Math.max(-127, Math.min(127, Math.round((Math.atan2(Math.sin(a), Math.cos(a)) / Math.PI) * 127)));
 
 /** The vehicles of a tick (shared by every receiver). */
 export function encodeVehicles(list: readonly NetVehicle[]): Uint8Array {
   const n = Math.min(255, list.length);
   let size = 1;
-  for (let i = 0; i < n; i++) size += VEHICLE_BYTES + VEHICLES[list[i]!.kind].seats.length * SEAT_BYTES;
+  for (let i = 0; i < n; i++) {
+    const spec = VEHICLES[list[i]!.kind];
+    size += VEHICLE_BYTES + spec.seats.length * SEAT_BYTES + (spec.ship ? SHIP_BYTES : 0);
+  }
   const buf = new Uint8Array(size);
   const v = new DataView(buf.buffer);
   v.setUint8(0, n);
@@ -518,6 +525,17 @@ export function encodeVehicles(list: readonly NetVehicle[]): Uint8Array {
       v.setUint8(o + 4, (st?.shots ?? 0) & 0xff);
       o += SEAT_BYTES;
     }
+    if (VEHICLES[x.kind].ship) {
+      const sh = x.ship;
+      v.setUint8(o, sh?.helm ?? 4);
+      v.setUint8(o + 1, Math.max(0, Math.min(255, Math.round((sh?.depth ?? 0) * 4))));
+      v.setUint8(o + 2, Math.max(0, Math.min(255, Math.round((sh?.flooding ?? 0) * 255))));
+      v.setUint8(o + 3, Math.min(7, sh?.fires ?? 0) | (sh?.overdrive ? 0x80 : 0));
+      v.setUint16(o + 4, (sh?.broken ?? 0) & 0xffff);
+      v.setUint8(o + 6, !sh || sh.sinking < 0 ? 255 : Math.min(254, Math.round(sh.sinking * 4)));
+      v.setUint8(o + 7, Math.max(0, Math.min(255, Math.round(sh?.oxygen ?? 0))));
+      o += SHIP_BYTES;
+    }
   }
   return buf;
 }
@@ -532,7 +550,8 @@ function decodeVehicles(v: DataView, o: number): { list: NetVehicle[]; end: numb
     const kind = VEHICLE_KINDS[v.getUint8(o + 2)];
     if (!kind) return null;
     const seats = VEHICLES[kind].seats.length;
-    if (v.byteLength < o + VEHICLE_BYTES + seats * SEAT_BYTES) return null;
+    const shipBytes = VEHICLES[kind].ship ? SHIP_BYTES : 0;
+    if (v.byteLength < o + VEHICLE_BYTES + seats * SEAT_BYTES + shipBytes) return null;
     const only = v.getUint16(o + 19);
     const x: NetVehicle = {
       id: v.getUint16(o),
@@ -554,6 +573,12 @@ function decodeVehicles(v: DataView, o: number): { list: NetVehicle[]; end: numb
       const id = v.getUint16(o);
       x.seats.push({ id: id === 0xffff ? -1 : id, yaw: (v.getInt8(o + 2) / 127) * Math.PI, pitch: (v.getInt8(o + 3) / 127) * (Math.PI / 2), shots: v.getUint8(o + 4) });
       o += SEAT_BYTES;
+    }
+    if (shipBytes) {
+      const sinking = v.getUint8(o + 6);
+      const f = v.getUint8(o + 3);
+      x.ship = { helm: v.getUint8(o), depth: v.getUint8(o + 1) / 4, flooding: v.getUint8(o + 2) / 255, fires: f & 7, overdrive: (f & 0x80) !== 0, broken: v.getUint16(o + 4), sinking: sinking === 255 ? -1 : sinking / 4, oxygen: v.getUint8(o + 7) };
+      o += SHIP_BYTES;
     }
     list.push(x);
   }

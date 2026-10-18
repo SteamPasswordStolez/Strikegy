@@ -49,13 +49,14 @@ import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
 import { EngineSounds, type EngineSource } from '@/audio/engines';
 import type { BoomSize } from '@/audio/AudioSystem';
-import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type BlastKind, type GrenadeType } from '@/combat/explosions';
+import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, gunBlast, type BlastKind, type GrenadeType } from '@/combat/explosions';
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
+import { layGun, lookPoint } from '@/vehicles/ship';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
 import { loadTactics } from '@/ai/tacticsLoad';
@@ -173,7 +174,8 @@ function boomSize(kind: string): BoomSize {
   if (kind === 'cannon') return 'small';
   if (kind === 'rocket' || kind === 'missile' || kind === 'atshell') return 'rocket';
   if (kind === 'shell' || kind === 'mortar' || kind === 'salvo') return 'shell';
-  if (kind === 'artillery' || kind === 'howitzer' || kind === 'wreck' || kind === 'charge') return 'heavy';
+  if (kind === 'naval' || kind === 'splash') return 'shell';
+  if (kind === 'artillery' || kind === 'howitzer' || kind === 'wreck' || kind === 'charge' || kind === 'bigNaval' || kind === 'torpedo' || kind === 'depth') return 'heavy';
   return 'grenade';
 }
 /**
@@ -651,7 +653,7 @@ export class Game {
         this.audio.smokePop(point, GRENADES.smoke.duration ?? 20);
       },
       destroyed: (_kind, point) => this.audio.grenadeBounce(point, 12),
-      shell: (gun, point, owner, target, part) => this.shellHit(gun, point, owner, target, part),
+      shell: (gun, point, owner, target, part, wet) => this.shellHit(gun, point, owner, target, part, wet),
     });
     r.scene.add(this.gadgets.group);
     this.support = new SupportWorld(this.physics, {
@@ -1642,7 +1644,13 @@ export class Game {
     if (input.viewToggle) this.rideThird = !this.rideThird;
     const spec = v.spec.seats[seat]!;
     if (spec.role === 'driver' && net.drive === v) v.drive(dt, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
-    if (spec.gun) {
+    if (v.ship && spec.gun) {
+      // Laid here for the look; the server lays and fires its own (from the seat's look).
+      const eye = v.seatEye(seat, new THREE.Vector3());
+      const target = lookPoint(this.physics, eye, viewDir(p.yaw, p.pitch), v.mounts[seat]!.gun.range, this.gadgets.water?.(eye.x, eye.z) ?? NaN, v.body);
+      const { laid } = layGun(v, seat, target, dt);
+      if (!v.ship.broken.has(seat) && v.pullTrigger(seat, input.fire && laid, this.simTime, dt)) net.mountFired(v, seat, 1);
+    } else if (spec.gun) {
       v.aimMount(seat, p.yaw, p.pitch, dt);
       this.keepLookInReach(v, seat);
       if (v.pullTrigger(seat, input.fire, this.simTime, dt)) {
@@ -1794,6 +1802,13 @@ export class Game {
     });
   }
 
+  /** Into the sea: spray at the surface over it, sized by the blast. */
+  private splash(kind: string, point: THREE.Vector3): void {
+    const level = this.gadgets.water?.(point.x, point.z);
+    const at = Number.isFinite(level) ? point.clone().setY(level!) : point;
+    this.effects.splash(at, kind === 'bigNaval' ? 2.2 : kind === 'torpedo' || kind === 'depth' ? 1.8 : kind === 'naval' || kind === 'splash' ? 1.2 : 0.6);
+  }
+
   /** Something going off in a match on the game server: what it looks and sounds like here (the server did the damage). */
   private netBoom(type: Extract<MatchEvent, { k: 'boom' }>['type'], point: THREE.Vector3): void {
     if (type === 'riflesmoke' || type === 'smokeShell') {
@@ -1803,7 +1818,8 @@ export class Game {
     }
     if (type !== 'flash' && type !== 'smoke') {
       const dist = this.renderer.camera.position.distanceTo(point);
-      this.effects.explosion(point);
+      if (type === 'splash') this.splash(type, point);
+      else this.effects.explosion(point);
       this.audio.explosion(point, dist, boomSize(type));
       this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - dist * 0.003) * BOOM_SHAKE[boomSize(type)]);
       return;
@@ -1890,6 +1906,7 @@ export class Game {
       map.world.vehicles !== 'noJets',
     );
     this.vehicles.water = level;
+    this.gadgets.water = level;
     this.renderer.scene.add(this.vehicles.group);
     if (this.bots) {
       const bots = this.bots;
@@ -1897,6 +1914,7 @@ export class Game {
       bots.driveInputs = this.driveInputs;
       bots.playerRiding = () => !!this.ride;
       bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
+      bots.ships.stationGun = (v, seat, target, trigger, dt, shooter) => this.shipGun(v, seat, target, trigger, dt, shooter);
     }
     if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
   }
@@ -2093,11 +2111,9 @@ export class Game {
 
   /** E next to a vehicle with a free seat: in, driver's seat first. */
   private tryEnterVehicle(): boolean {
-    const v = this.vehicles?.nearest(this.player.feet);
-    if (!v) return false;
-    const seat = v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === this.myId));
-    if (seat < 0) return false;
-    this.enterSeat(v, seat);
+    const pick = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
+    if (!pick) return false;
+    this.enterSeat(pick.v, pick.seat);
     return true;
   }
 
@@ -2178,6 +2194,7 @@ export class Game {
     const p = this.player;
     if (seat.role === 'driver') this.driveInputs.set(v.id, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
     if (seat.gun) this.stepVehicleGun(v, at, input.fire, dt);
+    else if (v.ship && seat.station) this.stepStation(v, at, input.fire, dt);
     if (v.altMounts[at] && v.pullTrigger(at, input.ads, this.simTime, dt, true)) this.fireMount(v, at, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, null, true);
     const eye = v.seatEye(at, this.tmpEye);
     this.player.ride(eye, v.velocity);
@@ -2253,6 +2270,14 @@ export class Game {
   /** The player's seat gun: follows the view; the trigger fires it (MGs overheat, shell guns reload). */
   private stepVehicleGun(v: Vehicle, seat: number, trigger: boolean, dt: number): void {
     const p = this.player;
+    if (v.ship) {
+      // A ship's gun lays itself onto what the view is on (sea surface included), elevation for the range.
+      const cam = this.renderer.camera;
+      const range = v.mounts[seat]!.gun.range;
+      const target = lookPoint(this.physics, cam.position, new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion), range, this.gadgets.water?.(cam.position.x, cam.position.z) ?? NaN, v.body);
+      this.shipGun(v, seat, target, trigger, dt, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam });
+      return;
+    }
     v.aimMount(seat, p.yaw, p.pitch, dt);
     this.keepLookInReach(v, seat);
     if (!v.pullTrigger(seat, trigger, this.simTime, dt)) return;
@@ -2270,6 +2295,52 @@ export class Game {
     const look = this.physics.raycast(origin, fwd, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
     const aim = look ? new THREE.Vector3(look.point.x, look.point.y, look.point.z) : origin.clone().addScaledVector(fwd, range);
     this.fireMount(v, seat, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam }, aim);
+  }
+
+  /** A warship's gun laid on `target`, fired by `trigger` once it is laid (not a knocked-out station). */
+  private shipGun(v: Vehicle, seat: number, target: THREE.Vector3, trigger: boolean, dt: number, shooter: GrenadeOwner): void {
+    const { aim, laid } = layGun(v, seat, target, dt);
+    if (v.ship?.broken.has(seat)) return;
+    if (v.pullTrigger(seat, trigger && laid, this.simTime, dt)) this.fireMount(v, seat, shooter, aim);
+  }
+
+  /**
+   * The helm (and the engine room) of a warship: the helm's trigger fires
+   * every station nobody mans that it may work (ship.ts `helmMay`), all laid
+   * on what the helm looks at; the engine room's trigger runs overdrive.
+   */
+  private stepStation(v: Vehicle, seat: number, trigger: boolean, dt: number): void {
+    const ship = v.ship!;
+    const kind = v.spec.seats[seat]!.station?.kind;
+    if (kind === 'engine') {
+      if (trigger && !this.net && ship.overdrive(Math.random)) this.hud.notify(t('ship.overdrive'), 'ally');
+      return;
+    }
+    if (kind !== 'helm') return;
+    const cam = this.renderer.camera;
+    const target = lookPoint(this.physics, cam.position, new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion), 6500, this.gadgets.water?.(cam.position.x, cam.position.z) ?? NaN, v.body);
+    const shooter = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam };
+    for (let i = 0; i < v.seats.length; i++) {
+      if (!ship.helmMay(i, (j) => !!v.seats[j], (k) => v.manned(k))) continue;
+      this.shipGun(v, i, target, trigger, dt, shooter);
+    }
+  }
+
+  /** The ride line's warship part: telegraph and speed, depth and air, fires, flooding, stations out. */
+  private shipLine(v: Vehicle, seat: number): string[] {
+    const s = v.ship!;
+    const kind = v.spec.seats[seat]!.station?.kind;
+    const out: string[] = [];
+    if (kind === 'helm') out.push(`${t(`ship.tel${s.telegraph}` as MessageKey)} · ${Math.round(v.forwardSpeed() * 1.944)} kn`);
+    if (v.spec.ship?.sub && (kind === 'helm' || kind === 'periscope' || kind === 'sonar')) out.push(t('ship.depth').replace('{d}', String(Math.round(s.depth))).replace('{o}', String(Math.round(s.oxygen))));
+    if (s.fires.length) out.push(t('ship.fires').replace('{n}', String(s.fires.length)));
+    if (s.flooding > 0.01) out.push(t('ship.flood').replace('{p}', String(Math.round(s.flooding * 100))));
+    if (s.broken.size) out.push(t('ship.broken').replace('{n}', String(s.broken.size)));
+    if (s.broken.has(seat)) out.push(t('ship.out'));
+    if (s.sinking >= 0) out.push(t('ship.sinking'));
+    if (!this.touch && kind === 'helm') out.push(t(v.spec.ship?.sub ? 'ship.controlsSub' : 'ship.controls'));
+    if (kind === 'engine') out.push(s.time < s.overdriveUntil ? t('ship.overdriveOn') : s.time < s.overdriveReady ? t('ship.overdriveWait') : t('ship.overdriveReady'));
+    return out;
   }
 
   /**
@@ -2401,14 +2472,17 @@ export class Game {
    * A shell came down: a direct hit kills people outright (no going down)
    * and hurts vehicles a lot; then the blast.
    */
-  private shellHit(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart): void {
+  private shellHit(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart, wet = false): void {
     const spec = VEHICLE_GUNS[gun as VehicleGunId];
     if (!spec) return;
     const name = t(`vehicleGun.${gun as VehicleGunId}`);
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon: name, id: owner.id };
     if (target && foes(target, owner) && target.id >= 0) {
-      if (this.vehicles?.get(target.id)) target.applyDamage(spec.vsVehicle, part, source, 'at');
-      else if (target.id === this.myId) {
+      const hitVehicle = this.vehicles?.get(target.id);
+      if (hitVehicle) {
+        target.applyDamage(spec.vsVehicle, part, source, 'at');
+        hitVehicle.shipHit(gun, point);
+      } else if (target.id === this.myId) {
         if (this.damagePlayer(999, point, 'explosion', source)) {
           this.reportKill(owner, this.myId, this.playerCombatant.name, this.myTeam, name);
           this.me.die('explosion', source);
@@ -2423,8 +2497,7 @@ export class Game {
 
       }
     }
-    const kind = gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : gun === 'aam' ? 'missile' : 'shell';
-    this.blast(kind, point, owner, name);
+    this.blast(gunBlast(gun), point, owner, name, wet);
   }
 
   /** A vehicle blew up: everyone aboard dies outright (no going down). */
@@ -2438,7 +2511,8 @@ export class Game {
     const weapon = by?.weapon ?? t(`vehicle.${v.kind}`);
     if (this.ride?.v === v) {
       this.leaveVehicle();
-      if (this.damagePlayer(999, at, 'explosion', by ?? undefined)) {
+      // A warship going down leaves its crew on deck (they swim for it); everything else kills them.
+      if (!v.spec.ship && this.damagePlayer(999, at, 'explosion', by ?? undefined)) {
         if (by && by.id !== this.myId) this.reportKill(owner, this.myId, this.playerCombatant.name, this.myTeam, weapon);
         this.me.die('explosion', by ?? undefined);
       }
@@ -2698,13 +2772,14 @@ export class Game {
    * A damaging blast (frag, panzerfaust rocket, AP mine): fortifications, beacons
    * and mines in it, practice targets, bots and the player. No friendly fire.
    */
-  private blast(kind: BlastKind, point: THREE.Vector3, owner: GrenadeOwner, weapon: string): void {
+  private blast(kind: BlastKind, point: THREE.Vector3, owner: GrenadeOwner, weapon: string, wet = false): void {
     const spec = BLASTS[kind];
     const byPlayer = owner.id === this.myId;
     const source: DamageSource = { pos: point.clone(), name: owner.name, team: owner.team, weapon, id: owner.id };
     const listenerDist = this.renderer.camera.position.distanceTo(point);
     const probe = point.clone().setY(point.y + 0.25);
-    this.effects.explosion(point);
+    if (wet) this.splash(kind, point);
+    else this.effects.explosion(point);
     this.audio.explosion(point, listenerDist, boomSize(kind));
     this.shake = Math.min(0.06, this.shake + Math.max(0, 0.06 - listenerDist * 0.003) * BOOM_SHAKE[boomSize(kind)]);
     if (kind !== 'frag') this.bots?.explosionAt(point);
@@ -2715,8 +2790,7 @@ export class Game {
     if (kind === 'frag') this.gadgets.blast(point, spec.radius * 0.6);
     for (const v of this.vehicles?.vehicles ?? []) {
       if (v.wrecked || (v.team && v.team === owner.team && owner.id !== this.myId)) continue;
-      // Distance to the hull, roughly.
-      const d = Math.max(0, v.pos.distanceTo(point) - Math.min(v.spec.half[0], v.spec.half[2]));
+      const d = v.hullDistance(point);
       const dmg = fragDamage(spec, d, false);
       if (dmg > 0) v.applyDamage(dmg, 'body', source, kind === 'rocket' || kind === 'cannon' ? 'at' : 'explosive');
     }
@@ -3569,7 +3643,9 @@ export class Game {
       const { v, seat } = this.ride;
       const role = v.spec.seats[seat]!.role;
       const n = v.seats.length;
-      const parts = [`${t(`vehicle.${v.kind}`)} · ${t(`seat.${role}`)}`];
+      const station = v.spec.seats[seat]!.station;
+      const parts = [`${t(`vehicle.${v.kind}`)} · ${station ? t(`station.${station.kind}`) : t(`seat.${role}`)}`];
+      if (v.ship) parts.push(...this.shipLine(v, seat));
       const mount = v.mounts[seat];
       if (mount?.overheated) parts.push(t('vehicle.overheat'));
       if (v.reloadLeft(seat, this.simTime) > 0) parts.push(t('vehicle.reloading'));
@@ -3588,9 +3664,14 @@ export class Game {
       prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
       touchLabel = t('touch.exitVehicle');
     } else if (onField && !prompt && !this.buildMode) {
-      const near = this.vehicles?.nearest(this.player.feet);
-      if (near) {
-        prompt = { text: `${key(false)}${t('vehicle.enter')}: ${t(`vehicle.${near.kind}`)}`, progress: null };
+      const near = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
+      const station = near?.v.spec.seats[near.seat]!.station;
+      if (near && station) {
+        const out = near.v.ship?.broken.has(near.seat) ? ` (${t('ship.out')})` : '';
+        prompt = { text: `${key(false)}${t('ship.man')}: ${t(`station.${station.kind}`)}${out} · ${t(`vehicle.${near.v.kind}`)}`, progress: null };
+        touchLabel = t('ship.man');
+      } else if (near) {
+        prompt = { text: `${key(false)}${t('vehicle.enter')}: ${t(`vehicle.${near.v.kind}`)}`, progress: null };
         touchLabel = t('vehicle.enter');
       }
     }
@@ -4763,6 +4844,7 @@ export class Game {
     // Vehicles (zone matches): copies of the server's, in a world laid out the same way (pads, tank spots, limits).
     if ((map.zones?.length ?? 0) > 0) {
       this.vehicles = vehicleWorldFor(this.physics, this.registry, { destroyed: () => {}, roadkill: () => {} }, map, opts.start.size ?? 24, water);
+      this.vehicles.authority = false;
       r.scene.add(this.vehicles.group);
       net.vehicles = this.vehicles;
       net.onVehicle = (v) => {

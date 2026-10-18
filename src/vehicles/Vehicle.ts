@@ -3,7 +3,8 @@ import type { HitPart } from '@/core/events';
 import type { Damageable, DamageKind, DamageSource } from '@/combat/Hitboxes';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
-import { AIRSPACE, VEHICLES, VEHICLE_GUNS, engineForce, vehicleDamage, type VehicleGunId, type VehicleGunSpec, type VehicleKind, type VehicleSpec } from './vehicleData';
+import { AIRSPACE, VEHICLES, VEHICLE_GUNS, engineForce, vehicleDamage, type VehicleGunId, type VehicleGunSpec, type StationKind, type VehicleKind, type VehicleSpec } from './vehicleData';
+import { ShipState } from './ship';
 import { buildVehicleModel, type VehicleModel } from './vehicleModels';
 
 /** Driving input for one step: throttle and steering -1..1, handbrake. */
@@ -107,6 +108,8 @@ export class Vehicle implements Damageable {
   remote = false;
   /** Rounds fired by each seat's main gun, counting up (others draw new ones). */
   readonly seatShots: number[];
+  /** A warship's telegraph, damage control, depth (ship.ts); null for everything else. */
+  readonly ship: ShipState | null;
   private wheelSpin: number[];
 
   constructor(
@@ -126,6 +129,7 @@ export class Vehicle implements Damageable {
     this.altMounts = spec.seats.map((s, seat) => mount(seat, s.alt));
     this.wheelSpin = spec.wheels.map(() => 0);
     this.seatShots = spec.seats.map(() => 0);
+    this.ship = spec.ship ? new ShipState(spec) : null;
     const world = physics.world;
     const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
     if (spec.flight) {
@@ -256,6 +260,37 @@ export class Vehicle implements Damageable {
     return this.seats[0] ?? null;
   }
 
+  /** Whether someone mans a station of `kind` (warships). */
+  manned(kind: StationKind): boolean {
+    return this.spec.seats.some((s, i) => s.station?.kind === kind && !!this.seats[i]);
+  }
+
+  /**
+   * How far `point` is from the hull: from its box for a ship (a shell on a
+   * 250 m carrier's bow is not 120 m off it), roughly from the middle for the rest.
+   */
+  hullDistance(point: THREE.Vector3): number {
+    if (!this.spec.ship) return Math.max(0, this.pos.distanceTo(point) - Math.min(this.spec.half[0], this.spec.half[2]));
+    const l = this.toLocal(this.tmpHull.copy(point));
+    const [hx, hy, hz] = this.spec.half;
+    return Math.hypot(Math.max(0, Math.abs(l.x) - hx), Math.max(0, Math.abs(l.y) - hy - 4), Math.max(0, Math.abs(l.z) - hz));
+  }
+  private readonly tmpHull = new THREE.Vector3();
+
+  /** A warship hit by a round of `gun` at `point` (world): fires, flooding, a station knocked out. */
+  shipHit(gun: string, point: THREE.Vector3): void {
+    if (!this.ship || this.wrecked) return;
+    this.ship.hit(gun === 'torpedo' ? 'torpedo' : 'shell', this.toLocal(this.tmpHull.copy(point)), Math.random);
+  }
+
+  /** A warship's troubles for a step (fires burn the hull); on the side that owns its health. */
+  stepShip(dt: number): void {
+    const s = this.ship;
+    if (!s) return;
+    const burn = s.step(dt, (k) => this.manned(k));
+    if (burn > 0 && !this.wrecked) this.health -= burn * this.spec.health;
+  }
+
   /** Signed speed along the hull's forward axis (m/s). */
   forwardSpeed(): number {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.quat);
@@ -341,7 +376,15 @@ export class Vehicle implements Damageable {
     const body = this.body;
     if (input && (input.throttle !== 0 || input.steer !== 0) && body.isSleeping()) body.wakeUp();
     const m = this.spec.mass;
-    const k = (m * 9.81) / (b.floats.length * b.draft);
+    const ship = this.ship;
+    // Water inside, or going down: less lift. A submarine dives by sitting deeper.
+    const k = ((ship?.lift ?? 1) * m * 9.81) / (b.floats.length * b.draft);
+    const dive = ship?.depth ?? 0;
+    if (ship) {
+      // The helm steps the telegraph (nobody at the helm: all stop).
+      if (input) ship.helm(input.throttle, !!input.brake);
+      else ship.set(1);
+    }
     const pos = this.pos;
     const q = this.quat;
     const lin = body.linvel();
@@ -354,7 +397,7 @@ export class Vehicle implements Damageable {
       p.set(f[0], f[1], f[2]).applyQuaternion(q);
       r.copy(p);
       p.add(pos);
-      const surface = level(p.x, p.z);
+      const surface = level(p.x, p.z) - dive;
       if (!(surface > p.y)) continue;
       wet++;
       const depth = Math.min(surface - p.y, b.draft * 3);
@@ -378,10 +421,10 @@ export class Vehicle implements Damageable {
     body.applyTorqueImpulse({ x: 0, y: -b.yawDrag * ang.y * share * dt, z: 0 }, true);
     // Propeller and rudder at the stern, under water.
     const stern = this.tmpBoatP.set(0, -this.spec.half[1], b.stern).applyQuaternion(q).add(pos);
-    const sternWet = level(stern.x, stern.z) > stern.y - 0.1;
+    const sternWet = level(stern.x, stern.z) - dive > stern.y - 0.1;
     if (!propel || !sternWet || this.wrecked || !input) return;
-    const throttle = input.throttle;
-    const top = b.waterTop ?? this.spec.top;
+    const throttle = ship ? ship.throttle : input.throttle;
+    const top = ship ? ship.topSpeed((kind) => this.manned(kind)) : (b.waterTop ?? this.spec.top);
     const push = throttle > 0 ? (along < top ? throttle * b.thrust : 0) : -along < this.spec.reverse ? throttle * b.thrust * b.reverse : 0;
     body.applyImpulseAtPoint({ x: fwd.x * push * dt, y: 0, z: fwd.z * push * dt }, stern, true);
     // Turning: by water speed past the rudder, a little from the propeller's wash at a standstill.
@@ -556,6 +599,11 @@ export class Vehicle implements Damageable {
   private readonly tmpQ = new THREE.Quaternion();
   private readonly tmpP = new THREE.Vector3();
 
+  /** A world point in the vehicle frame (latest step), in place. */
+  toLocal(world: THREE.Vector3): THREE.Vector3 {
+    return world.sub(this.pos).applyQuaternion(this.tmpQ.copy(this.quat).invert());
+  }
+
   /** Seat eye position in the world. */
   seatEye(i: number, out: THREE.Vector3, alpha = 1): THREE.Vector3 {
     const e = this.spec.seats[i]!.eye;
@@ -607,6 +655,9 @@ export class Vehicle implements Damageable {
 
   /** Where someone getting out of `seat` stands: beside it on the ground, else behind / in front, else on top. */
   exitSpot(seat: number, physics: PhysicsWorld): THREE.Vector3 {
+    // A ship's station: back where one stood to man it.
+    const st = this.spec.seats[seat]?.station;
+    if (st) return this.toWorld(new THREE.Vector3(st.at[0], st.at[1] + 0.05, st.at[2]), new THREE.Vector3());
     const [hx, , hz] = this.spec.half;
     const seatZ = this.spec.seats[seat]!.eye[2];
     const sides = [
@@ -666,7 +717,11 @@ export class Vehicle implements Damageable {
     const am = this.altMounts[seat];
     if (!m) return;
     const s = this.spec.seats[seat]!;
-    const rel = Math.atan2(Math.sin(worldYaw - this.yaw), Math.cos(worldYaw - this.yaw));
+    // Bearings in the gun's own frame (0 = the way it faces on the hull: a ship's aft turret faces back).
+    const f = s.facing ?? 0;
+    const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+    const fromFacing = (local: number) => (f === 0 ? local : wrap(local + f));
+    const rel = wrap(worldYaw - this.yaw - f);
     const tr = s.traverse ?? Math.PI;
     const [lo, hi] = s.pitch ?? [-0.2, 0.6];
     const wantYaw = THREE.MathUtils.clamp(rel, -tr, tr);
@@ -675,23 +730,25 @@ export class Vehicle implements Damageable {
       // Stabilised (owner, 2026-10-14: tanks were too hard to handle): the gun keeps its
       // bearing while the hull turns under it, within its traverse; the turn rate is for aiming.
       const hull = this.yaw;
+      let local = f === 0 ? m.yaw : wrap(m.yaw - f);
       if (m.hullYaw !== undefined) {
         const dh = Math.atan2(Math.sin(hull - m.hullYaw), Math.cos(hull - m.hullYaw));
         // A big jump is a gun nobody aimed for a while: no catching up on it.
-        if (Math.abs(dh) < 0.3) m.yaw = tr >= Math.PI ? Math.atan2(Math.sin(m.yaw - dh), Math.cos(m.yaw - dh)) : THREE.MathUtils.clamp(m.yaw - dh, -tr, tr);
+        if (Math.abs(dh) < 0.3) local = tr >= Math.PI ? Math.atan2(Math.sin(local - dh), Math.cos(local - dh)) : THREE.MathUtils.clamp(local - dh, -tr, tr);
       }
       m.hullYaw = hull;
       // The short way round (a gun with all-round traverse), at the turn rate.
-      let d = wantYaw - m.yaw;
+      let d = wantYaw - local;
       if (tr >= Math.PI) d = Math.atan2(Math.sin(d), Math.cos(d));
       const maxY = s.turn * dt;
-      m.yaw += THREE.MathUtils.clamp(d, -maxY, maxY);
-      if (tr >= Math.PI) m.yaw = Math.atan2(Math.sin(m.yaw), Math.cos(m.yaw));
-      else m.yaw = THREE.MathUtils.clamp(m.yaw, -tr, tr);
+      local += THREE.MathUtils.clamp(d, -maxY, maxY);
+      if (tr >= Math.PI) local = Math.atan2(Math.sin(local), Math.cos(local));
+      else local = THREE.MathUtils.clamp(local, -tr, tr);
+      m.yaw = fromFacing(local);
       const maxP = (s.elevate ?? s.turn) * dt;
       m.pitch += THREE.MathUtils.clamp(wantPitch - m.pitch, -maxP, maxP);
     } else {
-      m.yaw = wantYaw;
+      m.yaw = fromFacing(wantYaw);
       m.pitch = wantPitch;
     }
     if (am) {

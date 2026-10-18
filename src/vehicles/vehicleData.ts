@@ -18,10 +18,11 @@
  */
 
 import type { DamageKind } from '@/combat/Hitboxes';
+import { BATTLESHIP, CARRIER, DESTROYER, NAVAL_GUNS, SUBMARINE } from './warships';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol' | 'dd' | 'cv' | 'bb' | 'ss';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'naval5in' | 'naval6in' | 'naval16in' | 'aa40' | 'torpedo' | 'depthcharge' | 'deckgun';
 /** Tank kinds (one limit for all of them). */
 export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
 /** Jet kinds (one limit for all of them). */
@@ -49,7 +50,17 @@ export interface SeatSpec {
    */
   turn?: number;
   elevate?: number;
+  /** Which way the gun faces on the hull when centred (rad, 0 = ahead; a ship's aft turret faces back, pi). */
+  facing?: number;
+  /**
+   * A ship's station (2026-10-18, big maps plan step 5): what it is and where
+   * on deck one stands to man it (walk up, E). Getting out puts you back there.
+   */
+  station?: { kind: StationKind; at: readonly [number, number, number] };
 }
+
+/** What a warship's station does (plan section 3). */
+export type StationKind = 'helm' | 'main' | 'secondary' | 'aa' | 'torpedo' | 'asw' | 'fire' | 'engine' | 'dc' | 'flight' | 'catapult' | 'periscope' | 'sonar' | 'deckgun';
 
 export interface WheelSpec {
   /** Hub in the vehicle frame (m). */
@@ -92,6 +103,16 @@ export interface VehicleSpec {
    * in the vehicle frame. Someone getting out of a seat steps onto the deck.
    */
   deck?: { parts: readonly { half: readonly [number, number, number]; pos: readonly [number, number, number] }[] };
+  /** A warship (see warships.ts): damage control, flooding, fires, the helm's rules. */
+  ship?: ShipSpec;
+}
+
+/** What makes a vehicle a warship. */
+export interface ShipSpec {
+  /** Station kinds the helm may only work while a station of kind `needs` is manned (the battleship's guns and fire control). */
+  stationsNeeded: readonly { kinds: readonly StationKind[]; needs: StationKind }[];
+  /** A submarine: top speed dived, the helm's depths (m under the surface: surfaced, periscope, deep) and air dived (s). */
+  sub?: { divedTop: number; depths: readonly number[]; oxygen: number };
 }
 
 /**
@@ -573,6 +594,10 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   boat: BOAT,
   lcvp: LCVP,
   patrol: PATROL,
+  dd: DESTROYER,
+  cv: CARRIER,
+  bb: BATTLESHIP,
+  ss: SUBMARINE,
 };
 
 /** A gun that fires a shell (flies and drops) instead of a hitscan round. */
@@ -600,6 +625,10 @@ export interface VehicleGunSpec {
   shell?: ShellSpec;
   /** Missiles: home on a locked enemy aircraft. */
   homing?: boolean;
+  /** A torpedo: runs just under the surface (it ignores `gravity`) and floods what it hits. */
+  torpedo?: boolean;
+  /** A depth charge: sinks and goes off under water (hurts submarines). */
+  depth?: boolean;
 }
 
 export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
@@ -620,6 +649,7 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   gau: { rpm: 900, damage: 80, spread: 0.55, range: 900, vsVehicle: 45, blast: 1.8, burst: 90, cool: 5 },
   aam: { rpm: 60, damage: 999, spread: 0, range: 1500, vsVehicle: 320, blast: 4, burst: 2, cool: 14, shell: { speed: 260, gravity: 0 }, homing: true },
   jetrockets: { rpm: 600, damage: 999, spread: 0.9, range: 1000, vsVehicle: 220, blast: 5, burst: 14, cool: 12, shell: { speed: 230, gravity: 2 } },
+  ...NAVAL_GUNS,
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */

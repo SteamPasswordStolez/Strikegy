@@ -12,13 +12,14 @@
 import * as THREE from 'three';
 import type { Bot } from '@/ai/Bot';
 import { computeDamage, type DamageSource, type Damageable, type HitboxRegistry } from '@/combat/Hitboxes';
-import type { BlastKind } from '@/combat/explosions';
+import { gunBlast, type BlastKind } from '@/combat/explosions';
 import type { HitPart } from '@/core/events';
 import { t } from '@/i18n';
 import type { InputState } from '@/input/InputState';
 import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
+import { layGun, lookPoint } from '@/vehicles/ship';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import type { MapDef, Team } from '@/world/mapTypes';
@@ -148,7 +149,7 @@ export class MatchVehicles {
   /** A rocket tank came for `who` (its side is told where). */
   onRocketTank: (team: Team, zone: string, who: string, id: number) => void = () => {};
   /** A vehicle gun fired a blast round or a shell went off (browsers show it). */
-  onBoom: (kind: BlastKind | 'wreck', point: THREE.Vector3) => void = () => {};
+  onBoom: (kind: BlastKind | 'wreck' | 'splash', point: THREE.Vector3) => void = () => {};
   private botTankAt = 20;
   private botJetAt = BOT_JETS.first;
   private readonly jetFreeSince: Record<Team, number> = { blue: -1, red: -1 };
@@ -169,6 +170,7 @@ export class MatchVehicles {
       bots.driveInputs = this.driveInputs;
       bots.playerRiding = (id) => !!sim.soldiers.get(id)?.ride;
       bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
+      bots.ships.stationGun = (v, seat, target, trigger, dt, shooter) => this.shipGun(v, seat, target, trigger, dt, shooter);
     }
   }
 
@@ -223,11 +225,9 @@ export class MatchVehicles {
 
   /** E by a vehicle with a free seat (not one the other side crews): in, the driver's seat first. */
   tryEnter(s: Soldier): boolean {
-    const v = this.world.nearest(s.player.feet);
-    if (!v || (v.team && v.team !== s.team)) return false;
-    const seat = v.seats.findIndex((o, i) => !o && (i > 0 || v.driverOnly === null || v.driverOnly === s.id));
-    if (seat < 0) return false;
-    this.seat(s, v, seat);
+    const pick = this.world.enterAt(s.player.feet, (v, i) => (!v.team || v.team === s.team) && (i > 0 || v.driverOnly === null || v.driverOnly === s.id));
+    if (!pick) return false;
+    this.seat(s, pick.v, pick.seat);
     return true;
   }
 
@@ -343,6 +343,11 @@ export class MatchVehicles {
     const spec = v.spec.seats[at]!;
     const p = s.player;
     const shooter: Shooter = { id: s.id, name: s.combatant.name, team: s.team };
+    if (v.ship && (spec.gun || spec.station)) {
+      this.stepStation(v, at, p.yaw, p.pitch, input.fire, dt, shooter);
+      p.ride(v.seatEye(at, this.tmp), v.velocity);
+      return;
+    }
     if (spec.gun) {
       v.aimMount(at, p.yaw, p.pitch, dt);
       if (v.pullTrigger(at, input.fire, this.sim.time, dt)) {
@@ -362,6 +367,38 @@ export class MatchVehicles {
     }
     if (v.altMounts[at] && v.pullTrigger(at, input.ads, this.sim.time, dt, true)) this.fireMount(v, at, shooter, null, true);
     p.ride(v.seatEye(at, this.tmp), v.velocity);
+  }
+
+  /**
+   * A warship's station (a person's or a bot's): a gun lays itself onto what
+   * the look from the seat lands on (the sea surface included) and fires once
+   * laid; the helm's trigger fires the stations nobody mans that it may work;
+   * the engine room's runs overdrive.
+   */
+  stepStation(v: Vehicle, at: number, yaw: number, pitch: number, trigger: boolean, dt: number, shooter: Shooter): void {
+    const ship = v.ship!;
+    const spec = v.spec.seats[at]!;
+    const kind = spec.station?.kind;
+    if (kind === 'engine') {
+      if (trigger) ship.overdrive(Math.random);
+      return;
+    }
+    if (!spec.gun && kind !== 'helm') return;
+    const eye = v.seatEye(at, new THREE.Vector3());
+    const view = viewDir(yaw, pitch, this.tmp2);
+    const target = lookPoint(this.physics, eye, view, 6500, this.sim.world.water?.levelAt(eye.x, eye.z) ?? NaN, v.body);
+    if (spec.gun) {
+      this.shipGun(v, at, target, trigger, dt, shooter);
+      return;
+    }
+    for (let i = 0; i < v.seats.length; i++) if (ship.helmMay(i, (j) => !!v.seats[j], (k) => v.manned(k))) this.shipGun(v, i, target, trigger, dt, shooter);
+  }
+
+  /** A warship's gun laid on `target`, fired by `trigger` once laid (not a knocked-out station). */
+  shipGun(v: Vehicle, seat: number, target: THREE.Vector3, trigger: boolean, dt: number, shooter: Shooter): void {
+    const { aim, laid } = layGun(v, seat, target, dt);
+    if (v.ship?.broken.has(seat)) return;
+    if (v.pullTrigger(seat, trigger && laid, this.sim.time, dt)) this.fireMount(v, seat, shooter, aim);
   }
 
   /**
@@ -403,6 +440,8 @@ export class MatchVehicles {
     }
     v.place(to, new THREE.Quaternion(d.qx, d.qy, d.qz, d.qw), new THREE.Vector3(d.vx, d.vy, d.vz));
     if (v.flight) v.flight.throttle = d.throttle;
+    // A warship: the helm (telegraph and depth step) rides in the same byte.
+    if (v.ship) v.ship.setHelmByte(Math.round(d.throttle * 255));
     this.driveAt.set(v.id, now);
     return true;
   }
@@ -472,7 +511,7 @@ export class MatchVehicles {
   }
 
   /** A shell came down: a direct hit kills people outright (no going down) and hurts vehicles a lot; then the blast. */
-  shellHit(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart): void {
+  shellHit(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart, wet = false): void {
     const spec = VEHICLE_GUNS[gun as VehicleGunId];
     if (!spec) return;
     const name = t(`vehicleGun.${gun as VehicleGunId}`);
@@ -480,8 +519,11 @@ export class MatchVehicles {
     if (target && target.team !== owner.team && target.id >= 0) {
       const person = this.sim.soldiers.get(target.id);
       const bot = person ? undefined : this.sim.bots?.bots.find((b) => b.id === target.id);
-      if (this.world.get(target.id)) target.applyDamage(spec.vsVehicle, part, source, 'at');
-      else if (person) {
+      const hitVehicle = this.world.get(target.id);
+      if (hitVehicle) {
+        target.applyDamage(spec.vsVehicle, part, source, 'at');
+        hitVehicle.shipHit(gun, point);
+      } else if (person) {
         if (person.alive && person.damage(999, point, 'explosion', source)) {
           this.sim.reportKill(owner, person.id, person.combatant.name, person.team, name);
           person.die('explosion', source);
@@ -494,17 +536,16 @@ export class MatchVehicles {
         }
       } else target.applyDamage(spec.vsVehicle, part, source, 'at'); // a recon plane
     }
-    const kind: BlastKind = gun === 'howitzer' ? 'howitzer' : gun === 'atgun' ? 'atshell' : gun === 'rockets' ? 'salvo' : gun === 'aam' ? 'missile' : 'shell';
+    const kind: BlastKind = gunBlast(gun);
     this.sim.blast(kind, point, owner, name);
-    this.onBoom(kind, point);
+    this.onBoom(wet ? 'splash' : kind, point);
   }
 
   /** Blast damage to vehicles (roughly by the distance to the hull); a side's own crewed ones are spared. */
   blast(kind: BlastKind, point: THREE.Vector3, owner: Shooter, damage: (d: number) => number, source: DamageSource): void {
     for (const v of this.world.vehicles) {
       if (v.wrecked || (v.team && v.team === owner.team)) continue;
-      const d = Math.max(0, v.pos.distanceTo(point) - Math.min(v.spec.half[0], v.spec.half[2]));
-      const dmg = damage(d);
+      const dmg = damage(v.hullDistance(point));
       if (dmg > 0) v.applyDamage(dmg, 'body', source, kind === 'rocket' || kind === 'cannon' ? 'at' : 'explosive');
     }
   }
@@ -520,7 +561,7 @@ export class MatchVehicles {
     for (const s of this.sim.soldiers.values()) {
       if (s.ride?.v !== v) continue;
       this.leave(s, false);
-      if (s.alive && s.damage(999, v.pos, 'explosion', by ?? undefined)) {
+      if (!v.spec.ship && s.alive && s.damage(999, v.pos, 'explosion', by ?? undefined)) {
         if (by && by.id !== s.id) this.sim.reportKill(owner, s.id, s.combatant.name, s.team, weapon);
         s.die('explosion', by ?? undefined);
       }

@@ -99,7 +99,7 @@ export function seeded(seed: number): () => number {
 }
 
 /** What goes off where everyone should see it. */
-export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck' | 'charge';
+export type BoomKind = 'frag' | 'flash' | 'smoke' | 'rocket' | 'mine' | 'riflesmoke' | 'mortar' | 'artillery' | 'smokeShell' | 'shell' | 'howitzer' | 'atshell' | 'salvo' | 'missile' | 'cannon' | 'wreck' | 'charge' | 'naval' | 'bigNaval' | 'torpedo' | 'depth' | 'splash';
 
 /** Where a deployed soldier came out and the seed of its spread for this life. */
 export interface Deployed {
@@ -203,8 +203,12 @@ export class MatchSim {
         this.addSmoke(point, GRENADES.smoke.radius);
         this.onBoom('riflesmoke', point);
       },
-      shell: (gun, point, owner, target, part) => this.vehicles?.shellHit(gun, point, owner, target, part),
+      shell: (gun, point, owner, target, part, wet) => this.vehicles?.shellHit(gun, point, owner, target, part, wet),
     });
+    if (this.world.water) {
+      const water = this.world.water;
+      this.gadgets.water = (x, z) => water.levelAt(x, z);
+    }
     this.support = new SupportWorld(physics, {
       shell: (kind, point, owner) => {
         this.blast(kind, point, owner, t(`support.${kind}`));

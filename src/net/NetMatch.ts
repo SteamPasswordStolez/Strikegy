@@ -606,7 +606,7 @@ export class NetMatch {
   flush(): void {
     if (!this.outbox.length) return;
     const d = this.drive;
-    const drive = d && !d.wrecked ? { vehicle: d.id, x: d.pos.x, y: d.pos.y, z: d.pos.z, qx: d.quat.x, qy: d.quat.y, qz: d.quat.z, qw: d.quat.w, vx: d.velocity.x, vy: d.velocity.y, vz: d.velocity.z, throttle: d.flight?.throttle ?? 0 } : null;
+    const drive = d && !d.wrecked ? { vehicle: d.id, x: d.pos.x, y: d.pos.y, z: d.pos.z, qx: d.quat.x, qy: d.quat.y, qz: d.quat.z, qw: d.quat.w, vx: d.velocity.x, vy: d.velocity.y, vz: d.velocity.z, throttle: d.flight?.throttle ?? (d.ship ? d.ship.helmByte / 255 : 0) } : null;
     const bots = this.botFrame?.() ?? null;
     this.unacked.push(...this.outbox);
     if (this.unacked.length > REDUNDANT * 4) this.unacked.splice(0, this.unacked.length - REDUNDANT * 4);
@@ -725,6 +725,7 @@ export class NetMatch {
       if (tr.samples.length > 12) tr.samples.shift();
       v.health = n.health * v.spec.health;
       v.driverOnly = n.driverOnly < 0 ? null : n.driverOnly;
+      if (v.ship && n.ship) v.ship.take(n.ship, v === this.drive);
       if (n.flags & VF.wrecked && !v.wrecked) vw.burnOut(v);
       // Who sits where (this browser's own seat too: the game moves its player in and out on the server's word).
       n.seats.forEach((s, i) => {

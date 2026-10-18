@@ -49,9 +49,42 @@ export const BLASTS = {
   missile: { innerRadius: 1.5, radius: 4, maxDamage: 120, fortMult: 1.5 },
   // A Rush / S&D charge going off: everyone close by is caught in it.
   charge: { innerRadius: 4, radius: 12, maxDamage: 250, fortMult: 3 },
+  // Warships (big maps plan step 5): a 5 / 6-inch shell, a 16-inch shell, a torpedo, a depth charge.
+  naval: { innerRadius: 3, radius: 10, maxDamage: 220, fortMult: 2.6 },
+  bigNaval: { innerRadius: 6, radius: 18, maxDamage: 320, fortMult: 3 },
+  torpedo: { innerRadius: 3, radius: 9, maxDamage: 250, fortMult: 2 },
+  depth: { innerRadius: 6, radius: 18, maxDamage: 300, fortMult: 1 },
 } satisfies Record<string, BlastSpec>;
 
 export type BlastKind = keyof typeof BLASTS;
+
+/** The blast a vehicle gun's shell makes where it comes down. */
+export function gunBlast(gun: string): BlastKind {
+  switch (gun) {
+    case 'howitzer':
+      return 'howitzer';
+    case 'atgun':
+      return 'atshell';
+    case 'rockets':
+      return 'salvo';
+    case 'aam':
+      return 'missile';
+    case 'naval5in':
+    case 'naval6in':
+    case 'deckgun':
+      return 'naval';
+    case 'naval16in':
+      return 'bigNaval';
+    case 'aa40':
+      return 'cannon';
+    case 'torpedo':
+      return 'torpedo';
+    case 'depthcharge':
+      return 'depth';
+    default:
+      return 'shell';
+  }
+}
 
 /**
  * Frag damage at a distance: full damage inside the core, quadratic falloff to

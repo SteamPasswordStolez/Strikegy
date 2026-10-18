@@ -53,6 +53,11 @@ const VOICE: Record<EngineKind, EngineVoice> = {
   lcvp: { sample: 'engine_heavy', rate: [0.75, 1.15], idle: 24, top: 60, speed: 9, gain: 0.5, ref: 10, rumble: 800 },
   // Twin diesels of a patrol boat.
   patrol: { sample: 'engine_heavy', rate: [0.7, 1.2], idle: 24, top: 70, speed: 14, gain: 0.6, ref: 14, rumble: 700 },
+  // Warships: steam turbines and diesels, deep and far-reaching.
+  dd: { sample: 'engine_heavy', rate: [0.55, 0.9], idle: 18, top: 50, speed: 19, gain: 0.7, ref: 40, rumble: 500 },
+  cv: { sample: 'engine_heavy', rate: [0.45, 0.7], idle: 14, top: 40, speed: 17, gain: 0.8, ref: 70, rumble: 400 },
+  bb: { sample: 'engine_heavy', rate: [0.42, 0.66], idle: 14, top: 38, speed: 15, gain: 0.85, ref: 70, rumble: 380 },
+  ss: { sample: 'engine_heavy', rate: [0.6, 0.95], idle: 20, top: 48, speed: 10.5, gain: 0.5, ref: 25, rumble: 600 },
   recon: { sample: 'prop_loop', rate: [1, 1], idle: 90, top: 90, speed: 60, gain: 0.6, ref: 45, rumble: 3000 },
 };
 

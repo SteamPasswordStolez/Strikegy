@@ -6,6 +6,7 @@ import type { MapDef, Team } from '@/world/mapTypes';
 import type { Boundary } from '@/world/terrain';
 import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, VEHICLES, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
+import { SHIP, stationNear } from './ship';
 
 /** A base pad: where it is and what it brings out. */
 export interface PadSpot extends PadState {
@@ -81,6 +82,8 @@ export class VehicleWorld {
   air: { center: THREE.Vector3; radius: number } | null = null;
   /** Water under boats (the sea and rivers), or null on dry maps. */
   water: ((x: number, z: number) => number) | null = null;
+  /** This world keeps the vehicles' health (false in a browser playing on the game server: its snapshots do). */
+  authority = true;
   private readonly byHandle = new Map<number, Vehicle>();
 
   constructor(
@@ -172,6 +175,22 @@ export class VehicleWorld {
     return this.vehicles.find((v) => v.id === id);
   }
 
+  /**
+   * What E by `p` gets one into: on or by a warship, only the station one
+   * stands at (walk up to it); else the nearest vehicle's first free seat
+   * that `ok` allows. Null when there is none.
+   */
+  enterAt(p: THREE.Vector3, ok: (v: Vehicle, seat: number) => boolean): { v: Vehicle; seat: number } | null {
+    const v = this.nearest(p);
+    if (!v) return null;
+    if (v.spec.ship) {
+      const seat = stationNear(v.spec, (q) => v.toLocal(q), p, (i) => !v.seats[i] && ok(v, i));
+      return seat >= 0 ? { v, seat } : null;
+    }
+    const seat = v.seats.findIndex((s, i) => !s && ok(v, i));
+    return seat >= 0 ? { v, seat } : null;
+  }
+
   /** The closest vehicle with a free seat whose hull is within reach of `p`. */
   nearest(p: THREE.Vector3, reach = ENTER_REACH): Vehicle | null {
     let best: Vehicle | null = null;
@@ -209,6 +228,8 @@ export class VehicleWorld {
     for (const v of this.vehicles) {
       if (!v.empty) v.usedAt = this.time;
       v.drive(dt, inputs.get(v.id) ?? null);
+      // A warship's fires and flooding, where its health is kept (the game server's world, solo play; not a browser in a match there).
+      if (this.authority) v.stepShip(dt);
       if (!v.wrecked && v.health <= 0) this.wreck(v);
     }
     this.runOver(walkers);
@@ -216,7 +237,8 @@ export class VehicleWorld {
     this.stockBikes();
     for (let i = this.vehicles.length - 1; i >= 0; i--) {
       const v = this.vehicles[i]!;
-      const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v);
+      // Warships stay out empty (they are the fleet, not something one leaves lying about).
+      const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v) && !v.spec.ship;
       // Aircraft nobody flies: they come down; wrecks in the air fall and are cleared on landing.
       if (this.time > v.removeAt || unused || v.pos.y < -50) this.remove(v);
       else if (v.flight && v.crashed && !v.wrecked) v.health = 0;
@@ -242,7 +264,8 @@ export class VehicleWorld {
 
   private wreck(v: Vehicle): void {
     this.burnOut(v);
-    v.removeAt = this.time + WRECK_LIFE;
+    // A warship goes down slowly (its buoyancy fades: ship.ts `sinkTime`), then it goes.
+    v.removeAt = this.time + (v.ship ? SHIP.sinkTime + 15 : WRECK_LIFE);
     this.hooks.destroyed(v, v.lastHurtBy);
   }
 
@@ -250,6 +273,7 @@ export class VehicleWorld {
   burnOut(v: Vehicle): void {
     v.wrecked = true;
     v.health = 0;
+    if (v.ship && v.ship.sinking < 0) v.ship.sinking = 0;
     v.model.root.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) m.material = WRECK_MAT;

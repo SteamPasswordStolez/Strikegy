@@ -4,6 +4,7 @@ import type { Team } from '@/world/mapTypes';
 import { KitBuilder, type KitMaterial } from '@/world/modelKits';
 import { VEHICLES, type VehicleKind } from './vehicleData';
 import { bakeInto } from './vehicleLooks';
+import { buildBattleship, buildCarrier, buildDestroyer, buildSubmarine } from './warshipModels';
 
 /**
  * Procedural vehicle models. Origin is the chassis centre, forward is -z.
@@ -113,6 +114,10 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'boat') return buildBoat(team);
   if (kind === 'lcvp') return buildLcvp(team);
   if (kind === 'patrol') return buildPatrol(team);
+  if (kind === 'dd') return buildDestroyer(team);
+  if (kind === 'cv') return buildCarrier(team);
+  if (kind === 'bb') return buildBattleship(team);
+  if (kind === 'ss') return buildSubmarine(team);
   return buildBike(team);
 }
 

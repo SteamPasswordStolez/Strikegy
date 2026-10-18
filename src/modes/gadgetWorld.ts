@@ -6,6 +6,17 @@ import type { Damageable, DamageSource, HitboxRegistry } from '@/combat/Hitboxes
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
 import type { Team } from '@/world/mapTypes';
 import { BEACON, MINE, RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
+import { VEHICLE_GUNS, type VehicleGunId } from '@/vehicles/vehicleData';
+
+/**
+ * Shells and the sea (2026-10-18, big maps plan step 5): a shell going into the
+ * water goes off at the surface (a splash; boats close by take the blast); a
+ * torpedo drops in and runs `TORPEDO_RUN` m under the surface until it hits a
+ * hull or the shore; a depth charge sinks at `DEPTH.sink` m/s and goes off at
+ * `DEPTH.fuse` m (or on what it strikes).
+ */
+const TORPEDO_RUN = 0.9;
+const DEPTH = { sink: 4, fuse: 14 } as const;
 
 /** Who fired or placed something (the player or a bot). */
 export interface GadgetOwner {
@@ -30,7 +41,7 @@ export interface MineWalker {
 
 export interface GadgetHooks {
   /** A tank / gun shell struck something (`target` when it hit someone or a vehicle) and goes off. */
-  shell?(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart): void;
+  shell?(gun: string, point: THREE.Vector3, owner: GadgetOwner, target: Damageable | null, part: HitPart, wet?: boolean): void;
   /** A rocket or mine went off at `point`. */
   explode(kind: 'rocket' | 'mine', point: THREE.Vector3, owner: GadgetOwner): void;
   /** A rocket struck someone directly. */
@@ -58,6 +69,8 @@ interface Shot {
   homing?: () => THREE.Vector3 | null;
   /** The vehicle that fired it: its own shells fly out of its hitbox. */
   ignore?: RAPIER.RigidBody;
+  /** Running under the water: a torpedo, a depth charge. */
+  mode?: 'torpedo' | 'depth';
 }
 
 export interface Beacon {
@@ -134,8 +147,15 @@ export class GadgetWorld {
     if (homing) mesh.scale.setScalar(2.2);
     mesh.position.copy(origin);
     this.group.add(mesh);
-    this.shots.push({ id: this.nextId++, kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life: homing ? 8 : 14, mesh, gun, homing, ignore });
+    const spec = VEHICLE_GUNS[gun as VehicleGunId] as (typeof VEHICLE_GUNS)[VehicleGunId] | undefined;
+    const mode = spec?.torpedo ? 'torpedo' : spec?.depth ? 'depth' : undefined;
+    const life = homing ? 8 : mode === 'torpedo' && spec?.shell ? spec.range / spec.shell.speed : 14;
+    if (mode) mesh.scale.set(2.2, 4, 2.2);
+    this.shots.push({ id: this.nextId++, kind: 'shell', owner, pos: origin.clone(), vel: vel.clone(), gravity, life, mesh, gun, homing, ignore, mode });
   }
+
+  /** The water surface under a point (the sea and rivers; NaN on dry ground), set by the game. */
+  water: ((x: number, z: number) => number) | null = null;
 
   /** Everything in flight or placed, for the game server to send (ids shared by shots, beacons and mines). */
   /** Rockets, rifle grenades and shells in the air. */
@@ -218,7 +238,33 @@ export class GadgetWorld {
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
       s.life -= dt;
-      s.vel.y -= s.gravity * dt;
+      const level = s.kind === 'shell' && this.water ? this.water(s.pos.x, s.pos.z) : NaN;
+      if (s.mode && Number.isFinite(level) && s.pos.y < level - (s.mode === 'torpedo' ? TORPEDO_RUN - 0.05 : 0)) {
+        if (s.mode === 'torpedo') {
+          // Running at its depth along the way it was aimed.
+          s.pos.y = level - TORPEDO_RUN;
+          const speed = VEHICLE_GUNS[s.gun as VehicleGunId]?.shell?.speed ?? 25;
+          const h = Math.hypot(s.vel.x, s.vel.z) || 1;
+          s.vel.set((s.vel.x / h) * speed, 0, (s.vel.z / h) * speed);
+        } else {
+          // Sinking, slowed by the water; off at its depth.
+          s.vel.x *= Math.exp(-3 * dt);
+          s.vel.z *= Math.exp(-3 * dt);
+          s.vel.y = -DEPTH.sink;
+          if (s.pos.y < level - DEPTH.fuse) {
+            const at = s.pos.clone();
+            this.removeShot(i);
+            this.hooks.shell?.(s.gun ?? '', at, s.owner, null, 'body', true);
+            continue;
+          }
+        }
+      } else if (s.mode === 'torpedo' && this.water && !Number.isFinite(level) && s.vel.y === 0) {
+        // A running torpedo out of the water (up a river's end): it goes off there.
+        const at = s.pos.clone();
+        this.removeShot(i);
+        this.hooks.shell?.(s.gun ?? '', at, s.owner, null, 'body', false);
+        continue;
+      } else s.vel.y -= (s.mode ? 9.8 : s.gravity) * dt;
       // Missiles turn toward their target (up to 2.4 rad/s).
       const goal = s.homing?.();
       if (goal) {
@@ -232,6 +278,14 @@ export class GadgetWorld {
       const d = this.seg.copy(s.vel).multiplyScalar(dt);
       const len = d.length();
       const hit = len > 0 ? this.physics.raycast(s.pos, d.divideScalar(len), len, SHOT_MASK, undefined, s.ignore) : null;
+      // A shell into the sea: off at the surface (the torpedo and the depth charge go in).
+      if (!hit && !s.mode && Number.isFinite(level) && s.pos.y >= level && s.pos.y + d.y * len < level) {
+        const f = (s.pos.y - level) / Math.max(1e-6, -d.y * len);
+        const at = s.pos.clone().addScaledVector(d, len * f).setY(level);
+        this.removeShot(i);
+        this.hooks.shell?.(s.gun ?? '', at, s.owner, null, 'body', true);
+        continue;
+      }
       if (hit || s.life <= 0) {
         const at = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : s.pos.clone();
         // Back off the surface so the blast isn't buried in it.
@@ -243,7 +297,8 @@ export class GadgetWorld {
         }
         const target = hit ? this.registry.lookup(hit.collider.handle) : undefined;
         if (s.kind === 'shell') {
-          this.hooks.shell?.(s.gun ?? '', at, s.owner, target && target.owner.alive ? target.owner : null, target?.part ?? 'body');
+          const wet = !!s.mode && Number.isFinite(level) && at.y < level;
+          this.hooks.shell?.(s.gun ?? '', at, s.owner, target && target.owner.alive ? target.owner : null, target?.part ?? 'body', wet);
           continue;
         }
         if (target && target.owner.alive) this.hooks.directHit(target.owner, target.part, at, s.owner);

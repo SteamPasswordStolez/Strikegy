@@ -863,6 +863,7 @@ function netVehicle(v: Vehicle): NetVehicle {
     health: Math.max(0, v.health) / v.spec.health,
     driverOnly: v.driverOnly ?? -1,
     seats: v.seats.map((o, i) => ({ id: o?.id ?? -1, yaw: v.mounts[i]?.yaw ?? 0, pitch: v.mounts[i]?.pitch ?? 0, shots: v.seatShots[i] ?? 0 })),
+    ship: v.ship?.net(),
   };
 }
 

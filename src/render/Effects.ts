@@ -453,6 +453,39 @@ export class Effects {
     this.addDecal(new THREE.Vector3(point.x, floorY + 0.01, point.z), up, 0x14110e, 30);
   }
 
+  /** A shell into the sea (or a torpedo going off under a hull): a white column of spray, `size` 1 for a 5-inch. */
+  splash(point: THREE.Vector3, size = 1): void {
+    const up = new THREE.Vector3(0, 1, 0);
+    const n = Math.round(26 * Math.min(2.5, size));
+    for (let i = 0; i < n; i++) {
+      this.soft.spawn({
+        pos: point.clone().add(randomDir(this.tmpVec).setY(0).multiplyScalar(rand(0, 1.5 * size))),
+        vel: randomDir(this.tmpVec2).setY(0).multiplyScalar(rand(0.5, 2.5) * size).addScaledVector(up, rand(9, 20) * Math.sqrt(size)),
+        life: rand(1.6, 3),
+        size: rand(1, 2) * size,
+        endSize: rand(3, 5) * size,
+        color: i % 3 ? 0xe8eef0 : 0xc9d6da,
+        alpha: 0.7,
+        gravity: 9.8,
+        drag: 0.5,
+        floorY: point.y - 1,
+      });
+    }
+    for (let i = 0; i < n; i++) {
+      this.soft.spawn({
+        pos: point.clone().setY(point.y + 0.2),
+        vel: randomDir(this.tmpVec).setY(0).normalize().multiplyScalar(rand(2, 7) * size).addScaledVector(up, rand(1, 3)),
+        life: rand(2, 4),
+        size: rand(1.2, 2.2) * size,
+        endSize: rand(4, 7) * size,
+        color: 0xf2f6f7,
+        alpha: 0.45,
+        fadeIn: 0.1,
+        drag: 1.4,
+      });
+    }
+  }
+
   flashbang(point: THREE.Vector3): void {
     this.flashLight(point.clone().setY(point.y + 0.5), 2500, 0.25, 0xf2f6ff, 40);
     this.glow.spawn({ pos: point.clone().setY(point.y + 0.3), life: 0.18, size: 5, endSize: 8, color: 0xffffff });

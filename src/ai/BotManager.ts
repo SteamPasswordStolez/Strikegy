@@ -35,6 +35,7 @@ import { t as tr } from '@/i18n';
 import type { TacticalMap } from './tactics';
 import { DangerMap } from './danger';
 import { Crowns } from './foliage';
+import { SHIP_AI, ShipCrews, botStation } from './shipCrew';
 import { core } from '@/wasm/core';
 import { CROWD_AIR, CROWD_ARMOUR, CROWD_BOT, CROWD_FIRING, CROWD_HAS_GOAL, Crowd } from './crowd';
 
@@ -513,6 +514,7 @@ export class BotManager implements BotServices {
     opts: BotOptions,
   ) {
     this.humans = typeof player === 'function' ? player : () => [player];
+    this.ships = new ShipCrews(physics);
     this.skill = SKILLS[opts.difficulty];
     this.damageScale = DAMAGE_SCALE[opts.difficulty];
     const plain = (team: Team) => opts.plain === team || opts.plain === 'both';
@@ -910,7 +912,11 @@ export class BotManager implements BotServices {
 
   setWater(water: WaterMap): void {
     this.water = water.any ? water : null;
+    this.ships.level = (x, z) => water.levelAt(x, z);
   }
+
+  /** Bot warship crews (helm, gunners); its `stationGun` is set by the game. */
+  readonly ships: ShipCrews;
 
   foliage(from: THREE.Vector3, to: THREE.Vector3): number {
     return this.crowns ? this.crowns.depth(from.x, from.y, from.z, to.x, to.y, to.z) : 0;
@@ -2085,6 +2091,8 @@ export class BotManager implements BotServices {
     for (const e of this.entries) {
       const b = e.bot;
       if (!b.alive || b.riding || b.puppet) continue;
+      // A side with warships: bots back at the base crew them (straight aboard, like deploying into a seat).
+      if (b.feet.distanceTo(this.teams[b.team].base) < VEHICLE_BASE && this.crewShip(b, vw)) continue;
       // A landing force's soldier on its ship (no craft had room when they came back): into one as soon as one has.
       if (this.landing === b.team && b.feet.distanceTo(this.teams[b.team].base) < 90) {
         this.boardFromShip(b, vw);
@@ -2118,6 +2126,29 @@ export class BotManager implements BotServices {
       }
       if (best) e.board = { vehicle: best.v.id, seat: best.seat, until: this.time + 25 };
     }
+  }
+
+  /**
+   * Into a free station of one of the side's warships (the one with the
+   * fewest aboard first) while fewer than `SHIP_AI.crewShare` of the side's
+   * bots crew them. False when it didn't.
+   */
+  private crewShip(b: Bot, vw: VehicleWorld): boolean {
+    let best: { v: Vehicle; seat: number; aboard: number } | null = null;
+    let crew = 0;
+    for (const v of vw.vehicles) {
+      if (!v.ship || v.wrecked || (v.team ?? v.home) !== b.team) continue;
+      const aboard = v.seats.filter(Boolean).length;
+      crew += aboard;
+      const seat = botStation(v.spec, (i) => !v.seats[i] && !this.claimed(v.id, i));
+      if (seat < 0 || (best && aboard >= best.aboard)) continue;
+      best = { v, seat, aboard };
+    }
+    if (!best) return false;
+    const side = this.entries.filter((x) => x.bot.team === b.team).length;
+    if (crew >= Math.ceil(side * SHIP_AI.crewShare)) return false;
+    this.seatBot(b, best.v, best.seat);
+    return true;
   }
 
   /** The side that comes from the sea on this map (its base is a ship), or null. */
@@ -2238,6 +2269,17 @@ export class BotManager implements BotServices {
     v.seatEye(r.seat, this.tmp);
     bot.carry(this.tmp, v.velocity);
     const role = v.spec.seats[r.seat]!.role;
+    // A warship's crew stays at its stations (bots don't swim).
+    if (v.ship) {
+      const shooter = { id: bot.id, name: bot.name, team: bot.team };
+      const all = this.vehicles!.vehicles;
+      if (role === 'driver') {
+        const out: DriveInput = { throttle: 0, steer: 0, brake: false };
+        this.driveInputs.set(v.id, out);
+        this.ships.helm(v, all, bot.team, shooter, e.objective?.pos ?? null, this.time, dt, out);
+      } else if (v.mounts[r.seat]) this.ships.gunner(v, r.seat, all, bot.team, shooter, dt);
+      return;
+    }
     const boat = !!v.spec.boat && !v.spec.wheels.length;
     if (role === 'driver' && v.flight) this.pilot(e, v);
     else if (role === 'driver' && boat) this.boatPilot(e, v, dt);
@@ -2822,6 +2864,7 @@ export class BotManager implements BotServices {
     for (const e of this.entries) {
       if (e.bot.riding?.vehicle !== v.id) continue;
       this.alightBot(e);
+      // (People swim off a warship going down; bots don't swim, so they go down with it.)
       e.bot.killOutright(source ?? undefined);
       dead.push(e.bot);
     }
