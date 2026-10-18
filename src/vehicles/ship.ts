@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import type { DamageSource } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
-import type { StationKind, VehicleSpec } from './vehicleData';
+import { VEHICLES, type StationKind, type VehicleKind, type VehicleSpec } from './vehicleData';
 import type { Vehicle } from './Vehicle';
 import type { Team } from '@/world/mapTypes';
 
@@ -35,8 +36,12 @@ export const SHIP = {
   flood: { lift: 0.55, pump: 0.025, selfPump: 0.006, spread: 0.004, torpedo: 0.22 },
   repair: 12,
   engine: { unmanned: 0.75, overdrive: 0.15, overdriveTime: 15, cooldown: 90, fireChance: 0.08 },
-  /** Points a second for someone at a station or in a carrier plane (a fleet's RP: a squad of four on duty buys a plane in about a minute and a half). */
-  duty: 1,
+  /**
+   * At sea (maps with warships) squad RP comes from damage dealt (owner,
+   * 2026-10-18): points per hit point taken off an enemy ship, plane or boat,
+   * whatever did it (guns, torpedoes, bombs, the fires they started).
+   */
+  rpPerDamage: 1,
   /** Sinking: the buoyancy fades out over this long (s). */
   sinkTime: 25,
   /** A hit this close (m) to a station may knock it out, with this chance. */
@@ -425,6 +430,17 @@ export function fleetShip(all: readonly Vehicle[], team: Team, rand: () => numbe
   let r = rand() * weight.reduce((a, b) => a + b, 0);
   for (let i = 0; i < ships.length; i++) if ((r -= weight[i]!) <= 0) return ships[i]!;
   return ships[ships.length - 1]!;
+}
+
+/** Whether `kinds` (a map's own vehicles) include a warship: there RP comes from damage dealt (`SHIP.rpPerDamage`). */
+export function seaRp(kinds: readonly VehicleKind[]): boolean {
+  return kinds.some((k) => !!VEHICLES[k].ship);
+}
+
+/** Points for `by` taking `taken` health off `v` at sea: none for hurting one's own side's. */
+export function seaDamagePoints(v: Vehicle, by: DamageSource, taken: number): number {
+  const side = v.team ?? v.home;
+  return side && by.team === side ? 0 : taken * SHIP.rpPerDamage;
 }
 
 /** Every warship as the fleet battle counts it (`FleetRules.observeFleet`). */

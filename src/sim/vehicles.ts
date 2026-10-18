@@ -19,7 +19,7 @@ import type { InputState } from '@/input/InputState';
 import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
-import { layGun, lookPoint } from '@/vehicles/ship';
+import { layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
 import { CARRIER_PLANES, PLANE_COST, isCarrierPlane, launchBlock, planeCap, type CarrierPlaneKind } from '@/vehicles/carrierPlanes';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
@@ -166,7 +166,16 @@ export class MatchVehicles {
     map: MapDef,
     size: number,
   ) {
-    this.world = vehicleWorldFor(sim.physics, sim.registry, { destroyed: (v, by) => this.destroyed(v, by), roadkill: (v, w) => this.roadkill(v, w), duty: (id, p) => sim.scores.award(id, p) }, map, size, sim.world.water);
+    // At sea RP comes from damage dealt (owner, 2026-10-18).
+    const sea = seaRp((map.vehicles ?? []).map((m) => m.kind));
+    const hooks: VehicleHooks = {
+      destroyed: (v, by) => this.destroyed(v, by),
+      roadkill: (v, w) => this.roadkill(v, w),
+      damage: (v, by, taken) => {
+        if (sea) sim.scores.award(by.id, seaDamagePoints(v, by, taken));
+      },
+    };
+    this.world = vehicleWorldFor(sim.physics, sim.registry, hooks, map, size, sim.world.water);
     const bots = sim.bots;
     if (bots) {
       bots.vehicles = this.world;

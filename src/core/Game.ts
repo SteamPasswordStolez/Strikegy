@@ -56,7 +56,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
-import { contacts, deckSpawn, fleetShip, fleetState, layGun, lookPoint } from '@/vehicles/ship';
+import { contacts, deckSpawn, fleetShip, fleetState, layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
 import { CARRIER_PLANES, DECK, PLANE_COST, isCarrierPlane, launchBlock, planeCap } from '@/vehicles/carrierPlanes';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
@@ -1893,6 +1893,8 @@ export class Game {
     const plan = fixedOnly || map.world.vehicles === 'fixed' ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(this.physics, bases, zones, this.boundary);
     // Small maps: jeeps and motorbikes only.
     const heavy = map.world.vehicles !== 'light';
+    // At sea RP comes from damage dealt (owner, 2026-10-18).
+    const sea = seaRp((map.vehicles ?? []).map((m) => m.kind));
     const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
     const level = water ? (x: number, z: number) => water.levelAt(x, z) : null;
     const bikes = [...plan.bikes, ...mapVehicleSpots(map, this.physics, level)];
@@ -1905,7 +1907,9 @@ export class Game {
       {
         destroyed: (v, by) => this.vehicleDestroyed(v, by),
         roadkill: (v, victim) => this.roadkill(v, victim),
-        duty: (id, p) => this.scores.award(id, p),
+        damage: (v, by, taken) => {
+          if (sea) this.scores.award(by.id, seaDamagePoints(v, by, taken));
+        },
       },
       pads,
       bikes,
@@ -2449,7 +2453,13 @@ export class Game {
   /** In third person aboard, the camera orbits on its own (see `orbit`). */
   private orbiting(): boolean {
     const r = this.ride;
-    return !!r && this.rideThird && this.player.alive && !r.v.flight && !!r.v.spec.seats[r.seat]!.turn;
+    return !!r && this.rideThird && this.player.alive && !r.v.flight && (!!r.v.spec.seats[r.seat]!.turn || !!r.v.ship);
+  }
+
+  /** What the third-person camera aboard looks at (world): over the hull's middle; over a warship, high enough to see the whole ship. */
+  private rideCamTarget(v: Vehicle, alpha: number, out: THREE.Vector3): THREE.Vector3 {
+    const h = v.ship ? v.spec.half[1] + SHIP_CAM.height + SHIP_CAM.heightPerLength * v.spec.half[2] * 2 : v.spec.half[1] + (this.orbit ? ORBIT.height : 1.1);
+    return v.toWorld(out.set(0, h, 0), out, alpha);
   }
 
   /**
@@ -2460,12 +2470,17 @@ export class Game {
     const { v, seat } = this.ride!;
     const p = this.player;
     const dir = viewDir(o.yaw, o.pitch, this.tmpOrbitDir);
-    const target = v.toWorld(this.tmpOrbitAt.set(0, v.spec.half[1] + ORBIT.height, 0), this.tmpOrbitAt, this.lastAlpha);
-    const range = Math.max(400, v.mounts[seat]?.gun.range ?? 600);
+    const target = this.rideCamTarget(v, this.lastAlpha, this.tmpOrbitAt);
+    const range = v.ship ? 6500 : Math.max(400, v.mounts[seat]?.gun.range ?? 600);
     // From just past the vehicle (the camera ray would cross its own crew otherwise).
     const from = target.addScaledVector(dir, 3);
-    const hit = this.physics.raycast(from, dir, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
-    const aim = this.tmpOrbitAim.copy(from).addScaledVector(dir, hit ? hit.distance : range);
+    let aim: THREE.Vector3;
+    // At sea the look lands on the sea too (a ship's guns lay onto it).
+    if (v.ship) aim = this.tmpOrbitAim.copy(lookPoint(this.physics, from, dir, range, this.gadgets.water?.(from.x, from.z) ?? NaN, v.body));
+    else {
+      const hit = this.physics.raycast(from, dir, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
+      aim = this.tmpOrbitAim.copy(from).addScaledVector(dir, hit ? hit.distance : range);
+    }
     const gun = v.model.mounts[seat]?.gun;
     const pivot = gun ? gun.getWorldPosition(this.tmpOrbitAt) : v.seatEye(seat, this.tmpOrbitAt);
     const dx = aim.x - pivot.x;
@@ -3455,13 +3470,27 @@ export class Game {
         viewDir(o.yaw, o.pitch, fwd);
         this.gunView = { yaw: o.yaw, pitch: o.pitch };
       }
-      const target = v.toWorld(new THREE.Vector3(0, v.spec.half[1] + (o ? ORBIT.height : 1.1), 0), new THREE.Vector3(), alpha);
-      const want = v.flight ? 20 : v.kind === 'apc' || v.kind === 'rocket' ? 10 : v.kind === 'bike' ? 4.5 : TANK_KINDS.includes(v.kind) ? 11 : 6.5;
-      const hit = this.physics.raycast(target, fwd.clone().negate(), want, Layer.WORLD, v.collider);
+      const target = this.rideCamTarget(v, alpha, new THREE.Vector3());
+      const want = v.ship
+        ? SHIP_CAM.dist + SHIP_CAM.distPerLength * v.spec.half[2] * 2
+        : v.flight
+          ? 20
+          : v.kind === 'apc' || v.kind === 'rocket'
+            ? 10
+            : v.kind === 'bike'
+              ? 4.5
+              : TANK_KINDS.includes(v.kind)
+                ? 11
+                : 6.5;
+      // Its own hull never pulls the camera in (a deck's houses and guns are parts of its body).
+      const hit = this.physics.raycast(target, fwd.clone().negate(), want, Layer.WORLD, v.spec.deck ? undefined : v.collider, v.spec.deck ? v.body : undefined);
       const dist = hit ? Math.max(1.2, hit.distance - 0.3) : want;
       // Pull in at once, ease back out.
       this.rideCamDist = dist < this.rideCamDist ? dist : this.rideCamDist + (dist - this.rideCamDist) * (1 - Math.exp(-3 * dt));
       cam.position.copy(target).addScaledVector(fwd, -this.rideCamDist);
+      // Over a warship the camera stays above the waves.
+      const sea = v.ship ? this.gadgets.water?.(cam.position.x, cam.position.z) : undefined;
+      if (sea !== undefined && Number.isFinite(sea)) cam.position.y = Math.max(cam.position.y, sea + SHIP_CAM.overSea);
     }
   }
   private readonly tmpRideEye = new THREE.Vector3();
@@ -3522,11 +3551,23 @@ export class Game {
   private gunOnScreen(v: Vehicle, seat: number): { x: number; y: number } | null {
     const gun = v.mountAim(seat);
     if (!gun) return null;
-    const dir = viewDir(gun.yaw, gun.pitch, this.tmpOrbitDir);
+    const spec = v.mounts[seat]!.gun;
     const from = v.muzzleOf(seat, this.tmpOrbitAim);
-    const range = Math.max(400, v.mounts[seat]!.gun.range);
-    const hit = this.physics.raycast(from, dir, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
-    const at = from.addScaledVector(dir, hit ? hit.distance : range).project(this.renderer.camera);
+    let at: THREE.Vector3;
+    const shell = spec.shell;
+    if (v.ship && shell && shell.gravity > 0 && spec.blast >= 5 && !spec.depth && gun.pitch > 0.002) {
+      // A warship's big gun (not the AA): where its shell comes down on the sea now (the gun is elevated for the range).
+      const dist = Math.min(spec.range, (shell.speed * shell.speed * Math.sin(2 * gun.pitch)) / shell.gravity);
+      at = from.addScaledVector(viewDir(gun.yaw, 0, this.tmpOrbitDir), dist);
+      const sea = this.gadgets.water?.(at.x, at.z);
+      if (sea !== undefined && Number.isFinite(sea)) at.y = sea;
+    } else {
+      const dir = viewDir(gun.yaw, gun.pitch, this.tmpOrbitDir);
+      const range = Math.max(400, spec.range);
+      const hit = this.physics.raycast(from, dir, range, Layer.WORLD | Layer.HITBOX, undefined, v.body);
+      at = from.addScaledVector(dir, hit ? hit.distance : range);
+    }
+    at.project(this.renderer.camera);
     if (at.z > 1) return null;
     return { x: ((at.x + 1) / 2) * window.innerWidth, y: ((1 - at.y) / 2) * window.innerHeight };
   }
@@ -5357,6 +5398,13 @@ const RIDE_ZOOM = { sight: 3, mg: 1.6, speedFov: 6 };
 const LOOK_LEAD = { yaw: 0.5, pitch: 0.2 };
 /** The third-person orbit camera aboard: its pitch range (rad) and how high over the hull it looks from (m). */
 const ORBIT = { min: -0.85, max: 0.45, height: 1.6 };
+/**
+ * Third person aboard a warship (2026-10-18, owner asked how C looks there):
+ * the camera orbits the whole ship, not the station, from this far (m, plus
+ * a share of the hull's length) and over the hull's middle this high, never
+ * closer than `overSea` m over the waves.
+ */
+const SHIP_CAM = { dist: 30, distPerLength: 0.55, height: 6, heightPerLength: 0.035, overSea: 2.5 };
 
 /** Player jet cannon: fires at the crosshair within this angle of the nose (rad), onto an enemy aircraft this close to the crosshair. */
 const JET_GUN = { cone: 0.21, assist: 0.031 };

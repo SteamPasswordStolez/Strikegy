@@ -105,6 +105,8 @@ export class Vehicle implements Damageable {
   readonly velocity = new THREE.Vector3();
   /** Who last hurt it (credited if it blows up). */
   lastHurtBy: DamageSource | null = null;
+  /** Health taken off it and by whom (set by the world on the side that owns its health: RP at sea). */
+  onHurt: ((by: DamageSource, taken: number) => void) | null = null;
   /**
    * Moved from outside instead of by its own physics (`place`): a vehicle a
    * person drives in a match on the game server (that person's browser
@@ -298,7 +300,7 @@ export class Vehicle implements Damageable {
     const s = this.ship;
     if (!s) return;
     const burn = s.step(dt, (k) => this.manned(k));
-    if (burn > 0 && !this.wrecked) this.health -= burn * this.spec.health;
+    if (burn > 0 && !this.wrecked) this.hurt(burn * this.spec.health, this.lastHurtBy);
   }
 
   /** Signed speed along the hull's forward axis (m/s). */
@@ -312,13 +314,20 @@ export class Vehicle implements Damageable {
     return Math.atan2(-f.x, -f.z);
   }
 
+  /** Takes `dmg` off the health and tells `onHurt` how much of it was really taken (fires credit whoever last hurt it). */
+  private hurt(dmg: number, by: DamageSource | null): void {
+    const taken = Math.min(dmg, Math.max(0, this.health));
+    this.health -= dmg;
+    if (by && taken > 0) this.onHurt?.(by, taken);
+  }
+
   applyDamage(amount: number, part: HitPart, source?: DamageSource, kind: DamageKind = 'bullet'): boolean {
     void part;
     if (this.wrecked) return false;
     const dmg = vehicleDamage(this.kind, amount, kind);
     if (dmg <= 0) return false;
-    this.health -= dmg;
     if (source) this.lastHurtBy = source;
+    this.hurt(dmg, source ?? null);
     // A vehicle is never reported as a kill itself (its crew is).
     return false;
   }

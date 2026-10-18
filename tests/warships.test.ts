@@ -4,7 +4,7 @@ import { createInputState } from '@/input/InputState';
 import { decodeSnapshot, encodeInputFrame, encodeInputs, encodeVehicles, packInput, snapshotFor, type NetVehicle } from '@/net/matchProtocol';
 import { HitboxRegistry } from '@/combat/Hitboxes';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
-import { SHIP, SPOT, ShipState, TELEGRAPH, ballisticPitch, layGun, shipVisible, spotShips, stationNear } from '@/vehicles/ship';
+import { SHIP, SPOT, ShipState, TELEGRAPH, ballisticPitch, layGun, seaDamagePoints, seaRp, shipVisible, spotShips, stationNear } from '@/vehicles/ship';
 import { Vehicle } from '@/vehicles/Vehicle';
 import { VehicleWorld } from '@/vehicles/VehicleWorld';
 import { VEHICLES, type StationKind, type VehicleKind } from '@/vehicles/vehicleData';
@@ -267,6 +267,47 @@ describe('stations', () => {
     // Getting out puts one back on the station's spot on deck.
     const exit = v.exitSpot(fire.i, physics);
     expect(v.toLocal(exit.clone()).distanceTo(new THREE.Vector3(...v.spec.seats[fire.i]!.station!.at))).toBeLessThan(0.2);
+    physics.dispose();
+  });
+});
+
+describe('RP at sea', () => {
+  it('points for the health taken off an enemy vessel (fires credit the one who started them), none off one\'s own', async () => {
+    const physics = await PhysicsWorld.create();
+    const got = new Map<number, number>();
+    const vw = new VehicleWorld(
+      physics,
+      new HitboxRegistry(),
+      { destroyed: () => {}, roadkill: () => {}, damage: (v, by, taken) => got.set(by.id, (got.get(by.id) ?? 0) + seaDamagePoints(v, by, taken)) },
+      [],
+      [],
+      0,
+      [],
+      false,
+      false,
+    );
+    const dd = vw.spawn('dd', new THREE.Vector3(0, 0, 0), 0, 'blue');
+    const red = { pos: new THREE.Vector3(), name: 'r', team: 'red' as const, weapon: 'naval5in', id: 9 };
+    const blue = { ...red, team: 'blue' as const, id: 4 };
+    dd.applyDamage(1400, 'body', red, 'explosive');
+    const first = got.get(9)!;
+    expect(first).toBeCloseTo(VEHICLES.dd.health - dd.health);
+    dd.applyDamage(1400, 'body', blue, 'explosive');
+    expect(got.get(4)).toBe(0);
+    // A fire burning on: whoever last hurt it (blue here, so nothing); then red again.
+    dd.lastHurtBy = red;
+    dd.ship!.fires.push(0);
+    const before = dd.health;
+    dd.stepShip(1);
+    expect(got.get(9)! - first).toBeCloseTo(before - dd.health);
+    // Only what was really left counts.
+    const sofar = got.get(9)!;
+    dd.health = 500;
+    dd.applyDamage(20000, 'body', red, 'explosive');
+    expect(got.get(9)! - sofar).toBeCloseTo(500);
+    // Only maps with warships play it this way.
+    expect(seaRp(['dd', 'jeep'])).toBe(true);
+    expect(seaRp(['lcvp', 'boat', 'jeep'])).toBe(false);
     physics.dispose();
   });
 });

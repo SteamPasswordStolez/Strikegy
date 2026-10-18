@@ -48,8 +48,8 @@ export interface VehicleHooks {
   destroyed(v: Vehicle, by: DamageSource | null): void;
   /** `v` ran `victim` over. */
   roadkill(v: Vehicle, victim: Walker): void;
-  /** Points for someone manning a warship's station or flying a carrier plane (`SHIP.duty` a second): a fleet's RP. */
-  duty?(id: number, points: number): void;
+  /** `by` took `taken` health off `v` (on the side that owns vehicle health): RP at sea. */
+  damage?(v: Vehicle, by: DamageSource, taken: number): void;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -163,6 +163,9 @@ export class VehicleWorld {
       v.airRadius = this.air.radius;
     }
     v.water = this.water;
+    v.onHurt = (by, taken) => {
+      if (this.authority) this.hooks.damage?.(v, by, taken);
+    };
     if (v.spec.plane) v.carriers = () => this.vehicles.filter((c) => c.kind === 'cv');
     v.usedAt = this.time;
     this.vehicles.push(v);
@@ -268,8 +271,6 @@ export class VehicleWorld {
       v.drive(dt, inputs.get(v.id) ?? null);
       // A warship's fires and flooding, where its health is kept (the game server's world, solo play; not a browser in a match there).
       if (this.authority) v.stepShip(dt);
-      // On duty aboard a warship or in a carrier plane: points (squad RP for the planes, call-ins).
-      if (this.authority && (v.ship || v.spec.plane) && !v.wrecked && this.hooks.duty) for (const o of v.seats) if (o) this.hooks.duty(o.id, SHIP.duty * dt);
       // A carrier plane standing on the deck: repaired and rearmed after a while.
       if (v.spec.plane && !v.wrecked) {
         if (v.driverOnly !== null && (this.time > v.keptUntil || v.seats[0])) v.driverOnly = null;
