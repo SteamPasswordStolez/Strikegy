@@ -12,7 +12,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { NavWorld, VehicleNav } from '../src/ai/NavWorld.ts';
-import { onNavBuilt } from '../src/ai/navCache.ts';
+import { onNavBuilt, setNavFiles } from '../src/ai/navCache.ts';
 import { loadTactics } from '../src/ai/tacticsLoad.ts';
 import { MAPS } from '../src/data/maps.ts';
 import { PhysicsWorld } from '../src/physics/PhysicsWorld.ts';
@@ -23,11 +23,15 @@ import { parseMap } from '../src/world/validateMap.ts';
 const DIR = 'public/nav';
 mkdirSync(DIR, { recursive: true });
 const written = new Map<string, number>();
+const baked = new Map<string, Uint8Array>();
 onNavBuilt((key, data) => {
   const gz = gzipSync(data, { level: 9 });
   writeFileSync(`${DIR}/${key}.bin.gz`, gz);
   written.set(key, gz.byteLength);
+  baked.set(key, data);
 });
+// What this run baked, read back the way the site and the server read the files.
+setNavFiles(async (key) => baked.get(key) ?? null);
 
 // `npm run nav -- <id> ...` bakes just those maps (and removes nothing).
 const only = process.argv.slice(2);
@@ -45,8 +49,11 @@ for (const id of only.length ? only : [...MAPS.map((m) => m.id), 'sandbox']) {
   // Vehicles come with zone matches (bot drivers route on their own mesh).
   const veh = (map.zones?.length ?? 0) > 0 ? await VehicleNav.build(physics, world.built.navBig?.coarseExtra ?? extra) : null;
   const t2 = performance.now();
-  // The bots' tactical points (cover, peek spots), from the soldier navmesh.
-  if (nav) await loadTactics(nav, physics);
+  // The bots' tactical points (cover, peek spots), keyed on the soldier navmesh's triangles: from the navmesh as
+  // the game and the server load it from the baked file (a loaded mesh hashes differently from a freshly built
+  // one, so points baked from that were never found and every load built them again; 2026-10-19).
+  const loaded = nav ? await NavWorld.build(physics, extra, world.built.navBig) : null;
+  if (loaded) await loadTactics(loaded, physics);
   const keys = [...written.keys()].filter((k) => !before.has(k));
   const kb = keys.map((k) => `${k} ${Math.round(written.get(k)! / 1024)} KB`).join(', ');
   console.log(`${id}: navmesh ${nav ? Math.round(t1 - t0) : 'failed'} ms, vehicles ${veh ? `${Math.round(t2 - t1)} ms` : '-'} (${kb})`);
