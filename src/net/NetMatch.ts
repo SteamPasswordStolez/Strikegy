@@ -342,7 +342,7 @@ class Remote {
       v.effects.spawnShots([{ from: eye.clone(), to }], this.muzzle);
     }
     v.effects.muzzleFlash(this.muzzle, this.fwd);
-    v.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(v.camera.position), this.id);
+    v.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(v.camera.position), this.id, def.id);
   }
 
   /** The name over a person's head while up (and within range). */

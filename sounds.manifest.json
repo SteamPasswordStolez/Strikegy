@@ -148,6 +148,46 @@
       "src": "firearms/Prepared SFX Library/Walther PPQ/X_39P.wav",
       "dur": 0.9
     },
+    "gun_blk": {
+      "src": "firearms/Prepared SFX Library/Savage 10 .300 Blackout/T_27P.wav",
+      "dur": 1.1
+    },
+    "gun_ppsh": {
+      "src": "firearms/Prepared SFX Library/PPSh/P_30P.wav",
+      "dur": 0.9
+    },
+    "gun_m1917": {
+      "src": "firearms/Prepared SFX Library/1917/B_24P.wav",
+      "dur": 1.5
+    },
+    "gun_tikka": {
+      "src": "firearms/Prepared SFX Library/Tikka/W_29P.wav",
+      "dur": 1.8
+    },
+    "gun_m1894": {
+      "src": "firearms/Prepared SFX Library/Model 1894/L_23P.wav",
+      "dur": 1.3
+    },
+    "gun_mossberg": {
+      "src": "firearms/Prepared SFX Library/Mossberg/N_30P.wav",
+      "dur": 1.5
+    },
+    "gun_model12": {
+      "src": "firearms/Prepared SFX Library/Model 12/K_22P.wav",
+      "dur": 1.5
+    },
+    "gun_arisaka": {
+      "src": "firearms/Prepared SFX Library/Arisaka/E_25P.wav",
+      "dur": 1.8
+    },
+    "gun_1911": {
+      "src": "firearms/Prepared SFX Library/1911/A_42P.wav",
+      "dur": 0.9
+    },
+    "gun_bersa": {
+      "src": "firearms/Prepared SFX Library/Bersa/F_47P.wav",
+      "dur": 0.9
+    },
     "gunfar_ar": {
       "src": "firearms/Prepared SFX Library/AR-15/D_24P.wav",
       "dur": 1.4

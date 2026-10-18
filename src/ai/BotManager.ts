@@ -3031,7 +3031,7 @@ export class BotManager implements BotServices {
       if (pellets === 1 || i < 3) this.effects.spawnShots([{ from: eye, to }], this.muzzle);
     }
     this.effects.muzzleFlash(this.muzzle, dir);
-    this.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(this.listener), bot.id);
+    this.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(this.listener), bot.id, def.id);
     // Gunfire alerts everyone in earshot (both teams).
     this.alert(eye, HEAR_SHOT, bot);
   }

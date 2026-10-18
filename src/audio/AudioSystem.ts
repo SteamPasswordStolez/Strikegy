@@ -28,34 +28,36 @@ const VOICES: Record<WeaponClass, GunVoice> = {
 };
 
 /**
- * Each gun's own voice on its class's recording (gunplay audit, 2026-10-18:
- * four rifles sounded alike): the playback rate (lower = heavier) and how much
- * of the low thump goes under it. Until each gun has its own recording.
+ * Each gun's own voice (gunplay audit, 2026-10-18: four rifles sounded alike):
+ * its recording from the CC0 firearm library where one fits (`sample`; else
+ * the class's `gun_<class>`), the playback rate (lower = heavier) and how much
+ * of the low thump goes under it. Far off every gun of a class shares one
+ * distant recording (`gunfar_<class>`).
  */
-const GUN_VOICE: Record<string, { rate: number; thump: number }> = {
+const GUN_VOICE: Record<string, { sample?: string; rate: number; thump: number }> = {
   ar1: { rate: 1, thump: 1 },
-  ar2: { rate: 0.9, thump: 1.25 },
+  ar2: { sample: 'gun_lmg', rate: 0.95, thump: 1.25 },
   ar3: { rate: 1.04, thump: 0.95 },
-  ar4: { rate: 1.08, thump: 0.85 },
+  ar4: { sample: 'gun_blk', rate: 1.04, thump: 0.9 },
   smg1: { rate: 1.12, thump: 0.8 },
-  smg2: { rate: 0.98, thump: 1 },
+  smg2: { sample: 'gun_ppsh', rate: 1, thump: 1 },
   smg3: { rate: 1, thump: 1 },
-  smg4: { rate: 0.9, thump: 1.2 },
-  lmg1: { rate: 1.06, thump: 0.95 },
-  lmg2: { rate: 0.86, thump: 1.35 },
-  lmg3: { rate: 0.97, thump: 1.05 },
-  sg1: { rate: 1, thump: 1 },
-  sg2: { rate: 0.94, thump: 1.15 },
-  sg3: { rate: 1.07, thump: 0.9 },
+  smg4: { rate: 0.88, thump: 1.2 },
+  lmg1: { sample: 'gun_ar', rate: 0.95, thump: 1.2 },
+  lmg2: { sample: 'gun_m1894', rate: 0.9, thump: 1.35 },
+  lmg3: { rate: 1.04, thump: 1.05 },
+  sg1: { sample: 'gun_mossberg', rate: 1, thump: 1 },
+  sg2: { sample: 'gun_model12', rate: 1, thump: 1.1 },
+  sg3: { rate: 1.03, thump: 0.9 },
   dmr1: { rate: 1.08, thump: 0.9 },
-  dmr2: { rate: 1, thump: 1 },
-  dmr3: { rate: 0.9, thump: 1.25 },
-  sr1: { rate: 1.03, thump: 1 },
-  sr2: { rate: 0.87, thump: 1.4 },
-  sr3: { rate: 1.1, thump: 0.9 },
+  dmr2: { sample: 'gun_m1917', rate: 1, thump: 1.1 },
+  dmr3: { rate: 0.97, thump: 1.15 },
+  sr1: { sample: 'gun_arisaka', rate: 1, thump: 1 },
+  sr2: { sample: 'gun_tikka', rate: 0.9, thump: 1.4 },
+  sr3: { rate: 1.08, thump: 0.9 },
   pistol1: { rate: 1, thump: 1 },
-  pistol2: { rate: 0.86, thump: 1.3 },
-  pistol3: { rate: 1.08, thump: 0.85 },
+  pistol2: { sample: 'gun_1911', rate: 1, thump: 1.2 },
+  pistol3: { sample: 'gun_bersa', rate: 1, thump: 0.9 },
 };
 
 /**
@@ -634,7 +636,7 @@ export class AudioSystem {
       this.noiseBurst(out, t, 0.06, g * 0.45, { type: 'lowpass', freq: 1500 * pitch, endFreq: 260 }, pitch);
       this.tone(out, t, v.thump * 1.6 * pitch, 0.07, g * 0.3, 'sine', v.thump * 0.5);
       this.tone(out, t + 0.01, 2600 * pitch, 0.02, g * 0.1, 'square');
-    } else if (this.sample(`gun_${cls}`, out, t, 0.95, pitch)) {
+    } else if (this.sample(gv.sample && this.length(gv.sample) > 0 ? gv.sample : `gun_${cls}`, out, t, 0.95, pitch)) {
       // Recordings are taken beside the shooter; a sub thump restores first-person weight.
       this.tone(out, t, v.thump * 2 * pitch, 0.1, g * 0.4 * gv.thump, 'sine', v.thump * 0.5);
       // The action cycling, close to the ear.
@@ -713,7 +715,7 @@ export class AudioSystem {
   }
 
   /** Someone else's gunfire at a world position (bots, M3). */
-  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number, source?: number): void {
+  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number, source?: number, weaponId = ''): void {
     if (!this.ready) return;
     const t = this.ctx!.currentTime;
     this.excite(0.5 / Math.max(5, distance));
@@ -726,10 +728,13 @@ export class AudioSystem {
         : source !== undefined
           ? `g${source}`
           : `g${cls}${spot(pos, 2)}`;
-    const id = distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`;
+    // Near enough to tell guns apart: each gun's own recording and pitch.
+    const gv = distance > FAR_GUNFIRE_M ? undefined : GUN_VOICE[weaponId];
+    const own = gv?.sample && this.length(gv.sample) > 0 ? gv.sample : undefined;
+    const id = own ?? (distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`);
     const out = this.out(pos, 0.6, 1, (this.length(id) || 1.4) + 0.1, undefined, key);
     if (!out) return;
-    if (!this.sample(id, out, t, 0.9, rand(0.96, 1.04))) {
+    if (!this.sample(id, out, t, 0.9, rand(0.97, 1.03) * (gv?.rate ?? 1))) {
       const v = VOICES[cls];
       this.noiseBurst(out, t, v.decay * 1.5, v.gain, { type: 'lowpass', freq: Math.max(800, v.cutoff - distance * 20), endFreq: 200 });
     }
