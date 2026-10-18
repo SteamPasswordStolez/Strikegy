@@ -258,6 +258,8 @@
   "vehicleGun.depthcharge": "Depth charge",
   "vehicleGun.deckgun": "Deck gun",
   "ship.man": "Man",
+  "ship.relieve": "relieve the bot",
+  "spawn.shipPeople": "people",
   "ship.out": "knocked out",
   "ship.overdrive": "Engines on overdrive",
   "ship.overdriveOn": "overdrive on",

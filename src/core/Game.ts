@@ -2134,11 +2134,21 @@ export class Game {
 
   /** E next to a vehicle with a free seat: in, driver's seat first. */
   private tryEnterVehicle(): boolean {
-    const pick = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
+    const pick = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId, this.botYields);
     if (!pick) return false;
+    // A bot at that station gives it up (people first at sea).
+    if (pick.bump !== null && !this.bots?.yieldSeat(pick.bump)) return false;
     this.enterSeat(pick.v, pick.seat);
     return true;
   }
+
+  /** Whether combatant `id` is a bot (solo: anyone but the player; in a match people's ids are 1000 up). */
+  private isBotId(id: number): boolean {
+    return this.net ? id < 1000 : id !== this.myId;
+  }
+
+  /** Bots that would give their seat to the player (people first at sea; in a match the server decides, this is for the prompt). */
+  private readonly botYields = (id: number): boolean => (this.net ? this.isBotId(id) : !!this.bots?.yields(id));
 
   private enterSeat(v: Vehicle, seat: number): void {
     if (this.ride) this.ride.v.seats[this.ride.seat] = null;
@@ -3789,14 +3799,14 @@ export class Game {
       prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
       touchLabel = t('touch.exitVehicle');
     } else if (onField && !prompt && !this.buildMode) {
-      const near = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
+      const near = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId, this.botYields);
       const station = near?.v.spec.seats[near.seat]!.station;
       if (near && station) {
-        const out = near.v.ship?.broken.has(near.seat) ? ` (${t('ship.out')})` : '';
+        const out = (near.v.ship?.broken.has(near.seat) ? ` (${t('ship.out')})` : '') + (near.bump !== null ? ` (${t('ship.relieve')})` : '');
         prompt = { text: `${key(false)}${t('ship.man')}: ${t(`station.${station.kind}`)}${out} · ${t(`vehicle.${near.v.kind}`)}`, progress: null };
         touchLabel = t('ship.man');
       } else if (near) {
-        prompt = { text: `${key(false)}${t('vehicle.enter')}: ${t(`vehicle.${near.v.kind}`)}`, progress: null };
+        prompt = { text: `${key(false)}${t('vehicle.enter')}: ${t(`vehicle.${near.v.kind}`)}${near.bump !== null ? ` (${t('ship.relieve')})` : ''}`, progress: null };
         touchLabel = t('vehicle.enter');
       }
     }
@@ -4281,11 +4291,11 @@ export class Game {
     // Fleet battle: people come out on one of the side's ships, whatever they picked.
     if (selfId === this.myId && this.zoneMode?.match instanceof FleetRules && kind !== 'ship' && kind !== 'veh') {
       const v = this.vehicles ? fleetShip(this.vehicles.vehicles, team, Math.random) : null;
-      if (v) return deckSpawn(v, Math.random);
+      if (v) return deckSpawn(v, Math.random, (id) => this.isBotId(id));
     }
     if (kind === 'ship') {
       const v = this.vehicles?.get(Number(id));
-      if (v?.ship && !v.wrecked && (v.team ?? v.home) === team) return deckSpawn(v, Math.random);
+      if (v?.ship && !v.wrecked && (v.team ?? v.home) === team) return deckSpawn(v, Math.random, (id) => this.isBotId(id));
     }
     if (kind === 'beacon') {
       const b = this.gadgets.beaconsFor({ id: selfId, team }, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
@@ -4469,11 +4479,12 @@ export class Game {
     // The side's warships: on deck, to walk up to a station (a ship is a spawn point).
     for (const v of vw?.vehicles ?? []) {
       if (!v.ship || v.wrecked || (v.team ?? v.home) !== this.myTeam) continue;
-      const aboard = v.seats.filter((s) => s).length;
+      // People aboard of all stations (bots give theirs up to people).
+      const people = v.seats.filter((s) => s && !this.isBotId(s.id)).length;
       out.push({
         key: `ship:${v.id}`,
         kind: 'ride',
-        label: `${t('spawn.ship')}: ${t(`vehicle.${v.kind}`)} (${aboard}/${v.seats.length})`,
+        label: `${t('spawn.ship')}: ${t(`vehicle.${v.kind}`)} (${t('spawn.shipPeople')} ${people}/${v.seats.length})`,
         x: v.pos.x,
         z: v.pos.z,
         blocked: v.ship.sinking >= 0 ? t('ship.sinking') : null,

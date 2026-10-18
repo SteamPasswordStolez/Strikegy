@@ -258,6 +258,8 @@
   "vehicleGun.depthcharge": "폭뢰",
   "vehicleGun.deckgun": "갑판포",
   "ship.man": "근무",
+  "ship.relieve": "봇과 교대",
+  "spawn.shipPeople": "사람",
   "ship.out": "고장",
   "ship.overdrive": "기관 과부하 가동",
   "ship.overdriveOn": "과부하 가동 중",

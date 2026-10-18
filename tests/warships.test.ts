@@ -256,11 +256,13 @@ describe('stations', () => {
       return { i, p: v.toWorld(new THREE.Vector3(a[0] + 0.6, a[1], a[2] + 0.4), new THREE.Vector3()) };
     };
     const fire = at('fire');
-    expect(vw.enterAt(fire.p, () => true)).toEqual({ v, seat: fire.i });
+    expect(vw.enterAt(fire.p, () => true)).toEqual({ v, seat: fire.i, bump: null });
     expect(stationNear(v.spec, (q) => v.toLocal(q), fire.p, () => true)).toBe(fire.i);
     // Taken: nothing for E there (not the next free seat elsewhere on the ship).
     v.seats[fire.i] = { id: 7, team: 'blue' };
     expect(vw.enterAt(fire.p, () => true)).toBeNull();
+    // Unless it is a bot's and people come first: then it is that one, with the bot to get out.
+    expect(vw.enterAt(fire.p, () => true, (id) => id === 7)).toEqual({ v, seat: fire.i, bump: 7 });
     // Mid-deck, away from every station: nothing.
     const mid = v.toWorld(new THREE.Vector3(0, v.spec.half[1], 0), new THREE.Vector3());
     expect(vw.enterAt(mid, () => true)).toBeNull();
@@ -376,6 +378,36 @@ describe('warships on the wire', () => {
     expect(b!.seats[0]!.id).toBe(1000);
     expect(s!.ship).toMatchObject({ helm: 9, depth: 9.25, sinking: -1, oxygen: 87, overdrive: false });
   });
+
+  it('people first: E at a station a bot holds takes it over, the bot finds another', async () => {
+    const room = await MatchRoom.create({ room: 'n2', map: 'naval_test', mode: 'zone', lineup: 'usersBots', size: 16, botShare: false });
+    const sim = room.sim;
+    room.join({ uid: 'ua', name: 'alpha' }, { text: () => {}, binary: () => {} });
+    room.ready('ua');
+    room.tick();
+    const dd = sim.vehicles!.world.vehicles.find((v) => v.kind === 'dd' && v.home === 'blue')!;
+    // A blue bot at the helm.
+    const bot = sim.bots!.bots.find((b) => b.team === 'blue' && !b.benched && !b.riding)!;
+    if (dd.seats[0]) sim.bots!.yieldSeat(dd.seats[0].id);
+    sim.bots!.seatBot(bot, dd, 0);
+    expect(dd.seats[0]?.id).toBe(bot.id);
+    room.deploy('ua', `ship:${dd.id}`, { cls: 'assault' });
+    room.tick();
+    const s = sim.soldiers.get(1000)!;
+    const at = dd.spec.seats[0]!.station!.at;
+    s.player.teleport(dd.toWorld(new THREE.Vector3(at[0] + 0.5, at[1] + 0.05, at[2]), new THREE.Vector3()), 0);
+    for (let i = 0; i < 5; i++) room.tick();
+    expect(dd.seats[0]?.id).toBe(bot.id);
+    const e = createInputState();
+    e.interactPressed = true;
+    room.binary('ua', encodeInputs([packInput(e, 1, sim.tick, 0, 0, 0, 0)]));
+    room.tick();
+    expect(s.ride?.v).toBe(dd);
+    expect(s.ride?.seat).toBe(0);
+    expect(dd.seats[0]?.id).toBe(1000);
+    expect(bot.riding?.seat ?? -1).not.toBe(0);
+    room.dispose();
+  }, 60000);
 
   it('a person deploys aboard, walks up to the helm, mans it and steers from their browser', async () => {
     const room = await MatchRoom.create({ room: 'n1', map: 'naval_test', mode: 'zone' });

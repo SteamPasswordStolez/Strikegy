@@ -237,10 +237,17 @@ export class MatchVehicles {
   // ---------------------------------------------------------------------------
   // People
 
-  /** E by a vehicle with a free seat (not one the other side crews): in, the driver's seat first. */
+  /** E by a vehicle with a free seat (not one the other side crews): in, the driver's seat first; at sea a bot's station or parked plane too. */
   tryEnter(s: Soldier): boolean {
-    const pick = this.world.enterAt(s.player.feet, (v, i) => (!v.team || v.team === s.team) && (i > 0 || v.driverOnly === null || v.driverOnly === s.id));
+    const bots = this.sim.bots;
+    const pick = this.world.enterAt(
+      s.player.feet,
+      (v, i) => (!v.team || v.team === s.team) && (i > 0 || v.driverOnly === null || v.driverOnly === s.id),
+      bots ? (id) => bots.yields(id) : undefined,
+    );
     if (!pick) return false;
+    // A bot at that station gives it up (people first at sea).
+    if (pick.bump !== null && !bots?.yieldSeat(pick.bump)) return false;
     this.seat(s, pick.v, pick.seat);
     return true;
   }

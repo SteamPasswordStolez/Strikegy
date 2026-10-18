@@ -55,6 +55,10 @@ export interface VehicleHooks {
 const DOWN = new THREE.Vector3(0, -1, 0);
 /** How long a person's newly launched carrier plane waits for them (s). */
 const PLANE_KEEP = 40;
+/** Where people take a bot's seat (E at it: the bot gets out): a warship's stations and a carrier plane standing on a deck. */
+export function peopleFirst(v: Vehicle): boolean {
+  return !!v.spec.ship || (!!v.spec.plane && !!v.deck);
+}
 /** Ids for vehicles (clear of combatant ids). */
 const FIRST_ID = 50000;
 /** Seconds a wreck burns before it's cleared, and how long an empty vehicle may stand unused. */
@@ -191,25 +195,30 @@ export class VehicleWorld {
    * stands at (walk up to it); else the nearest vehicle's first free seat
    * that `ok` allows. Null when there is none.
    */
-  enterAt(p: THREE.Vector3, ok: (v: Vehicle, seat: number) => boolean): { v: Vehicle; seat: number } | null {
+  enterAt(p: THREE.Vector3, ok: (v: Vehicle, seat: number) => boolean, yields?: (id: number) => boolean): { v: Vehicle; seat: number; bump: number | null } | null {
+    // People come first at sea (owner, 2026-10-18): a warship's station or a parked carrier plane's seat
+    // held by a bot counts as free for them; the caller gets the bot out (`bump`).
+    const open = (v: Vehicle, i: number): boolean => {
+      const o = v.seats[i];
+      return !o || (!!yields && peopleFirst(v) && yields(o.id));
+    };
+    const free = (v: Vehicle): boolean => v.seats.some((_, i) => open(v, i));
     // Something standing on a ship's deck (a carrier's planes) comes before the ship's stations.
-    const v = this.nearest(p, ENTER_REACH, (o) => !o.spec.ship) ?? this.nearest(p);
+    const v = this.nearest(p, ENTER_REACH, (o) => !o.spec.ship && free(o)) ?? this.nearest(p, ENTER_REACH, free);
     if (!v) return null;
-    if (v.spec.ship) {
-      const seat = stationNear(v.spec, (q) => v.toLocal(q), p, (i) => !v.seats[i] && ok(v, i));
-      return seat >= 0 ? { v, seat } : null;
-    }
-    const seat = v.seats.findIndex((s, i) => !s && ok(v, i));
-    return seat >= 0 ? { v, seat } : null;
+    const seat = v.spec.ship ? stationNear(v.spec, (q) => v.toLocal(q), p, (i) => open(v, i) && ok(v, i)) : v.seats.findIndex((_, i) => !v.seats[i] && ok(v, i));
+    // Not a bot's seat when a free one is there (a plane's rear seat stays the bot's if the pilot's is free).
+    const pick = seat >= 0 ? seat : v.spec.ship ? -1 : v.seats.findIndex((_, i) => open(v, i) && ok(v, i));
+    return pick >= 0 ? { v, seat: pick, bump: v.seats[pick]?.id ?? null } : null;
   }
 
-  /** The closest vehicle with a free seat whose hull is within reach of `p`. */
-  nearest(p: THREE.Vector3, reach = ENTER_REACH, only?: (v: Vehicle) => boolean): Vehicle | null {
+  /** The closest vehicle with a free seat (`free`, by default an empty one) whose hull is within reach of `p`. */
+  nearest(p: THREE.Vector3, reach = ENTER_REACH, free?: (v: Vehicle) => boolean): Vehicle | null {
     let best: Vehicle | null = null;
     let bestD = Infinity;
     const local = new THREE.Vector3();
     for (const v of this.vehicles) {
-      if (v.wrecked || v.seats.every((s) => s) || (only && !only(v))) continue;
+      if (v.wrecked || (free ? !free(v) : v.seats.every((s) => s))) continue;
       // Distance to the hull box.
       local.copy(p).sub(v.pos).applyQuaternion(v.quat.clone().invert());
       const [hx, hy, hz] = v.spec.half;

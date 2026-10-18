@@ -2198,6 +2198,20 @@ export class BotManager implements BotServices {
     return this.entries.some((x) => x.board?.vehicle === vehicle && x.board.seat === seat);
   }
 
+  /** Whether bot `id` would give its seat to a person (one this side runs, riding; not one a browser runs). */
+  yields(id: number): boolean {
+    const b = this.entries.find((x) => x.bot.id === id)?.bot;
+    return !!b && !!b.riding && !b.puppet;
+  }
+
+  /** Bot `id` gives up its seat to a person (out where its station or seat is; it finds another). False when it won't. */
+  yieldSeat(id: number): boolean {
+    const e = this.entries.find((x) => x.bot.id === id);
+    if (!e || !this.yields(id)) return false;
+    this.alightBot(e);
+    return true;
+  }
+
   /** Puts a bot straight into a seat (a tank brought out for it, a deploy aboard): there at once, no slide across the map. */
   seatBot(bot: Bot, v: Vehicle, seat: number): void {
     this.boardBot(this.entryOf(bot), v, seat);

@@ -341,8 +341,11 @@ export function layGun(v: Vehicle, seat: number, target: THREE.Vector3, dt: numb
  * point): on deck at one of its free stations' spots, a little off it, the
  * helm's last (it is the one bots take first); facing the bow.
  */
-export function deckSpawn(v: Vehicle, rand: () => number): { pos: THREE.Vector3; yaw: number } {
-  const spots = v.spec.seats.map((s, i) => (s.station && !v.seats[i] && s.station.kind !== 'helm' ? s.station.at : null)).filter((a) => !!a);
+export function deckSpawn(v: Vehicle, rand: () => number, isBot?: (id: number) => boolean): { pos: THREE.Vector3; yaw: number } {
+  const stations = (free: (i: number) => boolean) => v.spec.seats.map((s, i) => (s.station && free(i) ? s.station.at : null)).filter((a) => !!a);
+  // By a free station; with none, by one a bot holds (people come first: E there takes it over).
+  let spots = stations((i) => !v.seats[i] && v.spec.seats[i]!.station!.kind !== 'helm');
+  if (!spots.length && isBot) spots = stations((i) => !!v.seats[i] && isBot(v.seats[i]!.id));
   const at = spots.length ? spots[Math.floor(rand() * spots.length)]! : v.spec.seats[0]!.station?.at ?? [0, v.spec.half[1], 0];
   const local = new THREE.Vector3(at[0] + (rand() - 0.5) * 1.2, at[1] + 0.15, at[2] + 1.2 + rand() * 0.8);
   return { pos: v.toWorld(local, new THREE.Vector3()), yaw: v.yaw };

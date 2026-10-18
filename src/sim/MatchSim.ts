@@ -703,9 +703,9 @@ export class MatchSim {
     }
     // Fleet battle: people come out on one of the side's ships, whatever they picked (bots wait at the base islet for a station).
     const fleet = this.zoneMode?.match instanceof FleetRules && this.soldiers.has(selfId) && kind !== 'ship' && kind !== 'veh' && this.vehicles ? fleetShip(this.vehicles.world.vehicles, team, Math.random) : null;
-    if (fleet) at = deckSpawn(fleet, Math.random);
+    if (fleet) at = deckSpawn(fleet, Math.random, (id) => !this.soldiers.has(id));
     const ship = kind === 'ship' ? this.vehicles?.world.get(Number(ref)) : undefined;
-    if (ship?.ship && !ship.wrecked && (ship.team ?? ship.home) === team) at = deckSpawn(ship, Math.random);
+    if (ship?.ship && !ship.wrecked && (ship.team ?? ship.home) === team) at = deckSpawn(ship, Math.random, (id) => !this.soldiers.has(id));
     const mate = kind === 'mate' ? this.squadOf(selfId)?.members.find((m) => String(m.id) === ref && m.id !== selfId) : undefined;
     if (mate && !mateSpawnBlock(mate, this.time, this.riding(mate.id))) {
       const side = Math.random() < 0.5 ? -1 : 1;
