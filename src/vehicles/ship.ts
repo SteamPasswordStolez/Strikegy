@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Layer, type PhysicsWorld, type RAPIER } from '@/physics/PhysicsWorld';
 import type { StationKind, VehicleSpec } from './vehicleData';
 import type { Vehicle } from './Vehicle';
+import type { Team } from '@/world/mapTypes';
 
 /**
  * A warship's state and rules (2026-10-18, big maps plan step 5): the engine
@@ -30,7 +31,7 @@ const STOP = 1;
  *   `engine.cooldown` s before the next, with a small chance of a fire.
  */
 export const SHIP = {
-  fire: { dps: 0.0012, out: 8, burnOut: 30, max: 4, chance: 0.3 },
+  fire: { dps: 0.0008, out: 8, burnOut: 30, max: 4, chance: 0.3 },
   flood: { lift: 0.55, pump: 0.025, selfPump: 0.006, spread: 0.004, torpedo: 0.22 },
   repair: 12,
   engine: { unmanned: 0.75, overdrive: 0.15, overdriveTime: 15, cooldown: 90, fireChance: 0.08 },
@@ -326,4 +327,72 @@ export function layGun(v: Vehicle, seat: number, target: THREE.Vector3, dt: numb
   const cp = Math.cos(now.pitch);
   const aim = pivot.addScaledVector(new THREE.Vector3(-Math.sin(now.yaw) * cp, Math.sin(now.pitch), -Math.cos(now.yaw) * cp), 1000);
   return { aim, laid: off < 0.0175 };
+}
+
+/**
+ * Where someone deploying aboard a warship comes out (a ship is a spawn
+ * point): on deck at one of its free stations' spots, a little off it, the
+ * helm's last (it is the one bots take first); facing the bow.
+ */
+export function deckSpawn(v: Vehicle, rand: () => number): { pos: THREE.Vector3; yaw: number } {
+  const spots = v.spec.seats.map((s, i) => (s.station && !v.seats[i] && s.station.kind !== 'helm' ? s.station.at : null)).filter((a) => !!a);
+  const at = spots.length ? spots[Math.floor(rand() * spots.length)]! : v.spec.seats[0]!.station?.at ?? [0, v.spec.half[1], 0];
+  const local = new THREE.Vector3(at[0] + (rand() - 0.5) * 1.2, at[1] + 0.15, at[2] + 1.2 + rand() * 0.8);
+  return { pos: v.toWorld(local, new THREE.Vector3()), yaw: v.yaw };
+}
+
+/**
+ * Finding ships (2026-10-19, plan section 3): a dived submarine can't be
+ * seen, only heard. Each manned station looks or listens once a second and
+ * marks what it finds for its side for `hold` s:
+ * - a destroyer's depth-charge station (with its sonar): dived submarines within `asw` m;
+ * - a submarine's sonar: ships within `sonarShips` m, dived submarines within `sonarSubs` m;
+ * - a submarine's periscope, at periscope depth or up: ships within `periscope` m;
+ * - and any ship has a dived submarine within `close` m of it.
+ * Surfaced ships are always in plain sight (they need no marking).
+ */
+export const SPOT = { asw: 1200, sonarShips: 3000, sonarSubs: 1500, periscope: 5000, periscopeDepth: 12, close: 200, hold: 12 };
+
+/** Whether `v` can be targeted by `team` at `time`: anything afloat, a dived submarine only while marked. */
+export function shipVisible(v: Vehicle, team: Team, time: number): boolean {
+  return !v.ship?.dived || v.spottedUntil[team] > time;
+}
+
+/** One round of looking and listening for every warship's manned stations (see `SPOT`); returns nothing, marks `spottedUntil`. */
+export function spotShips(all: readonly Vehicle[], time: number): void {
+  for (const v of all) {
+    if (!v.ship || v.wrecked) continue;
+    const team = v.team ?? v.home;
+    if (!team) continue;
+    const stations = new Set<StationKind>();
+    v.spec.seats.forEach((st, i) => {
+      if (st.station && v.seats[i] && !v.ship!.broken.has(i)) stations.add(st.station.kind);
+    });
+    const periscope = stations.has('periscope') && v.ship.depth <= SPOT.periscopeDepth;
+    for (const o of all) {
+      if (o === v || o.wrecked || !o.spec.boat || (o.team ?? o.home) === team) continue;
+      const d = o.pos.distanceTo(v.pos);
+      const sub = !!o.ship?.dived;
+      const found = sub
+        ? d < SPOT.close || (stations.has('asw') && d < SPOT.asw) || (stations.has('sonar') && d < SPOT.sonarSubs)
+        : (stations.has('sonar') && d < SPOT.sonarShips) || (periscope && d < SPOT.periscope);
+      if (found) o.spottedUntil[team] = Math.max(o.spottedUntil[team], time + SPOT.hold);
+    }
+  }
+}
+
+/** What a listening or looking station has in its range now: kind, bearing (deg, 0 = north / -z) and range, nearest first. */
+export function contacts(v: Vehicle, kind: StationKind, all: readonly Vehicle[]): { kind: string; bearing: number; range: number }[] {
+  const team = v.team ?? v.home;
+  const out: { kind: string; bearing: number; range: number }[] = [];
+  for (const o of all) {
+    if (o === v || o.wrecked || !o.spec.boat || (o.team ?? o.home) === team) continue;
+    const d = o.pos.distanceTo(v.pos);
+    const sub = !!o.ship?.dived;
+    const ok = kind === 'sonar' ? d < (sub ? SPOT.sonarSubs : SPOT.sonarShips) : kind === 'asw' ? sub && d < SPOT.asw : kind === 'periscope' ? !sub && d < SPOT.periscope && (v.ship?.depth ?? 0) <= SPOT.periscopeDepth : false;
+    if (!ok) continue;
+    const b = (Math.atan2(o.pos.x - v.pos.x, -(o.pos.z - v.pos.z)) * 180) / Math.PI;
+    out.push({ kind: o.kind, bearing: (b + 360) % 360, range: d });
+  }
+  return out.sort((a, b) => a.range - b.range);
 }

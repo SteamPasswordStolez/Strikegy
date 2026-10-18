@@ -134,7 +134,7 @@ export function buildDestroyer(team: Team | null): VehicleModel {
     b.cyl('paint', 1.5, 1.7, 5.5, [0, D + 7.4, z], [-0.08, 0, 0], 14);
     b.cyl('dark', 1.45, 1.45, 0.4, [0, D + 10.2, z - 0.2], [-0.08, 0, 0], 14);
   }
-  for (const s of [-1, 1]) b.box('paint', [1.4, 0.9, 6], [s * 3.9, D + 1.7, 17]);
+  for (const s of [-1, 1]) b.box('paint', [1.4, 0.9, 6], [s * 4.6, D + 1.7, 24]);
   b.box('paint', [4.4, 2.6, 7], [0, D + 1.3, 30]);
   // Depth charge racks at the stern, anchors and a jack staff at the bow.
   for (const s of [-1, 1]) for (let k = 0; k < 6; k++) b.cyl('dark', 0.35, 0.35, 0.9, [s * 1.6, D + 0.45, 50 + k * 1.0], [0, 0, Math.PI / 2], 10);
@@ -148,7 +148,7 @@ export function buildDestroyer(team: Team | null): VehicleModel {
   const gunSize = { w: 4.2, h: 3.0, d: 5.0, barrels: 1, bore: 0.12, length: 6.2, spacing: 0 };
   const fore = gunHouse(root, team, [0, D + 0.4, -35], gunSize);
   const aft = gunHouse(root, team, [0, D + 0.4, 42], gunSize);
-  const torp = torpedoMount(root, team, [0, D + 1.3, 9], 4, 7);
+  const torp = torpedoMount(root, team, [0, D + 1.3, 18], 4, 7);
   const aa = aaMount(root, team, [-4.2, D + 2.0, 22]);
   const asw = fixedLauncher(root, [0, D + 0.5, 56], true);
   return { root, wheels: [], mounts: [null, fore, aft, torp, aa, asw] };
@@ -187,9 +187,8 @@ export function buildBattleship(team: Team | null): VehicleModel {
   const D = 7;
   const b = new KitBuilder();
   hull(b, 245, 17, -7, D, 0.2, 'wood');
-  // Armoured citadel, the tower (bridge decks stepping up to fire control), the funnel, the aft superstructure.
-  b.box('paint', [14, 2.4, 80], [0, D + 1.2, 0]);
-  b.box('paint', [12, 6, 16], [0, D + 5.4, -16]);
+  // The tower (bridge decks stepping up to fire control), the funnel, the aft superstructure.
+  b.box('paint', [12, 8.4, 16], [0, D + 4.2, -16]);
   b.box('paint', [9, 5, 11], [0, D + 10.8, -17]);
   b.box('glass', [9.1, 1.2, 11.1], [0, D + 12.4, -17]);
   b.box('paint', [6.5, 6, 7], [0, D + 16.2, -18]);
@@ -198,13 +197,19 @@ export function buildBattleship(team: Team | null): VehicleModel {
   b.box('dark', [7, 0.4, 2], [0, D + 23.6, -18]);
   b.cyl('paint', 3.6, 4, 10, [0, D + 12, 6], [-0.05, 0, 0], 18);
   b.cyl('dark', 3.5, 3.5, 0.5, [0, D + 17.1, 5.6], [-0.05, 0, 0], 18);
-  b.box('paint', [10, 8, 22], [0, D + 6, 24]);
+  b.box('paint', [10, 10, 22], [0, D + 5, 24]);
+  // Barbette under the superfiring turret, towers under the AA platforms.
+  b.cyl('paint', 4.6, 4.8, 4, [0, D + 2, -46], [0, 0, 0], 20);
+  for (const [x, h, z] of [[-10, 7.6, 34], [10, 7.6, 34], [0, 10.6, 46]] as const) {
+    b.box('paint', [3.4, h, 3.4], [x, D + h / 2, z]);
+    b.box('dark', [4.2, 0.2, 4.2], [x, D + h, z]);
+  }
   b.rod('metal', [0, D + 12, 30], [0, D + 30, 31], 0.3, 8);
   // Catapult and the floatplane on it at the stern; boats; the anchor chains.
   b.box('dark', [1.2, 0.6, 18], [6, D + 1.3, 100], [0, 0.3, 0]);
   b.box('paint', [1.1, 1.1, 8], [6, D + 2.4, 100]);
   b.box('paint', [11, 0.2, 1.6], [6, D + 2.8, 99]);
-  for (const s of [-1, 1]) b.box('paint', [2.4, 1.2, 8], [s * 6, D + 3, 38]);
+  for (const s of [-1, 1]) b.box('paint', [2.4, 1.2, 8], [s * 6.2, D + 0.6, 2]);
   rails(b, -16.9, D, -100, 110);
   rails(b, 16.9, D, -100, 110);
   bakeInto(root, b, team, LIVERY);
@@ -213,10 +218,10 @@ export function buildBattleship(team: Team | null): VehicleModel {
   const B = gunHouse(root, team, [0, D + 4.0, -46], main);
   const C = gunHouse(root, team, [0, D + 0.6, 66], main);
   const sec = { w: 4.5, h: 2.4, d: 5, barrels: 2, bore: 0.12, length: 6.5, spacing: 1.0 };
-  const s1 = gunHouse(root, team, [-12, D + 2.2, -14], sec);
-  const s2 = gunHouse(root, team, [-12, D + 2.2, 16], sec);
-  const s3 = gunHouse(root, team, [12, D + 2.2, -14], sec);
-  const s4 = gunHouse(root, team, [12, D + 2.2, 16], sec);
+  const s1 = gunHouse(root, team, [-12, D + 0.4, -14], sec);
+  const s2 = gunHouse(root, team, [-12, D + 0.4, 16], sec);
+  const s3 = gunHouse(root, team, [12, D + 0.4, -14], sec);
+  const s4 = gunHouse(root, team, [12, D + 0.4, 16], sec);
   const a1 = aaMount(root, team, [-10, D + 7.6, 34], false);
   const a2 = aaMount(root, team, [10, D + 7.6, 34], false);
   const a3 = aaMount(root, team, [0, D + 10.6, 46], false);

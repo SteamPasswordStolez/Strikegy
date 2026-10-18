@@ -308,7 +308,7 @@ export class MatchRoom {
     if (!seat || this.over) return;
     const kit = cleanKit(rawKit);
     const s = seat.soldier;
-    const ok = /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6}|tank:[a-z]{2,12}|jet:[a-z]{2,12}|veh:\d{1,6})$/.test(key);
+    const ok = /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6}|tank:[a-z]{2,12}|jet:[a-z]{2,12}|veh:\d{1,6}|ship:\d{1,6})$/.test(key);
     const at = this.sim.deploy(s.id, ok ? key : 'base', kit);
     if (!at) return;
     seat.kit = kit;

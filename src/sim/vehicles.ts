@@ -121,12 +121,14 @@ export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry,
     bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
   }
   const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
-  const plan = planVehicleSpots(physics, bases, zones, Boundary.fromMap(map));
+  // A sea map's fleet: only what the map places (no motor pool, no jets off the edge).
+  const fixed = map.world.vehicles === 'fixed';
+  const plan = fixed ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(physics, bases, zones, Boundary.fromMap(map));
   const heavy = map.world.vehicles !== 'light';
   const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
   const level = water ? (x: number, z: number) => water.levelAt(x, z) : null;
   const bikes = [...plan.bikes, ...mapVehicleSpots(map, physics, level)];
-  const vw = new VehicleWorld(physics, registry, hooks, pads, bikes, size, heavy ? plan.tankSpots : [], heavy, map.world.vehicles !== 'noJets');
+  const vw = new VehicleWorld(physics, registry, hooks, pads, bikes, size, heavy ? plan.tankSpots : [], heavy, map.world.vehicles !== 'noJets' && !fixed);
   vw.water = level;
   const center = zones.length ? zones.reduce((a, z) => a.add(z.pos), new THREE.Vector3()).divideScalar(zones.length) : new THREE.Vector3();
   vw.air = { center, radius: Math.max(map.world.size[0], map.world.size[1]) / 2 };
@@ -171,6 +173,7 @@ export class MatchVehicles {
       bots.playerRiding = (id) => !!sim.soldiers.get(id)?.ride;
       bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
       bots.ships.stationGun = (v, seat, target, trigger, dt, shooter) => this.shipGun(v, seat, target, trigger, dt, shooter);
+      bots.ships.bounds = sim.world.terrain.boundary;
     }
   }
 

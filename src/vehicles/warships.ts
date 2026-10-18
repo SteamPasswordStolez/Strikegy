@@ -16,19 +16,19 @@ import type { SeatSpec, StationKind, VehicleGunSpec, VehicleSpec } from './vehic
 /** Naval guns. Shells fly (flight time matters at range); torpedoes run just under the surface. */
 export const NAVAL_GUNS: Record<'naval5in' | 'naval6in' | 'naval16in' | 'aa40' | 'torpedo' | 'depthcharge' | 'deckgun', VehicleGunSpec> = {
   // Destroyer main gun: a 5-inch every 3 s, out to ~5 km.
-  naval5in: { rpm: 20, damage: 999, spread: 0.18, range: 5000, vsVehicle: 1400, blast: 6, burst: 1, cool: 3, shell: { speed: 520, gravity: 9.8 } },
+  naval5in: { rpm: 20, damage: 999, spread: 0.45, range: 5000, vsVehicle: 1400, blast: 6, burst: 1, cool: 3, shell: { speed: 520, gravity: 9.8 } },
   // Battleship secondaries: 6-inch every 5 s.
-  naval6in: { rpm: 12, damage: 999, spread: 0.22, range: 5000, vsVehicle: 1800, blast: 7, burst: 1, cool: 5, shell: { speed: 540, gravity: 9.8 } },
+  naval6in: { rpm: 12, damage: 999, spread: 0.5, range: 5000, vsVehicle: 1800, blast: 7, burst: 1, cool: 5, shell: { speed: 540, gravity: 9.8 } },
   // Battleship main battery: a 16-inch salvo every 30 s, 600 m/s, ~6 km.
-  naval16in: { rpm: 2, damage: 999, spread: 0.12, range: 6500, vsVehicle: 9000, blast: 14, burst: 1, cool: 30, shell: { speed: 600, gravity: 9.8 } },
+  naval16in: { rpm: 2, damage: 999, spread: 0.35, range: 6500, vsVehicle: 9000, blast: 14, burst: 1, cool: 30, shell: { speed: 600, gravity: 9.8 } },
   // Twin 40 mm AA: fast, airburst-ish (small blast), against aircraft mostly.
   aa40: { rpm: 240, damage: 80, spread: 0.6, range: 2200, vsVehicle: 70, blast: 2.5, burst: 40, cool: 4, shell: { speed: 880, gravity: 9.8 } },
   // Torpedo: 25 m/s along the surface, a big hole and flooding.
-  torpedo: { rpm: 3, damage: 999, spread: 0.4, range: 3500, vsVehicle: 7000, blast: 8, burst: 1, cool: 20, shell: { speed: 25, gravity: 0 }, torpedo: true },
+  torpedo: { rpm: 3, damage: 999, spread: 0.4, range: 3500, vsVehicle: 20000, blast: 8, burst: 1, cool: 20, shell: { speed: 25, gravity: 0 }, torpedo: true },
   // Depth charges: rolled off the stern, they sink and go off at depth.
-  depthcharge: { rpm: 6, damage: 999, spread: 1.5, range: 60, vsVehicle: 4000, blast: 18, burst: 1, cool: 10, shell: { speed: 10, gravity: 9.8 }, depth: true },
+  depthcharge: { rpm: 6, damage: 999, spread: 1.5, range: 60, vsVehicle: 9000, blast: 18, burst: 1, cool: 10, shell: { speed: 10, gravity: 9.8 }, depth: true },
   // A submarine's deck gun (surfaced only).
-  deckgun: { rpm: 12, damage: 999, spread: 0.3, range: 4000, vsVehicle: 900, blast: 5, burst: 1, cool: 5, shell: { speed: 480, gravity: 9.8 } },
+  deckgun: { rpm: 12, damage: 999, spread: 0.6, range: 4000, vsVehicle: 900, blast: 5, burst: 1, cool: 5, shell: { speed: 480, gravity: 9.8 } },
 };
 
 /** Floats down both sides along a hull `len` m long, `half` m wide, at `y` (two rows, `n` a side). */
@@ -72,12 +72,12 @@ export const DESTROYER: VehicleSpec = {
   mass: 2.5e6,
   top: 19,
   reverse: 5,
-  health: 20000,
+  health: 60000,
   seats: [
-    seat('driver', 'helm', [0, DD_DECK + 7.6, -15], [2.6, DD_DECK, -9]),
+    seat('driver', 'helm', [0, DD_DECK + 7.6, -15], [3.6, DD_DECK, -5]),
     seat('gunner', 'main', [0, DD_DECK + 3.4, -35], [0, DD_DECK, -30.5], { gun: 'naval5in', traverse: 2.6, pitch: [-0.05, 0.75], turn: 0.4, elevate: 0.25 }),
     seat('gunner', 'main', [0, DD_DECK + 3.4, 42], [0, DD_DECK, 37.5], { gun: 'naval5in', facing: Math.PI, traverse: 2.6, pitch: [-0.05, 0.75], turn: 0.4, elevate: 0.25 }),
-    seat('gunner', 'torpedo', [0, DD_DECK + 2.3, 9], [0, DD_DECK, 13], { gun: 'torpedo', traverse: Math.PI, pitch: [-0.05, 0.05], turn: 0.5, elevate: 0.5 }),
+    seat('gunner', 'torpedo', [0, DD_DECK + 2.3, 18], [0, DD_DECK, 21.5], { gun: 'torpedo', traverse: Math.PI, pitch: [-0.05, 0.05], turn: 0.5, elevate: 0.5 }),
     seat('gunner', 'aa', [-4.2, DD_DECK + 2.6, 22], [-3.2, DD_DECK, 25.5], { gun: 'aa40', pitch: [-0.05, 1.45] }),
     seat('gunner', 'asw', [0, DD_DECK + 2, 53], [0, DD_DECK, 49], { gun: 'depthcharge', facing: Math.PI, traverse: 0.3, pitch: [0.1, 0.4] }),
   ],
@@ -87,7 +87,7 @@ export const DESTROYER: VehicleSpec = {
     thrust: 3.3e6,
     reverse: 0.35,
     stern: 55,
-    rudder: 2.05e6,
+    rudder: 3.3e6,
     drag: [30000, 2.2e6, 2.5e5],
     yawDrag: 7e8,
   },
@@ -115,10 +115,10 @@ export const CARRIER: VehicleSpec = {
   mass: 3.0e7,
   top: 17,
   reverse: 4,
-  health: 45000,
+  health: 135000,
   seats: [
-    seat('driver', 'helm', [12, CV_DECK + 14, -8], [9.5, CV_DECK, -2]),
-    seat('passenger', 'flight', [12, CV_DECK + 10, 8], [9.5, CV_DECK, 12]),
+    seat('driver', 'helm', [12, CV_DECK + 14, -8], [9, CV_DECK, -4]),
+    seat('passenger', 'flight', [12, CV_DECK + 10, 8], [9, CV_DECK, 10]),
     seat('gunner', 'aa', [-14.5, CV_DECK + 2, -95], [-13, CV_DECK, -91], { gun: 'aa40', pitch: [-0.05, 1.45] }),
     seat('gunner', 'aa', [14.5, CV_DECK + 2, -95], [13, CV_DECK, -91], { gun: 'aa40', pitch: [-0.05, 1.45] }),
     seat('gunner', 'aa', [-14.5, CV_DECK + 2, 100], [-13, CV_DECK, 96], { gun: 'aa40', facing: Math.PI, pitch: [-0.05, 1.45] }),
@@ -158,17 +158,17 @@ export const BATTLESHIP: VehicleSpec = {
   mass: 4.5e7,
   top: 15,
   reverse: 4,
-  health: 60000,
+  health: 180000,
   seats: [
-    seat('driver', 'helm', [0, BB_DECK + 18, -22], [3, BB_DECK, -14]),
-    seat('passenger', 'fire', [0, BB_DECK + 28, -18], [-3, BB_DECK, -14]),
+    seat('driver', 'helm', [0, BB_DECK + 18, -22], [7.5, BB_DECK, -11]),
+    seat('passenger', 'fire', [0, BB_DECK + 28, -18], [-7.5, BB_DECK, -11]),
     seat('gunner', 'main', [0, BB_DECK + 5, -66], [0, BB_DECK, -58], { gun: 'naval16in', traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.08, elevate: 0.1 }),
     seat('gunner', 'main', [0, BB_DECK + 8.5, -46], [0, BB_DECK, -38], { gun: 'naval16in', traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.08, elevate: 0.1 }),
     seat('gunner', 'main', [0, BB_DECK + 5, 66], [0, BB_DECK, 58], { gun: 'naval16in', facing: Math.PI, traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.08, elevate: 0.1 }),
-    seat('gunner', 'secondary', [-12, BB_DECK + 4, -14], [-10, BB_DECK, -8], { gun: 'naval6in', facing: -Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
-    seat('gunner', 'secondary', [-12, BB_DECK + 4, 16], [-10, BB_DECK, 22], { gun: 'naval6in', facing: -Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
-    seat('gunner', 'secondary', [12, BB_DECK + 4, -14], [10, BB_DECK, -8], { gun: 'naval6in', facing: Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
-    seat('gunner', 'secondary', [12, BB_DECK + 4, 16], [10, BB_DECK, 22], { gun: 'naval6in', facing: Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
+    seat('gunner', 'secondary', [-12, BB_DECK + 3, -14], [-10, BB_DECK, -8], { gun: 'naval6in', facing: -Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
+    seat('gunner', 'secondary', [-12, BB_DECK + 3, 16], [-10, BB_DECK, 22], { gun: 'naval6in', facing: -Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
+    seat('gunner', 'secondary', [12, BB_DECK + 3, -14], [10, BB_DECK, -8], { gun: 'naval6in', facing: Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
+    seat('gunner', 'secondary', [12, BB_DECK + 3, 16], [10, BB_DECK, 22], { gun: 'naval6in', facing: Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
     seat('gunner', 'aa', [-10, BB_DECK + 9, 34], [-8, BB_DECK, 38], { gun: 'aa40', pitch: [-0.05, 1.45] }),
     seat('gunner', 'aa', [10, BB_DECK + 9, 34], [8, BB_DECK, 38], { gun: 'aa40', pitch: [-0.05, 1.45] }),
     seat('gunner', 'aa', [0, BB_DECK + 12, 46], [0, BB_DECK, 50], { gun: 'aa40', facing: Math.PI, pitch: [-0.05, 1.45] }),
@@ -195,6 +195,10 @@ export const BATTLESHIP: VehicleSpec = {
       { half: [5.5, 2.2, 6], pos: [0, BB_DECK + 2.2, -66] },
       { half: [5.5, 3.8, 6], pos: [0, BB_DECK + 3.8, -46] },
       { half: [5.5, 2.2, 6], pos: [0, BB_DECK + 2.2, 66] },
+      // The AA platforms' towers.
+      { half: [1.7, 3.8, 1.7], pos: [-10, BB_DECK + 3.8, 34] },
+      { half: [1.7, 3.8, 1.7], pos: [10, BB_DECK + 3.8, 34] },
+      { half: [1.7, 5.3, 1.7], pos: [0, BB_DECK + 5.3, 46] },
       { half: [0.05, 0.55, 118], pos: [-16.95, BB_DECK + 0.55, 0] },
       { half: [0.05, 0.55, 118], pos: [16.95, BB_DECK + 0.55, 0] },
     ],
@@ -211,10 +215,10 @@ export const SUBMARINE: VehicleSpec = {
   mass: 1.5e6,
   top: 10.5,
   reverse: 3,
-  health: 12000,
+  health: 36000,
   seats: [
-    seat('driver', 'helm', [0, SS_DECK + 5.6, -6], [1.5, SS_DECK, -1]),
-    seat('passenger', 'periscope', [0, SS_DECK + 9, -8], [-1.5, SS_DECK, -1]),
+    seat('driver', 'helm', [0, SS_DECK + 5.6, -6], [1, SS_DECK, 1]),
+    seat('passenger', 'periscope', [0, SS_DECK + 9, -8], [-1, SS_DECK, 1]),
     seat('gunner', 'torpedo', [0, SS_DECK + 0.8, -42], [0, SS_DECK, -36], { gun: 'torpedo', traverse: 0.15, pitch: [-0.05, 0.05] }),
     seat('gunner', 'torpedo', [0, SS_DECK + 0.8, 42], [0, SS_DECK, 36], { gun: 'torpedo', facing: Math.PI, traverse: 0.15, pitch: [-0.05, 0.05] }),
     seat('passenger', 'sonar', [0, SS_DECK + 0.8, -26], [0, SS_DECK, -22]),
@@ -226,7 +230,7 @@ export const SUBMARINE: VehicleSpec = {
     thrust: 5.2e5,
     reverse: 0.4,
     stern: 46,
-    rudder: 7.3e5,
+    rudder: 1.28e6,
     drag: [13700, 1.4e6, 1.5e5],
     yawDrag: 2.27e8,
   },

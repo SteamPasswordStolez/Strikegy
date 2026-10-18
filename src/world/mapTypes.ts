@@ -191,8 +191,8 @@ export interface MapDef {
     groundMaterial?: SurfaceMaterial;
     /** Tree kind for `trees` and the scenery around the map (default conifer). */
     flora?: Flora;
-    /** Vehicles in bot matches: all (default), noJets (no aircraft), or light — jeeps and motorbikes only (small maps). */
-    vehicles?: 'all' | 'noJets' | 'light';
+    /** Vehicles in bot matches: all (default), noJets (no aircraft), light — jeeps and motorbikes only (small maps) — or fixed: only the map's own `vehicles` (a sea map's fleet). */
+    vehicles?: 'all' | 'noJets' | 'light' | 'fixed';
     /** Background sound levels 0..1 (defaults come from the visual profile). */
     ambience?: { wind?: number; birds?: number; battle?: number };
     /** How far one sees (m): the camera's far plane, and the fog thins to match (default 1,600 m and the profile's fog). */
@@ -220,4 +220,4 @@ export interface MapDef {
 }
 
 /** Vehicle kinds a map may place (see vehicles/vehicleData.ts). */
-export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat' | 'lcvp' | 'patrol';
+export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat' | 'lcvp' | 'patrol' | 'dd' | 'cv' | 'bb' | 'ss';

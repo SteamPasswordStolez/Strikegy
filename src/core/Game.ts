@@ -56,7 +56,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
-import { layGun, lookPoint } from '@/vehicles/ship';
+import { contacts, deckSpawn, layGun, lookPoint } from '@/vehicles/ship';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { BOT_WEAPONS } from '@/ai/personality';
 import { loadTactics } from '@/ai/tacticsLoad';
@@ -1882,7 +1882,7 @@ export class Game {
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
     this.boundary = Boundary.fromMap(map);
-    const plan = fixedOnly ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(this.physics, bases, zones, this.boundary);
+    const plan = fixedOnly || map.world.vehicles === 'fixed' ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(this.physics, bases, zones, this.boundary);
     // Small maps: jeeps and motorbikes only.
     const heavy = map.world.vehicles !== 'light';
     const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
@@ -1903,7 +1903,7 @@ export class Game {
       this.bots?.bots.length ?? 0,
       tankSpots,
       heavy,
-      map.world.vehicles !== 'noJets',
+      map.world.vehicles !== 'noJets' && map.world.vehicles !== 'fixed',
     );
     this.vehicles.water = level;
     this.gadgets.water = level;
@@ -1915,6 +1915,7 @@ export class Game {
       bots.playerRiding = () => !!this.ride;
       bots.fireMount = (v, seat, shooter, aim, alt) => this.fireMount(v, seat, shooter, aim, alt);
       bots.ships.stationGun = (v, seat, target, trigger, dt, shooter) => this.shipGun(v, seat, target, trigger, dt, shooter);
+      bots.ships.bounds = this.boundary;
     }
     if (import.meta.env.DEV) console.info(`[strikegy] vehicles: ${pads.length} pads, ${bikes.length} bike spots`);
   }
@@ -2338,6 +2339,11 @@ export class Game {
     if (s.broken.size) out.push(t('ship.broken').replace('{n}', String(s.broken.size)));
     if (s.broken.has(seat)) out.push(t('ship.out'));
     if (s.sinking >= 0) out.push(t('ship.sinking'));
+    if (kind === 'sonar' || kind === 'periscope' || kind === 'asw') {
+      const list = contacts(v, kind, this.vehicles?.vehicles ?? []).slice(0, 3);
+      out.push(list.length ? t('ship.contacts').replace('{list}', list.map((c) => `${t(`vehicle.${c.kind}` as MessageKey)} ${Math.round(c.bearing)}° ${(c.range / 1000).toFixed(1)} km`).join(', ')) : t('ship.noContacts'));
+    }
+    if (s.dived && kind === 'helm') out.push(t('ship.dived'));
     if (!this.touch && kind === 'helm') out.push(t(v.spec.ship?.sub ? 'ship.controlsSub' : 'ship.controls'));
     if (kind === 'engine') out.push(s.time < s.overdriveUntil ? t('ship.overdriveOn') : s.time < s.overdriveReady ? t('ship.overdriveWait') : t('ship.overdriveReady'));
     return out;
@@ -4153,6 +4159,10 @@ export class Game {
         return this.spawnFor(team, 'base', selfId);
       }
     }
+    if (kind === 'ship') {
+      const v = this.vehicles?.get(Number(id));
+      if (v?.ship && !v.wrecked && (v.team ?? v.home) === team) return deckSpawn(v, Math.random);
+    }
     if (kind === 'beacon') {
       const b = this.gadgets.beaconsFor({ id: selfId, team }, this.squadKeyOf(team, selfId)).find((x) => String(x.id) === id);
       if (b) {
@@ -4327,6 +4337,20 @@ export class Game {
         x: v.pos.x,
         z: v.pos.z,
         blocked: null,
+        warn: v.health < v.spec.health * 0.35 ? t('deploy.damaged') : null,
+      });
+    }
+    // The side's warships: on deck, to walk up to a station (a ship is a spawn point).
+    for (const v of vw?.vehicles ?? []) {
+      if (!v.ship || v.wrecked || (v.team ?? v.home) !== this.myTeam) continue;
+      const aboard = v.seats.filter((s) => s).length;
+      out.push({
+        key: `ship:${v.id}`,
+        kind: 'ride',
+        label: `${t('spawn.ship')}: ${t(`vehicle.${v.kind}`)} (${aboard}/${v.seats.length})`,
+        x: v.pos.x,
+        z: v.pos.z,
+        blocked: v.ship.sinking >= 0 ? t('ship.sinking') : null,
         warn: v.health < v.spec.health * 0.35 ? t('deploy.damaged') : null,
       });
     }

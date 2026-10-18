@@ -2277,7 +2277,7 @@ export class BotManager implements BotServices {
         const out: DriveInput = { throttle: 0, steer: 0, brake: false };
         this.driveInputs.set(v.id, out);
         this.ships.helm(v, all, bot.team, shooter, e.objective?.pos ?? null, this.time, dt, out);
-      } else if (v.mounts[r.seat]) this.ships.gunner(v, r.seat, all, bot.team, shooter, dt);
+      } else if (v.mounts[r.seat]) this.ships.gunner(v, r.seat, all, bot.team, shooter, this.time, dt);
       return;
     }
     const boat = !!v.spec.boat && !v.spec.wheels.length;

@@ -605,7 +605,9 @@ export function buildBoundaryWalls(boundary: Boundary, terrain: Terrain, physics
     const base = Math.min(terrain.heightAt(ax, az), terrain.heightAt(bx, bz), terrain.heightAt(mx, mz));
     const yaw = Math.atan2(bz - az, bx - ax);
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -yaw);
-    // Overlap neighbours a little so there are no gaps at corners.
-    physics.addStaticBox({ x: mx, y: base + 20, z: mz }, { x: len / 2 + 0.6, y: 30, z: 0.5 }, q, Layer.BOUNDS);
+    // Overlap neighbours a little so there are no gaps at corners. At least 60 m up: at sea
+    // the ground under the edge is the bed, and a carrier's hull stands 9 m out of the water.
+    const top = Math.max(base + 50, 60);
+    physics.addStaticBox({ x: mx, y: (base - 10 + top) / 2, z: mz }, { x: len / 2 + 0.6, y: (top - base + 10) / 2, z: 0.5 }, q, Layer.BOUNDS);
   }
 }

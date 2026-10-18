@@ -108,6 +108,8 @@ export class Vehicle implements Damageable {
   remote = false;
   /** Rounds fired by each seat's main gun, counting up (others draw new ones). */
   readonly seatShots: number[];
+  /** Until when each side has this boat marked (a dived submarine is only seen while marked: ship.ts `spotShips`). */
+  readonly spottedUntil: Record<Team, number> = { blue: -Infinity, red: -Infinity };
   /** A warship's telegraph, damage control, depth (ship.ts); null for everything else. */
   readonly ship: ShipState | null;
   private wheelSpin: number[];
@@ -151,10 +153,13 @@ export class Vehicle implements Damageable {
       // A boat: a dynamic hull the floats hold up (`sail`); no wheels.
       this.body = world.createRigidBody(
         RAPIER.RigidBodyDesc.dynamic()
-          .setTranslation(pos.x, pos.y + spec.half[1], pos.z)
+          // A warship starts at its waterline (dropped from the surface, a 30,000 t hull would bob for a minute).
+          .setTranslation(pos.x, pos.y + spec.half[1] - (spec.ship ? spec.boat.draft : 0), pos.z)
           .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
-          .setLinearDamping(0.05)
-          .setAngularDamping(0.8)
+          // A warship's own water drag sets its top speed and turning (mass-proportional
+          // damping would swamp the propeller on a 30,000 t hull); a little against rolling.
+          .setLinearDamping(spec.ship ? 0 : 0.05)
+          .setAngularDamping(spec.ship ? 0.15 : 0.8)
           .setCcdEnabled(true),
       );
       const [hx, hy, hz] = spec.half;
@@ -606,6 +611,11 @@ export class Vehicle implements Damageable {
 
   /** Seat eye position in the world. */
   seatEye(i: number, out: THREE.Vector3, alpha = 1): THREE.Vector3 {
+    // A dived submarine's helm looks through the periscope (its own spot is under water).
+    if (this.ship?.dived && this.spec.seats[i]!.station?.kind === 'helm') {
+      const p = this.spec.seats.findIndex((s) => s.station?.kind === 'periscope');
+      if (p >= 0) i = p;
+    }
     const e = this.spec.seats[i]!.eye;
     return this.toWorld(this.tmpLocal.set(e[0], e[1], e[2]), out, alpha);
   }

@@ -1,3 +1,4 @@
+import { deckSpawn } from '@/vehicles/ship';
 import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
 import { Bot, setNextBotId } from '@/ai/Bot';
@@ -700,6 +701,8 @@ export class MatchSim {
       this.gadgets.useBeacon(beacon);
       at = { pos: nav?.randomAround(beacon.pos, 1.5) ?? beacon.pos.clone(), yaw: beacon.mesh.rotation.y };
     }
+    const ship = kind === 'ship' ? this.vehicles?.world.get(Number(ref)) : undefined;
+    if (ship?.ship && !ship.wrecked && (ship.team ?? ship.home) === team) at = deckSpawn(ship, Math.random);
     const mate = kind === 'mate' ? this.squadOf(selfId)?.members.find((m) => String(m.id) === ref && m.id !== selfId) : undefined;
     if (mate && !mateSpawnBlock(mate, this.time, this.riding(mate.id))) {
       const side = Math.random() < 0.5 ? -1 : 1;

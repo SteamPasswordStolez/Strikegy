@@ -6,7 +6,7 @@ import type { MapDef, Team } from '@/world/mapTypes';
 import type { Boundary } from '@/world/terrain';
 import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, VEHICLES, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
-import { SHIP, stationNear } from './ship';
+import { SHIP, spotShips, stationNear } from './ship';
 
 /** A base pad: where it is and what it brings out. */
 export interface PadSpot extends PadState {
@@ -232,6 +232,8 @@ export class VehicleWorld {
       if (this.authority) v.stepShip(dt);
       if (!v.wrecked && v.health <= 0) this.wreck(v);
     }
+    // Warships look and listen for each other once a second (dived submarines are only seen when found).
+    if (Math.floor(this.time) !== Math.floor(this.time - dt) && this.vehicles.some((v) => v.ship)) spotShips(this.vehicles, this.time);
     this.runOver(walkers);
     this.stockPads();
     this.stockBikes();
@@ -331,7 +333,7 @@ export class VehicleWorld {
         // Left lying about away from its zone: taken back (another comes later).
         const home = b.spots[0]!.pos;
         const abandon = b.kind === 'lcvp' ? LANDING.abandon : BIKES.abandon;
-        if (v && v.empty && !v.wrecked && v.pos.distanceTo(home) > BIKES.abandonDistance && this.time - v.usedAt > abandon) this.remove(v);
+        if (v && v.empty && !v.wrecked && !v.ship && v.pos.distanceTo(home) > BIKES.abandonDistance && this.time - v.usedAt > abandon) this.remove(v);
         continue;
       }
       // Landing craft come back quickly: the landing force rides nothing else.
@@ -533,7 +535,8 @@ export function mapVehicleSpots(map: MapDef, physics: PhysicsWorld, water: ((x: 
     const [x, z] = m.pos;
     const level = water ? water(x, z) : NaN;
     const hit = physics.raycast({ x, y: 300, z }, { x: 0, y: -1, z: 0 }, 600, Layer.WORLD);
-    const y = m.kind === 'boat' && !Number.isNaN(level) ? level : (hit?.point.y ?? 0);
+    // Anything that floats goes on the water (a hull put on the sea bed comes up like a cork).
+    const y = VEHICLES[m.kind].boat && !Number.isNaN(level) ? level : (hit?.point.y ?? 0);
     return { zone: `map${i}`, kind: m.kind, team: m.team, spots: [{ pos: new THREE.Vector3(x, y + 0.1, z), yaw: ((m.yaw ?? 0) * Math.PI) / 180 }], vehicle: null, lostAt: -Infinity };
   });
 }

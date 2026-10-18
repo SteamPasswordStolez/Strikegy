@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
-import { ballisticPitch } from '@/vehicles/ship';
+import { ballisticPitch, shipVisible } from '@/vehicles/ship';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import type { StationKind, VehicleSpec } from '@/vehicles/vehicleData';
 import type { Team } from '@/world/mapTypes';
+import type { Boundary } from '@/world/terrain';
 
 /**
  * Bot warship crews (2026-10-18, big maps plan step 5). The helm closes on
@@ -19,15 +20,17 @@ export const SHIP_AI = {
   engage: 6000,
   /** Range each kind fights at (m). */
   keepOff: { dd: 2400, bb: 3800, cv: 6500, ss: 1300 } as Partial<Record<string, number>>,
+  /** Turning circles (m) by kind: how much room a ship needs at the edge. */
+  circle: { dd: 600, cv: 1300, bb: 1200, ss: 500 } as Partial<Record<string, number>>,
   /** Feelers: seconds of way ahead (plus half the hull), the water under the keel wanted (m). */
   feel: 14,
   underKeel: 3,
-  /** Turn back to the middle past this share of the map's radius. */
-  edge: 0.85,
+  /** Turn back to the middle closer than this to the edge of the playable area (m, plus the turning circle's radius). */
+  edge: 120,
   /** Rethink the target every so many seconds. */
   rethink: 2,
   /** Bots' laying error: a share of the range (m per m). */
-  scatter: 0.008,
+  scatter: 0.015,
   /** Shares of a side's bots crewing its warships at most (a fleet map's ships are its spawns: all). */
   crewShare: 0.6,
   /** AA: aircraft within this range (m). */
@@ -67,6 +70,8 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 export class ShipCrews {
   /** The water (sea and rivers; NaN on dry ground). */
   level: ((x: number, z: number) => number) | null = null;
+  /** The playable area's outline (ships keep inside it), set by the game. */
+  bounds: Boundary | null = null;
   /** Lays and fires a ship's station gun (the game's / the server's `shipGun`). */
   stationGun: StationGun | null = null;
   private readonly plans = new Map<number, Plan>();
@@ -82,13 +87,13 @@ export class ShipCrews {
     return hit ? Math.max(0, hit.distance - 30) : 500;
   }
 
-  /** The nearest enemy warship or boat (not a dived submarine unless `dived`), within `reach`. */
-  private enemyShip(all: readonly Vehicle[], v: Vehicle, team: Team, reach: number, dived = false): Vehicle | null {
+  /** The nearest enemy warship or boat the side can see (a dived submarine only once found), within `reach`; `subs`: dived submarines only. */
+  private enemyShip(all: readonly Vehicle[], v: Vehicle, team: Team, reach: number, time: number, subs = false): Vehicle | null {
     let best: Vehicle | null = null;
     let bestD = reach;
     for (const o of all) {
       if (o === v || o.wrecked || !o.spec.boat || (o.team ?? o.home) === team || (o.team ?? o.home) === null) continue;
-      if (!dived && o.ship?.dived) continue;
+      if (!shipVisible(o, team, time) || (subs && !o.ship?.dived)) continue;
       const d = o.pos.distanceTo(v.pos);
       if (d < bestD) {
         bestD = d;
@@ -125,7 +130,7 @@ export class ShipCrews {
     }
     if (time > plan.until || plan.target?.wrecked) {
       plan.until = time + SHIP_AI.rethink;
-      plan.target = this.enemyShip(all, v, team, SHIP_AI.engage);
+      plan.target = this.enemyShip(all, v, team, SHIP_AI.engage, time);
     }
     const t = plan.target;
     const keep = SHIP_AI.keepOff[v.kind] ?? 2500;
@@ -148,17 +153,23 @@ export class ShipCrews {
       // There: steam round it.
       if (Math.hypot(dx, dz) < 400) want += (plan.side * Math.PI) / 2;
     }
-    // Back toward the middle near the map's edge.
+    // Back toward the middle near the map's edge (by its turning circle: a carrier needs 650 m to come round).
     const cx = v.airCenter.x - v.pos.x;
     const cz = v.airCenter.z - v.pos.z;
-    if (Math.hypot(cx, cz) > v.airRadius * SHIP_AI.edge) want = Math.atan2(-cx, -cz);
+    const room = SHIP_AI.edge + (SHIP_AI.circle[v.kind] ?? 300) / 2;
+    const b = this.bounds;
+    if (b ? !b.contains(v.pos.x, v.pos.z) || b.edgeDistance(v.pos.x, v.pos.z) < room : Math.hypot(cx, cz) > v.airRadius * 0.85) want = Math.atan2(-cx, -cz);
     // Feel ahead: shallows, land, another hull. Turn to whichever side is clear.
     const speed = v.forwardSpeed();
     const look = Math.max(80, Math.abs(speed) * SHIP_AI.feel) + v.spec.half[2];
     const need = (v.spec.boat?.draft ?? 3) + SHIP_AI.underKeel;
     const clear = (off: number): boolean => {
       const a = v.yaw + off;
-      return this.depthAt(v.pos.x - Math.sin(a) * look, v.pos.z - Math.cos(a) * look, v) > need;
+      const x = v.pos.x - Math.sin(a) * look;
+      const z = v.pos.z - Math.cos(a) * look;
+      // The edge's invisible wall counts as land.
+      if (this.bounds && (!this.bounds.contains(x, z) || this.bounds.edgeDistance(x, z) < v.spec.half[0] + 20)) return false;
+      return this.depthAt(x, z, v) > need;
     };
     const ahead = clear(0);
     if (!ahead) {
@@ -185,7 +196,7 @@ export class ShipCrews {
     const sub = v.spec.ship?.sub;
     if (sub) {
       if (t && t.pos.distanceTo(v.pos) < keep * 3) depth = 1;
-      const hunter = this.enemyShip(all, v, team, SHIP_AI.deepFrom);
+      const hunter = this.enemyShip(all, v, team, SHIP_AI.deepFrom, time);
       if (hunter?.kind === 'dd') depth = 2;
       if (ship.oxygen < SHIP_AI.air) depth = 0;
       depth = Math.min(depth, sub.depths.length - 1);
@@ -195,12 +206,14 @@ export class ShipCrews {
     if (!t || !this.stationGun) return;
     for (let i = 0; i < v.seats.length; i++) {
       if (!ship.helmMay(i, (j) => !!v.seats[j], (k) => v.manned(k))) continue;
+      // Depth charges only on a submarine under the stern.
+      if (v.spec.seats[i]!.station?.kind === 'asw' && !(t.ship?.dived && t.pos.distanceTo(v.pos) < SHIP_AI.aswRange)) continue;
       this.fireAt(v, i, t, shooter, dt);
     }
   }
 
   /** A bot manning a gun station: AA at aircraft, depth charges at a dived submarine, the rest at the nearest enemy ship. */
-  gunner(v: Vehicle, seat: number, all: readonly Vehicle[], team: Team, shooter: { id: number; name: string; team: Team }, dt: number): void {
+  gunner(v: Vehicle, seat: number, all: readonly Vehicle[], team: Team, shooter: { id: number; name: string; team: Team }, time: number, dt: number): void {
     const kind = v.spec.seats[seat]!.station?.kind;
     const m = v.mounts[seat];
     if (!m || !this.stationGun) return;
@@ -223,8 +236,8 @@ export class ShipCrews {
       this.stationGun(v, seat, best.pos.clone().addScaledVector(best.velocity, time), true, dt, shooter);
       return;
     }
-    const t = kind === 'asw' ? this.enemyShip(all, v, team, SHIP_AI.aswRange, true) : this.enemyShip(all, v, team, m.gun.range);
-    if (!t || (kind === 'asw' && !t.ship?.dived)) {
+    const t = kind === 'asw' ? this.enemyShip(all, v, team, SHIP_AI.aswRange, time, true) : this.enemyShip(all, v, team, m.gun.range, time);
+    if (!t) {
       this.stationGun(v, seat, v.pos.clone().addScaledVector(new THREE.Vector3(-Math.sin(v.yaw), 0, -Math.cos(v.yaw)), 1000), false, dt, shooter);
       return;
     }
