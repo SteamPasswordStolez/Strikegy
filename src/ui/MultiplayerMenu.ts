@@ -5,7 +5,7 @@ import { loadIdentity, seatId } from '@/net/identity';
 import { ServerLink, ServerError } from '@/net/ServerLink';
 import { serverUrls } from '@/net/servers';
 import { chatOf, isMuted, setMuted } from '@/net/chat';
-import { hasSides, simpleAllowed, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
+import { PROTOCOL_VERSION, hasSides, simpleAllowed, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
 import { ChatPanel, nameView } from './ChatPanel';
 import { modeName, renderMatchSetup, simpleField, stepGroup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
 import { uiSound } from '@/audio/uiSounds';
@@ -193,7 +193,16 @@ export class MultiplayerMenu {
       if (!this.room) this.showList();
     } catch (err) {
       this.view = 'offline';
-      this.notice = err instanceof ServerError && err.code === 'version' ? t('mp.oldVersion') : t('mp.noServer');
+      if (err instanceof ServerError && err.code === 'version') {
+        this.notice = t('mp.oldVersion');
+        // The site moved on before the server did (or the other way round): to the build that matches it.
+        const where = await matchingBuild(Number(err.detail));
+        if (where) {
+          location.href = where;
+          return;
+        }
+        if (Number(err.detail) < PROTOCOL_VERSION) this.notice = t('mp.serverOld');
+      } else this.notice = t('mp.noServer');
       this.host.redraw();
     }
   }
@@ -912,5 +921,29 @@ export class MultiplayerMenu {
     if (owner && !self) {
       button(acts, 'ds-btn ghost mp-sm danger', t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));
     }
+  }
+}
+
+/**
+ * When the server runs another game version than this page: the address of
+ * a build that matches it, or null. The site keeps the build of the commit
+ * the server laptop runs under `mp/` while that is older than the site
+ * (deploy.yml, server/laptop.json), so people can still play together
+ * before the server is updated; from that build, a server that has moved on
+ * means the site's own root again.
+ */
+async function matchingBuild(server: number): Promise<string | null> {
+  if (!Number.isFinite(server)) return null;
+  const root = new URL(import.meta.env.BASE_URL, location.href);
+  const inOld = /\/mp\/$/.test(root.pathname);
+  if (server > PROTOCOL_VERSION) return inOld ? new URL('../?multi', root).href : null;
+  if (inOld) return null;
+  try {
+    const res = await fetch(new URL('mp/version.json', root), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const v = (await res.json()) as { protocol?: unknown };
+    return v.protocol === server ? new URL('mp/?multi', root).href : null;
+  } catch {
+    return null;
   }
 }

@@ -553,6 +553,7 @@
   "mp.connecting": "Connecting to the server…",
   "mp.noServer": "Couldn't reach the multiplayer server.",
   "mp.oldVersion": "The game was updated. Please reload.",
+  "mp.serverOld": "The server still runs the previous version, so multiplayer is unavailable until it is updated. Single player works as usual.",
   "mp.lost": "Lost the connection to the server.",
   "mp.kicked": "You were kicked from the room.",
   "mp.retry": "Reconnect",

@@ -7,7 +7,8 @@ type Handlers = {
 export class ServerError extends Error {
   constructor(
     readonly code: ErrorCode | 'connect',
-    detail?: string,
+    /** What came with it (for `version`: the server's protocol number). */
+    readonly detail?: string,
   ) {
     super(detail ? `${code}: ${detail}` : code);
   }

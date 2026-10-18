@@ -48,6 +48,29 @@ jobs:
             cd exp-src && npm ci && npm run build && rm -f dist/CNAME
             mkdir -p ../dist/exp && cp -r dist/. ../dist/exp/
           fi
+      # Multiplayer while the server laptop runs an older game than the site (server/laptop.json: the commit it
+      # runs, updated whenever the laptop is): that commit's build goes under /mp/, where the multiplayer menu
+      # sends people when the server turns them away as too new. Same protocol: /mp/ just sends people back.
+      - if: github.ref == 'refs/heads/main'
+        id: laptop
+        run: |
+          here=$(grep -oP 'PROTOCOL_VERSION = \K[0-9]+' src/net/lobbyProtocol.ts)
+          echo "commit=$(node -p "require('./server/laptop.json').commit")" >> "$GITHUB_OUTPUT"
+          if [ "$(node -p "require('./server/laptop.json').protocol")" != "$here" ]; then echo "older=1" >> "$GITHUB_OUTPUT"; fi
+      - if: github.ref == 'refs/heads/main' && steps.laptop.outputs.older == '1'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.laptop.outputs.commit }}
+          path: mp-src
+      - if: github.ref == 'refs/heads/main' && steps.laptop.outputs.older == '1'
+        run: |
+          cd mp-src && npm ci && npm run nav && npm run build && rm -f dist/CNAME
+          mkdir -p ../dist/mp && cp -r dist/. ../dist/mp/
+          echo "{\"protocol\": $(grep -oP 'PROTOCOL_VERSION = \K[0-9]+' src/net/lobbyProtocol.ts)}" > ../dist/mp/version.json
+      - if: github.ref == 'refs/heads/main' && steps.laptop.outputs.older != '1'
+        run: |
+          mkdir -p dist/mp
+          printf '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=../?multi"><title>Strikegy</title>' > dist/mp/index.html
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:
