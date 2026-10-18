@@ -11,6 +11,7 @@
  */
 import * as THREE from 'three';
 import { AMMO_GIVE_COOLDOWN, GIVE_RANGE, GRENADE_COUNT, MEDKIT } from '@/data/classes';
+import { MATCH } from '@/modes/matchFlags';
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, type GadgetId } from '@/data/gadgets';
 import type { InputState } from '@/input/InputState';
 import { REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Fortifications, type Station } from '@/modes/fortify';
@@ -196,7 +197,7 @@ export type GiveClock = Map<string, number>;
  * ammo (each with a cooldown per mate). Returns who got what, or null.
  */
 export function stepGive(s: Soldier, input: InputState, mates: Iterable<Soldier>, now: number, clock: GiveClock): { mate: Soldier; kind: 'medkit' | 'ammo' } | null {
-  if (!input.interactPressed || (s.cls !== 'medic' && s.cls !== 'support')) return null;
+  if (!input.interactPressed || MATCH.simple || (s.cls !== 'medic' && s.cls !== 'support')) return null;
   let best: Soldier | null = null;
   let bestD = GIVE_RANGE;
   const kind = s.cls === 'medic' ? 'medkit' : 'ammo';

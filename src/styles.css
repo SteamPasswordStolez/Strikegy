@@ -503,6 +503,14 @@ body {
   display: none;
 }
 
+/* Simplified matches (MATCH.simple): the buttons for what they don't have go; gadget, build,
+   breath and call-ins already hide when there is nothing to show. */
+.touch-layer.simple .touch-btn.touch-medkit,
+.touch-layer.simple .touch-btn.touch-inspect,
+.touch-layer.no-melee .touch-btn.touch-melee {
+  display: none;
+}
+
 /* Buttons the player placed (layout editor): centre at left / top, own size. */
 .touch-btn.custom {
   right: auto;

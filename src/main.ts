@@ -55,7 +55,7 @@ else {
     (start, link) => {
       stopShowcase();
       rememberRoom();
-      void startGame(new URLSearchParams({ map: start.map, mode: start.mode, bots: 'none' }), () => menu.root.remove(), { link, start });
+      void startGame(new URLSearchParams({ map: start.map, mode: start.mode, bots: 'none', ...(start.simple ? { simple: '1' } : {}) }), () => menu.root.remove(), { link, start });
     },
     (key) => {
       if (key !== 'menuScene') return;
@@ -173,6 +173,8 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void, n
     net,
     // ?tutorial: the menu's tutorial (the basics step by step on the range).
     tutorial: params.has('tutorial'),
+    // ?simple=1: the simplified controls (a room setting on the game server).
+    simple: params.get('simple') === '1',
     // ?side=red: the player's side in a solo match (blue without it).
     team: params.get('side') === 'red' ? 'red' : 'blue',
   });

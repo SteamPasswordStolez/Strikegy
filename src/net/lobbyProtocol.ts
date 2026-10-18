@@ -117,6 +117,8 @@ export interface RoomSettings {
   teamPick: TeamPick;
   /** People may chat in the room (owner, 2026-10-14: set when made, changeable while waiting). */
   chat: boolean;
+  /** Simplified controls for everyone in the room (owner, 2026-10-18; `MATCH.simple`). */
+  simple: boolean;
 }
 
 /**
@@ -191,6 +193,8 @@ export interface MatchStart {
   size?: number;
   /** How well the bots play (a browser running some of them plays them so). */
   difficulty?: 'easy' | 'normal' | 'hard';
+  /** The room plays with the simplified controls (`RoomSettings.simple`). */
+  simple?: boolean;
 }
 
 /** A bot handed to a browser to run (see `BotManager.adopt`). */
@@ -460,7 +464,7 @@ const str = (v: unknown, max: number): v is string => typeof v === 'string' && v
 /** Checks settings from a client; returns a clean copy or null. */
 export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!isObj(raw)) return null;
-  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick, chat } = raw;
+  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick, chat, simple } = raw;
   if (!str(name, 32) || !str(map, 32) || !str(mode, 16)) return null;
   // No control characters or text-direction overrides (they scramble the room list).
   // eslint-disable-next-line no-control-regex -- stripping them is the point
@@ -472,6 +476,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
   // Rooms from before team picking: drawn at random.
   if (teamPick !== undefined && !PICKS.includes(teamPick as TeamPick)) return null;
   if (chat !== undefined && typeof chat !== 'boolean') return null;
+  if (simple !== undefined && typeof simple !== 'boolean') return null;
   return {
     name: title,
     map,
@@ -483,6 +488,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
     botShare,
     teamPick: (teamPick as TeamPick | undefined) ?? 'random',
     chat: chat !== false,
+    simple: simple === true,
   };
 }
 

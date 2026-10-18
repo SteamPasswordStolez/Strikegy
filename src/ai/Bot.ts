@@ -508,8 +508,8 @@ export class Bot implements Damageable, Combatant {
     this.smokes = type === 'smoke' ? 2 : 0;
     this.flashes = type === 'flash' ? 2 : 0;
     this.kit = [this.frags, this.smokes, this.flashes];
-    // Class gadget: half the recons carry a beacon, half mines.
-    this.gadget = classGadget(this.cls, this.id % 2 === 0 ? 'beacon' : 'mine');
+    // Class gadget: half the recons carry a beacon, half mines (none in a simplified match).
+    this.gadget = MATCH.simple ? null : classGadget(this.cls, this.id % 2 === 0 ? 'beacon' : 'mine');
     this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
     this.gadgetReadyAt = 0;
     this.push.set(0, 0, 0);
@@ -525,7 +525,7 @@ export class Bot implements Damageable, Combatant {
     this.downed = this.dead = false;
     this.downTime = 0;
     this.shieldUntil = -Infinity;
-    this.medkits = this.cls === 'medic' ? Infinity : MEDKIT.carried;
+    this.medkits = MATCH.simple ? 0 : this.cls === 'medic' ? Infinity : MEDKIT.carried;
     this.medkitReadyAt = 0;
     this.reviveOf = null;
     this.reviveProgress = 0;

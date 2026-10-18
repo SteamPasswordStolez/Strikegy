@@ -1,5 +1,6 @@
 import { disposeTree } from '@/render/dispose';
 import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
+import { SIMPLE, simplifyInput } from '@/modes/simple';
 import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
 import { EventBus } from './EventBus';
@@ -155,6 +156,8 @@ export interface GameOptions {
   net?: NetOptions;
   /** The menu's tutorial: the basics step by step (on the range), whether seen before or not. */
   tutorial?: boolean;
+  /** Simplified controls (owner, 2026-10-18; `MATCH.simple`): the solo setup's switch, or the room's on the game server. */
+  simple?: boolean;
   /** The player's side in a solo match (default blue). */
   team?: Team;
   /** Behind the main menu: the bots fight, a camera drifts over it; no player, HUD, input or sound. */
@@ -642,7 +645,7 @@ export class Game {
     // What this match allows (free-for-all: no sides, squads or vehicles), before the soldiers and bots are made.
     const asked = this.options.mode ?? 'auto';
     const zoned = asked !== 'skirmish' && (asked !== 'auto' || !!this.options.bots) && (map.zones?.length ?? 0) > 0;
-    setMatchFlags(zoned ? matchFlagsFor(pickMode(map, asked === 'auto' ? undefined : (asked as ModeKind), true)) : {});
+    setMatchFlags(matchFlagsFor(zoned ? pickMode(map, asked === 'auto' ? undefined : (asked as ModeKind), true) : null, !!this.options.simple));
     const ownSpawn = (s: SpawnPoint) => s.team === this.myTeam || (this.myTeam === 'blue' && s.team === 'player');
     this.spawn = (this.myTeam === 'blue' ? map.spawns.find((s) => s.team === 'player') : undefined) ?? map.spawns.find(ownSpawn) ?? map.spawns[0]!;
     const firstKit = this.loadouts.current;
@@ -679,7 +682,7 @@ export class Game {
 
     this.cls = firstKit.cls;
     this.grenades.reset(firstKit.grenade);
-    this.weapons.endlessReserve = !this.options.sandbox && firstKit.cls === 'support';
+    this.weapons.endlessReserve = !this.options.sandbox && (firstKit.cls === 'support' || MATCH.simple);
 
     const net = this.options.net;
     if (net && !this.touch && net.start.roster.some((r) => r.bot) && (map.zones?.length ?? 0) > 0) {
@@ -728,7 +731,7 @@ export class Game {
     const mode = this.options.mode ?? 'auto';
     if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
-      this.setupFortifications(map, terrain, water, built);
+      if (!MATCH.simple) this.setupFortifications(map, terrain, water, built);
       if (this.bots && !this.options.sandbox && MATCH.vehicles) this.setupVehicles(map);
     }
     if (this.options.net) await this.setupNet(map, terrain, built, water);
@@ -1071,7 +1074,8 @@ export class Game {
     } else {
       viewEl = document.createElement('div');
       viewEl.className = 'ds-keys';
-      renderHint(viewEl, t(touch ? 'start.hintTouch' : 'start.hint'));
+      // Simplified matches list only the controls they keep.
+      renderHint(viewEl, t(MATCH.simple ? (touch ? 'start.hintTouchSimple' : 'start.hintSimple') : touch ? 'start.hintTouch' : 'start.hint'));
     }
     this.overlay.setPause({
       context: this.zoneMode ? `${this.mapName} · ${t(`mode.${this.zoneMode.kind}`)}` : this.mapName,
@@ -1134,7 +1138,8 @@ export class Game {
       deployFlow: this.deployFlow,
       zones: !!this.zoneMode,
       fort: !!this.fort,
-      support: !!this.playerSquad,
+      support: !!this.playerSquad && MATCH.callIns,
+      simple: MATCH.simple,
     });
     if (!steps.length) return;
     this.tutorial = new TutorialRun(steps);
@@ -1414,6 +1419,8 @@ export class Game {
   }
 
   private simStep(dt: number): void {
+    // What a simplified match doesn't have goes before anything (solo or sent to the server) sees it.
+    simplifyInput(this.input);
     if (this.net) return this.netStep(dt, this.net);
     const input = this.input;
     const p = this.player;
@@ -1667,7 +1674,7 @@ export class Game {
     }
     this.interact = mate ? { kind: 'reviveMate', name: mate.name } : null;
     // Nobody down here: a mate a medic or support could hand something to (the server does the handing).
-    if (!mate && (this.cls === 'medic' || this.cls === 'support')) {
+    if (!mate && !MATCH.simple && (this.cls === 'medic' || this.cls === 'support')) {
       const need = this.cls === 'medic' ? SF.needMedkit : SF.needAmmo;
       for (const o of net.others()) {
         if (friends(o, this.meSide) && o.alive && o.flags & need && o.feet.distanceTo(feet) < GIVE_RANGE) {
@@ -1774,7 +1781,8 @@ export class Game {
     const scoped = !!w.def.scope && w.adsBlend > 0.9;
     const ev = stepBreath(this.breath, dt, hold, scoped);
     if (ev) this.audio.breath(ev);
-    const amp = w.def.scope ? (SWAY_AMP[w.def.class] ?? 0.004) : 0;
+    // Simplified: no holding the breath, so the scopes sway far less instead.
+    const amp = w.def.scope ? (SWAY_AMP[w.def.class] ?? 0.004) * (MATCH.simple ? SIMPLE.sway : 1) : 0;
     const moving = Math.min(1.5, p.horizontalSpeed() / 4);
     const stance = (p.crouching && p.grounded ? 0.6 : 1) * (1 + moving * 0.7) * (p.grounded ? 1 : 2);
     scopeSway(this.breath, this.simTime, amp, w.adsBlend, stance, w.sway);
@@ -2403,7 +2411,7 @@ export class Game {
   /** Menu state for the HUD, or null when the player can't call anything in. */
   private supportState(): SupportMenuState | null {
     const sq = this.playerSquad;
-    if (!sq || !this.player.alive || !this.deployed) return null;
+    if (!sq || !MATCH.callIns || !this.player.alive || !this.deployed) return null;
     // On the game server only a squad's first member (its leader) calls things in.
     if (this.net && sq.members[0]?.id !== this.myId) return null;
     const cooldown = {} as Record<SupportId, number>;
@@ -2772,7 +2780,7 @@ export class Game {
       if (b.downed && d < reviveD) {
         revive = b;
         reviveD = d;
-      } else if (this.cls === 'medic' && b.alive && b.medkits === 0 && d < giveD && this.giveOk(`${this.myId}>${b.id}:kit`)) {
+      } else if (this.cls === 'medic' && !MATCH.simple && b.alive && b.medkits === 0 && d < giveD && this.giveOk(`${this.myId}>${b.id}:kit`)) {
         give = b;
         giveD = d;
       }
@@ -2914,7 +2922,7 @@ export class Game {
   /** Medic and support bots next to the player hand over a medkit or ammo when it's needed. */
   private botsResupplyPlayer(): void {
     const bots = this.bots;
-    if (!bots || !this.player.alive || !this.deployed) return;
+    if (!bots || MATCH.simple || !this.player.alive || !this.deployed) return;
     const feet = this.player.feet;
     const needKit = this.cls !== 'medic' && this.medkits === 0;
     const needAmmo = this.weapons.needsAmmo;
@@ -3414,7 +3422,8 @@ export class Game {
     const onField = this.player.alive && this.deployed;
     const me = this.me;
     const kitText = this.cls === 'medic' ? (me.medkitReady ? '∞' : `${Math.ceil(me.medkitReadyAt - this.simTime)}s`) : String(this.medkits);
-    const medkit = onField ? { text: kitText, ready: me.medkitReady } : null;
+    // Simplified matches have no medkits (the chip and the touch button go).
+    const medkit = onField && !MATCH.simple ? { text: kitText, ready: me.medkitReady } : null;
     const reviver = this.playerDowned ? (this.bots?.reviverFor(this.playerCombatant) ?? null) : null;
     const down = this.playerDowned
       ? {
@@ -3510,10 +3519,12 @@ export class Game {
       downed: this.playerDowned,
       build: onField && this.buildMode ? 'on' : nearSpot ? 'near' : null,
       gadget: onField && this.gadget ? { label: `${t(`gadgetShort.${this.gadget}`)} ${this.gadgetCount}`, out: this.gadgetOut, empty: this.gadgetCount === 0 } : null,
-      scoped: onField && !!w.def.scope && w.adsBlend > 0.5,
+      scoped: onField && !MATCH.simple && !!w.def.scope && w.adsBlend > 0.5,
       // Call-ins are picked on foot only (see simStep), so the button goes while aboard.
       support: supportState && !this.ride ? this.supportMenu.open || !!this.supportAim : null,
       ride: this.ride ? (this.ride.v.spec.seats[this.ride.seat]!.role === 'driver' ? (this.ride.v.flight ? 'fly' : 'drive') : 'seat') : null,
+      simple: MATCH.simple,
+      melee: MATCH.melee,
     });
     // First person in a vehicle: its sight or cockpit over the view, and no infantry crosshair under it.
     const rideView = this.rideViewState();
@@ -3538,7 +3549,7 @@ export class Game {
             })()
           : null,
         breath:
-          w.def.scope && w.adsBlend > 0.9 && this.player.alive && !this.playerDowned
+          w.def.scope && w.adsBlend > 0.9 && this.player.alive && !this.playerDowned && !MATCH.simple
             ? { air: this.breath.air / BREATH.air, holding: this.breath.holding, locked: this.breath.locked, hint: t(this.touch ? 'breath.hintTouch' : 'breath.hint') }
             : null,
         dark: this.player.alive ? this.breath.dark : 0,
@@ -3587,7 +3598,7 @@ export class Game {
     const teamSize = { blue: 0, red: 0 };
     teamSize[this.myTeam] = (b?.allies ?? 0) + 1;
     teamSize[otherTeam(this.myTeam)] = b?.enemies ?? 1;
-    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize, passive: !!this.options.net });
+    const zm = new ZoneMode(map, this.bus, { tickets: this.options.tickets, mode, teamSize, passive: !!this.options.net, simple: !!this.options.simple });
     if (zm.match instanceof KillConfirmRules) this.tagVisuals = new TagVisuals(this.renderer.scene);
     if (zm.charges) {
       // On walkable ground (a browser in a match on the game server gets the server's spots with the rules).

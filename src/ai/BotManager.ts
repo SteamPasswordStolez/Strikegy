@@ -644,7 +644,7 @@ export class BotManager implements BotServices {
     this.syncCrowd();
     this.dodgeGrenades();
     this.dodgeShells();
-    for (const team of ['blue', 'red'] as const) this.considerSupport(team);
+    if (MATCH.callIns) for (const team of ['blue', 'red'] as const) this.considerSupport(team);
     this.considerVehicles();
     this.stepCount++;
     const viewers = this.viewers ? [...this.viewers()] : null;
@@ -685,7 +685,7 @@ export class BotManager implements BotServices {
       this.putBot(e);
     }
     for (const [id, r] of this.revivers) if (!r.target.downed || !r.bot.alive || r.bot.reviveOf !== r.target) this.revivers.delete(id);
-    this.shareMedkits();
+    if (!MATCH.simple) this.shareMedkits();
   }
 
   /** Medics hand a medkit to teammates next to them who have used theirs (twice a second, per pair on a cooldown). */
@@ -1865,6 +1865,7 @@ export class BotManager implements BotServices {
 
   /** A swing with the rifle butt at `target` in reach: one hit, the melee damage. */
   melee(bot: Bot, target: Combatant): boolean {
+    if (!MATCH.melee) return false;
     const eye = bot.eyePos(new THREE.Vector3());
     const aim = target.feet.clone().setY(target.feet.y + target.eyeHeight * 0.7);
     const dir = aim.sub(eye);

@@ -400,8 +400,13 @@ export class TouchControls implements InputSource {
     support?: boolean | null;
     /** In a vehicle: the driver's seat, a plane's pilot seat, any other seat; null on foot. */
     ride?: 'drive' | 'fly' | 'seat' | null;
+    /** Simplified controls (`MATCH.simple`): no medkit or inspect buttons; melee only where the mode keeps it. */
+    simple?: boolean;
+    melee?: boolean;
   }): void {
     this.setRide(c.ride ?? null);
+    this.root.classList.toggle('simple', !!c.simple);
+    this.root.classList.toggle('no-melee', c.melee === false);
     const sup = this.buttons.get('support')!;
     sup.classList.toggle('show', c.support !== null && c.support !== undefined);
     sup.classList.toggle('on', !!c.support);

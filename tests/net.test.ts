@@ -31,15 +31,21 @@ describe('names and settings', () => {
   });
 
   it('rejects room sizes over 300 and unknown values', () => {
-    const ok: RoomSettings = { name: '방', map: 'iron_gate', mode: 'zone', size: 300, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true };
+    const ok: RoomSettings = { name: '방', map: 'iron_gate', mode: 'zone', size: 300, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true, simple: false };
     expect(cleanSettings(ok)).toEqual(ok);
     expect(cleanSettings({ ...ok, size: 301 })).toBeNull();
     expect(cleanSettings({ ...ok, lineup: 'x' })).toBeNull();
     expect(cleanSettings({ ...ok, map: '../x' })).toBeNull();
+    // Simplified controls: a yes / no; rooms from older clients play the full controls.
+    expect(cleanSettings({ ...ok, simple: true })?.simple).toBe(true);
+    expect(cleanSettings({ ...ok, simple: 'yes' })).toBeNull();
+    const { simple: _drop, ...old } = ok;
+    void _drop;
+    expect(cleanSettings(old)?.simple).toBe(false);
   });
 
   it('a room with bots weighs its full size on the server, users only just its people', () => {
-    const s: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 40, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true };
+    const s: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 40, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true, simple: false };
     expect(roomLoad(s, 3)).toBe(3);
     expect(roomLoad({ ...s, lineup: 'usersBots' }, 3)).toBe(40);
     expect(roomLoad({ ...s, lineup: 'coop' }, 3)).toBe(40);
@@ -47,7 +53,7 @@ describe('names and settings', () => {
 });
 
 describe('lobby core', () => {
-  const settings: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 8, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true };
+  const settings: RoomSettings = { name: 'r', map: 'lyon', mode: 'zone', size: 8, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true, simple: false };
   const hello = (name: string) => JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name, uid: name, device: 'desktop' });
   const fake = () => {
     const got: ServerMsg[] = [];
@@ -194,7 +200,7 @@ describe('lobby core', () => {
     await send(2, { t: 'team', team: 'blue' });
     expect(people[2]!.f.last('error')!.code).toBe('notOwner');
     // Random: sides dealt out at the start, two and two.
-    await send(0, { t: 'settings', settings: { ...settings, size: 4, teamPick: 'random', chat: true } });
+    await send(0, { t: 'settings', settings: { ...settings, size: 4, teamPick: 'random', chat: true, simple: false } });
     await send(0, { t: 'start' });
     expect(counts()).toEqual({ blue: 2, red: 2 });
     // Against the bots everyone is blue; every soldier for themselves: no sides.
@@ -369,7 +375,7 @@ describe('game server gateway', () => {
     return { ws, id: welcome.id, welcome, send, next };
   }
 
-  const settings: RoomSettings = { name: '테스트', map: 'iron_gate', mode: 'zone', size: 24, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true };
+  const settings: RoomSettings = { name: '테스트', map: 'iron_gate', mode: 'zone', size: 24, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true, simple: false };
 
   it('rejects an old client and bad names', async () => {
     const ws = new WebSocket(url());

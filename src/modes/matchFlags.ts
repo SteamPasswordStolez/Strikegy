@@ -14,6 +14,16 @@ import type { Team } from '@/world/mapTypes';
  *   revive; without it a down is a death at once.
  * - `respawn`: seconds before the next life (null: the usual wait).
  * - `squads`, `vehicles`, `callIns`: whether those exist at all.
+ * - `simple`: the simplified controls (owner, 2026-10-18), for any mode, for
+ *   players who find the controls hard or the buttons too many (phones most
+ *   of all): moving, looking, shooting, aiming, reloading, jumping,
+ *   crouching, sprinting, switching weapons, grenades and vehicles stay;
+ *   class gadgets, medkits, melee, building and supply stations, call-ins,
+ *   reviving, holding the breath and inspecting go. Reserve ammo never runs
+ *   out instead (health already comes back by itself). A room setting in
+ *   multiplayer, a setup setting in solo play (`src/modes/simple.ts`).
+ * - `melee`: swinging the gun exists (off in simplified matches, except the
+ *   gun game, whose last step is the butt).
  */
 export interface MatchFlags {
   ffa: boolean;
@@ -26,9 +36,11 @@ export interface MatchFlags {
   truce: boolean;
   /** Building goes this many times as fast (fortress: the build phase), and bots don't hold back from it. */
   buildBoost: number;
+  simple: boolean;
+  melee: boolean;
 }
 
-const TEAM_PLAY: MatchFlags = { ffa: false, revive: true, respawn: null, squads: true, vehicles: true, callIns: true, truce: false, buildBoost: 1 };
+const TEAM_PLAY: MatchFlags = { ffa: false, revive: true, respawn: null, squads: true, vehicles: true, callIns: true, truce: false, buildBoost: 1, simple: false, melee: true };
 
 export const MATCH: MatchFlags = { ...TEAM_PLAY };
 

@@ -430,17 +430,18 @@ export class Soldier {
     this.killedBy = null;
     this.cls = kit.cls;
     if (weapons) this.weapons.resetAmmo();
-    else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support');
+    // Support's passive, and everyone in a simplified match (no stations, no ammo boxes): endless reserve.
+    else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support' || MATCH.simple);
     this.grenades.reset(kit.grenade);
     this.downed = false;
     this.downTime = 0;
-    this.medkits = MEDKIT.carried;
+    this.medkits = MATCH.simple ? 0 : MEDKIT.carried;
     this.medkitReadyAt = 0;
     this.medkitUse = this.healLeft = 0;
     this.throwBlock = this.throwCooldown = 0;
     this.reviveOf = null;
     this.reviveProgress = 0;
-    this.gadget = classGadget(kit.cls, kit.reconGadget);
+    this.gadget = MATCH.simple ? null : classGadget(kit.cls, kit.reconGadget);
     this.gadgetCount = this.gadget ? GADGETS[this.gadget].count : 0;
     this.gadgetOut = false;
     this.gadgetBusy = 0;

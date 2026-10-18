@@ -13,6 +13,7 @@ import {
 } from '@/data/classes';
 import type { LoadoutStore } from '@/data/loadoutStore';
 import { GADGETS, classGadget } from '@/data/gadgets';
+import { MATCH } from '@/modes/matchFlags';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { uiSound } from '@/audio/uiSounds';
 import { icon } from './icons';
@@ -149,9 +150,12 @@ export class LoadoutPanel {
     row('primary1', t('loadout.primary2'), WEAPONS[l.primary[1]].name, l.primary[1]);
     row('pistol', t('loadout.pistol'), WEAPONS[l.pistol].name, l.pistol);
     row('grenade', t('loadout.grenade'), `${t(`grenade.${l.grenade}` as MessageKey)} ×${GRENADE_COUNT[l.grenade]}`, null);
-    const gid = classGadget(l.cls, l.reconGadget);
-    const gadget = l.cls === 'recon' ? t(`gadget.${l.reconGadget}`) : t(`gadget.${l.cls}` as MessageKey);
-    row('gadget', t('loadout.gadget'), gid ? `${gadget} ×${GADGETS[gid].count}` : gadget, null, gid ? undefined : t('gadget.supportNote'));
+    // Simplified matches carry no class gadget.
+    if (!MATCH.simple) {
+      const gid = classGadget(l.cls, l.reconGadget);
+      const gadget = l.cls === 'recon' ? t(`gadget.${l.reconGadget}`) : t(`gadget.${l.cls}` as MessageKey);
+      row('gadget', t('loadout.gadget'), gid ? `${gadget} ×${GADGETS[gid].count}` : gadget, null, gid ? undefined : t('gadget.supportNote'));
+    }
     this.renderPicker();
   }
 

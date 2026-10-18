@@ -17,6 +17,8 @@ export interface TutorialCtx {
   zones: boolean;
   fort: boolean;
   support: boolean;
+  /** Simplified controls (`MATCH.simple`): no medkit, no reviving or resupplying. */
+  simple?: boolean;
 }
 
 /** One frame of what the player did. */
@@ -91,7 +93,7 @@ export const STEPS: readonly StepDef[] = [
   { id: 'aim', keys: ['ads'], basic: true, amount: (p) => (p.ads ? p.dt : 0), need: 1 },
   { id: 'reload', keys: ['reload'], basic: true, amount: (p) => pulse(p.reloaded), need: 1 },
   { id: 'grenade', keys: ['grenade'], basic: true, amount: (p) => pulse(p.grenade), need: 1 },
-  { id: 'medkit', keys: ['medkit'], basic: true, amount: (p) => pulse(p.medkit), need: 1 },
+  { id: 'medkit', keys: ['medkit'], basic: true, amount: (p) => pulse(p.medkit), need: 1, avail: (c) => !c.simple },
   {
     id: 'capture',
     keys: [],
@@ -108,6 +110,7 @@ export const STEPS: readonly StepDef[] = [
     amount: (p) => pulse(p.interact),
     need: 1,
     timeout: 10,
+    avail: (c) => !c.simple,
   },
   {
     id: 'build',

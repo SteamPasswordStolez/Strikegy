@@ -17,7 +17,7 @@ import { loadIdentity } from '@/net/identity';
 import { inRoom } from '@/core/session';
 import type { MatchStart } from '@/net/lobbyProtocol';
 import { CREDITS } from '@/data/credits';
-import { SOLO_LOBBY_MODES, renderMatchSetup, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
+import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 
 const PICK_KEY = 'strikegy.lobby.v1';
@@ -112,6 +112,7 @@ export class Lobby {
       team: snapTeam(saved.team ?? entry?.team ?? MAPS[0]!.team),
       difficulty: DIFFICULTIES.includes(saved.difficulty as Difficulty) ? saved.difficulty! : 'normal',
       side: SIDES.find((s) => s === saved.side) ?? 'random',
+      simple: saved.simple === true,
     };
     this.root = el('div', 'lobby', container);
     this.bg = el('div', 'lb-bg', this.root);
@@ -478,6 +479,10 @@ export class Lobby {
         this.saveAndRender();
       },
     });
+    fields.push(simpleField(!!p.simple, (on) => {
+      p.simple = on;
+      this.saveAndRender();
+    }));
     renderMatchSetup(body, {
       mode: p.mode,
       map: p.map,

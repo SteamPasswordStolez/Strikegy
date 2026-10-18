@@ -17,12 +17,13 @@ import { ROCKET } from '@/data/gadgets';
 import { CALL_RANGE, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { t } from '@/i18n';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
-import { ZoneMode, pickMode } from '@/modes/ZoneMode';
+import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
+import { simplifyInput } from '@/modes/simple';
 import { Fortifications } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { EscortRules, GunGameRules, LastStandRules, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
-import { MATCH, foes, friends } from '@/modes/matchFlags';
+import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
 import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
 import { ScoreTracker } from '@/modes/scoreTracker';
 import { SQUAD_SIZE, Squad, WIPE_PENALTY, mateSpawnBlock, squadName, type SquadMember } from '@/modes/squads';
@@ -56,6 +57,8 @@ export interface MatchOptions {
    * as they join), and how well they play. None: people only.
    */
   bots?: { blue: number; red: number; difficulty: Difficulty } | null;
+  /** Simplified controls (the room's setting; see `matchFlags`). */
+  simple?: boolean;
 }
 
 /** One soldier's controls for a step: buttons and stick, and where they look (absolute). */
@@ -179,7 +182,8 @@ export class MatchSim {
     physics.timestep = SIM_DT;
     this.throwables = new Throwables(new THREE.Scene(), physics, this.bus);
     const map = world.map;
-    this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize }) : null;
+    this.zoneMode = (map.zones?.length ?? 0) > 0 ? new ZoneMode(map, this.bus, { mode: opts.mode, tickets: opts.tickets, teamSize: opts.teamSize, simple: opts.simple }) : null;
+    if (!this.zoneMode) setMatchFlags(matchFlagsFor(null, opts.simple));
     this.zoneMode?.snapCharges(nav);
     // Last soldier standing: crates on walkable ground.
     this.zoneMode?.placeLoot(nav, (opts.teamSize?.blue ?? 12) + (opts.teamSize?.red ?? 12));
@@ -187,7 +191,8 @@ export class MatchSim {
     this.zoneMode?.planRoute(vehicleNav, nav);
     const em = this.zoneMode?.match;
     this.escort = em instanceof EscortRules ? new EscortWorld(physics, null, em.attacker) : null;
-    this.fort = this.zoneMode ? new Fortifications(fortPlanFor(world, physics), new FortModels(null), physics, impacts, nav) : null;
+    // No stations or building in a simplified match.
+    this.fort = this.zoneMode && !MATCH.simple ? new Fortifications(fortPlanFor(world, physics), new FortModels(null), physics, impacts, nav) : null;
     this.gadgets = new GadgetWorld(physics, this.registry, {
       explode: (kind, point, owner) => {
         this.blast(kind, point, owner, t(kind === 'rocket' ? 'gadget.assault' : 'gadget.mine'));
@@ -617,7 +622,7 @@ export class MatchSim {
   callIn(id: number, kind: string, point: THREE.Vector3 | null): boolean {
     const s = this.soldiers.get(id);
     const q = this.squadOf(id);
-    if (!s || !q || q.members[0]?.id !== id || !s.deployed || !s.alive || s.downed) return false;
+    if (!MATCH.callIns || !s || !q || q.members[0]?.id !== id || !s.deployed || !s.alive || s.downed) return false;
     if (!(SUPPORT_ORDER as readonly string[]).includes(kind) || !point) return false;
     if (point.distanceTo(s.player.feet) > CALL_RANGE + 5) return false;
     const owner: GadgetOwner = { id, name: s.combatant.name, team: s.team, squad: `${q.team}:${q.name}` };
@@ -779,6 +784,8 @@ export class MatchSim {
       s.weapons.sway.yaw = given.swayYaw ?? 0;
       s.weapons.sway.pitch = given.swayPitch ?? 0;
     }
+    // What a simplified match doesn't have (the browser drops it too; this is the server's word).
+    simplifyInput(input);
     // A click released before this step still counts as one trigger pull.
     if (input.firePressed) input.fire = true;
     // Down or dead in a vehicle: out of it.

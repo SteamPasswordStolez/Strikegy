@@ -39,6 +39,8 @@ export interface LobbyPick {
   team: number;
   difficulty: Difficulty;
   side: LobbySide;
+  /** Simplified controls (owner, 2026-10-18; see `MATCH.simple`). */
+  simple?: boolean;
 }
 
 /**
@@ -47,9 +49,11 @@ export interface LobbyPick {
  * practice range takes no bots.
  */
 export function matchQuery(p: LobbyPick, roll: () => number = Math.random): string {
-  if (p.map === RANGE_ID) return `?map=${RANGE_ID}&bots=0`;
+  const simple = p.simple ? '&simple=1' : '';
+  if (p.map === RANGE_ID) return `?map=${RANGE_ID}&bots=0${simple}`;
   const side = p.side === 'random' ? (roll() < 0.5 ? 'blue' : 'red') : p.side;
   const q = new URLSearchParams({ map: p.map, bots: `${Math.max(0, p.team - 1)}v${p.team}`, mode: p.mode, difficulty: p.difficulty, side });
+  if (p.simple) q.set('simple', '1');
   return `?${q.toString()}`;
 }
 

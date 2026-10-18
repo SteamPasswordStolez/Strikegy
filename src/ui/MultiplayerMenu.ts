@@ -7,7 +7,7 @@ import { serverUrls } from '@/net/servers';
 import { chatOf, isMuted, setMuted } from '@/net/chat';
 import { hasSides, type Device, type Lineup, type InputRule, type MatchStart, type Member, type Room, type RoomInfo, type RoomSettings, type Side, type TeamPick } from '@/net/lobbyProtocol';
 import { ChatPanel, nameView } from './ChatPanel';
-import { modeName, renderMatchSetup, stepGroup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
+import { modeName, renderMatchSetup, simpleField, stepGroup, stepMode, thumb, type SetupField, type SetupMap } from './MatchSetup';
 import { uiSound } from '@/audio/uiSounds';
 import { icon } from './icons';
 import './multiplayer.css';
@@ -107,6 +107,7 @@ export class MultiplayerMenu {
       botShare: saved.botShare ?? true,
       teamPick: PICKS.includes(saved.teamPick as TeamPick) ? saved.teamPick! : 'random',
       chat: saved.chat !== false,
+      simple: saved.simple === true,
       password: '',
     };
     void this.connect();
@@ -537,6 +538,7 @@ export class MultiplayerMenu {
     if (s.lineup !== 'users') row('mp.row.difficulty', t(`lobby.diff.${s.difficulty}` as MessageKey));
     row('mp.row.input', t(`mp.input.${s.input}` as MessageKey));
     row('mp.row.chat', t(s.chat ? 'lobby.on' : 'lobby.off'));
+    row('lobby.simple', t(s.simple ? 'lobby.on' : 'lobby.off'));
   }
 
   private renderDetail(side: HTMLElement, r: RoomInfo): void {
@@ -727,6 +729,12 @@ export class MultiplayerMenu {
         },
       );
     }
+    fields.push(
+      simpleField(f.simple, (on) => {
+        f.simple = on;
+        redraw();
+      }),
+    );
     fields.push({
       kind: 'choice',
       id: 'chat',
@@ -795,6 +803,7 @@ export class MultiplayerMenu {
     el('span', 'ds-badge accent', badges, modeName(s.mode));
     el('span', 'ds-badge line', badges, mapName(s.map));
     el('span', `ds-badge line st-${room.state}`, badges, t(room.state === 'playing' ? 'mp.state.playing' : 'mp.state.lobby'));
+    if (s.simple) el('span', 'ds-badge line', badges, t('lobby.simpleBadge'));
     if (room.locked) {
       const lock = el('span', 'ds-badge line', badges);
       lock.insertAdjacentHTML('beforeend', icon('lock'));

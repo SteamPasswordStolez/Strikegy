@@ -30,13 +30,24 @@ export interface ZoneModeOptions extends ZoneRulesOptions {
   rand?: () => number;
   /** A copy following a game server (multiplayer client): the server keeps the score. */
   passive?: boolean;
+  /** Simplified controls (see `matchFlags`). */
+  simple?: boolean;
 }
 
 /** A free spawn at a zone (hardpoint / deathmatch modes) needs no enemy this close to the zone's edge. */
 const FREE_SPAWN_CLEAR = 30;
 
-/** What a match of `kind` allows (see `matchFlags`): the free-for-all modes have no sides, squads, vehicles or revives. */
-export function matchFlagsFor(kind: ModeKind): Partial<MatchFlags> {
+/**
+ * What a match of `kind` allows (see `matchFlags`), with the simplified
+ * controls on top when `simple` (`null`: no zone mode, e.g. the range).
+ */
+export function matchFlagsFor(kind: ModeKind | null, simple = false): Partial<MatchFlags> {
+  const flags = kind ? modeFlags(kind) : {};
+  return simple ? { ...flags, simple: true, revive: false, callIns: false, melee: kind === 'gungame' } : flags;
+}
+
+/** What a mode allows: the free-for-all modes have no sides, squads, vehicles or revives. */
+function modeFlags(kind: ModeKind): Partial<MatchFlags> {
   if (kind === 'ffa' || kind === 'gungame') {
     return { ffa: true, revive: false, respawn: kind === 'ffa' ? FFA.respawn : GUN_GAME.respawn, squads: false, vehicles: false, callIns: false };
   }
@@ -211,7 +222,7 @@ export class ZoneMode {
     this.rules = new ZoneRules(map.zones ?? [], opts);
     this.kind = pickMode(map, opts.mode);
     // Before anything reads them (the game builds its bots after this in some orders: it sets them too).
-    setMatchFlags(matchFlagsFor(this.kind));
+    setMatchFlags(matchFlagsFor(this.kind, opts.simple));
     this.match = createMatch(this.kind, map, opts);
     this.match.start(this.rules);
     this.syncFlags();

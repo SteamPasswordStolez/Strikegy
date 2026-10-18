@@ -167,6 +167,8 @@ export interface MatchRoomOptions {
   mapsDir?: string;
   /** Bots run in people's browsers (squads with people in them; default on). */
   botShare?: boolean;
+  /** Simplified controls for everyone (the room's setting). */
+  simple?: boolean;
 }
 
 export class MatchRoom {
@@ -201,7 +203,7 @@ export class MatchRoom {
     const lineup = opts.lineup ?? 'users';
     const side = Math.max(1, Math.floor((opts.size ?? 24) / 2));
     const bots = lineup === 'users' ? null : { blue: side, red: side, difficulty: opts.difficulty ?? 'normal' };
-    const sim = await MatchSim.create(map, { mode, bots, teamSize: { blue: side, red: side } });
+    const sim = await MatchSim.create(map, { mode, bots, teamSize: { blue: side, red: side }, simple: !!opts.simple });
     return new MatchRoom(sim, opts);
   }
 
@@ -258,6 +260,7 @@ export class MatchRoom {
       life,
       size: Math.max(1, Math.floor((this.opts.size ?? 24) / 2)) * 2,
       difficulty: this.opts.difficulty ?? 'normal',
+      simple: !!this.opts.simple,
     };
     conn.text({ t: 'match', match: start });
   }
