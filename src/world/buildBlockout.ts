@@ -151,7 +151,7 @@ export function buildBlockout(
   const footprints: BuiltMap['footprints'] = [];
 
   if (terrain) {
-    const built = buildTerrain(terrain, surfaces?.terrain(groundKind) ?? null, physics, terrainStep);
+    const built = buildTerrain(terrain, surfaces?.terrain(groundKind, map.world.shore ?? null) ?? null, physics, terrainStep);
     impacts.set(built.collider.handle, SURFACE_FROM_MATERIAL[groundKind]);
     groundHandle = built.collider.handle;
     if (built.mesh) {

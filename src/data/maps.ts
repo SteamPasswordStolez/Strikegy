@@ -18,6 +18,7 @@ export const MAPS: readonly MapEntry[] = [
   { id: 'lyon', team: 16 },
   { id: 'bilbao', team: 12 },
   { id: 'persia', team: 4 },
+  { id: 'ashfall', team: 64 },
 ];
 
 /** The practice range: no bots, every weapon. */

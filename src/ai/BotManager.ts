@@ -41,6 +41,8 @@ import { CROWD_AIR, CROWD_ARMOUR, CROWD_BOT, CROWD_FIRING, CROWD_HAS_GOAL, Crowd
 /** Objectives farther than this send bots looking for a ride; they get out this close to it (m). */
 const VEHICLE_TRIP = 110;
 const VEHICLE_DROP = 30;
+/** A bot coxswain waits this long (s) past the usual wait for a boat to fill. */
+const BOAT_WAIT = 9;
 /** How far bots look for a free seat: at their base (within `VEHICLE_BASE` m of it) / elsewhere. */
 const VEHICLE_REACH = { base: 60, field: 30 };
 const VEHICLE_BASE = 45;
@@ -2075,9 +2077,19 @@ export class BotManager implements BotServices {
     const vw = this.vehicles;
     if (!vw || this.time < this.vehicleCheckAt) return;
     this.vehicleCheckAt = this.time + 1;
+    // Beached boats stay beached until everyone is out (or they're gone).
+    for (const id of this.beached) {
+      const v = vw.get(id);
+      if (!v || v.empty) this.beached.delete(id);
+    }
     for (const e of this.entries) {
       const b = e.bot;
       if (!b.alive || b.riding || b.puppet) continue;
+      // A landing force's soldier on its ship (no craft had room when they came back): into one as soon as one has.
+      if (this.landing === b.team && b.feet.distanceTo(this.teams[b.team].base) < 90) {
+        this.boardFromShip(b, vw);
+        continue;
+      }
       if (e.board) {
         const v = vw.get(e.board.vehicle);
         const taken = !v || v.wrecked || !!v.seats[e.board.seat] || (v.team && v.team !== b.team);
@@ -2105,6 +2117,21 @@ export class BotManager implements BotServices {
         best = { v, seat, d };
       }
       if (best) e.board = { vehicle: best.v.id, seat: best.seat, until: this.time + 25 };
+    }
+  }
+
+  /** The side that comes from the sea on this map (its base is a ship), or null. */
+  landing: Team | null = null;
+
+  /** From the ship straight into a seat of a landing craft waiting by it. */
+  private boardFromShip(b: Bot, vw: VehicleWorld): void {
+    const base = this.teams[b.team].base;
+    for (const v of vw.vehicles) {
+      if (v.kind !== 'lcvp' || v.home !== b.team || v.wrecked || v.velocity.length() > 2.5 || v.pos.distanceTo(base) > 260) continue;
+      const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i));
+      if (seat < 0) continue;
+      this.seatBot(b, v, seat);
+      return;
     }
   }
 
@@ -2211,9 +2238,16 @@ export class BotManager implements BotServices {
     v.seatEye(r.seat, this.tmp);
     bot.carry(this.tmp, v.velocity);
     const role = v.spec.seats[r.seat]!.role;
+    const boat = !!v.spec.boat && !v.spec.wheels.length;
     if (role === 'driver' && v.flight) this.pilot(e, v);
+    else if (role === 'driver' && boat) this.boatPilot(e, v, dt);
     else if (role === 'driver') this.autopilot(e, v, dt);
     if (v.mounts[r.seat] && !(v.flight && role === 'driver')) this.botGunner(bot, v, r.seat);
+    // Boats: nobody gets out at sea (bots don't swim); everyone goes once it is run up on a shore.
+    if (boat) {
+      if (this.beached.has(v.id)) this.alightBot(e);
+      return;
+    }
     // Getting out: near the objective with the vehicle stopped, or left without a driver.
     const goal = e.objective?.pos;
     // Gun crews in armour stay aboard at the objective (passengers get out).
@@ -2224,6 +2258,46 @@ export class BotManager implements BotServices {
       e.alone = undefined;
       this.alightBot(e);
     } else if (!noDriver) e.alone = undefined;
+  }
+
+  /** Boats run up on a shore this moment (their crews get out). */
+  private readonly beached = new Set<number>();
+
+  /**
+   * Bot coxswains (2026-10-18, landing craft): wait a little by the ship for
+   * the craft to fill, then head straight for the objective (the beach in
+   * front of it) at full speed; when it stops dead on the bottom with walkable
+   * ground ahead of the bow it is beached and everyone goes ashore. Stuck
+   * anywhere else (a rock, another craft): back off and try again.
+   */
+  private boatPilot(e: BotEntry, v: Vehicle, dt: number): void {
+    const d = e.drive!;
+    const out: DriveInput = { throttle: 0, steer: 0, brake: false };
+    this.driveInputs.set(v.id, out);
+    if (v.seats.some((s) => !s) && this.time < d.waitUntil + BOAT_WAIT) return;
+    const goal = e.objective?.pos ?? this.teams[otherTeam(e.bot.team)].base;
+    const want = Math.atan2(-(goal.x - v.pos.x), -(goal.z - v.pos.z));
+    const diff = Math.atan2(Math.sin(want - v.yaw), Math.cos(want - v.yaw));
+    if (this.time < d.backUntil) {
+      out.throttle = -1;
+      out.steer = d.tries % 2 ? 1 : -1;
+      return;
+    }
+    out.steer = THREE.MathUtils.clamp(-diff * 2, -1, 1);
+    out.throttle = Math.abs(diff) > 1.2 ? 0.45 : 1;
+    const speed = Math.abs(v.forwardSpeed());
+    d.stuckFor = speed < 0.8 ? d.stuckFor + dt : 0;
+    if (d.stuckFor < 1.5) return;
+    d.stuckFor = 0;
+    // Ground in front of the ramp someone can walk on: beached.
+    const bow = this.tmp.set(0, 0, -(v.spec.half[2] + 2)).applyQuaternion(v.quat).add(v.pos);
+    const land = this.nav.closest(bow);
+    if (land && Math.hypot(land.x - bow.x, land.z - bow.z) < 2.5) {
+      this.beached.add(v.id);
+      return;
+    }
+    d.tries++;
+    d.backUntil = this.time + 3;
   }
 
   /**

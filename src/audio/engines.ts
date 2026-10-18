@@ -49,6 +49,8 @@ const VOICE: Record<EngineKind, EngineVoice> = {
   cas: { idle: 0, top: 0, speed: 100, gain: 0.8, ref: 55, jet: true, rumble: 520 },
   // An outboard: the heavy engine run high and light.
   boat: { sample: 'engine_heavy', rate: [1.3, 2.1], idle: 40, top: 120, speed: 15, gain: 0.32, ref: 7, rumble: 1400 },
+  // A landing craft's diesel: low and slow.
+  lcvp: { sample: 'engine_heavy', rate: [0.75, 1.15], idle: 24, top: 60, speed: 9, gain: 0.5, ref: 10, rumble: 800 },
   recon: { sample: 'prop_loop', rate: [1, 1], idle: 90, top: 90, speed: 60, gain: 0.6, ref: 45, rumble: 3000 },
 };
 

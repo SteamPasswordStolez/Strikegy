@@ -165,6 +165,15 @@ const COLOUR_GAIN: Partial<Record<SurfaceMaterial, number>> = {
 };
 
 /** Terrain blends per ground: [surface, tint, amount] for the patches, [surface, tint] on steep slopes. */
+/** Sea maps: the ground below `top` (m) turns to `surface` (default sand) tinted `color` (a black-sand beach). */
+export interface ShoreBand {
+  top: number;
+  color: string;
+  surface?: SurfaceMaterial;
+  /** And high ground (a volcano's cone): above `above` m it turns to bare rock / ash of this colour. */
+  ash?: { above: number; color: string };
+}
+
 const TERRAIN_LAYERS: Partial<Record<SurfaceMaterial, { patch: [SurfaceMaterial, string, number]; steep: [SurfaceMaterial, string] }>> = {
   // Meadows: bare earth worn through the grass, rock on the slopes.
   grass: { patch: ['ground', '#b8a487', 0.6], steep: ['rock', '#c4bcb2'] },
@@ -333,8 +342,8 @@ export class SurfaceLibrary {
    * TERRAIN_LAYERS), blended in the shader. Breaks the one-texture-everywhere
    * look without new assets or geometry.
    */
-  terrain(kind: SurfaceMaterial): THREE.MeshStandardMaterial {
-    const key = `${kind}:terrain`;
+  terrain(kind: SurfaceMaterial, shore: ShoreBand | null = null): THREE.MeshStandardMaterial {
+    const key = `${kind}:terrain${shore ? `:${shore.top}:${shore.color}:${shore.ash?.above ?? ''}` : ''}`;
     const hit = this.tints.get(key);
     if (hit) return hit;
     const layers = TERRAIN_LAYERS[kind];
@@ -359,6 +368,11 @@ export class SurfaceLibrary {
       uSteep: { value: steep.map },
       uSteepRepeat: { value: steep.map!.repeat.x },
       uSteepTint: { value: new THREE.Color(layers.steep[1]) },
+      uShoreTop: { value: shore ? shore.top : -1e9 },
+      uShore: { value: shore ? this.get(shore.surface ?? 'sand').map : patch.map },
+      uShoreTint: { value: new THREE.Color(shore?.color ?? '#ffffff') },
+      uAshAbove: { value: shore?.ash ? shore.ash.above : 1e9 },
+      uAshTint: { value: new THREE.Color(shore?.ash?.color ?? '#ffffff') },
     };
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
@@ -374,9 +388,9 @@ export class SurfaceLibrary {
           `#include <common>
           varying vec3 vMacroWorld;
           varying vec3 vGroundNormal;
-          uniform sampler2D uMacro, uPatch, uSteep;
-          uniform float uMacroStrength, uPatchRepeat, uSteepRepeat, uPatchAmount;
-          uniform vec3 uPatchTint, uSteepTint;`,
+          uniform sampler2D uMacro, uPatch, uSteep, uShore;
+          uniform float uMacroStrength, uPatchRepeat, uSteepRepeat, uPatchAmount, uShoreTop, uAshAbove;
+          uniform vec3 uPatchTint, uSteepTint, uShoreTint, uAshTint;`,
         )
         .replace(
           '#include <map_fragment>',
@@ -392,7 +406,15 @@ export class SurfaceLibrary {
           if (pw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPatch, wuv * uPatchRepeat).rgb * uPatchTint, pw);
           // Steep ground shows its rock.
           float sw = smoothstep(0.2, 0.34, 1.0 - vGroundNormal.y + (m2 - 0.5) * 0.12);
-          if (sw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uSteep, wuv * uSteepRepeat).rgb * uSteepTint, sw);`,
+          if (sw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uSteep, wuv * uSteepRepeat).rgb * uSteepTint, sw);
+          // A shore band (sea maps): sand from the sea bed up to a ragged line above the water.
+          float shw = 1.0 - smoothstep(uShoreTop - 0.8, uShoreTop + 0.6, vMacroWorld.y + (m1 - 0.5) * 2.4);
+          // Grain from the sand texture, broad lighter / darker drifts from the macro noise.
+          vec3 shc = texture2D(uShore, wuv * 0.5).rgb * uShoreTint * (0.62 + 0.9 * mix(m1, m2, 0.55));
+          if (shw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, shc, shw);
+          // High ground: bare rock and ash (a volcano), the line ragged by the macro noise.
+          float ashw = smoothstep(uAshAbove - 6.0, uAshAbove + 10.0, vMacroWorld.y + (m1 - 0.5) * 24.0);
+          if (ashw > 0.003) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uSteep, wuv * uSteepRepeat).rgb * uAshTint * (0.7 + 0.6 * m2), ashw);`,
         );
     };
     mat.customProgramCacheKey = () => `terrain-${kind}`;

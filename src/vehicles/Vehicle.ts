@@ -141,7 +141,7 @@ export class Vehicle implements Damageable {
       this.syncModel(1);
       return;
     }
-    if (spec.boat) {
+    if (spec.boat && !spec.wheels.length) {
       // A boat: a dynamic hull the floats hold up (`sail`); no wheels.
       this.body = world.createRigidBody(
         RAPIER.RigidBodyDesc.dynamic()
@@ -271,8 +271,8 @@ export class Vehicle implements Damageable {
       this.fly(dt, input);
       return;
     }
-    if (this.spec.boat) {
-      this.sail(dt, input);
+    if (this.spec.boat && !this.controller) {
+      this.sail(dt, input, true);
       return;
     }
     const c = this.controller!;
@@ -304,6 +304,12 @@ export class Vehicle implements Damageable {
       this.body.setAngvel({ x: ang.x, y: want, z: ang.z }, true);
     }
     this.stabilize(dt);
+    // Amphibians float too; their water drive works once no wheel touches the bottom.
+    if (this.spec.boat) {
+      let touching = false;
+      for (let i = 0; i < spec.wheels.length; i++) if (c.wheelIsInContact(i)) touching = true;
+      this.sail(dt, input, !touching);
+    }
   }
 
   /**
@@ -314,7 +320,7 @@ export class Vehicle implements Damageable {
    * runs past, both only while the stern is in the water. On dry ground it
    * is just a heavy box. Same numbers in the driver's browser and on the server.
    */
-  private sail(dt: number, input: DriveInput | null): void {
+  private sail(dt: number, input: DriveInput | null, propel: boolean): void {
     const b = this.spec.boat!;
     const level = this.water;
     if (!level) return;
@@ -359,9 +365,10 @@ export class Vehicle implements Damageable {
     // Propeller and rudder at the stern, under water.
     const stern = this.tmpBoatP.set(0, -this.spec.half[1], b.stern).applyQuaternion(q).add(pos);
     const sternWet = level(stern.x, stern.z) > stern.y - 0.1;
-    if (!sternWet || this.wrecked || !input) return;
+    if (!propel || !sternWet || this.wrecked || !input) return;
     const throttle = input.throttle;
-    const push = throttle > 0 ? (along < this.spec.top ? throttle * b.thrust : 0) : -along < this.spec.reverse ? throttle * b.thrust * b.reverse : 0;
+    const top = b.waterTop ?? this.spec.top;
+    const push = throttle > 0 ? (along < top ? throttle * b.thrust : 0) : -along < this.spec.reverse ? throttle * b.thrust * b.reverse : 0;
     body.applyImpulseAtPoint({ x: fwd.x * push * dt, y: 0, z: fwd.z * push * dt }, stern, true);
     // Turning: by water speed past the rudder, a little from the propeller's wash at a standstill.
     const flow = Math.abs(along) + Math.abs(throttle) * 2.5;
@@ -580,12 +587,14 @@ export class Vehicle implements Damageable {
   exitSpot(seat: number, physics: PhysicsWorld): THREE.Vector3 {
     const [hx, , hz] = this.spec.half;
     const seatZ = this.spec.seats[seat]!.eye[2];
-    const tries = [
+    const sides = [
       [-(hx + 0.9), seatZ],
       [hx + 0.9, seatZ],
       [0, hz + 1.2],
       [0, -(hz + 1.2)],
     ] as const;
+    // A landing craft: out over the ramp first.
+    const tries = this.spec.boat?.bowExit ? [[0, -(hz + 1.4)], [-0.9, -(hz + 1.4)], [0.9, -(hz + 1.4)], ...sides] : sides;
     const local = new THREE.Vector3();
     const at = new THREE.Vector3();
     for (const [x, z] of tries) {

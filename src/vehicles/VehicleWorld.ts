@@ -26,6 +26,8 @@ export interface BikeSpot {
   zone: string;
   /** What stands there (default: a motorbike); maps place boats at their piers this way. */
   kind?: VehicleKind;
+  /** The side it belongs to (a landing force's craft), or nobody's. */
+  team?: Team;
   spots: { pos: THREE.Vector3; yaw: number }[];
   vehicle: number | null;
   lostAt: number;
@@ -56,6 +58,8 @@ const FAR_LOOK = 45;
 /** Within this distance (m) vehicles show their small parts too (a pixel or two beyond). */
 const FINE_LOOK = 25;
 const ABANDON = 150;
+/** Landing craft: seconds before a lost one is back at its spot, and before an empty one left on the beach is cleared. */
+const LANDING = { respawn: 12, abandon: 25 };
 
 /** How far a hull reaches from its centre on the ground (half its diagonal, m). */
 function hullReach(kind: VehicleKind): number {
@@ -302,15 +306,17 @@ export class VehicleWorld {
         const v = this.get(b.vehicle);
         // Left lying about away from its zone: taken back (another comes later).
         const home = b.spots[0]!.pos;
-        if (v && v.empty && !v.wrecked && v.pos.distanceTo(home) > BIKES.abandonDistance && this.time - v.usedAt > BIKES.abandon) this.remove(v);
+        const abandon = b.kind === 'lcvp' ? LANDING.abandon : BIKES.abandon;
+        if (v && v.empty && !v.wrecked && v.pos.distanceTo(home) > BIKES.abandonDistance && this.time - v.usedAt > abandon) this.remove(v);
         continue;
       }
-      if (this.time < b.lostAt + BIKES.respawn) continue;
+      // Landing craft come back quickly: the landing force rides nothing else.
+      if (this.time < b.lostAt + (b.kind === 'lcvp' ? LANDING.respawn : BIKES.respawn)) continue;
       const kind = b.kind ?? 'bike';
       const free = b.spots.filter((s) => this.clearFor(s.pos, kind));
       if (!free.length) continue;
       const s = free[Math.floor(Math.random() * free.length)]!;
-      b.vehicle = this.spawn(kind, s.pos, s.yaw, null).id;
+      b.vehicle = this.spawn(kind, s.pos, s.yaw, b.team ?? null).id;
     }
   }
 
@@ -504,6 +510,6 @@ export function mapVehicleSpots(map: MapDef, physics: PhysicsWorld, water: ((x: 
     const level = water ? water(x, z) : NaN;
     const hit = physics.raycast({ x, y: 300, z }, { x: 0, y: -1, z: 0 }, 600, Layer.WORLD);
     const y = m.kind === 'boat' && !Number.isNaN(level) ? level : (hit?.point.y ?? 0);
-    return { zone: `map${i}`, kind: m.kind, spots: [{ pos: new THREE.Vector3(x, y + 0.1, z), yaw: ((m.yaw ?? 0) * Math.PI) / 180 }], vehicle: null, lostAt: -Infinity };
+    return { zone: `map${i}`, kind: m.kind, team: m.team, spots: [{ pos: new THREE.Vector3(x, y + 0.1, z), yaw: ((m.yaw ?? 0) * Math.PI) / 180 }], vehicle: null, lostAt: -Infinity };
   });
 }

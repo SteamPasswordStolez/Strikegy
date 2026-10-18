@@ -111,6 +111,7 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'fighter') return buildFighter(team);
   if (kind === 'cas') return buildCas(team);
   if (kind === 'boat') return buildBoat(team);
+  if (kind === 'lcvp') return buildLcvp(team);
   return buildBike(team);
 }
 
@@ -651,6 +652,78 @@ function buildJeep(team: Team | null): VehicleModel {
   muzzle.position.set(0, 0.02, -1.33);
   gun.add(muzzle);
   return { root, wheels: addWheels(root, 'jeep', team), mounts: [null, { turret, gun, muzzle }] };
+}
+
+/** An MG on a pintle (boats): turret and gun pivots, the gun pointing -z. */
+function pintleMg(root: THREE.Group, at: [number, number, number], team: Team | null): MountNodes {
+  const turret = new THREE.Group();
+  turret.position.set(...at);
+  root.add(turret);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.08, 0);
+  turret.add(gun);
+  const gb = new KitBuilder();
+  gb.box('dark', [0.16, 0.18, 0.72], [0, 0, -0.05]);
+  gb.box('dark', [0.17, 0.05, 0.3], [0, 0.11, -0.15]);
+  gb.cyl('dark', 0.05, 0.05, 0.36, [0, 0.02, -0.55], [Math.PI / 2, 0, 0], 10);
+  gb.cyl('dark', 0.025, 0.025, 0.6, [0, 0.02, -1.0], [Math.PI / 2, 0, 0], 8);
+  gb.cyl('dark', 0.035, 0.03, 0.08, [0, 0.02, -1.3], [Math.PI / 2, 0, 0], 8);
+  for (const s of [-1, 1]) gb.rod('metal', [s * 0.06, -0.02, 0.32], [s * 0.07, -0.14, 0.4], 0.018, 6);
+  gb.tinted('#3c4232', () => gb.box('paint', [0.14, 0.2, 0.3], [-0.17, -0.04, -0.05]));
+  bakeInto(gun, gb, team);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0.02, -1.33);
+  gun.add(muzzle);
+  return { turret, gun, muzzle };
+}
+
+/**
+ * Landing craft (11 m, front -z): a flat-bottomed box hull, high plywood
+ * sides, the bow ramp (up, hinged at the deck), the well with ribs and
+ * benches, the coxswain's station at the stern with two MGs either side,
+ * the engine house and a towing bitt.
+ */
+function buildLcvp(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  const H = 0.9;
+  // Hull: the bottom rising toward the bow, slab sides, the transom.
+  b.loft('paint', [[-1.25, -4.6], [1.25, -4.6], [1.35, 5.3], [-1.35, 5.3]], [[-1.6, -5.4], [1.6, -5.4], [1.6, 5.4], [-1.6, 5.4]], -0.9, -0.3);
+  for (const s of [-1, 1]) {
+    b.box('paint', [0.12, H + 0.3, 10.6], [s * 1.54, H / 2 - 0.15, 0]);
+    // Rub rail and the deck edge.
+    b.box('dark', [0.08, 0.1, 10.6], [s * 1.62, -0.05, 0]);
+    b.box('dark', [0.22, 0.06, 10.6], [s * 1.5, H + 0.03, 0]);
+  }
+  b.box('paint', [3.2, H + 0.3, 0.12], [0, H / 2 - 0.15, 5.36]);
+  // The well's floor, ribs up the sides, a bench either side.
+  b.box('dark', [2.9, 0.06, 9.0], [0, -0.28, -0.6]);
+  for (let z = -4.2; z < 3.6; z += 1.2) for (const s of [-1, 1]) b.box('trim', [0.08, H, 0.1], [s * 1.44, H / 2 - 0.2, z]);
+  for (const s of [-1, 1]) b.box('wood', [0.4, 0.08, 6.2], [s * 1.2, 0.25, -0.9]);
+  // The ramp: a steel plate raised at the bow, hinged at the deck, its cables.
+  b.box('paint', [2.8, 2.0, 0.14], [0, 0.55, -5.25], [-0.12, 0, 0]);
+  for (let k = -2; k <= 2; k++) b.box('dark', [0.05, 1.9, 0.06], [k * 0.55, 0.55, -5.33], [-0.12, 0, 0]);
+  for (const s of [-1, 1]) b.rod('metal', [s * 1.3, 1.5, -5.2], [s * 1.45, 1.6, -3.6], 0.012, 4);
+  // Stern: the deck, the engine house, the coxswain's armoured tub and wheel.
+  b.box('paint', [3.0, 0.1, 2.4], [0, 0.95, 4.2]);
+  b.box('paint', [2.0, 0.85, 1.6], [0, 0.45, 4.2]);
+  b.box('paint', [1.0, 0.95, 0.08], [0, 1.45, 3.55]);
+  b.box('paint', [0.08, 0.95, 0.9], [-0.5, 1.45, 4.0]);
+  b.box('paint', [0.08, 0.95, 0.9], [0.5, 1.45, 4.0]);
+  b.tube('dark', Array.from({ length: 13 }, (_, i) => {
+    const a = (i / 12) * Math.PI * 2;
+    return [Math.cos(a) * 0.2, 1.55 + Math.sin(a) * 0.2, 3.75] as [number, number, number];
+  }), 0.015, 24, 5);
+  // MG tubs either side of the coxswain.
+  for (const s of [-1, 1]) {
+    b.cyl('paint', 0.45, 0.45, 0.7, [s * 1.05, 1.3, 4.1], [0, 0, 0], 14, true);
+    b.rod('metal', [s * 1.05, 1.0, 4.1], [s * 1.05, 1.95, 4.1], 0.04, 8);
+  }
+  b.box('metal', [0.3, 0.25, 0.3], [0, 1.1, 5.1]);
+  bakeInto(root, b, team);
+  const left = pintleMg(root, [-1.05, 2.0, 4.1], team);
+  const right = pintleMg(root, [1.05, 2.0, 4.1], team);
+  return { root, wheels: [], mounts: [null, left, right, null, null, null, null, null, null] };
 }
 
 /**

@@ -2,7 +2,7 @@
 // roads that keep buildings off them, street frontages of enterable buildings, ruins,
 // clutter, copses, and a mirror of the engine's terrain height (hills + pads) for slope
 // checks. `createTown(R, { inMap, terrain, zones, ... })` returns helpers bound to one map.
-import { block, densify, lineDist, round, smoothOpen, stripAlong, wallLine } from './lib.mjs';
+import { block, densify, inside, lineDist, round, smoothOpen, stripAlong, wallLine } from './lib.mjs';
 
 export const DEG = Math.PI / 180;
 
@@ -90,8 +90,15 @@ export function heightFn(terrain) {
     const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
   };
+  const land = terrain.land;
+  const ring = land ? [...land.outline, land.outline[0]] : null;
+  const landAt = (x, z) => {
+    if (!land) return 0;
+    const d = lineDist(x, z, ring);
+    return inside(land.outline, x, z) ? land.height * smooth(0, land.inland, d) : -land.depth * smooth(0, land.shelf, d);
+  };
   const hillsAt = (x, z) => {
-    let h = 0;
+    let h = landAt(x, z);
     for (const hl of hills) {
       const d = Math.hypot(x - hl.pos[0], z - hl.pos[1]) / hl.radius;
       if (d < 1) h += hl.height * (0.5 + 0.5 * Math.cos(Math.PI * d));

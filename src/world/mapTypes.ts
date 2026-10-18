@@ -2,7 +2,7 @@ import type { ModelKind } from './modelKits';
 import type { SeaDef } from './waves';
 export type Vec3 = [number, number, number];
 export type Team = 'blue' | 'red';
-export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter' | 'desert';
+export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter' | 'desert' | 'tropical';
 export type SurfaceMaterial =
   | 'ground'
   | 'concrete'
@@ -33,7 +33,7 @@ export type SurfaceMaterial =
   /** Baled straw and hay (procedural; tinted). */
   | 'straw';
 /** Kind of trees on a map and in its scenery (default conifer). */
-export type Flora = 'conifer' | 'broadleaf' | 'palm';
+export type Flora = 'conifer' | 'broadleaf' | 'palm' | 'jungle';
 export type ObjectType = 'wall' | 'cover' | 'floor' | 'ramp' | 'prop';
 
 export interface MapObject {
@@ -95,6 +95,12 @@ export interface TerrainDef {
   flats?: { pos: [number, number]; radius: number; height?: number; blend?: number }[];
   /** River channels carved into the ground, with a water surface (see world/river.ts). */
   rivers?: RiverDef[];
+  /**
+   * An island (sea maps): the ground rises from the sea bed (`-depth`) over `shelf` m
+   * to the shore line `outline` (height 0 there), then to `height` over `inland` m
+   * inside it; hills and pads go on top.
+   */
+  land?: { outline: [number, number][]; height: number; inland: number; shelf: number; depth: number };
 }
 
 export interface RiverDef {
@@ -106,7 +112,7 @@ export interface RiverDef {
   depth: number;
   /** Width of the sloped bank on each side (m, default 5). */
   bank?: number;
-  /** Water depth above the bed (m, default 0.6: wadeable). */
+  /** Water depth above the bed (m, default 0.6: wadeable; 0: a dry channel — a trench or a cutting). */
   water?: number;
   /** Bridge centres [x, z]: bots walk round to these rather than wade when it isn't far. */
   crossings?: [number, number][];
@@ -193,6 +199,10 @@ export interface MapDef {
     view?: { far?: number };
     /** A sea inside the boundary and out to the horizon (see world/waves.ts). */
     sea?: SeaDef;
+    /** The side that comes from the sea (its base is a ship offshore): its people deploy into landing craft (see Game.landingSeat). */
+    landing?: Team;
+    /** Sand along the shore: terrain below `top` (m) drawn as this colour of sand (black volcanic sand on Ashfall Isle). */
+    shore?: { top: number; color: string; ash?: { above: number; color: string } };
   };
   spawns: SpawnPoint[];
   zones?: ZoneDef[];
@@ -206,8 +216,8 @@ export interface MapDef {
   /** Practice dummies (sandbox/training maps). */
   targets?: TargetDef[];
   /** Vehicles standing at fixed spots (brought back a while after one is lost): boats at a pier. */
-  vehicles?: { kind: MapVehicleKind; pos: [number, number]; yaw?: number }[];
+  vehicles?: { kind: MapVehicleKind; pos: [number, number]; yaw?: number; team?: Team }[];
 }
 
 /** Vehicle kinds a map may place (see vehicles/vehicleData.ts). */
-export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat';
+export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat' | 'lcvp';

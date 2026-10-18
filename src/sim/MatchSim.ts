@@ -288,6 +288,7 @@ export class MatchSim {
     bots.grenades = this.throwables;
     bots.gadgets = this.gadgets;
     bots.squadKey = (b) => this.squadKey(b.id);
+    bots.landing = map.world.landing ?? null;
     bots.setTactical(this.world.built.windows, this.world.built.footprints);
     if (map.trees) bots.setForest(map.trees, map.world.size, (x, z) => this.world.terrain.heightAt(x, z), map.world.flora);
     if (this.world.water) bots.setWater(this.world.water);

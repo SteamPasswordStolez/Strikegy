@@ -177,6 +177,11 @@ export class Terrain {
   ) {
     this.def = def ?? {};
     this.riverDist = (this.def.rivers ?? []).map((r) => new DistanceGrid(r.pts, r.width / 2 + (r.bank ?? 5) + VALLEY_REACH + 2));
+    const land = this.def.land;
+    if (land) {
+      this.landShape = new Boundary(land.outline);
+      this.landDist = new DistanceGrid([...land.outline, land.outline[0]!], Math.max(land.inland, land.shelf) + 2);
+    }
     const hills = this.def.hills ?? [];
     const flats = this.def.flats ?? [];
     this.padTarget = flats.map((pad) => pad.height ?? this.padBase(pad.pos[0], pad.pos[1]));
@@ -185,6 +190,17 @@ export class Terrain {
     this.rows = Math.max(1, Math.ceil(size[1] / INDEX_CELL));
     this.hillCells = this.index(hills.map((h) => [h.pos[0], h.pos[1], h.radius]));
     this.flatCells = this.index(flats.map((f) => [f.pos[0], f.pos[1], f.radius + (f.blend ?? 8)]));
+  }
+
+  private readonly landShape: Boundary | null = null;
+  private readonly landDist: DistanceGrid | null = null;
+
+  /** The island's own height at (x, z) (0 without one): sea bed, shelf, shore, inland. */
+  private landAt(x: number, z: number): number {
+    const land = this.def.land!;
+    const d = this.landDist!.sample(x, z);
+    if (this.landShape!.contains(x, z)) return d === Infinity ? land.height : land.height * smoothstep(0, land.inland, d);
+    return d === Infinity ? -land.depth : -land.depth * smoothstep(0, land.shelf, d);
   }
 
   /** Cell size of the hill / pad index (m). */
@@ -222,7 +238,7 @@ export class Terrain {
     // Only the hills and pads whose reach covers this cell: the others add nothing
     // (a map with ~400 building pads spent most of its world build here, 2026-10-18).
     const cell = this.cellOf(x, z);
-    let h = 0;
+    let h = this.landShape ? this.landAt(x, z) : 0;
     const hills = this.def.hills ?? [];
     const hl = cell >= 0 ? this.hillCells[cell]! : null;
     for (let k = 0, n = hl ? hl.length : hills.length; k < n; k++) {
@@ -271,7 +287,7 @@ export class Terrain {
 
   /** Height of the unflattened ground at a pad center (pads keep the local level). */
   private padBase(x: number, z: number): number {
-    let h = 0;
+    let h = this.landShape ? this.landAt(x, z) : 0;
     for (const hill of this.def.hills ?? []) {
       const d = Math.hypot(x - hill.pos[0], z - hill.pos[1]) / hill.radius;
       if (d < 1) h += hill.height * (0.5 + 0.5 * Math.cos(Math.PI * d));
@@ -288,6 +304,8 @@ export class Terrain {
     const h = this.heightAt(x, z);
     if (d <= 0) return h;
     // At sea the ground beyond the edge sinks to the bed (an island's hills carry on until they reach it).
+    // An island shapes its own coasts and bed, beyond the boundary too.
+    if (this.seaBed && this.def.land) return h;
     if (this.seaBed) return h + (Math.min(h, this.seaBed.floor) - h) * smoothstep(10, 320, d);
     const u = x / SCENERY_EXTENT + 0.5;
     const v = z / SCENERY_EXTENT + 0.5;

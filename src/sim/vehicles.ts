@@ -108,6 +108,8 @@ export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry,
     const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
     if (!sp.length) continue;
     const pos = sp.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(sp.length);
+    // A landing force's base is a ship: no motor pool on its deck (it brings landing craft instead).
+    if (team === map.world.landing) continue;
     bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
   }
   const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));

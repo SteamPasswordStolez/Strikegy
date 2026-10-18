@@ -58,6 +58,8 @@ export function buildRivers(terrain: Terrain, environment: THREE.Texture | null)
   // Across the strip: shelf ice under the banks, a ragged ice edge, open water.
   const across = [-1, -0.86, -0.7, 0, 0.7, 0.86, 1];
   for (const r of terrain.rivers) {
+    // A dry channel (a trench, a cutting) has no water to draw.
+    if (r.water === 0) continue;
     const rows = resample(r.pts, STEP);
     const half = r.width / 2 + (r.bank ?? 5) * 0.8;
     const pos: number[] = [];

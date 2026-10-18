@@ -19,7 +19,7 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
 export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets';
 /** Tank kinds (one limit for all of them). */
@@ -108,6 +108,10 @@ export interface BoatSpec {
   drag: readonly [number, number, number];
   /** Water resisting the hull turning (N m per rad/s): with `rudder` it sets how fast it turns. */
   yawDrag: number;
+  /** Top speed afloat (m/s) when it differs from `top` (an amphibian is slower in the water). */
+  waterTop?: number;
+  /** People get out over the bow (a landing craft's ramp) rather than the sides. */
+  bowExit?: boolean;
 }
 
 export interface FlightSpec {
@@ -171,6 +175,60 @@ const BOAT: VehicleSpec = {
   },
 };
 
+/**
+ * Landing craft (2026-10-18, Ashfall Isle): an 11 m open boat with a bow ramp,
+ * the coxswain at the stern, an MG either side of him, six in the well. Slow
+ * and steady; it runs up on the beach and everyone goes out over the ramp.
+ */
+const LCVP: VehicleSpec = {
+  kind: 'lcvp',
+  seats: [
+    { role: 'driver', eye: [0, 2.35, 4.4], exposed: true },
+    { role: 'gunner', eye: [-1.05, 2.45, 4.0], exposed: true, gun: 'mg' },
+    { role: 'gunner', eye: [1.05, 2.45, 4.0], exposed: true, gun: 'mg' },
+    { role: 'passenger', eye: [-0.7, 1.55, -2.4], exposed: true },
+    { role: 'passenger', eye: [0.7, 1.55, -2.4], exposed: true },
+    { role: 'passenger', eye: [-0.7, 1.55, -0.6], exposed: true },
+    { role: 'passenger', eye: [0.7, 1.55, -0.6], exposed: true },
+    { role: 'passenger', eye: [-0.7, 1.55, 1.2], exposed: true },
+    { role: 'passenger', eye: [0.7, 1.55, 1.2], exposed: true },
+  ],
+  half: [1.6, 0.9, 5.4],
+  mass: 9000,
+  wheels: [],
+  wheelRadius: 0,
+  suspension: { rest: 0, travel: 0, stiffness: 0, damping: 0 },
+  engine: 0,
+  brake: 0,
+  steer: 0,
+  top: 9,
+  reverse: 3,
+  grip: 0,
+  friction: 0,
+  health: 900,
+  mult: { bullet: 0.1, heavy: 0.3, explosive: 0.8, at: 1.4 },
+  boat: {
+    floats: [
+      [-1.35, -0.85, -4.6],
+      [1.35, -0.85, -4.6],
+      [-1.45, -0.85, -1.6],
+      [1.45, -0.85, -1.6],
+      [-1.45, -0.85, 1.4],
+      [1.45, -0.85, 1.4],
+      [-1.4, -0.85, 4.6],
+      [1.4, -0.85, 4.6],
+    ],
+    draft: 0.55,
+    thrust: 42000,
+    reverse: 0.4,
+    stern: 5.3,
+    rudder: 2600,
+    drag: [900, 7000, 3800],
+    yawDrag: 110000,
+    bowExit: true,
+  },
+};
+
 export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   jeep: {
     kind: 'jeep',
@@ -227,6 +285,26 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     friction: 2.4,
     health: 1100,
     mult: { bullet: 0, heavy: 0, explosive: 0.45, at: 1.6 },
+    // Amphibious (2026-10-18, like the BTRs and AAVs it stands for): in deep water it
+    // floats and its water jets push it along at a walking pace and a bit.
+    boat: {
+      floats: [
+        [-1.25, -0.8, -2.6],
+        [1.25, -0.8, -2.6],
+        [-1.3, -0.8, 0],
+        [1.3, -0.8, 0],
+        [-1.25, -0.8, 2.6],
+        [1.25, -0.8, 2.6],
+      ],
+      draft: 0.9,
+      thrust: 60000,
+      reverse: 0.4,
+      stern: 3.1,
+      rudder: 6000,
+      drag: [1600, 14000, 9000],
+      yawDrag: 260000,
+      waterTop: 4.5,
+    },
   },
   tank: {
     kind: 'tank',
@@ -425,6 +503,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     mult: { bullet: 0.5, heavy: 0.5, explosive: 1.2, at: 2 },
   },
   boat: BOAT,
+  lcvp: LCVP,
 };
 
 /** A gun that fires a shell (flies and drops) instead of a hitscan round. */

@@ -36,6 +36,8 @@ export class SeaView {
     far: number,
     /** The scene's environment map: set on the material so `envMapIntensity` counts (with only `scene.environment` it doesn't). */
     environment: THREE.Texture | null,
+    /** The sand under the shallows (a black-sand beach's colour), default a pale sand. */
+    sand: string | null = null,
   ) {
     const geo = discGeometry(far * 1.02);
     const w = waveUniforms(sea);
@@ -51,6 +53,7 @@ export class SeaView {
       seaFloor: { value: sea.floor },
       seaSwell: { value: sea.swell },
       seaRipple: { value: rippleTexture() },
+      seaSandColor: { value: new THREE.Color(sand ?? '#b6b49a').multiplyScalar(sand ? 0.55 : 0.4) },
     };
     const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.14, metalness: 0, envMap: environment, envMapIntensity: 0.42, side: THREE.DoubleSide });
     const u = this.uniforms;
@@ -90,6 +93,7 @@ uniform sampler2D seaBed;
 uniform vec4 seaBedBox;
 uniform float seaFloor;
 uniform float seaSwell;
+uniform vec3 seaSandColor;
 varying vec3 vSeaP0;
 varying float vSeaLift;
 // Value noise and its gradient, baked into a tiling texture (one fetch instead of four hashes).
@@ -112,7 +116,7 @@ float seaDepth = seaLevel + vSeaLift - seaGround(vSeaP0.xz);
 // Little light comes back out of deep water: dark there, a lighter green-blue over sand in the shallows.
 vec3 seaDeep = vec3(0.006, 0.03, 0.05);
 vec3 seaShallow = vec3(0.03, 0.13, 0.12);
-vec3 seaSand = vec3(0.2, 0.22, 0.18);
+vec3 seaSand = seaSandColor;
 vec3 seaCol = mix(seaShallow, seaDeep, smoothstep(0.4, 7.0, seaDepth));
 seaCol = mix(seaSand, seaCol, smoothstep(0.0, 0.45, seaDepth));
 // Foam: a thin broken line where the water meets the sand (washing up and back), and on the highest crests.

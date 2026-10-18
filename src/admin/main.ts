@@ -51,7 +51,7 @@ const uptime = (s: number): string => {
 };
 const MODE: Record<string, string> = { zone: '거점', frontline: '전선', conquest: '돌파', hardpoint: '하드포인트', rush: '러시', snd: '폭파', escort: '호위', fortress: '요새', tdm: '팀 데스매치', killconfirm: '킬 컨펌', ffa: '개인전', gungame: '건 게임', lastman: '최후의 1인' };
 const SYS: Record<string, string> = { join: '입장', leave: '퇴장', kicked: '강퇴됨', host: '방장이 됨', team: '팀 이동', start: '경기 시작', muted: '방장이 채금', unmuted: '채금 해제' };
-const MAP: Record<string, string> = { iron_gate: '철문 주둔지', ardennes: '아르덴 숲', lyon: '리옹', bilbao: '빌바오', persia: '페르시아' };
+const MAP: Record<string, string> = { iron_gate: '철문 주둔지', ardennes: '아르덴 숲', lyon: '리옹', bilbao: '빌바오', persia: '페르시아', ashfall: '재의 섬' };
 
 class AdminPage {
   private ws: WebSocket | null = null;

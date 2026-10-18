@@ -80,6 +80,7 @@ export class WaterMap {
       this.seaCells = cells;
     }
     for (const r of terrain.rivers) {
+      if (r.water === 0) continue;
       const reach = r.width / 2 + (r.bank ?? 5);
       const xs = r.pts.map((p) => p[0]);
       const zs = r.pts.map((p) => p[1]);

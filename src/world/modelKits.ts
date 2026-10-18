@@ -39,7 +39,11 @@ export type ModelKind =
   | 'cart'
   | 'silo'
   | 'stall'
-  | 'crane';
+  | 'crane'
+  | 'pillbox'
+  | 'coastalGun'
+  | 'aaGun'
+  | 'planeWreck';
 
 export const MODEL_KINDS: readonly ModelKind[] = [
   'car',
@@ -73,6 +77,10 @@ export const MODEL_KINDS: readonly ModelKind[] = [
   'silo',
   'stall',
   'crane',
+  'pillbox',
+  'coastalGun',
+  'aaGun',
+  'planeWreck',
 ];
 
 /** Surface of a piece: the object's own tinted material, or a shared one. */
@@ -1231,6 +1239,153 @@ const KITS: Record<ModelKind, Kit> = {
         b.pieces.push(p);
       }
     }
+    return cols;
+  },
+
+  pillbox(b, w, h, d) {
+    // Island pillbox (2026-10-18, Ashfall Isle): a squat concrete box with firing
+    // slits on the front and both sides, the door at the back (+z), a thick roof
+    // slab heaped with earth. Enterable.
+    const t = 0.6;
+    const roof = 0.7;
+    const inner = h - roof;
+    const s0 = 1.05;
+    const s1 = 1.4;
+    const door = 1.2;
+    const cols: KitBox[] = [];
+    const wall = (size: V3, at: V3) => {
+      b.box('body', size, at);
+      cols.push({ center: at, size });
+    };
+    // Front (-z) and sides (x): wall under and over a slit, the slit's ends.
+    wall([w, s0, t], [0, s0 / 2, -d / 2 + t / 2]);
+    wall([w, inner - s1, t], [0, (s1 + inner) / 2, -d / 2 + t / 2]);
+    for (const k of [-1, 1]) wall([0.9, s1 - s0, t], [k * (w / 2 - 0.45), (s0 + s1) / 2, -d / 2 + t / 2]);
+    for (const k of [-1, 1]) {
+      const x = k * (w / 2 - t / 2);
+      const L = d - 2 * t;
+      wall([t, s0, L], [x, s0 / 2, 0]);
+      wall([t, inner - s1, L], [x, (s1 + inner) / 2, 0]);
+      for (const e of [-1, 1]) wall([t, s1 - s0, 0.8], [x, (s0 + s1) / 2, e * (L / 2 - 0.4)]);
+    }
+    // Back with the door in the middle.
+    const side = (w - door) / 2;
+    for (const k of [-1, 1]) wall([side, inner, t], [k * (door / 2 + side / 2), inner / 2, d / 2 - t / 2]);
+    wall([door, inner - 2.1, t], [0, (2.1 + inner) / 2, d / 2 - t / 2]);
+    // Roof slab, the earth heaped on it, steel lips over the slits.
+    wall([w + 0.5, roof, d + 0.5], [0, inner + roof / 2, 0]);
+    b.loft('dirt', [[-w / 2 - 0.2, -d / 2 - 0.2], [w / 2 + 0.2, -d / 2 - 0.2], [w / 2 + 0.2, d / 2 + 0.2], [-w / 2 - 0.2, d / 2 + 0.2]], [[-w / 4, -d / 4], [w / 4, -d / 4], [w / 4, d / 4], [-w / 4, d / 4]], h, h + 0.55);
+    b.box('dark', [w - 1.8, 0.07, 0.08], [0, s1 + 0.03, -d / 2 - 0.03]);
+    for (const k of [-1, 1]) b.box('dark', [0.08, 0.07, d - 2.4], [k * (w / 2 + 0.03), s1 + 0.03, 0]);
+    b.box('trim', [w - 2 * t, 0.05, d - 2 * t], [0, 0.03, 0]);
+    // Earth banked up against the front and sides, low enough to fire over.
+    b.loft('dirt', [[-w / 2 - 0.9, -d / 2 - 1.3], [w / 2 + 0.9, -d / 2 - 1.3], [w / 2 + 0.9, d / 2 - 0.6], [-w / 2 - 0.9, d / 2 - 0.6]], [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2 - 0.6], [-w / 2, d / 2 - 0.6]], 0, 0.75);
+    cols.push({ center: [0, 0.3, -d / 2 - 0.6], size: [w + 1.4, 0.6, 1.0] });
+    return cols;
+  },
+
+  coastalGun(b, w, h, d) {
+    // A coastal gun in an open concrete emplacement: a ring wall, the gun on its
+    // pedestal behind a shield, the barrel to the front (-z), ready shells.
+    const cols: KitBox[] = [];
+    const R = Math.min(w, d) / 2;
+    const wallH = Math.min(1.5, h * 0.45);
+    const n = 10;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      // A gap at the back for the way in.
+      if (Math.abs(Math.atan2(Math.sin(a - Math.PI / 2), Math.cos(a - Math.PI / 2))) < 0.3) continue;
+      const seg = 2 * R * Math.sin(Math.PI / n) + 0.1;
+      const at: V3 = [Math.cos(a) * (R - 0.35), wallH / 2, Math.sin(a) * (R - 0.35)];
+      const yaw = -a + Math.PI / 2;
+      b.box('body', [seg, wallH, 0.7], at, [0, yaw, 0]);
+      cols.push({ center: at, size: [seg, wallH, 0.7], yaw });
+    }
+    b.cyl('trim', R - 0.7, R - 0.7, 0.08, [0, 0.04, 0], [0, 0, 0], 24);
+    // Pedestal, carriage, shield, barrel.
+    const barrel = Math.max(4, d * 0.55);
+    b.cyl('dark', 0.9, 1.1, 0.9, [0, 0.45, 0], [0, 0, 0], 16);
+    b.box('paint', [1.6, 0.8, 2.2], [0, 1.25, 0.2]);
+    b.loft('paint', [[-1.3, -0.9], [1.3, -0.9], [1.3, 1.3], [-1.3, 1.3]], [[-1.0, -0.4], [1.0, -0.4], [1.0, 1.2], [-1.0, 1.2]], 0.9, Math.min(h, 2.9));
+    b.cyl('dark', 0.16, 0.22, barrel, [0, 1.75, -1.0 - barrel / 2], [Math.PI / 2, 0, 0], 12);
+    b.cyl('dark', 0.25, 0.25, 0.6, [0, 1.75, -0.9], [Math.PI / 2, 0, 0], 12);
+    cols.push({ center: [0, 1.4, 0.2], size: [2.6, 2.8, 2.4] });
+    for (let k = 0; k < 6; k++) b.cyl('bronze', 0.09, 0.09, 0.7, [-R + 1.2 + (k % 3) * 0.25, 0.35, 1.2 + Math.floor(k / 3) * 0.25], [0, 0, 0], 8);
+    return cols;
+  },
+
+  aaGun(b, w, h, d, rand) {
+    // A twin anti-aircraft gun in a ring of sandbags, barrels raised.
+    const cols: KitBox[] = [];
+    const R = Math.min(w, d) / 2;
+    const n = 8;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      if (Math.abs(Math.atan2(Math.sin(a - Math.PI / 2), Math.cos(a - Math.PI / 2))) < 0.3) continue;
+      const seg = 2 * R * Math.sin(Math.PI / n) + 0.1;
+      const bags = new KitBuilder();
+      KITS.sandbags(bags, seg, 1.0, 0.8, rand);
+      const yaw = -a + Math.PI / 2;
+      const at: V3 = [Math.cos(a) * (R - 0.4), 0, Math.sin(a) * (R - 0.4)];
+      for (const p of bags.pieces) {
+        for (const g of [p.geo, p.far]) {
+          if (!g) continue;
+          g.rotateY(yaw);
+          g.translate(...at);
+        }
+        b.pieces.push(p);
+      }
+      cols.push({ center: [at[0], 0.5, at[2]], size: [seg, 1.0, 0.8], yaw });
+    }
+    // Mount: a cruciform base, a turning cradle, two long barrels, the seat and sights.
+    for (const k of [0, 1]) b.box('dark', [k ? 0.3 : 2.4, 0.2, k ? 2.4 : 0.3], [0, 0.1, 0]);
+    b.cyl('paint', 0.35, 0.45, 0.6, [0, 0.5, 0], [0, 0, 0], 12);
+    b.box('paint', [1.0, 0.5, 0.9], [0, 1.0, 0]);
+    for (const k of [-1, 1]) {
+      b.cyl('dark', 0.05, 0.07, 2.4, [k * 0.22, 1.9, -0.75], [-0.75, 0, 0], 8);
+      b.box('dark', [0.18, 0.22, 0.8], [k * 0.22, 1.35, -0.05], [-0.75, 0, 0]);
+    }
+    b.box('dark', [0.5, 0.08, 0.4], [0, 0.85, 0.65]);
+    b.rod('metal', [-0.4, 1.2, -0.2], [0.4, 1.2, -0.2], 0.02, 6);
+    cols.push({ center: [0, 0.7, 0], size: [1.0, 1.4, 1.0] });
+    return cols;
+  },
+
+  planeWreck(b, w, h, d, rand) {
+    // A crashed propeller fighter: the fuselage nosed into the ground, one wing
+    // still on and crumpled, the other torn off beside it, the tail broken off.
+    const cols: KitBox[] = [];
+    const L = d * 0.9;
+    const r = Math.min(0.75, w * 0.1);
+    const pts: [number, number][] = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      pts.push([Math.max(0.05, r * Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * (1 - 0.65 * t * t)), t * L]);
+    }
+    // Lathe stands on +y: lay it along +z (nose at -z), tip the nose down a little.
+    const fus = new KitBuilder();
+    fus.lathe('body', pts, [0, 0, 0], 12);
+    for (const p of fus.pieces) {
+      for (const g of [p.geo, p.far]) {
+        if (!g) continue;
+        g.rotateX(Math.PI / 2);
+        g.translate(0, 0, -d / 2 + 0.3);
+        g.rotateX(0.1);
+        g.rotateZ(0.18);
+        g.translate(0, r * 0.8, 0);
+      }
+      b.pieces.push(p);
+    }
+    cols.push({ center: [0, r, -d / 2 + L / 2], size: [r * 2, r * 2, L] });
+    b.box('dark', [0.6, 0.35, 1.1], [0, r * 1.9, -d / 2 + L * 0.35], [0.12, 0, 0.18]);
+    b.box('body', [w * 0.42, 0.14, 1.8], [-w * 0.24, 0.35, -d / 2 + L * 0.32], [0, 0.1, -0.12]);
+    b.box('body', [w * 0.38, 0.14, 1.6], [w * 0.3, 0.25, -d / 2 + L * 0.2 + 2.2], [0.06, 0.7 + rand() * 0.3, 0.04]);
+    cols.push({ center: [-w * 0.24, 0.35, -d / 2 + L * 0.32], size: [w * 0.42, 0.4, 1.8] });
+    b.box('body', [0.12, 1.4, 1.1], [0.5, 0.6, d / 2 - 0.8], [0, 0.4, 1.2]);
+    b.box('body', [2.2, 0.1, 0.8], [0.4, 0.2, d / 2 - 0.5], [0, 0.4, 0.1]);
+    b.cyl('dark', 0.2, 0.25, 0.4, [0, 0.62, -d / 2 + 0.2], [Math.PI / 2, 0, 0], 10);
+    for (let k = 0; k < 3; k++) b.box('dark', [0.14, 1.1, 0.05], [0, 0.62, -d / 2 + 0.05], [0.3 * (k - 1), 0, (k * Math.PI * 2) / 3 + 0.4]);
+    b.cyl('dirt', 1.8, 2.2, 0.06, [0, 0.03, -d / 2 + 1.2], [0, 0, 0], 16);
     return cols;
   },
 

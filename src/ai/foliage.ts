@@ -17,6 +17,8 @@ const SHAPE: Record<Flora, { height: number; cone: boolean; centre: number; radi
   conifer: { height: 18, cone: true, centre: 0.2, radius: 0.245, vertical: 0, density: 0.6 },
   broadleaf: { height: 16.5, cone: false, centre: 0.62, radius: 0.36, vertical: 0.3, density: 0.5 },
   palm: { height: 16, cone: false, centre: 0.92, radius: 0.3, vertical: 0.12, density: 0.3 },
+  // Jungle: mostly broad crowns (some palms), thicker.
+  jungle: { height: 16, cone: false, centre: 0.6, radius: 0.36, vertical: 0.3, density: 0.62 },
 };
 
 /** How far a conifer's lowest branches hang below the crown base per metre out from the trunk. */

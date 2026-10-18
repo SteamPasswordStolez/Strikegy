@@ -116,6 +116,8 @@ export interface BackdropOptions {
   desert?: boolean;
   /** Weakest devices (low preset): fewer 3D trees along the edge. */
   phone?: boolean;
+  /** Bare rock / ash above this height (a volcano), as on the map's own terrain. */
+  ash?: { above: number; color: string };
 }
 
 /**
@@ -153,7 +155,8 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
     const f = opts.desert ? 0.12 * smoothstep(0.55, 0.62, n.fbm(u, v, 6, 3)) : smoothstep(0.34, 0.5, n.fbm(u, v, 6, 3));
     // At sea nothing grows below the water line (and a little above it: the beach).
     const dry = terrain.seaBed ? smoothstep(terrain.seaBed.level + 0.5, terrain.seaBed.level + 3, groundAt(x, z)) : 1;
-    return f * dry * (1 - smoothstep(70, 110, heightAt(x, z)));
+    const top = opts.ash ? 1 - smoothstep(opts.ash.above - 8, opts.ash.above + 6, heightAt(x, z)) : 1;
+    return f * dry * top * (1 - smoothstep(70, 110, heightAt(x, z)));
   };
 
   // --- Terrain -------------------------------------------------------------
@@ -170,6 +173,7 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   const floor = new THREE.Color(winter ? 0xb4bcc2 : desert ? 0x9c8a62 : 0x3a3a26);
   const rock = new THREE.Color(winter ? 0x8e9194 : desert ? 0xa08466 : 0x807b70);
   const c = new THREE.Color();
+  const ashColor = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
@@ -180,6 +184,8 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
     // Needle litter and shade under the trees.
     c.lerp(floor, forest(x, z) * 0.75);
     c.lerp(rock, smoothstep(45, 90, h) * 0.8);
+    // A volcano's bare cone (maps with an ash line).
+    if (opts.ash) c.lerp(ashColor.set(opts.ash.color), smoothstep(opts.ash.above - 6, opts.ash.above + 14, h));
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
     colors[i * 3 + 2] = c.b;

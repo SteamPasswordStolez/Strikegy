@@ -1,7 +1,7 @@
 import type { MapDef } from './mapTypes';
 
 const OBJECT_TYPES = new Set(['wall', 'cover', 'floor', 'ramp', 'prop']);
-const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor', 'winter', 'desert']);
+const PROFILES = new Set(['outdoor_day', 'overcast', 'indoor', 'winter', 'desert', 'tropical']);
 const MATERIALS = new Set(['ground', 'concrete', 'concrete_floor', 'metal', 'wood', 'brick', 'snow', 'grass', 'sand', 'plaster', 'brick_old', 'roof', 'asphalt', 'cobble', 'rock', 'canvas', 'paint', 'rubber', 'straw']);
 
 function isNum(v: unknown): v is number {
@@ -42,7 +42,7 @@ export function validateMap(raw: unknown): string[] {
     if (world.groundMaterial !== undefined && !MATERIALS.has(String(world.groundMaterial))) {
       errs.push(`world.groundMaterial: unknown "${String(world.groundMaterial)}"`);
     }
-    if (world.flora !== undefined && !['conifer', 'broadleaf', 'palm'].includes(String(world.flora))) {
+    if (world.flora !== undefined && !['conifer', 'broadleaf', 'palm', 'jungle'].includes(String(world.flora))) {
       errs.push(`world.flora: unknown "${String(world.flora)}"`);
     }
     if (world.vehicles !== undefined && !['all', 'noJets', 'light'].includes(String(world.vehicles))) {

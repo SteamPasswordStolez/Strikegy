@@ -21,6 +21,8 @@ describe('vehicle spots stay in play', () => {
       const boundary = w.terrain.boundary;
       const bases: { team: 'blue' | 'red'; pos: THREE.Vector3; facing: number }[] = [];
       for (const team of ['blue', 'red'] as const) {
+        // A landing force's base is a ship: no pads or tank spots there (as in the game).
+        if (team === map.world.landing) continue;
         const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
         const pos = sp.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(sp.length);
         bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
@@ -33,6 +35,7 @@ describe('vehicle spots stay in play', () => {
       for (const b of plan.bikes) for (const s of b.spots) expect(inside(s.pos, 2), `bike at ${b.zone}`).toBe(true);
       // Every side still has its base vehicles.
       for (const team of ['blue', 'red'] as const) {
+        if (team === map.world.landing) continue;
         expect(plan.pads.filter((p) => p.team === team).length).toBe(2);
         if (map.world.vehicles !== 'light') expect(plan.tankSpots.filter((p) => p.team === team).length).toBeGreaterThanOrEqual(2);
       }

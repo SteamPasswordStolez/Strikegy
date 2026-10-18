@@ -601,6 +601,7 @@ export class Game {
     const { terrain, shaped, water, sea, built } = buildWorld(map, this.physics, this.impacts, { scene: r.scene, surfaces: this.surfaces, terrainStep: r.preset === 'low' ? 2 : 1 });
     this.navExtra = built.navExtra;
     this.navBig = built.navBig;
+    this.landingTeam = map.world.landing ?? null;
     this.sea = sea;
     lap('world');
     const props = placeProps(map, r.scene, this.models);
@@ -608,10 +609,11 @@ export class Game {
     await this.loadStep(0.48, 'load.nature');
     if (water && terrain.rivers.length) r.scene.add(buildRivers(terrain, r.scene.environment));
     if (sea) {
-      this.seaView = new SeaView(sea, terrain, r.camera.far, r.scene.environment);
+      this.seaView = new SeaView(sea, terrain, r.camera.far, r.scene.environment, map.world.shore?.color ?? null);
       r.scene.add(this.seaView.mesh);
     }
     const winter = map.world.visualProfile === 'winter';
+    const shore = map.world.shore ?? null;
     if (winter) {
       this.snowfall = new Snowfall(r.preset === 'low' ? 1200 : r.preset === 'medium' ? 2500 : 4000);
       r.scene.add(this.snowfall.points);
@@ -625,13 +627,13 @@ export class Game {
     const coverStyle = GROUND_COVER[map.world.groundMaterial ?? 'ground'];
     if (coverStyle && shaped && built.groundHandle !== null && r.preset !== 'low') {
       const kind = map.world.groundMaterial ?? 'ground';
-      this.groundCover = new GroundCover(coverStyle, terrain.bounds(), this.physics, this.impacts, built.groundHandle, SURFACE_FROM_MATERIAL[kind], (x, y, z) => !!water && (water.depthAt(x, y + 0.3, z) > 0 || (!!sea && water.seaAt(x, z) && y < sea.level + sea.swell / 2 + 0.3)), q.msaa);
+      this.groundCover = new GroundCover(coverStyle, terrain.bounds(), this.physics, this.impacts, built.groundHandle, SURFACE_FROM_MATERIAL[kind], (x, y, z) => (!!water && (water.depthAt(x, y + 0.3, z) > 0 || (!!sea && water.seaAt(x, z) && y < sea.level + sea.swell / 2 + 0.3))) || (!!shore && y < shore.top + 0.4), q.msaa);
       r.scene.add(this.groundCover.mesh);
     }
     lap('water+forest');
     await this.loadStep(0.56, 'load.scenery');
     this.fitShadows(map, terrain, built.root, props);
-    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: r.preset === 'low' });
+    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: r.preset === 'low', ash: map.world.shore?.ash });
     lap('backdrop');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
@@ -735,6 +737,7 @@ export class Game {
         await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, { ...botOpts, side: this.myTeam });
         this.bots.grenades = this.throwables;
+        this.bots.landing = map.world.landing ?? null;
         this.bots.gadgets = this.gadgets;
         this.bots.squadKey = (b) => this.squadKeyOf(b.team, b.id);
         this.bots.setTactical(built.windows, built.footprints);
@@ -1856,6 +1859,8 @@ export class Game {
       const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
       if (!sp.length) continue;
       const pos = sp.reduce((a, s) => a.add(new THREE.Vector3(...s.pos)), new THREE.Vector3()).divideScalar(sp.length);
+      // A landing force's base is a ship: no motor pool on its deck (it brings landing craft instead).
+      if (team === map.world.landing) continue;
       bases.push({ team, pos, facing: sp[0]!.yaw * DEG });
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
@@ -1948,7 +1953,7 @@ export class Game {
    * first unless it is kept for someone else. -1 when there's none.
    */
   private freeSeatFor(v: Vehicle, team: Team, id: number): number {
-    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || v.kind === 'rocket')) return -1;
+    if (v.wrecked || !(TANK_KINDS.includes(v.kind) || JET_KINDS.includes(v.kind) || v.kind === 'rocket' || v.kind === 'lcvp')) return -1;
     if ((v.team ?? v.home) !== team) return -1;
     return v.seats.findIndex((s, i) => !s && (i > 0 || v.driverOnly === null || v.driverOnly === id) && !this.bots?.claimedSeat(v.id, i));
   }
@@ -4143,7 +4148,35 @@ export class Game {
         best = c;
       }
     }
+    // A landing force's base is a ship: from there into a landing craft waiting by it.
+    if (best.key === 'base' && this.landingTeam === bot.team) return this.landingSeat(bot.team, bot.id) ?? 'base';
     return best.key;
+  }
+
+  /** The side that lands from the sea on this map (null: none). */
+  private landingTeam: Team | null = null;
+
+  /**
+   * A seat in a landing craft still by the ship (not under way), the one with
+   * most aboard first so craft fill up and go; null when none has room.
+   */
+  private landingSeat(team: Team, id: number): string | null {
+    const base = this.baseCenter(team);
+    let best: Vehicle | null = null;
+    let bestAboard = -1;
+    for (const v of this.vehicles?.vehicles ?? []) {
+      if (v.kind !== 'lcvp' || v.home !== team || v.wrecked || v.pos.distanceTo(base) > 260 || v.velocity.length() > 2.5) continue;
+      if (this.freeSeatFor(v, team, id) < 0) continue;
+      let pending = 0;
+      for (const vid of this.pendingSeats.values()) if (vid === v.id) pending++;
+      if (this.freeSeatCount(v, team, id) <= pending) continue;
+      const aboard = v.seats.filter(Boolean).length + pending;
+      if (aboard > bestAboard) {
+        best = v;
+        bestAboard = aboard;
+      }
+    }
+    return best ? `veh:${best.id}` : null;
   }
 
   private deployOptions(): DeployOption[] {

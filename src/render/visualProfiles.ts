@@ -74,6 +74,17 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     envIntensity: 0.4,
     exposure: 0.4,
   },
+  // A tropical island at midday: a high, white sun, deep blue sky with heaped cloud, humid haze.
+  tropical: {
+    sky: { turbidity: 4, rayleigh: 1.6, mieCoefficient: 0.006, mieDirectionalG: 0.82, cloudCoverage: 0.38, cloudDensity: 0.45 },
+    photo: 'clear',
+    photoHorizon: 1.5,
+    sun: { elevation: 62, azimuth: 20, color: 0xfff6e8, intensity: 2.6 },
+    fog: { color: 0xb8cbd8, density: 0.0018 },
+    hemi: { sky: 0xd4e6ff, ground: 0x4c5a38, intensity: 0.3 },
+    envIntensity: 0.85,
+    exposure: 0.44,
+  },
   indoor: {
     background: 0x15171a,
     fog: { color: 0x15171a, density: 0.012 },

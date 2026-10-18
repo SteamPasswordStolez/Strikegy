@@ -243,6 +243,7 @@ export interface ConiferKit {
 
 /** Trees for a map: conifers (default), broadleaf (meadows, orchards) or date palms. */
 export function createConiferKit(alphaToCoverage: boolean, snow = false, flora: Flora = 'conifer'): ConiferKit {
+  if (flora === 'jungle') return jungleKit(alphaToCoverage);
   const build = flora === 'broadleaf' ? (s: number) => broadleafVariant(s, TREE_HEIGHT) : flora === 'palm' ? (s: number) => palmVariant(s, TREE_HEIGHT) : buildVariant;
   const variants = Array.from({ length: VARIANTS }, (_, i) => build(101 + i * 17));
   const foliageMaterial = new THREE.MeshStandardMaterial({
@@ -253,6 +254,48 @@ export function createConiferKit(alphaToCoverage: boolean, snow = false, flora: 
     alphaToCoverage,
     side: THREE.DoubleSide,
     roughness: 0.9,
+    metalness: 0,
+  });
+  const trunkMaterial = new THREE.MeshStandardMaterial({ map: barkTexture(), roughness: 0.95, metalness: 0 });
+  return { variants, foliageMaterial, trunkMaterial };
+}
+
+/**
+ * Jungle (2026-10-18, Ashfall Isle): two broad-crowned variants and a palm in
+ * one kit. Their foliage shares one material, so the leaf clump and the palm
+ * frond are painted side by side on one texture and each variant's cards
+ * point at its half.
+ */
+function jungleKit(alphaToCoverage: boolean): ConiferKit {
+  const leaves = leafTexture();
+  const fronds = frondTexture();
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 256;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(leaves.image as HTMLCanvasElement, 0, 0);
+  ctx.drawImage(fronds.image as HTMLCanvasElement, 256, 0);
+  leaves.dispose();
+  fronds.dispose();
+  const atlas = new THREE.CanvasTexture(c);
+  atlas.colorSpace = THREE.SRGBColorSpace;
+  atlas.anisotropy = 4;
+  const half = (v: ConiferVariant, right: boolean): ConiferVariant => {
+    const uv = v.foliage.getAttribute('uv') as THREE.BufferAttribute;
+    // Pulled in from the edges a little so mip levels don't bleed the other half in.
+    for (let i = 0; i < uv.count; i++) uv.setX(i, (right ? 0.5 : 0) + (0.008 + uv.getX(i) * 0.984) * 0.5);
+    return v;
+  };
+  const variants = [half(broadleafVariant(301, TREE_HEIGHT), false), half(palmVariant(318, TREE_HEIGHT), true), half(broadleafVariant(335, TREE_HEIGHT * 1.1), false)];
+  const foliageMaterial = new THREE.MeshStandardMaterial({
+    map: atlas,
+    // Wetter, deeper green than the meadow trees.
+    color: 0x9fb08f,
+    vertexColors: true,
+    alphaTest: 0.45,
+    alphaToCoverage,
+    side: THREE.DoubleSide,
+    roughness: 0.85,
     metalness: 0,
   });
   const trunkMaterial = new THREE.MeshStandardMaterial({ map: barkTexture(), roughness: 0.95, metalness: 0 });
