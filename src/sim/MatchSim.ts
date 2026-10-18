@@ -262,9 +262,9 @@ export class MatchSim {
     if ((opts.bots && opts.bots.blue + opts.bots.red > 0) || charges) {
       // Colliders into the broadphase before the navmesh reads them.
       physics.step();
-      nav = await NavWorld.build(physics, world.built.navExtra ?? undefined);
+      nav = await NavWorld.build(physics, world.built.navExtra ?? undefined, world.built.navBig);
       // Bot drivers route on a mesh as wide as a tank.
-      if ((map.zones?.length ?? 0) > 0 && (opts.bots || pickMode(map, opts.mode, true) === 'escort')) vehicleNav = await VehicleNav.build(physics, world.built.navExtra ?? undefined);
+      if ((map.zones?.length ?? 0) > 0 && (opts.bots || pickMode(map, opts.mode, true) === 'escort')) vehicleNav = await VehicleNav.build(physics, world.built.navBig?.coarseExtra ?? world.built.navExtra ?? undefined);
     }
     const sim = new MatchSim(physics, impacts, world, opts, nav, vehicleNav);
     // Cover, peek spots and zone positions for the bots (baked with the navmesh).
@@ -768,6 +768,8 @@ export class MatchSim {
   beginStep(dt = SIM_DT): void {
     this.time += dt;
     this.tick++;
+    // The sea moves with the match clock (browsers follow the same tick).
+    if (this.world.sea) this.world.sea.time = this.tick * SIM_DT;
     this.vehicles?.beginStep();
   }
 

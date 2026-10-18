@@ -155,6 +155,9 @@ class DistanceGrid {
   }
 }
 
+/** Cell of the terrain's hill / pad index (m). */
+const INDEX_CELL = 32;
+
 /** Beyond the banks, a river's valley keeps shaping the hills this far out (m). */
 const VALLEY_REACH = 40;
 
@@ -169,27 +172,76 @@ export class Terrain {
     readonly boundary: Boundary,
     /** Ground rectangle covered by the mesh/collider, [x, z] centered on the origin. */
     readonly size: readonly [number, number],
+    /** A sea map's bed: beyond the boundary the ground goes down to `floor` instead of rising into hills. */
+    readonly seaBed: { level: number; floor: number } | null = null,
   ) {
     this.def = def ?? {};
     this.riverDist = (this.def.rivers ?? []).map((r) => new DistanceGrid(r.pts, r.width / 2 + (r.bank ?? 5) + VALLEY_REACH + 2));
+    const hills = this.def.hills ?? [];
+    const flats = this.def.flats ?? [];
+    this.padTarget = flats.map((pad) => pad.height ?? this.padBase(pad.pos[0], pad.pos[1]));
+    // Which hills and pads reach each cell, in the map's order (pads blend in order).
+    this.cols = Math.max(1, Math.ceil(size[0] / INDEX_CELL));
+    this.rows = Math.max(1, Math.ceil(size[1] / INDEX_CELL));
+    this.hillCells = this.index(hills.map((h) => [h.pos[0], h.pos[1], h.radius]));
+    this.flatCells = this.index(flats.map((f) => [f.pos[0], f.pos[1], f.radius + (f.blend ?? 8)]));
+  }
+
+  /** Cell size of the hill / pad index (m). */
+  private readonly cols: number;
+  private readonly rows: number;
+  /** Per cell, the hills / pads (indices, ascending) whose reach touches it. */
+  private readonly hillCells: Int32Array[];
+  private readonly flatCells: Int32Array[];
+  /** Each pad's level (its own, or the unflattened ground at its centre). */
+  private readonly padTarget: number[];
+
+  private index(discs: [number, number, number][]): Int32Array[] {
+    const lists: number[][] = Array.from({ length: this.cols * this.rows }, () => []);
+    const x0 = -this.size[0] / 2;
+    const z0 = -this.size[1] / 2;
+    discs.forEach(([x, z, r], i) => {
+      const c0 = Math.max(0, Math.floor((x - r - x0) / INDEX_CELL));
+      const c1 = Math.min(this.cols - 1, Math.floor((x + r - x0) / INDEX_CELL));
+      const r0 = Math.max(0, Math.floor((z - r - z0) / INDEX_CELL));
+      const r1 = Math.min(this.rows - 1, Math.floor((z + r - z0) / INDEX_CELL));
+      for (let row = r0; row <= r1; row++) for (let c = c0; c <= c1; c++) lists[row * this.cols + c]!.push(i);
+    });
+    return lists.map((l) => Int32Array.from(l));
+  }
+
+  /** The index cell of (x, z), or -1 outside the ground rectangle (everything is checked there). */
+  private cellOf(x: number, z: number): number {
+    const c = Math.floor((x + this.size[0] / 2) / INDEX_CELL);
+    const r = Math.floor((z + this.size[1] / 2) / INDEX_CELL);
+    return c < 0 || r < 0 || c >= this.cols || r >= this.rows ? -1 : r * this.cols + c;
   }
 
   /** Height inside the map before the outside rise (what objects sit on). */
   heightAt(x: number, z: number): number {
+    // Only the hills and pads whose reach covers this cell: the others add nothing
+    // (a map with ~400 building pads spent most of its world build here, 2026-10-18).
+    const cell = this.cellOf(x, z);
     let h = 0;
-    for (const hill of this.def.hills ?? []) {
+    const hills = this.def.hills ?? [];
+    const hl = cell >= 0 ? this.hillCells[cell]! : null;
+    for (let k = 0, n = hl ? hl.length : hills.length; k < n; k++) {
+      const hill = hills[hl ? hl[k]! : k]!;
       const d = Math.hypot(x - hill.pos[0], z - hill.pos[1]) / hill.radius;
       if (d < 1) h += hill.height * (0.5 + 0.5 * Math.cos(Math.PI * d));
     }
     const amp = this.def.noise ?? 0;
     if (amp > 0) h += amp * (this.noise.fbm(x / 400 + 0.5, z / 400 + 0.5, 6, 4) - 0.5) * 2;
-    for (const pad of this.def.flats ?? []) {
+    const flats = this.def.flats ?? [];
+    const fl = cell >= 0 ? this.flatCells[cell]! : null;
+    for (let k = 0, n = fl ? fl.length : flats.length; k < n; k++) {
+      const i = fl ? fl[k]! : k;
+      const pad = flats[i]!;
       const d = Math.hypot(x - pad.pos[0], z - pad.pos[1]);
       const blend = pad.blend ?? 8;
       if (d >= pad.radius + blend) continue;
-      const target = pad.height ?? this.padBase(pad.pos[0], pad.pos[1]);
       const w = 1 - smoothstep(pad.radius, pad.radius + blend, d);
-      h += (target - h) * w;
+      h += (this.padTarget[i]! - h) * w;
     }
     const rivers = this.def.rivers;
     if (rivers) for (let i = 0; i < rivers.length; i++) h -= rivers[i]!.depth * this.riverShape(i, x, z);
@@ -235,6 +287,8 @@ export class Terrain {
     const d = this.boundary.outside(x, z);
     const h = this.heightAt(x, z);
     if (d <= 0) return h;
+    // At sea the ground beyond the edge sinks to the bed (an island's hills carry on until they reach it).
+    if (this.seaBed) return h + (Math.min(h, this.seaBed.floor) - h) * smoothstep(10, 320, d);
     const u = x / SCENERY_EXTENT + 0.5;
     const v = z / SCENERY_EXTENT + 0.5;
     const hills = this.hillNoise.fbm(u, v, 3, 5);
@@ -293,6 +347,8 @@ export function polylineDistance(pts: readonly (readonly [number, number])[], x:
  */
 const CHUNK_CELLS = 128;
 const LOD_DISTANCES = [0, 290, 460];
+/** Big maps (over 1 km) go on to 1/8 and 1/16 detail (16 / 32 m on a 2 m grid) for the ground across the map. */
+const FAR_LODS = [900, 1500];
 /** Skirts hang this far below chunk edges to hide cracks between detail levels (m). */
 const SKIRT = 1.5;
 
@@ -384,7 +440,7 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
       const lod = new THREE.LOD();
       lod.position.set(px((c0 + c1) / 2), 0, pz((r0 + r1) / 2));
       lod.updateMatrix();
-      LOD_DISTANCES.forEach((d, level) => {
+      (Math.max(sx, sz) > 1000 ? [...LOD_DISTANCES, ...FAR_LODS] : LOD_DISTANCES).forEach((d, level) => {
         const step = Math.min(CHUNK_CELLS / 2, base << level);
         const geo = chunk(c0, c1, r0, r1, step);
         geo.translate(-lod.position.x, 0, -lod.position.z);
@@ -469,27 +525,45 @@ export function groundBlocks(
   return false;
 }
 
-/** Terrain triangles for the navmesh (same grid as the collider). */
-export function terrainTriangles(terrain: Terrain, grid: ReturnType<Terrain['sample']>): { positions: number[]; indices: number[] } {
-  const { cols, rows, heights } = grid;
+/**
+ * Terrain triangles for the navmesh (same grid as the collider). `step` > 1
+ * takes every step-th grid line (a big map's coarse navmesh: rasterizing
+ * the 2 m triangles was most of its bake).
+ */
+export function terrainTriangles(terrain: Terrain, grid: ReturnType<Terrain['sample']>, step = 1): { positions: number[]; indices: number[] } {
+  const { heights } = grid;
   const [sx, sz] = terrain.size;
   const positions: number[] = [];
   const indices: number[] = [];
-  for (let r = 0; r <= rows; r++) {
-    const z = -sz / 2 + (r / rows) * sz;
-    for (let c = 0; c <= cols; c++) positions.push(-sx / 2 + (c / cols) * sx, heights[r * (cols + 1) + c]!, z);
+  // Grid lines used (the last one always, so the edge stays where it is).
+  const lines = (n: number): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < n; i += step) out.push(i);
+    out.push(n);
+    return out;
+  };
+  const cs = lines(grid.cols);
+  const rs = lines(grid.rows);
+  for (const r of rs) {
+    const z = -sz / 2 + (r / grid.rows) * sz;
+    for (const c of cs) positions.push(-sx / 2 + (c / grid.cols) * sx, heights[r * (grid.cols + 1) + c]!, z);
   }
-  const cell = Math.max(sx / cols, sz / rows);
+  const cols = cs.length - 1;
+  const rows = rs.length - 1;
+  const cell = Math.max(sx / grid.cols, sz / grid.rows) * step;
+  const seaFloor = terrain.seaBed ? terrain.seaBed.level - 1.25 : null;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       // Only cells in (or right next to) the playable area; the rest is unreachable.
-      const cx = -sx / 2 + ((c + 0.5) / cols) * sx;
-      const cz = -sz / 2 + ((r + 0.5) / rows) * sz;
+      const cx = -sx / 2 + (((cs[c]! + cs[c + 1]!) / 2) / grid.cols) * sx;
+      const cz = -sz / 2 + (((rs[r]! + rs[r + 1]!) / 2) / grid.rows) * sz;
       if (terrain.boundary.outside(cx, cz) > cell * 2) continue;
       const a = r * (cols + 1) + c;
       const b = a + 1;
       const d = a + cols + 1;
       const e = d + 1;
+      // Sea too deep to wade is swum, and bots don't swim: no navmesh on the bed out there.
+      if (seaFloor !== null && Math.max(positions[a * 3 + 1]!, positions[b * 3 + 1]!, positions[d * 3 + 1]!, positions[e * 3 + 1]!) < seaFloor) continue;
       // Counter-clockwise seen from above (+y) so Recast treats them as floor.
       indices.push(a, d, b, b, d, e);
     }

@@ -1,4 +1,5 @@
 import type { Terrain } from './terrain';
+import type { Sea } from './waves';
 
 /** Grid spacing of the water map (m). */
 const CELL = 2;
@@ -6,6 +7,8 @@ const CELL = 2;
 export const WADE_DEPTH = 0.25;
 /** Speed multiplier while wading. */
 export const WADE_SPEED = 0.6;
+/** Water this deep over the feet or more is swum (m): about chest high. */
+export const SWIM_DEPTH = 1.25;
 /** Water within this distance of a bridge centre counts as crossed by the bridge (m). */
 const BRIDGE_REACH = 18;
 
@@ -48,7 +51,14 @@ export class WaterMap {
   /** Bridge centres over the rivers [x, z]. */
   readonly crossings: readonly (readonly [number, number])[];
 
-  constructor(terrain: Terrain) {
+  /** Ground height where the sea can reach (under its highest crest), NaN elsewhere; null without a sea. */
+  private readonly seaCells: Float32Array | null;
+
+  constructor(
+    terrain: Terrain,
+    /** The map's sea (its surface moves: looked up each time). */
+    readonly sea: Sea | null = null,
+  ) {
     const [sx, sz] = terrain.size;
     this.cols = Math.ceil(sx / CELL) + 1;
     this.rows = Math.ceil(sz / CELL) + 1;
@@ -56,7 +66,19 @@ export class WaterMap {
     this.z0 = -sz / 2;
     this.level = new Float32Array(this.cols * this.rows).fill(NaN);
     this.crossings = terrain.rivers.flatMap((r) => r.crossings ?? []);
-    let any = false;
+    let any = !!sea;
+    this.seaCells = null;
+    if (sea) {
+      const cells = new Float32Array(this.cols * this.rows).fill(NaN);
+      const top = sea.level + sea.swell / 2 + 0.2;
+      for (let row = 0; row < this.rows; row++) {
+        for (let col = 0; col < this.cols; col++) {
+          const ground = terrain.surfaceAt(this.x0 + col * CELL, this.z0 + row * CELL);
+          if (ground < top) cells[row * this.cols + col] = ground;
+        }
+      }
+      this.seaCells = cells;
+    }
     for (const r of terrain.rivers) {
       const reach = r.width / 2 + (r.bank ?? 5);
       const xs = r.pts.map((p) => p[0]);
@@ -83,12 +105,28 @@ export class WaterMap {
     this.any = any;
   }
 
-  /** Water surface height at (x, z), or NaN on dry ground. */
+  /** Water surface height at (x, z), or NaN on dry ground (the sea's moving surface where it reaches). */
   levelAt(x: number, z: number): number {
     const col = Math.round((x - this.x0) / CELL);
     const row = Math.round((z - this.z0) / CELL);
-    if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) return NaN;
-    return this.level[row * this.cols + col]!;
+    if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) return this.sea ? this.sea.heightAt(x, z) : NaN;
+    const i = row * this.cols + col;
+    const river = this.level[i]!;
+    const ground = this.seaCells ? this.seaCells[i]! : NaN;
+    if (Number.isNaN(ground)) return river;
+    // The sea here now: dry while a trough leaves the sand bare.
+    const sea = this.sea!.heightAt(x, z);
+    if (sea <= ground) return river;
+    return Number.isNaN(river) ? sea : Math.max(river, sea);
+  }
+
+  /** Whether the sea reaches (x, z) (not rivers). */
+  seaAt(x: number, z: number): boolean {
+    if (!this.seaCells) return false;
+    const col = Math.round((x - this.x0) / CELL);
+    const row = Math.round((z - this.z0) / CELL);
+    if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) return true;
+    return !Number.isNaN(this.seaCells[row * this.cols + col]!);
   }
 
   /** Depth of water over a point at height y (0 when dry or above the surface). */

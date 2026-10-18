@@ -248,12 +248,14 @@ export class WeaponController {
     const d = this.def;
     this.drawTimer = Math.max(0, this.drawTimer - dt);
     // Out of a sprint (stopped, or ended by the trigger / sights) the gun comes up first.
-    if (this.wasSprinting && !player.sprinting) this.sprintOut = d.sprintOut;
-    this.wasSprinting = player.sprinting;
+    // Swimming holds the gun out of the water like a sprint holds it low (and it comes up the same way after).
+    const lowered = player.sprinting || player.swimming;
+    if (this.wasSprinting && !lowered) this.sprintOut = d.sprintOut;
+    this.wasSprinting = lowered;
     this.sprintOut = Math.max(0, this.sprintOut - dt);
-    this.stepMelee(dt, input, player, blocked);
+    this.stepMelee(dt, input, player, blocked || player.swimming);
     const meleeing = this.meleeTime >= 0;
-    const ready = this.drawTimer === 0 && this.sprintOut === 0 && !player.sprinting && !blocked && !meleeing;
+    const ready = this.drawTimer === 0 && this.sprintOut === 0 && !lowered && !blocked && !meleeing;
     const wantAds = input.ads && ready && !(s.reloading && d.reloadStyle === 'mag');
     const adsRate = dt / d.adsTime;
     this.adsBlend = THREE.MathUtils.clamp(this.adsBlend + (wantAds ? adsRate : -adsRate), 0, 1);
@@ -316,7 +318,7 @@ export class WeaponController {
       return;
     }
     // Anything else you do (shoot, aim, reload, sprint, throw, swing) ends it.
-    if (!idle || player.sprinting) {
+    if (!idle || player.sprinting || player.swimming) {
       this.inspectTime = -1;
       return;
     }

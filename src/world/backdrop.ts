@@ -23,7 +23,49 @@ function bySector<T>(items: T[], pos: (t: T) => THREE.Vector3): T[][] {
   return out.filter((s) => s.length > 0);
 }
 
-const EXTENT = SCENERY_EXTENT;
+/** Scenery square for a map: the old 1.4 km, or for big maps (2026-10-18) the map plus 1.2 km of hills round it. */
+function sceneryExtent(terrain: Terrain): number {
+  const size = Math.max(terrain.size[0], terrain.size[1]);
+  return size <= 1000 ? SCENERY_EXTENT : size + 2400;
+}
+
+/**
+ * The scenery ground of a big map: grid lines ~16 m apart under the map
+ * (hidden, only for the seam), then from its edge outwards starting 10 m
+ * apart and growing 8 % a line, so the hills next to the map are as fine
+ * as on small maps and the far ones cost little. Cells wholly under the
+ * map's own terrain are left out.
+ */
+function bigGround(halfX: number, halfZ: number, extent: number): THREE.BufferGeometry {
+  const axis = (half: number): number[] => {
+    const inner = Math.max(1, Math.round((half * 2) / 16));
+    const out: number[] = [];
+    let d = 10;
+    for (let x = half + d; x < extent / 2; x += d, d *= 1.08) out.push(x);
+    out.push(extent / 2);
+    const line: number[] = [...out.map((v) => -v).reverse()];
+    for (let i = 0; i <= inner; i++) line.push(-half + (i / inner) * half * 2);
+    return [...line, ...out];
+  };
+  const xs = axis(halfX);
+  const zs = axis(halfZ);
+  const pos: number[] = [];
+  for (const z of zs) for (const x of xs) pos.push(x, 0, z);
+  const idx: number[] = [];
+  const w = xs.length;
+  for (let j = 0; j < zs.length - 1; j++) {
+    for (let i = 0; i < w - 1; i++) {
+      if (Math.max(Math.abs(xs[i]!), Math.abs(xs[i + 1]!)) < halfX - 8 && Math.max(Math.abs(zs[j]!), Math.abs(zs[j + 1]!)) < halfZ - 8) continue;
+      const a = j * w + i;
+      const b = a + w;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  return geo;
+}
 
 /**
  * Forest-floor clutter (scanned rocks, stumps, ferns, shrubs: thousands of
@@ -84,6 +126,7 @@ export interface BackdropOptions {
 export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: BackdropOptions & { mapHasTerrain: boolean }): THREE.Group {
   const group = new THREE.Group();
   group.name = 'backdrop';
+  const EXTENT = sceneryExtent(terrain);
   const n = new TileNoise(99);
   const [minX, minZ, maxX, maxZ] = terrain.bounds();
   const halfX = Math.max(-minX, maxX);
@@ -108,13 +151,16 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
     const [u, v] = uvOf(x, z);
     // Desert: only the odd palm grove.
     const f = opts.desert ? 0.12 * smoothstep(0.55, 0.62, n.fbm(u, v, 6, 3)) : smoothstep(0.34, 0.5, n.fbm(u, v, 6, 3));
-    return f * (1 - smoothstep(70, 110, heightAt(x, z)));
+    // At sea nothing grows below the water line (and a little above it: the beach).
+    const dry = terrain.seaBed ? smoothstep(terrain.seaBed.level + 0.5, terrain.seaBed.level + 3, groundAt(x, z)) : 1;
+    return f * dry * (1 - smoothstep(70, 110, heightAt(x, z)));
   };
 
   // --- Terrain -------------------------------------------------------------
   const seg = opts.lowDetail ? 72 : 120;
-  const geo = new THREE.PlaneGeometry(EXTENT, EXTENT, seg, seg);
-  geo.rotateX(-Math.PI / 2);
+  const big = EXTENT > SCENERY_EXTENT;
+  const geo = big ? bigGround(tx, tz, EXTENT) : new THREE.PlaneGeometry(EXTENT, EXTENT, seg, seg);
+  if (!big) geo.rotateX(-Math.PI / 2);
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
   const winter = !!opts.winter;
@@ -158,6 +204,7 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
       const z = (rng() - 0.5) * 2 * reach;
       const d = outside(x, z);
       if (d < minD || d > maxD || !accept(x, z, d)) continue;
+      if (terrain.seaBed && groundAt(x, z) < terrain.seaBed.level + 0.5) continue;
       out.push({
         pos: new THREE.Vector3(x, groundAt(x, z) - 0.3, z),
         scale: 0.75 + rng() * 0.55,
@@ -199,6 +246,7 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
       const z = (rng() - 0.5) * 2 * (Math.max(halfX, halfZ) + maxD);
       const d = outside(x, z);
       if (d < minD || d > maxD || rng() > 0.35 + forest(x, z)) continue;
+      if (terrain.seaBed && groundAt(x, z) < terrain.seaBed.level + 0.5) continue;
       const s = scale[0] + rng() * (scale[1] - scale[0]);
       e.set((rng() - 0.5) * 6 * DEG, rng() * Math.PI * 2, (rng() - 0.5) * 6 * DEG);
       matrices.push(new THREE.Matrix4().compose(new THREE.Vector3(x, groundAt(x, z) - sink * s, z), q.setFromEuler(e), new THREE.Vector3(s, s, s)));
@@ -258,6 +306,7 @@ function placeAlongEdge(models: ModelLibrary, parent: THREE.Object3D, terrain: T
       const inward = inset[0] + rng() * (inset[1] - inset[0]);
       const x = x0 + nx * inward;
       const z = z0 + nz * inward;
+      if (terrain.seaBed && terrain.heightAt(x, z) < terrain.seaBed.level + 0.3) continue;
       const s = scale[0] + rng() * (scale[1] - scale[0]);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rng() * Math.PI * 2);
       out.push(new THREE.Matrix4().compose(new THREE.Vector3(x, terrain.heightAt(x, z) - 0.02, z), q.clone(), new THREE.Vector3(s, s, s)));

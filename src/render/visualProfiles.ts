@@ -289,6 +289,22 @@ export class Atmosphere {
   }
 
   /**
+   * How far one sees on this map (big maps, the sea; 2026-10-18): the camera's
+   * far plane goes out to `far` and exponential fog thins so it closes in
+   * there (1 % left at `far`) rather than at the profile's ~1.3 km. 0 keeps both.
+   */
+  setViewRange(scene: THREE.Scene, camera: THREE.PerspectiveCamera, far: number): void {
+    if (far <= camera.far) return;
+    camera.far = far;
+    camera.updateProjectionMatrix();
+    const fog = scene.fog as THREE.FogExp2 | null;
+    if (fog) fog.density = Math.min(fog.density, Math.sqrt(Math.log(100)) / far);
+    this.viewFar = far;
+  }
+  /** The map's far plane when it asked for one (0: the default). */
+  viewFar = 0;
+
+  /**
    * Fixes the shadow frustum over a world-space box (the playable map), fitted
    * tightly in the sun's view space. The shadow map then only needs re-rendering
    * when something that casts shadows moves. `maxSize` caps the longer side.

@@ -2,7 +2,7 @@ import { disposeTree } from '@/render/dispose';
 import * as THREE from 'three';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
-import type { Team } from '@/world/mapTypes';
+import type { MapDef, Team } from '@/world/mapTypes';
 import type { Boundary } from '@/world/terrain';
 import { BIKES, ENTER_REACH, JET_KINDS, PADS, ROADKILL, TANK_KINDS, VEHICLES, padReady, vehicleLimit, type PadState, type VehicleKind } from './vehicleData';
 import { Vehicle, type DriveInput } from './Vehicle';
@@ -24,6 +24,8 @@ export interface TankSpot {
 /** A zone's motorbike spot. */
 export interface BikeSpot {
   zone: string;
+  /** What stands there (default: a motorbike); maps place boats at their piers this way. */
+  kind?: VehicleKind;
   spots: { pos: THREE.Vector3; yaw: number }[];
   vehicle: number | null;
   lostAt: number;
@@ -73,6 +75,8 @@ export class VehicleWorld {
   private time = 0;
   /** The map's air space for new vehicles (null: Vehicle's defaults). */
   air: { center: THREE.Vector3; radius: number } | null = null;
+  /** Water under boats (the sea and rivers), or null on dry maps. */
+  water: ((x: number, z: number) => number) | null = null;
   private readonly byHandle = new Map<number, Vehicle>();
 
   constructor(
@@ -144,6 +148,7 @@ export class VehicleWorld {
       v.airCenter = this.air.center;
       v.airRadius = this.air.radius;
     }
+    v.water = this.water;
     v.usedAt = this.time;
     this.vehicles.push(v);
     for (const c of [v.collider, v.wingCollider]) {
@@ -301,10 +306,11 @@ export class VehicleWorld {
         continue;
       }
       if (this.time < b.lostAt + BIKES.respawn) continue;
-      const free = b.spots.filter((s) => this.clearFor(s.pos, 'bike'));
+      const kind = b.kind ?? 'bike';
+      const free = b.spots.filter((s) => this.clearFor(s.pos, kind));
       if (!free.length) continue;
       const s = free[Math.floor(Math.random() * free.length)]!;
-      b.vehicle = this.spawn('bike', s.pos, s.yaw, null).id;
+      b.vehicle = this.spawn(kind, s.pos, s.yaw, null).id;
     }
   }
 
@@ -485,4 +491,19 @@ export function planVehicleSpots(
     if (spots.length) for (let n = 0; n < BIKES.perZone; n++) bikes.push({ zone: z.id, spots, vehicle: null, lostAt: -Infinity });
   }
   return { pads, bikes, tankSpots };
+}
+
+/**
+ * The map's fixed vehicle spots (`MapDef.vehicles`) as spots kept stocked like
+ * the motorbikes': a boat floats where it is put (on the water there), the
+ * rest stand on the ground.
+ */
+export function mapVehicleSpots(map: MapDef, physics: PhysicsWorld, water: ((x: number, z: number) => number) | null): BikeSpot[] {
+  return (map.vehicles ?? []).map((m, i) => {
+    const [x, z] = m.pos;
+    const level = water ? water(x, z) : NaN;
+    const hit = physics.raycast({ x, y: 300, z }, { x: 0, y: -1, z: 0 }, 600, Layer.WORLD);
+    const y = m.kind === 'boat' && !Number.isNaN(level) ? level : (hit?.point.y ?? 0);
+    return { zone: `map${i}`, kind: m.kind, spots: [{ pos: new THREE.Vector3(x, y + 0.1, z), yaw: ((m.yaw ?? 0) * Math.PI) / 180 }], vehicle: null, lostAt: -Infinity };
+  });
 }

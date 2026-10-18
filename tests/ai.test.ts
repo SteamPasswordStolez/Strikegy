@@ -143,9 +143,9 @@ describe('NavWorld', () => {
     }
     physics.step();
     const nav = (await NavWorld.build(physics))!;
-    const q = (nav as unknown as { query: import('recast-navigation').NavMeshQuery }).query;
-    const half = (nav as unknown as { halfExtents: { x: number; y: number; z: number } })
-      .halfExtents;
+    const part = (nav as unknown as { fine: unknown }).fine;
+    const q = (part as { query: import('recast-navigation').NavMeshQuery }).query;
+    const half = (part as { halfExtents: { x: number; y: number; z: number } }).halfExtents;
     let paths = 0;
     for (let i = 0; i < 150; i++) {
       const from = { x: (r() - 0.5) * 76, y: 0, z: (r() - 0.5) * 76 };

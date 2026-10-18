@@ -110,7 +110,7 @@ describe('building interiors', () => {
 
 /** Navmesh polygons inside a building's footprint, below its roof, that no walk from outside reaches. */
 function interiorIslands(nav: NavWorld, def: BuildingDef, built: ReturnType<typeof buildBuilding>): { n: number; at: string[] } {
-  const islands = (nav as unknown as { islands: Set<number> }).islands;
+  const islands = (nav as unknown as { fine: { islands: Set<number> } }).fine.islands;
   let roof = -Infinity;
   for (const o of built.objects) if (o.type === 'floor' && !o.rot?.[0] && !o.rot?.[2] && o.size[0] * o.size[2] > 0.6 * def.size[0] * def.size[1]) roof = Math.max(roof, o.pos[1] + o.size[1] / 2);
   const yaw = ((def.rot ?? 0) * Math.PI) / 180;

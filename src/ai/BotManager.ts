@@ -2096,7 +2096,7 @@ export class BotManager implements BotServices {
       let best: { v: Vehicle; seat: number; d: number } | null = null;
       for (const v of vw.vehicles) {
         // Aircraft are only boarded on the deploy screen (one flying low past isn't a ride).
-        if (v.flight || v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
+        if (v.flight || v.spec.boat || v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
         const d = v.pos.distanceTo(b.feet);
         if (d > reach || (best && d >= best.d)) continue;
         const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i) && (i > 0 || v.driverOnly === null || v.driverOnly === b.id));

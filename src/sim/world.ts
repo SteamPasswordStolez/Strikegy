@@ -7,6 +7,7 @@ import type { MapDef } from '@/world/mapTypes';
 import { propColliders } from '@/world/placeProps';
 import { Boundary, Terrain } from '@/world/terrain';
 import { WaterMap } from '@/world/water';
+import { Sea } from '@/world/waves';
 import type { SurfaceLibrary } from '@/render/textures';
 import { planFortifications, worldProbe, type FortPlan } from '@/modes/fortify';
 import type * as THREE from 'three';
@@ -25,6 +26,8 @@ export interface SimWorld {
   /** The map shapes its ground (terrain / irregular boundary) rather than a flat box. */
   shaped: boolean;
   water: WaterMap | null;
+  /** The map's sea (its surface moves with `sea.time`), or null. */
+  sea: Sea | null;
   built: BuiltMap;
 }
 
@@ -39,14 +42,16 @@ export function buildWorld(map: MapDef, physics: PhysicsWorld, impacts: SurfaceR
   // Buildings get a level pad so they sit flat on sloped ground.
   const pads = (map.buildings ?? []).map((b) => ({ pos: b.pos, radius: buildingPadRadius(b) - 1, blend: 5 }));
   const terrainDef = { ...map.world.terrain, flats: [...(map.world.terrain?.flats ?? []), ...pads] };
-  const terrain = new Terrain(terrainDef, Boundary.fromMap(map), map.world.size);
+  const seaDef = map.world.sea;
+  const sea = seaDef ? new Sea(seaDef) : null;
+  const terrain = new Terrain(terrainDef, Boundary.fromMap(map), map.world.size, sea ? { level: sea.level, floor: sea.floor } : null);
   const shaped = hasTerrain(map);
   if (shaped) snapToTerrain(map, terrain);
   const built = buildBlockout(map, view?.scene ?? null, physics, view?.surfaces ?? null, impacts, shaped ? terrain : null, view?.terrainStep ?? 1);
   propColliders(map, physics, impacts);
   if (map.trees?.length) treeColliders(map.trees, terrain, physics, impacts);
-  const water = terrain.rivers.length ? new WaterMap(terrain) : null;
-  return { map, terrain, shaped, water, built };
+  const water = terrain.rivers.length || sea ? new WaterMap(terrain, sea) : null;
+  return { map, terrain, shaped, water, sea, built };
 }
 
 /**

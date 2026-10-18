@@ -29,6 +29,8 @@ import { createConiferKit } from '@/world/conifers';
 import { Forest } from '@/world/forest';
 import { buildRivers } from '@/world/river';
 import { WaterMap } from '@/world/water';
+import type { Sea } from '@/world/waves';
+import { SeaView } from '@/world/seaView';
 import { Snowfall } from '@/render/snowfall';
 import { placeProps } from '@/world/placeProps';
 import type { MapDef, SpawnPoint } from '@/world/mapTypes';
@@ -41,6 +43,7 @@ import { Player } from '@/player/Player';
 import { HitboxRegistry, computeDamage, type DamageSource, type Damageable } from '@/combat/Hitboxes';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import { NavWorld, VehicleNav } from '@/ai/NavWorld';
+import type { BigNavInput } from '@/ai/navRegions';
 import { BotManager, HEAR_STEP, HEAR_STEP_SPRINT, type AdoptSpec, type BotOptions } from '@/ai/BotManager';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from '@/ai/types';
 import { TargetDummy } from '@/combat/TargetDummy';
@@ -50,7 +53,7 @@ import { BLASTS, GRENADES, flashDuration, flashIntensity, fragDamage, type Blast
 import { GADGETS, PANZERFAUST_TOSS, PLACE_REACH, ROCKET, classGadget, type GadgetId } from '@/data/gadgets';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { SupportWorld } from '@/modes/supportWorld';
-import { VehicleWorld, callInSpot, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
+import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { SoldierModel } from '@/ai/SoldierModel';
@@ -122,7 +125,7 @@ import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, type FortJob, 
 import { FortModels } from '@/world/fortModels';
 import { NetMatch, type NetOptions } from '@/net/NetMatch';
 import { forgetPlay } from './session';
-import { seeded } from '@/sim/MatchSim';
+import { SIM_DT, seeded } from '@/sim/MatchSim';
 import type { MatchEvent, ServerMsg } from '@/net/lobbyProtocol';
 import { SF, type NetBotEvent } from '@/net/matchProtocol';
 import { sanitizeLoadout, type Loadout } from '@/data/classes';
@@ -245,6 +248,10 @@ export class Game {
   private bots: BotManager | null = null;
   private nav: NavWorld | null = null;
   private navExtra: { positions: number[]; indices: number[] } | null = null;
+  private navBig: BigNavInput | null = null;
+  /** The map's sea (its surface follows the match clock: the server's tick in a room). */
+  private sea: Sea | null = null;
+  private seaView: SeaView | null = null;
   private forest: Forest | null = null;
   /** Grass tufts around the camera on open ground (grass / bare / sand maps). */
   private groundCover: GroundCover | null = null;
@@ -579,6 +586,7 @@ export class Game {
       shadowMapSize: q.shadowMapSize,
       shadowExtent: q.shadowExtent,
     }, photoSky);
+    this.atmosphere.setViewRange(r.scene, r.camera, map.world.view?.far ?? 0);
     const t0 = performance.now();
     // Load-time breakdown (dev console): where the seconds go on big maps.
     const steps: string[] = [];
@@ -590,13 +598,19 @@ export class Game {
     };
     await this.loadStep(0.36, 'load.buildings');
     // Ground, colliders and map data as the game server builds them, plus the looks.
-    const { terrain, shaped, water, built } = buildWorld(map, this.physics, this.impacts, { scene: r.scene, surfaces: this.surfaces, terrainStep: r.preset === 'low' ? 2 : 1 });
+    const { terrain, shaped, water, sea, built } = buildWorld(map, this.physics, this.impacts, { scene: r.scene, surfaces: this.surfaces, terrainStep: r.preset === 'low' ? 2 : 1 });
     this.navExtra = built.navExtra;
+    this.navBig = built.navBig;
+    this.sea = sea;
     lap('world');
     const props = placeProps(map, r.scene, this.models);
     lap('props');
     await this.loadStep(0.48, 'load.nature');
-    if (water) r.scene.add(buildRivers(terrain, r.scene.environment));
+    if (water && terrain.rivers.length) r.scene.add(buildRivers(terrain, r.scene.environment));
+    if (sea) {
+      this.seaView = new SeaView(sea, terrain, r.camera.far, r.scene.environment);
+      r.scene.add(this.seaView.mesh);
+    }
     const winter = map.world.visualProfile === 'winter';
     if (winter) {
       this.snowfall = new Snowfall(r.preset === 'low' ? 1200 : r.preset === 'medium' ? 2500 : 4000);
@@ -611,7 +625,7 @@ export class Game {
     const coverStyle = GROUND_COVER[map.world.groundMaterial ?? 'ground'];
     if (coverStyle && shaped && built.groundHandle !== null && r.preset !== 'low') {
       const kind = map.world.groundMaterial ?? 'ground';
-      this.groundCover = new GroundCover(coverStyle, terrain.bounds(), this.physics, this.impacts, built.groundHandle, SURFACE_FROM_MATERIAL[kind], (x, y, z) => !!water && water.depthAt(x, y + 0.3, z) > 0, q.msaa);
+      this.groundCover = new GroundCover(coverStyle, terrain.bounds(), this.physics, this.impacts, built.groundHandle, SURFACE_FROM_MATERIAL[kind], (x, y, z) => !!water && (water.depthAt(x, y + 0.3, z) > 0 || (!!sea && water.seaAt(x, z) && y < sea.level + sea.swell / 2 + 0.3)), q.msaa);
       r.scene.add(this.groundCover.mesh);
     }
     lap('water+forest');
@@ -707,13 +721,13 @@ export class Game {
       // A desktop in a room with bots runs some of them (setupNetBots): they need the navmesh (before the fortifications, which cut it).
       await this.loadStep(0.62, 'load.nav');
       this.physics.step();
-      this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined);
+      this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined, this.navBig);
     } else if (botOpts && botOpts.allies + botOpts.enemies > 0) {
       await this.loadStep(0.62, 'load.nav');
       // Colliders must be in the broadphase before the navmesh reads them.
       this.physics.step();
       const tNav = performance.now();
-      this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined);
+      this.nav = await NavWorld.build(this.physics, this.navExtra ?? undefined, this.navBig);
       if (import.meta.env.DEV) console.info(`[strikegy] navmesh built in ${Math.round(performance.now() - tNav)} ms`);
       if (this.nav) {
         // Every soldier + weapon model, built in pieces so the loading screen keeps drawing.
@@ -738,7 +752,7 @@ export class Game {
         if ((map.zones?.length ?? 0) > 0 && !this.options.sandbox) {
           await this.loadStep(0.8, 'load.vehicleNav');
           const tVeh = performance.now();
-          bots.vehicleNav = await VehicleNav.build(this.physics, this.navExtra ?? undefined);
+          bots.vehicleNav = await VehicleNav.build(this.physics, this.navBig?.coarseExtra ?? this.navExtra ?? undefined);
           if (import.meta.env.DEV) console.info(`[strikegy] vehicle navmesh built in ${Math.round(performance.now() - tVeh)} ms`);
         }
       }
@@ -750,8 +764,10 @@ export class Game {
     if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
       if (!MATCH.simple) this.setupFortifications(map, terrain, water, built);
-      if (this.bots && !this.options.sandbox && MATCH.vehicles) this.setupVehicles(map);
+      if (this.bots && !this.options.sandbox && MATCH.vehicles) this.setupVehicles(map, water);
     }
+    // The range and other maps with vehicles at fixed spots (a boat at the pier) but no zone match.
+    if (!this.vehicles && !this.options.net && map.vehicles?.length) this.setupVehicles(map, water, true);
     if (this.options.net) await this.setupNet(map, terrain, built, water);
     if (this.bots) {
       this.setupSquads(map, terrain);
@@ -1465,6 +1481,7 @@ export class Game {
     const input = this.input;
     const p = this.player;
     this.simTime += dt;
+    if (this.sea) this.sea.time = this.simTime;
     this.throwBlock = Math.max(0, this.throwBlock - dt);
     this.throwCooldown = Math.max(0, this.throwCooldown - dt);
 
@@ -1511,7 +1528,7 @@ export class Game {
       this.me.stepMedkit(dt);
       this.stepInteract(dt, input);
       if (!this.interact && input.interactPressed && this.tryEnterVehicle()) return this.finishStep(dt, input);
-      if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting) this.throwGrenade();
+      if (input.throwGrenade && this.throwCooldown === 0 && !p.sprinting && !p.swimming) this.throwGrenade();
       // Hands busy (throwing, patching up, reviving, at a charge): no shooting.
       const busy = this.throwBlock > 0 || this.medkitUse > 0 || this.reviveProgress > 0 || this.working >= 0 || this.buildMode || this.gadgetOut || this.supportAim !== null || this.me.using;
       // Barbed wire slows everyone wading through it.
@@ -1539,6 +1556,7 @@ export class Game {
     const w = this.weapons;
     const me0 = this.me;
     this.simTime += dt;
+    if (this.sea) this.sea.time = net.serverTick() * SIM_DT;
     if (input.firePressed) input.fire = true;
     // Recon: the wheel changes scope power while aiming (before packing: the server mustn't switch weapons).
     if (this.cls === 'recon' && w.def.scope && w.adsBlend > 0.5 && input.weaponCycle !== 0) {
@@ -1832,7 +1850,7 @@ export class Game {
   // Vehicles
 
   /** Pads at both bases and motorbikes around the zones (bot matches with zones). */
-  private setupVehicles(map: MapDef): void {
+  private setupVehicles(map: MapDef, water: WaterMap | null, fixedOnly = false): void {
     const bases: { team: Team; pos: THREE.Vector3; facing: number }[] = [];
     for (const team of ['blue', 'red'] as const) {
       const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
@@ -1842,11 +1860,12 @@ export class Game {
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
     this.boundary = Boundary.fromMap(map);
-    const plan = planVehicleSpots(this.physics, bases, zones, this.boundary);
+    const plan = fixedOnly ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(this.physics, bases, zones, this.boundary);
     // Small maps: jeeps and motorbikes only.
     const heavy = map.world.vehicles !== 'light';
     const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
-    const { bikes } = plan;
+    const level = water ? (x: number, z: number) => water.levelAt(x, z) : null;
+    const bikes = [...plan.bikes, ...mapVehicleSpots(map, this.physics, level)];
     const tankSpots = heavy ? plan.tankSpots : [];
     if (zones.length) VehicleClass.airCenter.copy(zones.reduce((a, z) => a.add(z.pos), new THREE.Vector3()).divideScalar(zones.length));
     VehicleClass.airRadius = Math.max(map.world.size[0], map.world.size[1]) / 2;
@@ -1864,6 +1883,7 @@ export class Game {
       heavy,
       map.world.vehicles !== 'noJets',
     );
+    this.vehicles.water = level;
     this.renderer.scene.add(this.vehicles.group);
     if (this.bots) {
       const bots = this.bots;
@@ -3115,6 +3135,7 @@ export class Game {
     if (this.forest?.update(at)) this.renderer.requestShadowUpdate();
     // Scenery clutter near the camera only, and the outer tree line's 3D / impostor switch.
     if (this.backdrop) cullBackdropDetail(this.backdrop, at);
+    if (this.seaView) this.seaView.update(at, this.net ? this.net.serverTick() * SIM_DT : this.simTime, this.renderer.scene);
     // After the first physics step: scene queries only see the map colliders from then on.
     if (this.simTime > 0) this.groundCover?.update(at, this.elapsed);
     this.snowfall?.update(at, this.elapsed, this.renderer.canvas.height);
@@ -3388,7 +3409,7 @@ export class Game {
       adsBlend: w.adsBlend,
       speed: p.horizontalSpeed(),
       grounded: p.grounded,
-      sprinting: p.sprinting,
+      sprinting: p.sprinting || p.swimming,
       sprintOut: w.sprintOutLeft,
       lookDYaw: lookYaw,
       lookDPitch: lookPitch,
@@ -3768,7 +3789,7 @@ export class Game {
   /** Supply stations and build spots at every zone, found on the loaded world. */
   private setupFortifications(map: MapDef, terrain: Terrain, water: WaterMap | null, built: BuiltMap): void {
     const t0 = performance.now();
-    const plan = fortPlanFor({ map, terrain, water, built, shaped: true }, this.physics);
+    const plan = fortPlanFor({ map, terrain, water, sea: water?.sea ?? null, built, shaped: true }, this.physics);
     const fort = new Fortifications(plan, new FortModels(this.surfaces), this.physics, this.impacts, this.nav);
     fort.onChange = () => this.renderer.requestShadowUpdate();
     fort.onPoints = (id, points) => this.scores.award(id, points);
@@ -4707,7 +4728,7 @@ export class Game {
     net.onState = (m) => this.onNetState(m);
     // Vehicles (zone matches): copies of the server's, in a world laid out the same way (pads, tank spots, limits).
     if ((map.zones?.length ?? 0) > 0) {
-      this.vehicles = vehicleWorldFor(this.physics, this.registry, { destroyed: () => {}, roadkill: () => {} }, map, opts.start.size ?? 24);
+      this.vehicles = vehicleWorldFor(this.physics, this.registry, { destroyed: () => {}, roadkill: () => {} }, map, opts.start.size ?? 24, water);
       r.scene.add(this.vehicles.group);
       net.vehicles = this.vehicles;
       net.onVehicle = (v) => {

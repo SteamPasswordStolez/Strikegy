@@ -47,6 +47,8 @@ const VOICE: Record<EngineKind, EngineVoice> = {
   td: { sample: 'engine_heavy', rate: [0.72, 1.18], idle: 23, top: 58, speed: 12, gain: 0.55, ref: 12, tracks: true, rumble: 750 },
   fighter: { idle: 0, top: 0, speed: 125, gain: 0.85, ref: 60, jet: true, rumble: 700 },
   cas: { idle: 0, top: 0, speed: 100, gain: 0.8, ref: 55, jet: true, rumble: 520 },
+  // An outboard: the heavy engine run high and light.
+  boat: { sample: 'engine_heavy', rate: [1.3, 2.1], idle: 40, top: 120, speed: 15, gain: 0.32, ref: 7, rumble: 1400 },
   recon: { sample: 'prop_loop', rate: [1, 1], idle: 90, top: 90, speed: 60, gain: 0.6, ref: 45, rumble: 3000 },
 };
 

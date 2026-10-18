@@ -12,7 +12,7 @@ import {
   wishDirection,
   SLIDE,
 } from './movement';
-import { WADE_DEPTH, WADE_SPEED, type WaterMap } from '@/world/water';
+import { SWIM_DEPTH, WADE_DEPTH, WADE_SPEED, type WaterMap } from '@/world/water';
 
 const MAX_PITCH = (89 * Math.PI) / 180;
 /**
@@ -21,6 +21,14 @@ const MAX_PITCH = (89 * Math.PI) / 180;
  * `face` (cosine); at the top the climber steps `onto` m onto the deck.
  */
 const CLIMB = { speed: 2.6, off: 0.55, reach: 0.85, face: 0.35, onto: 0.95 };
+/**
+ * Swimming (2026-10-18, big maps plan step 2): in water deeper than
+ * `SWIM_DEPTH` people swim at the surface — slowly (`speed`, `fast` with
+ * sprint held), no guns, no crouching or jumping; the feet hang `float` m
+ * under the surface, so the eye rides ~0.3 m above the waves. Getting out is
+ * walking up the beach: once it is shallower again they stand.
+ */
+export const SWIM = { speed: 1.5, fast: 2.3, accel: 5, float: 1.35, rise: 3, again: 0.15 };
 /** Meters travelled per footstep sound. */
 const STRIDE = { walk: 1.9, sprint: 2.5, crouch: 1.5 };
 
@@ -51,6 +59,8 @@ export class Player {
   sprinting = false;
   /** Rivers on the map (wading slows the player), set by the game. */
   water: WaterMap | null = null;
+  /** Swimming (deep water): moving slowly at the surface, guns down. */
+  swimming = false;
   /** Class passives (set by the game each step): speed multiplier and how much of the wading slowdown applies. */
   speedBonus = 1;
   wadePenalty = 1;
@@ -116,6 +126,7 @@ export class Player {
     this.crouchLatched = false;
     this.slideLeft = 0;
     this.ladder = null;
+    this.swimming = false;
     this.yaw = yaw;
     this.pitch = 0;
     this.body.setTranslation(this.centerFromFeet(), true);
@@ -143,6 +154,7 @@ export class Player {
     this.velocity.copy(velocity);
     this.grounded = true;
     this.sprinting = false;
+    this.swimming = false;
   }
 
   /** Off the vehicle: capsule back, standing at `feet`. */
@@ -169,6 +181,15 @@ export class Player {
     this.prevFeet.copy(this.feet);
     if (this.ladder || this.takeLadder(input)) {
       this.stepLadder(dt, input);
+      this.body.setNextKinematicTranslation(this.centerFromFeet());
+      this.health.step(dt);
+      return;
+    }
+    const level = this.water ? this.water.levelAt(this.feet.x, this.feet.z) : NaN;
+    const depth = level > this.feet.y ? level - this.feet.y : 0;
+    this.swimming = depth > SWIM_DEPTH - (this.swimming ? SWIM.again : 0);
+    if (this.swimming) {
+      this.stepSwim(dt, input, level);
       this.body.setNextKinematicTranslation(this.centerFromFeet());
       this.health.step(dt);
       return;
@@ -329,6 +350,35 @@ export class Player {
       this.ladder = null;
       this.grounded = true;
     }
+  }
+
+  /** One step in deep water: across at swimming speed, held at the surface (riding the waves). */
+  private stepSwim(dt: number, input: InputState, level: number): void {
+    this.crouchLatched = false;
+    this.updateCrouch(false);
+    this.slideLeft = 0;
+    this.sprinting = false;
+    this.jumpBuffered = 0;
+    const moving = input.moveX !== 0 || input.moveY !== 0;
+    const [wx, wz] = moving ? wishDirection(input.moveX, input.moveY, this.yaw) : [0, 0];
+    const top = (input.sprint ? SWIM.fast : SWIM.speed) * Math.min(1, Math.hypot(input.moveX, input.moveY));
+    const [vx, vz] = approachVelocity(this.velocity.x, this.velocity.z, wx * top, wz * top, SWIM.accel, dt);
+    this.velocity.x = vx;
+    this.velocity.z = vz;
+    // Toward floating height, quickly but not in one jump (a dive in from a deck comes up again).
+    const want = level - SWIM.float;
+    this.velocity.y = THREE.MathUtils.clamp((want - this.feet.y) * 4, -SWIM.rise, SWIM.rise);
+    const desired = { x: vx * dt, y: this.velocity.y * dt, z: vz * dt };
+    const filter = groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOT | Layer.BOUNDS);
+    this.controller.computeColliderMovement(this.collider, desired, undefined, filter);
+    const moved = this.controller.computedMovement();
+    this.grounded = false;
+    this.sinceGrounded = MOVE.coyoteTime + 1;
+    this.velocity.x = moved.x / dt;
+    this.velocity.z = moved.z / dt;
+    this.feet.x += moved.x;
+    this.feet.y += moved.y;
+    this.feet.z += moved.z;
   }
 
   /** In a slide (sprint, then crouch). */

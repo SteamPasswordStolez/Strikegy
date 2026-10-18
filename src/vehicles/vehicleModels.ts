@@ -110,6 +110,7 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'rocket') return buildRocketTruck(team);
   if (kind === 'fighter') return buildFighter(team);
   if (kind === 'cas') return buildCas(team);
+  if (kind === 'boat') return buildBoat(team);
   return buildBike(team);
 }
 
@@ -650,6 +651,108 @@ function buildJeep(team: Team | null): VehicleModel {
   muzzle.position.set(0, 0.02, -1.33);
   gun.add(muzzle);
   return { root, wheels: addWheels(root, 'jeep', team), mounts: [null, { turret, gun, muzzle }] };
+}
+
+/**
+ * Assault boat (7.4 m, front -z): a V hull rising to a sharp bow, an
+ * inflatable collar along the gunwale, a deck, the driver's console with a
+ * windscreen at the stern, an outboard, benches and an MG on the bow.
+ */
+function buildBoat(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  const L0 = -3.7;
+  const L1 = 3.55;
+  /** Half beam at the gunwale along the hull (u: 0 bow .. 1 stern). */
+  const beam = (u: number) => 1.05 * Math.min(1, Math.sqrt(Math.max(0, u) / 0.42)) * (u > 0.97 ? 0.97 + (1 - u) : 1);
+  /** Keel height: rises toward the bow. */
+  const keel = (u: number) => -0.5 + 0.42 * Math.max(0, 1 - u / 0.38) ** 2;
+  /** Sheer (gunwale height) rising a little at the bow. */
+  const sheer = (u: number) => 0.22 + 0.18 * Math.max(0, 1 - u / 0.5) ** 2;
+  for (const side of [-1, 1]) {
+    b.grid(
+      'paint',
+      18,
+      5,
+      (u, v) => {
+        const z = L0 + (L1 - L0) * u;
+        const w = beam(u);
+        const k = keel(u);
+        // Keel to chine (a V), then a near-upright topside to the gunwale.
+        const x = v < 0.5 ? w * 0.86 * (v / 0.5) : w * (0.86 + 0.14 * ((v - 0.5) / 0.5));
+        const chine = Math.max(k, -0.26);
+        const y = v < 0.5 ? k + (chine - k) * (v / 0.5) : chine + (sheer(u) - chine) * ((v - 0.5) / 0.5);
+        return [side * x, y, z];
+      },
+      true,
+    );
+  }
+  // Transom across the stern.
+  b.loft('paint', [[-0.9, L1 - 0.06], [0.9, L1 - 0.06], [0.9, L1], [-0.9, L1]], [[-1.0, L1 - 0.06], [1.0, L1 - 0.06], [1.0, L1], [-1.0, L1]], -0.42, 0.22);
+  // Deck and the collar (a grey rubber tube along both gunwales, meeting at the bow).
+  b.box('dark', [1.7, 0.06, 5.2], [0, -0.12, 0.7]);
+  const collar: [number, number, number][] = [];
+  for (let i = 0; i <= 14; i++) {
+    const u = 0.04 + (i / 14) * 0.95;
+    collar.push([beam(u) + 0.08, sheer(u) + 0.08, L0 + (L1 - L0) * u]);
+  }
+  b.tinted('#3f4244', () => {
+    for (const side of [-1, 1]) b.tube('rubber', collar.map(([x, y, z]) => [side * x, y, z] as [number, number, number]), 0.2, 24, 10);
+    b.tube('rubber', [[-0.3, sheer(0.06) + 0.08, L0 + 0.5], [0, sheer(0.02) + 0.1, L0 + 0.25], [0.3, sheer(0.06) + 0.08, L0 + 0.5]], 0.19, 6, 10);
+  });
+  // Rub strakes and grab lines.
+  for (const side of [-1, 1]) {
+    b.tube('dark', collar.map(([x, y, z]) => [side * (x + 0.17), y + 0.08, z] as [number, number, number]), 0.015, 24, 4);
+    b.box('dark', [0.05, 0.05, 6.2], [side * 1.0, -0.05, 0.4]);
+  }
+  // Console: a box with a windscreen, wheel and throttle.
+  b.box('paint', [0.7, 0.75, 0.7], [0.45, 0.25, 1.55]);
+  b.box('dark', [0.72, 0.06, 0.72], [0.45, 0.64, 1.55]);
+  b.box('glass', [0.68, 0.34, 0.02], [0.45, 0.82, 1.18], [-0.35, 0, 0]);
+  b.box('metal', [0.7, 0.03, 0.03], [0.45, 0.99, 1.13]);
+  b.tube('dark', Array.from({ length: 13 }, (_, i) => {
+    const a = (i / 12) * Math.PI * 2;
+    return [0.45 + Math.cos(a) * 0.16, 0.86 + Math.sin(a) * 0.16 * 0.6, 1.33 + Math.sin(a) * 0.16 * 0.75] as [number, number, number];
+  }), 0.014, 24, 5);
+  b.rod('dark', [0.75, 0.64, 1.45], [0.8, 0.78, 1.38], 0.02, 6);
+  // Benches with cushions, a jerrycan and ammo boxes on the deck.
+  for (const z of [0.35, -0.6]) {
+    b.box('dark', [1.5, 0.3, 0.42], [0, 0.05, z]);
+    b.tinted('#34372f', () => b.box('canvas', [1.4, 0.08, 0.38], [0, 0.24, z]));
+  }
+  b.tinted('#4a4e3a', () => b.box('paint', [0.18, 0.34, 0.28], [-0.65, 0.07, 2.6]));
+  for (const x of [-0.45, -0.1]) b.tinted('#545a40', () => b.box('paint', [0.3, 0.2, 0.18], [x, -0.0, -1.6]));
+  // Outboard on the transom: cowl, leg, cavitation plate, propeller.
+  b.box('dark', [0.5, 0.5, 0.55], [0, 0.42, L1 + 0.3]);
+  b.box('dark', [0.46, 0.08, 0.5], [0, 0.17, L1 + 0.3]);
+  b.box('dark', [0.14, 0.75, 0.25], [0, -0.25, L1 + 0.34]);
+  b.box('dark', [0.36, 0.03, 0.42], [0, -0.42, L1 + 0.36]);
+  b.cyl('metal', 0.04, 0.04, 0.22, [0, -0.56, L1 + 0.24], [Math.PI / 2, 0, 0], 8);
+  for (let k = 0; k < 3; k++) b.box('metal', [0.04, 0.24, 0.05], [0, -0.56, L1 + 0.16], [0, 0, (k * Math.PI * 2) / 3]);
+  // Bow: a cleat, the navigation light, the MG's pintle.
+  b.box('metal', [0.16, 0.04, 0.05], [0, sheer(0.05) + 0.24, L0 + 0.45]);
+  b.rod('metal', [0, -0.1, -2.3], [0, 0.66, -2.3], 0.05, 8);
+  bakeInto(root, b, team);
+  const turret = new THREE.Group();
+  turret.position.set(0, 0.7, -2.3);
+  root.add(turret);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.08, 0);
+  turret.add(gun);
+  const gb = new KitBuilder();
+  gb.box('dark', [0.16, 0.18, 0.72], [0, 0, -0.05]);
+  gb.box('dark', [0.17, 0.05, 0.3], [0, 0.11, -0.15]);
+  gb.cyl('dark', 0.05, 0.05, 0.36, [0, 0.02, -0.55], [Math.PI / 2, 0, 0], 10);
+  gb.cyl('dark', 0.025, 0.025, 0.6, [0, 0.02, -1.0], [Math.PI / 2, 0, 0], 8);
+  gb.cyl('dark', 0.035, 0.03, 0.08, [0, 0.02, -1.3], [Math.PI / 2, 0, 0], 8);
+  for (const s of [-1, 1]) gb.rod('metal', [s * 0.06, -0.02, 0.32], [s * 0.07, -0.14, 0.4], 0.018, 6);
+  gb.tinted('#3c4232', () => gb.box('paint', [0.14, 0.2, 0.3], [-0.17, -0.04, -0.05]));
+  gb.box('paint', [0.5, 0.28, 0.025], [0, 0.12, -0.32]);
+  bakeInto(gun, gb, team);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0.02, -1.33);
+  gun.add(muzzle);
+  return { root, wheels: [], mounts: [null, { turret, gun, muzzle }, null, null] };
 }
 
 function buildApc(team: Team | null): VehicleModel {

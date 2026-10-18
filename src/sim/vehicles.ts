@@ -19,10 +19,11 @@ import type { InputState } from '@/input/InputState';
 import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
-import { VehicleWorld, callInSpot, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
+import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
 import type { MapDef, Team } from '@/world/mapTypes';
 import { Boundary } from '@/world/terrain';
+import type { WaterMap } from '@/world/water';
 import type { NetDrive } from '@/net/matchProtocol';
 import type { MatchSim } from './MatchSim';
 import type { Soldier } from './Soldier';
@@ -101,7 +102,7 @@ export function lockTarget(v: Vehicle, team: Team, vehicles: Iterable<Vehicle>, 
  * zones, tank spots, the air space), the same on the server and in the
  * browser so ids, limits and spots agree. `size`: soldiers the room holds.
  */
-export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry, hooks: VehicleHooks, map: MapDef, size: number): VehicleWorld {
+export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry, hooks: VehicleHooks, map: MapDef, size: number, water: WaterMap | null = null): VehicleWorld {
   const bases: { team: Team; pos: THREE.Vector3; facing: number }[] = [];
   for (const team of ['blue', 'red'] as const) {
     const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
@@ -113,7 +114,10 @@ export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry,
   const plan = planVehicleSpots(physics, bases, zones, Boundary.fromMap(map));
   const heavy = map.world.vehicles !== 'light';
   const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
-  const vw = new VehicleWorld(physics, registry, hooks, pads, plan.bikes, size, heavy ? plan.tankSpots : [], heavy, map.world.vehicles !== 'noJets');
+  const level = water ? (x: number, z: number) => water.levelAt(x, z) : null;
+  const bikes = [...plan.bikes, ...mapVehicleSpots(map, physics, level)];
+  const vw = new VehicleWorld(physics, registry, hooks, pads, bikes, size, heavy ? plan.tankSpots : [], heavy, map.world.vehicles !== 'noJets');
+  vw.water = level;
   const center = zones.length ? zones.reduce((a, z) => a.add(z.pos), new THREE.Vector3()).divideScalar(zones.length) : new THREE.Vector3();
   vw.air = { center, radius: Math.max(map.world.size[0], map.world.size[1]) / 2 };
   return vw;
@@ -149,7 +153,7 @@ export class MatchVehicles {
     map: MapDef,
     size: number,
   ) {
-    this.world = vehicleWorldFor(sim.physics, sim.registry, { destroyed: (v, by) => this.destroyed(v, by), roadkill: (v, w) => this.roadkill(v, w) }, map, size);
+    this.world = vehicleWorldFor(sim.physics, sim.registry, { destroyed: (v, by) => this.destroyed(v, by), roadkill: (v, w) => this.roadkill(v, w) }, map, size, sim.world.water);
     const bots = sim.bots;
     if (bots) {
       bots.vehicles = this.world;

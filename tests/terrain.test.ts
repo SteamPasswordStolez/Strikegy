@@ -108,3 +108,46 @@ describe('river distance grid', () => {
     expect(t.heightAt(3, 0)).toBeCloseTo(-2, 1);
   });
 });
+
+describe('terrain hill / pad index', () => {
+  it('gives the same heights as checking every hill and pad, on every map', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { smoothstep } = await import('@/render/noise');
+    for (const id of ['iron_gate', 'ardennes', 'lyon', 'bilbao', 'persia', 'big_test']) {
+      const map = JSON.parse(readFileSync(`public/maps/${id}.json`, 'utf8'));
+      const def = map.world.terrain ?? {};
+      const terrain = new Terrain(def, Boundary.fromMap(map), map.world.size);
+      // The height function before the index (without noise and rivers, which it leaves as they were).
+      const plain = { ...def, noise: 0, rivers: [] };
+      const indexed = new Terrain(plain, Boundary.fromMap(map), map.world.size);
+      const base = (x: number, z: number) => {
+        let h = 0;
+        for (const hill of plain.hills ?? []) {
+          const d = Math.hypot(x - hill.pos[0], z - hill.pos[1]) / hill.radius;
+          if (d < 1) h += hill.height * (0.5 + 0.5 * Math.cos(Math.PI * d));
+        }
+        return h;
+      };
+      const naive = (x: number, z: number) => {
+        let h = base(x, z);
+        for (const pad of plain.flats ?? []) {
+          const d = Math.hypot(x - pad.pos[0], z - pad.pos[1]);
+          const blend = pad.blend ?? 8;
+          if (d >= pad.radius + blend) continue;
+          const target = pad.height ?? base(pad.pos[0], pad.pos[1]);
+          h += (target - h) * (1 - smoothstep(pad.radius, pad.radius + blend, d));
+        }
+        return h;
+      };
+      const [sx, sz] = map.world.size;
+      let seed = 3;
+      const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+      for (let i = 0; i < 4000; i++) {
+        const x = (rand() - 0.5) * sx * 1.2;
+        const z = (rand() - 0.5) * sz * 1.2;
+        expect(indexed.heightAt(x, z)).toBe(naive(x, z));
+      }
+      expect(Number.isFinite(terrain.heightAt(0, 0))).toBe(true);
+    }
+  });
+});

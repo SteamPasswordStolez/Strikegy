@@ -1,4 +1,5 @@
 import type { ModelKind } from './modelKits';
+import type { SeaDef } from './waves';
 export type Vec3 = [number, number, number];
 export type Team = 'blue' | 'red';
 export type VisualProfileId = 'outdoor_day' | 'overcast' | 'indoor' | 'winter' | 'desert';
@@ -188,6 +189,10 @@ export interface MapDef {
     vehicles?: 'all' | 'noJets' | 'light';
     /** Background sound levels 0..1 (defaults come from the visual profile). */
     ambience?: { wind?: number; birds?: number; battle?: number };
+    /** How far one sees (m): the camera's far plane, and the fog thins to match (default 1,600 m and the profile's fog). */
+    view?: { far?: number };
+    /** A sea inside the boundary and out to the horizon (see world/waves.ts). */
+    sea?: SeaDef;
   };
   spawns: SpawnPoint[];
   zones?: ZoneDef[];
@@ -200,4 +205,9 @@ export interface MapDef {
   trees?: [number, number, number][];
   /** Practice dummies (sandbox/training maps). */
   targets?: TargetDef[];
+  /** Vehicles standing at fixed spots (brought back a while after one is lost): boats at a pier. */
+  vehicles?: { kind: MapVehicleKind; pos: [number, number]; yaw?: number }[];
 }
+
+/** Vehicle kinds a map may place (see vehicles/vehicleData.ts). */
+export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat';

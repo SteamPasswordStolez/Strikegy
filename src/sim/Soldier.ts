@@ -254,7 +254,7 @@ export class Soldier {
    * play); a browser in a match there leaves it out and draws the server's.
    */
   throwGrenade(launch: ((type: GrenadeType, origin: THREE.Vector3, dir: THREE.Vector3, carry: THREE.Vector3) => void) | null): boolean {
-    if (this.throwCooldown > 0 || this.player.sprinting) return false;
+    if (this.throwCooldown > 0 || this.player.sprinting || this.player.swimming) return false;
     const type = this.grenades.take();
     if (!type) return false;
     const { eye, fwd, right, up } = this.weapons.aimBasis(this.player);

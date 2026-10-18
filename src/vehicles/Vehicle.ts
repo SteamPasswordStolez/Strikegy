@@ -141,6 +141,38 @@ export class Vehicle implements Damageable {
       this.syncModel(1);
       return;
     }
+    if (spec.boat) {
+      // A boat: a dynamic hull the floats hold up (`sail`); no wheels.
+      this.body = world.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(pos.x, pos.y + spec.half[1], pos.z)
+          .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
+          .setLinearDamping(0.05)
+          .setAngularDamping(0.8)
+          .setCcdEnabled(true),
+      );
+      const [hx, hy, hz] = spec.half;
+      const m = spec.mass;
+      this.collider = world.createCollider(
+        RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+          .setMassProperties(
+            m,
+            { x: 0, y: -hy * 0.6, z: 0 },
+            { x: (m / 12) * (4 * hy * hy + 4 * hz * hz), y: (m / 12) * (4 * hx * hx + 4 * hz * hz), z: (m / 12) * (4 * hx * hx + 4 * hy * hy) },
+            { x: 0, y: 0, z: 0, w: 1 },
+          )
+          .setFriction(0.4)
+          .setCollisionGroups(groups(Layer.WORLD | Layer.HITBOX, Layer.WORLD | Layer.BOUNDS | Layer.VEHICLE_BLOCK)),
+        this.body,
+      );
+      physics.trackOccluder(this.collider);
+      this.model = buildVehicleModel(kind, home);
+      this.readBody();
+      this.prevPos.copy(this.pos);
+      this.prevQuat.copy(this.quat);
+      this.syncModel(1);
+      return;
+    }
     const start = pos.clone().setY(pos.y + spec.half[1] + spec.wheelRadius + spec.suspension.rest + 0.15);
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -239,6 +271,10 @@ export class Vehicle implements Damageable {
       this.fly(dt, input);
       return;
     }
+    if (this.spec.boat) {
+      this.sail(dt, input);
+      return;
+    }
     const c = this.controller!;
     const spec = this.spec;
     // A resting body sleeps; wheel forces alone don't wake it.
@@ -269,6 +305,76 @@ export class Vehicle implements Damageable {
     }
     this.stabilize(dt);
   }
+
+  /**
+   * Boats: each float pushes up by how deep it is under the waves (stiff
+   * enough to sit `draft` deep at rest) and is damped up and down; the water
+   * drags the hull little along it and hard across it (the keel); the
+   * propeller pushes at the stern and the rudder turns it by how fast water
+   * runs past, both only while the stern is in the water. On dry ground it
+   * is just a heavy box. Same numbers in the driver's browser and on the server.
+   */
+  private sail(dt: number, input: DriveInput | null): void {
+    const b = this.spec.boat!;
+    const level = this.water;
+    if (!level) return;
+    const body = this.body;
+    if (input && (input.throttle !== 0 || input.steer !== 0) && body.isSleeping()) body.wakeUp();
+    const m = this.spec.mass;
+    const k = (m * 9.81) / (b.floats.length * b.draft);
+    const pos = this.pos;
+    const q = this.quat;
+    const lin = body.linvel();
+    const ang = body.angvel();
+    const p = this.tmpBoatP;
+    const r = this.tmpBoatR;
+    const v = this.tmpBoatV;
+    let wet = 0;
+    for (const f of b.floats) {
+      p.set(f[0], f[1], f[2]).applyQuaternion(q);
+      r.copy(p);
+      p.add(pos);
+      const surface = level(p.x, p.z);
+      if (!(surface > p.y)) continue;
+      wet++;
+      const depth = Math.min(surface - p.y, b.draft * 3);
+      // Velocity of this point: linear + angular x r.
+      v.set(lin.x + ang.y * r.z - ang.z * r.y, lin.y + ang.z * r.x - ang.x * r.z, lin.z + ang.x * r.y - ang.y * r.x);
+      const up = (k * depth - b.drag[2] * v.y) * dt;
+      body.applyImpulseAtPoint({ x: 0, y: up, z: 0 }, p, true);
+    }
+    if (!wet) return;
+    const share = wet / b.floats.length;
+    // Drag in the hull's frame: along, across.
+    const fwd = this.tmpBoatF.set(0, 0, -1).applyQuaternion(q);
+    fwd.y = 0;
+    fwd.normalize();
+    const side = this.tmpBoatS.set(-fwd.z, 0, fwd.x);
+    const along = lin.x * fwd.x + lin.z * fwd.z;
+    const across = lin.x * side.x + lin.z * side.z;
+    const dragAlong = -(b.drag[0] * along + b.drag[0] * 0.25 * along * Math.abs(along)) * share * dt;
+    const dragAcross = -b.drag[1] * across * share * dt;
+    body.applyImpulse({ x: fwd.x * dragAlong + side.x * dragAcross, y: 0, z: fwd.z * dragAlong + side.z * dragAcross }, true);
+    body.applyTorqueImpulse({ x: 0, y: -b.yawDrag * ang.y * share * dt, z: 0 }, true);
+    // Propeller and rudder at the stern, under water.
+    const stern = this.tmpBoatP.set(0, -this.spec.half[1], b.stern).applyQuaternion(q).add(pos);
+    const sternWet = level(stern.x, stern.z) > stern.y - 0.1;
+    if (!sternWet || this.wrecked || !input) return;
+    const throttle = input.throttle;
+    const push = throttle > 0 ? (along < this.spec.top ? throttle * b.thrust : 0) : -along < this.spec.reverse ? throttle * b.thrust * b.reverse : 0;
+    body.applyImpulseAtPoint({ x: fwd.x * push * dt, y: 0, z: fwd.z * push * dt }, stern, true);
+    // Turning: by water speed past the rudder, a little from the propeller's wash at a standstill.
+    const flow = Math.abs(along) + Math.abs(throttle) * 2.5;
+    const yawTorque = -input.steer * b.rudder * flow * Math.sign(along >= -0.5 ? 1 : -1) * dt;
+    body.applyTorqueImpulse({ x: 0, y: yawTorque, z: 0 }, true);
+  }
+  /** The sea and rivers under a boat (`WaterMap.levelAt`: NaN on dry ground), set by its world. */
+  water: ((x: number, z: number) => number) | null = null;
+  private readonly tmpBoatP = new THREE.Vector3();
+  private readonly tmpBoatR = new THREE.Vector3();
+  private readonly tmpBoatV = new THREE.Vector3();
+  private readonly tmpBoatF = new THREE.Vector3();
+  private readonly tmpBoatS = new THREE.Vector3();
 
   /**
    * Keeps it from rolling over (strongly for the bike, which balances on

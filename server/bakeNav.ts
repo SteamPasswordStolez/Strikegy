@@ -29,7 +29,9 @@ onNavBuilt((key, data) => {
   written.set(key, gz.byteLength);
 });
 
-for (const id of [...MAPS.map((m) => m.id), 'sandbox']) {
+// `npm run nav -- <id> ...` bakes just those maps (and removes nothing).
+const only = process.argv.slice(2);
+for (const id of only.length ? only : [...MAPS.map((m) => m.id), 'sandbox']) {
   const map = parseMap(JSON.parse(readFileSync(`public/maps/${id}.json`, 'utf8')));
   const physics = await PhysicsWorld.create();
   const world = buildWorld(map, physics, new SurfaceRegistry());
@@ -38,10 +40,10 @@ for (const id of [...MAPS.map((m) => m.id), 'sandbox']) {
   const extra = world.built.navExtra ?? undefined;
   const t0 = performance.now();
   const before = new Set(written.keys());
-  const nav = await NavWorld.build(physics, extra);
+  const nav = await NavWorld.build(physics, extra, world.built.navBig);
   const t1 = performance.now();
   // Vehicles come with zone matches (bot drivers route on their own mesh).
-  const veh = (map.zones?.length ?? 0) > 0 ? await VehicleNav.build(physics, extra) : null;
+  const veh = (map.zones?.length ?? 0) > 0 ? await VehicleNav.build(physics, world.built.navBig?.coarseExtra ?? extra) : null;
   const t2 = performance.now();
   // The bots' tactical points (cover, peek spots), from the soldier navmesh.
   if (nav) await loadTactics(nav, physics);
@@ -51,7 +53,7 @@ for (const id of [...MAPS.map((m) => m.id), 'sandbox']) {
   physics.dispose();
 }
 
-for (const f of readdirSync(DIR)) {
+if (!only.length) for (const f of readdirSync(DIR)) {
   if (!written.has(f.replace(/\.bin(\.gz)?$/, ''))) {
     rmSync(`${DIR}/${f}`);
     console.log(`removed ${f} (no map uses it)`);

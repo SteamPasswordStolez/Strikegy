@@ -17,6 +17,8 @@ import {
 } from 'recast-navigation';
 import { bakedNav, hashNavInput, loadNav, saveNav } from './navCache';
 import { createDefaultTileCacheMeshProcess, generateTileCache, generateTiledNavMesh } from 'recast-navigation/generators';
+import { buildTileCache } from './navGen';
+import { dilated, patchAt, type BigNavInput, type FineMask } from './navRegions';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import { MOVE } from '@/player/movement';
 
@@ -58,13 +60,13 @@ const SNAP_NEAR = { x: 0.6, y: 1.2, z: 0.6 };
 const MAX_PATH = 256;
 
 /**
- * Navigation mesh for bots, built from the static world colliders (every map
- * block and prop is a box). Wraps the Detour queries the AI needs: paths,
- * nearest walkable points and random points in an area. It is a tile cache,
- * so things built during a match (sandbags) can cut holes in it.
+ * One Detour navmesh and the queries the AI needs on it: paths, nearest
+ * walkable points, random points in an area, walking along it. The soldiers'
+ * fine mesh is a tile cache, so things built during a match (sandbags) can
+ * cut holes in it; a big map's coarse mesh is a plain tiled one (see `NavWorld`).
  */
-export class NavWorld {
-  private readonly query: NavMeshQuery;
+class NavPart {
+  readonly query: NavMeshQuery;
   private readonly halfExtents = { x: 2, y: 4, z: 2 };
   /** Obstacle changes not yet baked into the mesh. */
   private pending = false;
@@ -95,9 +97,11 @@ export class NavWorld {
     c: [0, 0, 0],
   };
 
-  private constructor(
+  constructor(
     readonly navMesh: NavMesh,
-    private readonly tileCache: TileCache,
+    private readonly tileCache: TileCache | null,
+    /** Tiles that reach the open ground round a fine patch (a big map's fine mesh): whatever touches them is walkable. */
+    private readonly rim: ((x: number, z: number) => boolean) | null = null,
   ) {
     this.query = new NavMeshQuery(navMesh);
     this.raw.straight.resize(MAX_PATH * 3);
@@ -124,12 +128,18 @@ export class NavWorld {
   private markIslands(): void {
     const nm = this.navMesh;
     const refs: number[] = [];
+    const onRim = new Set<number>();
     for (let i = 0, n = nm.getMaxTiles(); i < n; i++) {
       const tile = nm.getTile(i);
-      const count = tile.header()?.polyCount() ?? 0;
+      const header = tile.header();
+      const count = header?.polyCount() ?? 0;
       if (count === 0) continue;
       const base = nm.getPolyRefBase(tile);
-      for (let p = 0; p < count; p++) refs.push(base + p);
+      const rim = !!this.rim && this.rim((header!.bmin(0) + header!.bmax(0)) / 2, (header!.bmin(2) + header!.bmax(2)) / 2);
+      for (let p = 0; p < count; p++) {
+        refs.push(base + p);
+        if (rim) onRim.add(base + p);
+      }
     }
     // Connected components over the polygon links (whatever their flags).
     const comp = new Map<number, number>();
@@ -154,15 +164,18 @@ export class NavWorld {
     }
     let main = 0;
     for (let i = 1; i < sizes.length; i++) if (sizes[i]! > sizes[main]!) main = i;
+    // A big map's fine mesh is many patches (towns): each one that reaches the open ground round it counts.
+    const kept = new Set<number>([main]);
+    for (const ref of onRim) kept.add(comp.get(ref)!);
     const was = [...this.islands];
     this.islands.clear();
     for (const ref of refs) {
-      if (comp.get(ref) === main) continue;
+      if (kept.has(comp.get(ref)!)) continue;
       this.islands.add(ref);
       nm.setPolyFlags(ref, 0);
     }
     // Joined up again (an obstacle removed): walkable once more.
-    for (const ref of was) if (!this.islands.has(ref) && nm.isValidPolyRef(ref) && comp.get(ref) === main) nm.setPolyFlags(ref, 1);
+    for (const ref of was) if (!this.islands.has(ref) && nm.isValidPolyRef(ref) && kept.has(comp.get(ref)!)) nm.setPolyFlags(ref, 1);
   }
 
   /**
@@ -238,6 +251,7 @@ export class NavWorld {
 
   /** Blocks a box on the ground (centre, half extents, yaw in radians); returns a handle, or null. */
   addBox(center: V3, half: V3, yaw: number): Obstacle | null {
+    if (!this.tileCache) return null;
     const res = this.tileCache.addBoxObstacle(center, { x: half.x + OBSTACLE_PAD, y: half.y, z: half.z + OBSTACLE_PAD }, yaw);
     if (!res.success || !res.obstacle) return null;
     this.pending = true;
@@ -247,6 +261,7 @@ export class NavWorld {
 
   /** Pass the obstacle itself: the wrapper can't remove by a bare ref (it reads `.ref` off any object). */
   remove(obstacle: Obstacle): void {
+    if (!this.tileCache) return;
     this.tileCache.removeObstacle(obstacle);
     this.pending = true;
     const reach = obstacle.type === 'box' ? Math.hypot(obstacle.halfExtents.x, obstacle.halfExtents.z) : obstacle.radius;
@@ -275,7 +290,7 @@ export class NavWorld {
    * the rest on the next.
    */
   update(maxTiles = 48): void {
-    if (!this.pending) return;
+    if (!this.pending || !this.tileCache) return;
     for (let i = 0; i < maxTiles; i++) {
       const r = this.tileCache.update(this.navMesh);
       if (!r.success || r.upToDate) {
@@ -287,49 +302,6 @@ export class NavWorld {
     if (this.pending) return;
     if (this.dirty.size) this.markRebuiltIslands();
     this.dirty.clear();
-  }
-
-  /** Builds from the physics world; returns null if generation fails. */
-  /** `extra` adds non-box walkable geometry (terrain triangles, counter-clockwise from above). */
-  static async build(physics: PhysicsWorld, extra?: { positions: number[]; indices: number[] }): Promise<NavWorld | null> {
-    recastReady ??= init();
-    await recastReady;
-    const { positions, indices } = collectNavInput(physics, extra);
-    if (indices.length === 0) return null;
-    const config = {
-      cs: CS,
-      ch: CH,
-      walkableRadius: Math.ceil(MOVE.radius / CS),
-      walkableHeight: Math.ceil(MOVE.standHeight / CH),
-      walkableClimb: Math.floor(0.45 / CH),
-      walkableSlopeAngle: 45,
-      mergeRegionArea: 20,
-      maxSimplificationError: 1.3,
-      detailSampleDist: 6,
-      detailSampleMaxError: 1,
-      tileSize: TILE,
-      // Buildings stack up to three floors plus roofs and bridges over the river.
-      expectedLayersPerTile: 6,
-      maxObstacles: 256,
-    };
-    // Same input and settings as a previous load: reuse that navmesh (seconds saved on big maps).
-    const key = hashNavInput(positions, indices, `tc1${JSON.stringify(config)}`);
-    const cached = skipCache() ? null : ((await loadNav(key)) ?? (await bakedNav(key)));
-    if (cached) {
-      try {
-        const imp = importTileCache(cached, createDefaultTileCacheMeshProcess());
-        return new NavWorld(imp.navMesh, imp.tileCache);
-      } catch (err) {
-        console.warn('[nav] cached navmesh unusable, rebuilding', err);
-      }
-    }
-    const result = generateTileCache(positions, indices, config);
-    if (!result.success) {
-      console.warn('[nav] navmesh generation failed:', result.error);
-      return null;
-    }
-    void saveNav(key, exportTileCache(result.navMesh, result.tileCache));
-    return new NavWorld(result.navMesh, result.tileCache);
   }
 
   /**
@@ -451,9 +423,302 @@ export class NavWorld {
     for (const o of [r.point, r.ref, r.over, r.height, r.count]) Raw.destroy(o);
     for (const a of [r.visited, r.polys, r.straight, r.flags, r.refs]) a.destroy();
     this.query.destroy();
-    this.tileCache.destroy();
+    this.tileCache?.destroy();
     this.navMesh.destroy();
   }
+}
+
+/** Coarse polygon refs are handed out shifted by this (a bot's ref tells which mesh it is on). */
+const COARSE_REF = 2 ** 32;
+/** The fine mesh reaches this far past its mask (m), so a bot in the mask never walks off it. */
+const FINE_MARGIN = 16;
+/** Along a coarse route, where it enters and leaves fine patches is found to this step (m). */
+const STITCH_STEP = 4;
+
+/** Soldier navmesh settings (fine). */
+const FINE = {
+  cs: CS,
+  ch: CH,
+  walkableRadius: Math.ceil(MOVE.radius / CS),
+  walkableHeight: Math.ceil(MOVE.standHeight / CH),
+  walkableClimb: Math.floor(0.45 / CH),
+  walkableSlopeAngle: 45,
+  mergeRegionArea: 20,
+  maxSimplificationError: 1.3,
+  detailSampleDist: 6,
+  detailSampleMaxError: 1,
+  tileSize: TILE,
+  // Buildings stack up to three floors plus roofs and bridges over the river.
+  expectedLayersPerTile: 6,
+  maxObstacles: 256,
+};
+/** A big map's coarse soldier mesh: 0.5 m voxels in 32 m tiles (the same climb and erosion as the fine one). */
+const COARSE_CS = 0.5;
+const COARSE = {
+  cs: COARSE_CS,
+  ch: COARSE_CS / 2,
+  walkableRadius: Math.ceil(MOVE.radius / COARSE_CS),
+  walkableHeight: Math.ceil(MOVE.standHeight / (COARSE_CS / 2)),
+  walkableClimb: Math.floor(0.45 / (COARSE_CS / 2)),
+  walkableSlopeAngle: 45,
+  minRegionArea: 8,
+  mergeRegionArea: 20,
+  maxSimplificationError: 1.3,
+  maxEdgeLen: 24,
+  detailSampleDist: 6,
+  detailSampleMaxError: 1,
+  tileSize: 64,
+};
+
+/**
+ * Navigation mesh for bots, built from the static world colliders (every map
+ * block and prop is a box). Wraps the Detour queries the AI needs: paths,
+ * nearest walkable points and random points in an area. It is a tile cache,
+ * so things built during a match (sandbags) can cut holes in it.
+ *
+ * Big maps (2026-10-18, `navRegions.ts`): the fine mesh only covers the
+ * towns, positions and zones; a coarse mesh covers everything. A point in a
+ * fine patch is answered by the fine mesh, anywhere else by the coarse one;
+ * a route is planned on the coarse mesh and its stretches through fine
+ * patches are planned again on the fine one. Without a mask (every map up to
+ * Ardennes' size) it is the one fine mesh, exactly as before.
+ */
+export class NavWorld {
+  private readonly route: THREE.Vector3[] = [];
+  private readonly piece: THREE.Vector3[] = [];
+
+  private constructor(
+    private readonly fine: NavPart,
+    private readonly coarse: NavPart | null,
+    private readonly mask: FineMask | null,
+  ) {}
+
+  /** The fine mesh (tests; tactics read every part through `parts`). */
+  get navMesh(): NavMesh {
+    return this.fine.navMesh;
+  }
+
+  /** The meshes and, for the coarse one, which of its polygons count (those outside fine patches). */
+  parts(): { navMesh: NavMesh; keep: ((x: number, z: number) => boolean) | null }[] {
+    const out: { navMesh: NavMesh; keep: ((x: number, z: number) => boolean) | null }[] = [{ navMesh: this.fine.navMesh, keep: null }];
+    const mask = this.mask;
+    if (this.coarse && mask) out.push({ navMesh: this.coarse.navMesh, keep: (x, z) => !patchAt(mask, x, z) });
+    return out;
+  }
+
+  get version(): number {
+    return this.fine.version;
+  }
+
+  /** Polygons flagged off as islands (tests / debugging). */
+  get islandCount(): number {
+    return this.fine.islandCount + (this.coarse?.islandCount ?? 0);
+  }
+
+  /** Whether (x, z) is answered by the coarse mesh. */
+  private isCoarse(x: number, z: number): boolean {
+    return !!this.coarse && !!this.mask && !patchAt(this.mask, x, z);
+  }
+
+  /** Blocks a box on the ground (centre, half extents, yaw in radians); returns a handle, or null. Fine mesh only: things are built at zones. */
+  addBox(center: V3, half: V3, yaw: number): Obstacle | null {
+    return this.fine.addBox(center, half, yaw);
+  }
+
+  remove(obstacle: Obstacle): void {
+    this.fine.remove(obstacle);
+  }
+
+  update(maxTiles = 48): void {
+    this.fine.update(maxTiles);
+  }
+
+  /**
+   * Builds from the physics world; returns null if generation fails. `extra`
+   * adds non-box walkable geometry (terrain triangles, counter-clockwise from
+   * above); `big` makes it a fine + coarse pair.
+   */
+  static async build(physics: PhysicsWorld, extra?: { positions: number[]; indices: number[] }, big?: BigNavInput | null): Promise<NavWorld | null> {
+    recastReady ??= init();
+    await recastReady;
+    const { positions, indices } = collectNavInput(physics, extra);
+    if (indices.length === 0) return null;
+    if (!big) {
+      const fine = await buildFine(positions, indices, null);
+      return fine ? new NavWorld(fine, null, null) : null;
+    }
+    // Fine: only what lies in the mask grown by the margin.
+    const mask = big.fine;
+    const grown = dilated(mask, FINE_MARGIN);
+    // A triangle goes in when its bounding box touches a grown cell (big slabs have their corners far off).
+    const cellX = (x: number) => Math.max(0, Math.min(mask.cols - 1, Math.floor((x - mask.x0) / mask.cell)));
+    const cellZ = (z: number) => Math.max(0, Math.min(mask.rows - 1, Math.floor((z - mask.z0) / mask.cell)));
+    const fineIdx: number[] = [];
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i]! * 3;
+      const b = indices[i + 1]! * 3;
+      const c = indices[i + 2]! * 3;
+      const c0 = cellX(Math.min(positions[a]!, positions[b]!, positions[c]!));
+      const c1 = cellX(Math.max(positions[a]!, positions[b]!, positions[c]!));
+      const r0 = cellZ(Math.min(positions[a + 2]!, positions[b + 2]!, positions[c + 2]!));
+      const r1 = cellZ(Math.max(positions[a + 2]!, positions[b + 2]!, positions[c + 2]!));
+      let hit = false;
+      for (let r = r0; r <= r1 && !hit; r++) for (let k = c0; k <= c1 && !hit; k++) hit = grown[r * mask.cols + k] === 1;
+      if (hit) fineIdx.push(indices[i]!, indices[i + 1]!, indices[i + 2]!);
+    }
+    // A tile is on the rim of its patch when its middle is outside the mask itself.
+    const fine = await buildFine(positions, fineIdx, (x, z) => !patchAt(mask, x, z));
+    if (!fine) return null;
+    // Coarse: everything, with the terrain at every second grid line.
+    const coarseIn = collectNavInput(physics, big.coarseExtra);
+    const coarse = await buildCoarse(coarseIn.positions, coarseIn.indices);
+    return new NavWorld(fine, coarse, coarse ? mask : null);
+  }
+
+  /**
+   * Corner points of the shortest walkable path from `from` to `to` (both are
+   * snapped to the mesh first). Returns false when no path exists.
+   */
+  path(from: V3, to: V3, out: THREE.Vector3[]): boolean {
+    const mask = this.mask;
+    const coarse = this.coarse;
+    if (!coarse || !mask) return this.fine.path(from, to, out);
+    const pa = patchAt(mask, from.x, from.z);
+    const pb = patchAt(mask, to.x, to.z);
+    // Both ends in one town: the fine mesh alone.
+    if (pa && pa === pb && this.fine.path(from, to, out)) return true;
+    const route = this.route;
+    if (!coarse.path(from, to, route)) return pa && pb ? this.fine.path(from, to, out) : false;
+    // Walk the coarse route; the stretches inside fine patches go on the fine mesh.
+    out.length = 0;
+    const push = (p: V3): void => {
+      const last = out[out.length - 1];
+      if (!last || Math.hypot(last.x - p.x, last.y - p.y, last.z - p.z) > 0.05) out.push(new THREE.Vector3(p.x, p.y, p.z));
+    };
+    let runStart: THREE.Vector3 | null = null;
+    let runLast: THREE.Vector3 | null = null;
+    const runCoarse: THREE.Vector3[] = [];
+    const piece = this.piece;
+    const closeRun = (end: THREE.Vector3): void => {
+      const ok = this.fine.path(runStart!, end, piece) && piece.length > 0 && piece[piece.length - 1]!.distanceTo(end) < 2.5;
+      for (const p of ok ? piece : runCoarse) push(p);
+      push(end);
+      runStart = null;
+      runLast = null;
+      runCoarse.length = 0;
+    };
+    if (pa) {
+      runStart = runLast = new THREE.Vector3(from.x, route[0]!.y, from.z);
+      runCoarse.push(runStart);
+    } else push(route[0]!);
+    for (let i = 1; i < route.length; i++) {
+      const a = route[i - 1]!;
+      const b = route[i]!;
+      const n = Math.max(1, Math.ceil(a.distanceTo(b) / STITCH_STEP));
+      for (let k = 1; k <= n; k++) {
+        const p = k === n ? b : new THREE.Vector3().lerpVectors(a, b, k / n);
+        if (patchAt(mask, p.x, p.z)) {
+          if (!runStart) {
+            // Entering a patch: the last open-ground sample is where the coarse part ends.
+            runStart = p;
+            runCoarse.length = 0;
+          }
+          runLast = p;
+          if (k === n) runCoarse.push(p);
+        } else {
+          if (runStart) closeRun(runLast!);
+          if (k === n) push(p);
+        }
+      }
+    }
+    if (runStart) closeRun(pb ? new THREE.Vector3(to.x, route[route.length - 1]!.y, to.z) : runLast!);
+    return out.length > 0;
+  }
+
+  /** Nearest point on the mesh, or null if nothing walkable is close. */
+  closest(p: V3, out = new THREE.Vector3()): THREE.Vector3 | null {
+    if (!this.coarse) return this.fine.closest(p, out);
+    const [first, second] = this.isCoarse(p.x, p.z) ? [this.coarse, this.fine] : [this.fine, this.coarse];
+    return first.closest(p, out) ?? second.closest(p, out);
+  }
+
+  /** Nearest point on the mesh to `p` searching wide (a point high above or off the map); null if none. */
+  closestFar(p: V3, out = new THREE.Vector3()): THREE.Vector3 | null {
+    return (this.coarse ?? this.fine).closestFar(p, out);
+  }
+
+  /** Random walkable point within `radius` of `center` (connected to it). */
+  randomAround(center: V3, radius: number, out = new THREE.Vector3()): THREE.Vector3 | null {
+    return (this.isCoarse(center.x, center.z) ? this.coarse! : this.fine).randomAround(center, radius, out);
+  }
+
+  /**
+   * Walks from `from` toward `to` along the mesh surface (see `NavPart.move`).
+   * `ref` is the polygon `from` is on (0 = unknown); coarse polygons come
+   * back shifted by `COARSE_REF`, so a bot walking into a town looks its
+   * polygon up again on the fine mesh.
+   */
+  move(ref: number, from: V3, to: V3, out: THREE.Vector3): number {
+    if (!this.coarse || !this.isCoarse(from.x, from.z)) return this.fine.move(ref >= COARSE_REF ? 0 : ref, from, to, out);
+    const r = this.coarse.move(ref >= COARSE_REF ? ref - COARSE_REF : 0, from, to, out);
+    return r ? r + COARSE_REF : 0;
+  }
+
+  /** True if a straight walk from `from` to `to` stays on the mesh (no wall or ledge in between). */
+  walkable(from: V3, to: V3): boolean {
+    if (!this.coarse) return this.fine.walkable(from, to);
+    const fine = !this.isCoarse(from.x, from.z) && !this.isCoarse(to.x, to.z);
+    return (fine ? this.fine : this.coarse).walkable(from, to);
+  }
+
+  dispose(): void {
+    this.fine.dispose();
+    this.coarse?.dispose();
+  }
+}
+
+/** The soldiers' fine tile cache (cached by its input as before; `rim` marks a big map's patch edges). */
+async function buildFine(positions: number[], indices: number[], rim: ((x: number, z: number) => boolean) | null): Promise<NavPart | null> {
+  const config = FINE;
+  // Same input and settings as a previous load: reuse that navmesh (seconds saved on big maps).
+  const key = hashNavInput(positions, indices, `tc1${JSON.stringify(config)}`);
+  const cached = skipCache() ? null : ((await loadNav(key)) ?? (await bakedNav(key)));
+  if (cached) {
+    try {
+      const imp = importTileCache(cached, createDefaultTileCacheMeshProcess());
+      return new NavPart(imp.navMesh, imp.tileCache, rim);
+    } catch (err) {
+      console.warn('[nav] cached navmesh unusable, rebuilding', err);
+    }
+  }
+  // Small maps: the library's generator as always; big ones need more tile address bits.
+  const result = rim ? buildTileCache(positions, indices, config, createDefaultTileCacheMeshProcess()) : generateTileCache(positions, indices, config);
+  if (!result.success) {
+    console.warn('[nav] navmesh generation failed:', result.error);
+    return null;
+  }
+  void saveNav(key, exportTileCache(result.navMesh!, result.tileCache!));
+  return new NavPart(result.navMesh!, result.tileCache!, rim);
+}
+
+/** A big map's coarse soldier mesh (a plain tiled navmesh, no obstacles). */
+async function buildCoarse(positions: number[], indices: number[]): Promise<NavPart | null> {
+  const key = hashNavInput(positions, indices, `co1${JSON.stringify(COARSE)}`);
+  const cached = skipCache() ? null : ((await loadNav(key)) ?? (await bakedNav(key)));
+  if (cached) {
+    try {
+      return new NavPart(importNavMesh(cached).navMesh, null);
+    } catch (err) {
+      console.warn('[nav] cached coarse navmesh unusable, rebuilding', err);
+    }
+  }
+  const result = generateTiledNavMesh(positions, indices, COARSE);
+  if (!result.success) {
+    console.warn('[nav] coarse navmesh generation failed:', result.error);
+    return null;
+  }
+  void saveNav(key, exportNavMesh(result.navMesh));
+  return new NavPart(result.navMesh, null);
 }
 
 /**

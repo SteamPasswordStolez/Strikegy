@@ -19,7 +19,7 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
 export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets';
 /** Tank kinds (one limit for all of them). */
@@ -84,6 +84,30 @@ export interface VehicleSpec {
   turnRate?: number;
   /** Aircraft: flies itself toward where the pilot looks (no wheels). */
   flight?: FlightSpec;
+  /** Boats: float on the water (no wheels; see `Vehicle.sail`). */
+  boat?: BoatSpec;
+}
+
+/**
+ * A boat (2026-10-18, big maps plan step 2): a dynamic hull held up by
+ * floats against the sea's surface, pushed by a propeller and turned by a
+ * rudder at the stern. Forces in N, points in the vehicle frame (z back).
+ */
+export interface BoatSpec {
+  /** Points along the bottom of the hull where it floats (m). */
+  floats: readonly (readonly [number, number, number])[];
+  /** How deep the hull sits at rest (m): sets the float stiffness. */
+  draft: number;
+  /** Propeller push forward (N) and back (share of it), where it pushes (z, m). */
+  thrust: number;
+  reverse: number;
+  stern: number;
+  /** Turning: rudder torque per m/s of water past it (N m), and a little at a standstill (the propeller's wash). */
+  rudder: number;
+  /** Water drag per m/s: along the hull, across it (the keel), up and down (per float). */
+  drag: readonly [number, number, number];
+  /** Water resisting the hull turning (N m per rad/s): with `rudder` it sets how fast it turns. */
+  yawDrag: number;
 }
 
 export interface FlightSpec {
@@ -102,6 +126,50 @@ export interface FlightSpec {
  * scenery hills, which have no collision), and start at `startAlt`.
  */
 export const AIRSPACE = { margin: 450, outsideAlt: 230, startAlt: 230 };
+
+/** A 7.4 m assault boat: open, driver at the stern console, an MG on the bow, two aboard. */
+const BOAT: VehicleSpec = {
+  kind: 'boat',
+  seats: [
+    { role: 'driver', eye: [0.45, 1.55, 1.9], exposed: true },
+    { role: 'gunner', eye: [0, 1.75, -2.3], exposed: true, gun: 'mg' },
+    { role: 'passenger', eye: [-0.5, 1.25, 0.4], exposed: true },
+    { role: 'passenger', eye: [0.5, 1.25, 0.4], exposed: true },
+  ],
+  half: [1.25, 0.5, 3.7],
+  mass: 2400,
+  wheels: [],
+  wheelRadius: 0,
+  suspension: { rest: 0, travel: 0, stiffness: 0, damping: 0 },
+  engine: 0,
+  brake: 0,
+  steer: 0,
+  top: 15,
+  reverse: 4,
+  grip: 0,
+  friction: 0,
+  health: 480,
+  mult: { bullet: 0.25, heavy: 0.3, explosive: 1, at: 1.8 },
+  boat: {
+    floats: [
+      [-1.0, -0.45, -2.6],
+      [1.0, -0.45, -2.6],
+      [-1.15, -0.45, -0.8],
+      [1.15, -0.45, -0.8],
+      [-1.15, -0.45, 1.0],
+      [1.15, -0.45, 1.0],
+      [-1.1, -0.45, 2.9],
+      [1.1, -0.45, 2.9],
+    ],
+    draft: 0.32,
+    thrust: 14000,
+    reverse: 0.4,
+    stern: 3.6,
+    rudder: 650,
+    drag: [160, 1700, 1100],
+    yawDrag: 19000,
+  },
+};
 
 export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   jeep: {
@@ -356,6 +424,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
     health: 160,
     mult: { bullet: 0.5, heavy: 0.5, explosive: 1.2, at: 2 },
   },
+  boat: BOAT,
 };
 
 /** A gun that fires a shell (flies and drops) instead of a hitscan round. */

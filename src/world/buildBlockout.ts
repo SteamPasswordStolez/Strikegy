@@ -5,6 +5,7 @@ import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces';
 import type { MapDef, MapObject, SurfaceMaterial } from './mapTypes';
 import { buildBoundaryWalls, buildTerrain, terrainTriangles, type Terrain } from './terrain';
+import { navFineMask, type BigNavInput } from '@/ai/navRegions';
 import { buildBuilding, type BuildingDoor, type WindowSpot } from './buildings';
 import { WALL } from './buildingParts';
 import { buildKit, kitMaterials, MODEL_KINDS, unchamfer, watchtowerLadder, type KitMaterial } from './modelKits';
@@ -110,6 +111,8 @@ export interface BuiltMap {
   root: THREE.Group;
   /** Walkable terrain triangles for the navmesh (null on flat box maps). */
   navExtra: { positions: number[]; indices: number[] } | null;
+  /** Big maps: where the soldiers' navmesh is fine, and the terrain for the coarse one (every 2nd grid line); null on the rest. */
+  navBig: BigNavInput | null;
   /** Window firing spots of all buildings. */
   windows: WindowSpot[];
   /** Building footprints: centre, yaw (radians), half extents. */
@@ -142,6 +145,7 @@ export function buildBlockout(
   const groundKind = map.world.groundMaterial ?? 'ground';
   const snowy = map.world.visualProfile === 'winter';
   let navExtra: BuiltMap['navExtra'] = null;
+  let navBig: BuiltMap['navBig'] = null;
   let groundHandle: number | null = null;
   const windows: WindowSpot[] = [];
   const footprints: BuiltMap['footprints'] = [];
@@ -156,6 +160,8 @@ export function buildBlockout(
     }
     if (map.world.boundary) buildBoundaryWalls(terrain.boundary, terrain, physics);
     navExtra = terrainTriangles(terrain, built.grid);
+    const fine = navFineMask(map);
+    if (fine) navBig = { fine, coarseExtra: terrainTriangles(terrain, built.grid, 2) };
   } else {
     const [sx, sz] = map.world.size;
     const groundThickness = 1;
@@ -300,7 +306,7 @@ export function buildBlockout(
   }
 
   scene?.add(root);
-  return { root, navExtra, windows, footprints, groundHandle };
+  return { root, navExtra, navBig, windows, footprints, groundHandle };
 }
 
 /**
