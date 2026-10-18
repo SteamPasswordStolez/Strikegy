@@ -112,6 +112,7 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'cas') return buildCas(team);
   if (kind === 'boat') return buildBoat(team);
   if (kind === 'lcvp') return buildLcvp(team);
+  if (kind === 'patrol') return buildPatrol(team);
   return buildBike(team);
 }
 
@@ -652,6 +653,67 @@ function buildJeep(team: Team | null): VehicleModel {
   muzzle.position.set(0, 0.02, -1.33);
   gun.add(muzzle);
   return { root, wheels: addWheels(root, 'jeep', team), mounts: [null, { turret, gun, muzzle }] };
+}
+
+/**
+ * Patrol boat (26 m, front -z): a hull flaring to a raked bow, the deck with
+ * planking, the wheelhouse amidships with windows and a mast, a twin cannon
+ * on the foredeck, an MG on the stern, railings, liferafts, depth markings.
+ * Its deck parts are colliders too (vehicleData `deck`): this is drawn over them.
+ */
+function buildPatrol(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  const D = 1.2;
+  // Hull: a narrow keel line widening to the deck, the bow raked forward.
+  b.loft('paint', [[-0.5, -11.6], [0.5, -11.6], [1.6, 12.6], [-1.6, 12.6]], [[-1.4, -13.6], [1.4, -13.6], [2.7, 13], [-2.7, 13]], -1.2, D);
+  b.loft('paint', [[-1.4, -13.6], [1.4, -13.6], [2.2, -9], [-2.2, -9]], [[-0.2, -14.4], [0.2, -14.4], [2.4, -9], [-2.4, -9]], D, D + 0.5);
+  // Boot topping and the deck planking.
+  for (const s of [-1, 1]) b.box('dark', [0.06, 0.25, 25], [s * 2.62, -0.2, 0.2]);
+  b.box('wood', [5.1, 0.06, 21.6], [0, D + 0.03, 1.8]);
+  // Wheelhouse: walls with a band of windows, the roof, the mast with radar and lights.
+  b.box('paint', [3.2, 1.2, 5.2], [0, D + 0.6, 1.6]);
+  b.box('glass', [3.24, 0.7, 5.24], [0, D + 1.55, 1.6]);
+  for (const z of [-0.9, 0.4, 1.6, 2.8, 4.1]) for (const s of [-1, 1]) b.box('paint', [0.06, 0.7, 0.12], [s * 1.62, D + 1.55, z]);
+  for (const x of [-1.0, 0, 1.0]) b.box('paint', [0.12, 0.7, 0.06], [x, D + 1.55, -1.02]);
+  b.box('paint', [3.4, 0.14, 5.4], [0, D + 2.35, 1.6]);
+  b.rod('metal', [0, D + 2.4, 2.4], [0, D + 6.4, 2.6], 0.07, 8);
+  b.box('dark', [1.6, 0.12, 0.25], [0, D + 5.6, 2.55]);
+  b.cyl('light', 0.08, 0.08, 0.2, [0, D + 6.5, 2.6], [0, 0, 0], 8);
+  // Railings: posts and two wires down both sides and across the stern.
+  for (let z = -10.5; z <= 12.5; z += 1.5) for (const s of [-1, 1]) b.rod('metal', [s * 2.6, D, z], [s * 2.6, D + 1.0, z], 0.025, 5);
+  for (const y of [0.55, 1.0]) for (const s of [-1, 1]) b.rod('metal', [s * 2.6, D + y, -10.5], [s * 2.6, D + y, 12.5], 0.015, 4);
+  for (const y of [0.55, 1.0]) b.rod('metal', [-2.6, D + y, 12.85], [2.6, D + y, 12.85], 0.015, 4);
+  // The cannon's mount ring and the MG's pedestal; liferafts in canisters; a towing bitt.
+  b.cyl('paint', 1.0, 1.1, 0.7, [0, D + 0.35, -7.4], [0, 0, 0], 16);
+  b.cyl('dark', 0.3, 0.35, 0.8, [0, D + 0.4, 9.6], [0, 0, 0], 10);
+  for (const s of [-1, 1]) b.cyl('paint', 0.35, 0.35, 1.2, [s * 1.9, D + 0.4, 6.0], [Math.PI / 2, 0, 0], 10);
+  b.box('metal', [0.4, 0.3, 0.3], [0, D + 0.15, 12.3]);
+  // Numbers on the bow.
+  for (const s of [-1, 1]) b.box('light', [0.04, 0.5, 1.4], [s * 2.0, D - 0.1, -9.5]);
+  bakeInto(root, b, team);
+  // The twin cannon: a shielded turret on the ring, two barrels.
+  const turret = new THREE.Group();
+  turret.position.set(0, D + 0.7, -7.4);
+  root.add(turret);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.55, 0);
+  turret.add(gun);
+  const tb = new KitBuilder();
+  tb.loft('paint', [[-0.9, -0.8], [0.9, -0.8], [0.9, 0.9], [-0.9, 0.9]], [[-0.7, -0.5], [0.7, -0.5], [0.7, 0.8], [-0.7, 0.8]], 0, 1.2);
+  bakeInto(turret, tb, team);
+  const gb = new KitBuilder();
+  for (const s of [-1, 1]) {
+    gb.cyl('dark', 0.06, 0.07, 2.4, [s * 0.22, 0, -1.6], [Math.PI / 2, 0, 0], 10);
+    gb.cyl('dark', 0.09, 0.09, 0.2, [s * 0.22, 0, -2.8], [Math.PI / 2, 0, 0], 10);
+  }
+  gb.box('dark', [0.7, 0.4, 0.8], [0, 0, -0.2]);
+  bakeInto(gun, gb, team);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0, -2.95);
+  gun.add(muzzle);
+  const aft = pintleMg(root, [0, D + 1.4, 9.6], team);
+  return { root, wheels: [], mounts: [null, { turret, gun, muzzle }, aft] };
 }
 
 /** An MG on a pintle (boats): turret and gun pivots, the gun pointing -z. */

@@ -19,7 +19,7 @@
 
 import type { DamageKind } from '@/combat/Hitboxes';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp';
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol';
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
 export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets';
 /** Tank kinds (one limit for all of them). */
@@ -86,6 +86,12 @@ export interface VehicleSpec {
   flight?: FlightSpec;
   /** Boats: float on the water (no wheels; see `Vehicle.sail`). */
   boat?: BoatSpec;
+  /**
+   * A deck people walk on while it moves (2026-10-18, big maps plan step 4):
+   * solid parts on it besides the hull box (deckhouse, railings, gun mounts),
+   * in the vehicle frame. Someone getting out of a seat steps onto the deck.
+   */
+  deck?: { parts: readonly { half: readonly [number, number, number]; pos: readonly [number, number, number] }[] };
 }
 
 /**
@@ -226,6 +232,68 @@ const LCVP: VehicleSpec = {
     drag: [900, 7000, 3800],
     yawDrag: 110000,
     bowExit: true,
+  },
+};
+
+/**
+ * A 26 m patrol boat (2026-10-18, step 4's test ship): a deck to walk round,
+ * the wheelhouse amidships (the helm), a twin cannon on the foredeck, an MG
+ * aft. Everyone else stands on deck: it carries them.
+ */
+const PATROL: VehicleSpec = {
+  kind: 'patrol',
+  seats: [
+    { role: 'driver', eye: [0.6, 3.0, 1.0], exposed: true },
+    { role: 'gunner', eye: [0, 3.1, -7.4], exposed: true, gun: 'autocannon', turn: 1.4, elevate: 0.8, pitch: [-0.15, 0.7] },
+    { role: 'gunner', eye: [0, 2.9, 9.6], exposed: true, gun: 'mg' },
+  ],
+  half: [2.7, 1.2, 13],
+  mass: 42000,
+  wheels: [],
+  wheelRadius: 0,
+  suspension: { rest: 0, travel: 0, stiffness: 0, damping: 0 },
+  engine: 0,
+  brake: 0,
+  steer: 0,
+  top: 14,
+  reverse: 4,
+  grip: 0,
+  friction: 0,
+  health: 2600,
+  mult: { bullet: 0.05, heavy: 0.25, explosive: 0.7, at: 1.2 },
+  boat: {
+    floats: [
+      [-2.0, -1.15, -11],
+      [2.0, -1.15, -11],
+      [-2.5, -1.15, -5],
+      [2.5, -1.15, -5],
+      [-2.6, -1.15, 1],
+      [2.6, -1.15, 1],
+      [-2.6, -1.15, 7],
+      [2.6, -1.15, 7],
+      [-2.5, -1.15, 12],
+      [2.5, -1.15, 12],
+    ],
+    draft: 0.8,
+    thrust: 140000,
+    reverse: 0.4,
+    stern: 12.6,
+    rudder: 11000,
+    drag: [4200, 70000, 26000],
+    yawDrag: 3200000,
+  },
+  deck: {
+    parts: [
+      // Wheelhouse (solid), its roof the radar platform.
+      { half: [1.6, 1.15, 2.6], pos: [0, 2.35, 1.6] },
+      // Railings along both sides and across the stern, the bow's bulwark.
+      { half: [0.05, 0.5, 11.5], pos: [-2.62, 1.7, 0] },
+      { half: [0.05, 0.5, 11.5], pos: [2.62, 1.7, 0] },
+      { half: [2.6, 0.5, 0.05], pos: [0, 1.7, 12.9] },
+      // The cannon's mount and the MG's pedestal.
+      { half: [1.0, 0.35, 1.0], pos: [0, 1.55, -7.4] },
+      { half: [0.35, 0.4, 0.35], pos: [0, 1.6, 9.6] },
+    ],
   },
 };
 
@@ -504,6 +572,7 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   },
   boat: BOAT,
   lcvp: LCVP,
+  patrol: PATROL,
 };
 
 /** A gun that fires a shell (flies and drops) instead of a hitscan round. */

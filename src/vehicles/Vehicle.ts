@@ -62,6 +62,8 @@ export class Vehicle implements Damageable {
   readonly collider: RAPIER.Collider;
   /** Aircraft: a second hitbox across the wings. */
   readonly wingCollider: RAPIER.Collider | null = null;
+  /** A walkable ship's solid deck parts (deckhouse, railings, mounts), on the same body. */
+  readonly parts: RAPIER.Collider[] = [];
   private readonly controller: RAPIER.DynamicRayCastVehicleController | null = null;
   /** Aircraft only. */
   readonly flight: Flight | null = null;
@@ -166,6 +168,18 @@ export class Vehicle implements Damageable {
         this.body,
       );
       physics.trackOccluder(this.collider);
+      for (const part of spec.deck?.parts ?? []) {
+        const c = world.createCollider(
+          RAPIER.ColliderDesc.cuboid(part.half[0], part.half[1], part.half[2])
+            .setTranslation(part.pos[0], part.pos[1], part.pos[2])
+            .setDensity(0)
+            .setFriction(0.6)
+            .setCollisionGroups(groups(Layer.WORLD | Layer.HITBOX, Layer.WORLD | Layer.BOUNDS | Layer.VEHICLE_BLOCK)),
+          this.body,
+        );
+        physics.trackOccluder(c);
+        this.parts.push(c);
+      }
       this.model = buildVehicleModel(kind, home);
       this.readBody();
       this.prevPos.copy(this.pos);
@@ -487,8 +501,16 @@ export class Vehicle implements Damageable {
 
   /** A remote vehicle to `pos` / `quat` at the next physics step, moving at `vel`. */
   place(pos: THREE.Vector3, quat: THREE.Quaternion, vel: THREE.Vector3): void {
-    this.body.setNextKinematicTranslation(pos);
-    this.body.setNextKinematicRotation(quat);
+    if (this.spec.deck) {
+      // A ship people walk on is put there straight away: a kinematic body moved to a
+      // next pose drags a character controller standing on it along now and then by
+      // itself, while the people aboard are carried by the deck already (Player.ridePlatform).
+      this.body.setTranslation(pos, true);
+      this.body.setRotation(quat, true);
+    } else {
+      this.body.setNextKinematicTranslation(pos);
+      this.body.setNextKinematicRotation(quat);
+    }
     this.velocity.copy(vel);
   }
 
@@ -593,15 +615,33 @@ export class Vehicle implements Damageable {
       [0, hz + 1.2],
       [0, -(hz + 1.2)],
     ] as const;
-    // A landing craft: out over the ramp first.
-    const tries = this.spec.boat?.bowExit ? [[0, -(hz + 1.4)], [-0.9, -(hz + 1.4)], [0.9, -(hz + 1.4)], ...sides] : sides;
+    // A landing craft: out over the ramp first. A ship with a deck: onto the deck by the seat.
+    const seatX = this.spec.seats[seat]!.eye[0];
+    const deck = this.spec.deck
+      ? ([
+          [seatX + 1.1, seatZ],
+          [seatX - 1.1, seatZ],
+          [seatX, seatZ + 1.6],
+          [seatX, seatZ - 1.6],
+        ] as const)
+      : [];
+    const tries = this.spec.boat?.bowExit ? [[0, -(hz + 1.4)], [-0.9, -(hz + 1.4)], [0.9, -(hz + 1.4)], ...sides] : [...deck, ...sides];
     const local = new THREE.Vector3();
     const at = new THREE.Vector3();
-    for (const [x, z] of tries) {
-      this.toWorld(local.set(x, 0.5, z), at);
-      const down = physics.raycast({ x: at.x, y: at.y + 1.5, z: at.z }, { x: 0, y: -1, z: 0 }, 5, Layer.WORLD, this.collider);
+    for (let i = 0; i < tries.length; i++) {
+      const [x, z] = tries[i]!;
+      // Onto our own deck: from above it, the hull counts (elsewhere the ray ignores it: it starts inside).
+      const onDeck = i < deck.length;
+      this.toWorld(local.set(x, onDeck ? this.spec.half[1] + 1.2 : 0.5, z), at);
+      const down = physics.raycast({ x: at.x, y: at.y + 1.5, z: at.z }, { x: 0, y: -1, z: 0 }, 5, Layer.WORLD, onDeck ? undefined : this.collider);
       if (!down || down.normal.y < 0.6) continue;
       const g = new THREE.Vector3(down.point.x, down.point.y, down.point.z);
+      if (onDeck) {
+        // Only the deck itself (or a part on it), not the sea bed past its side.
+        const c = physics.world.getCollider(down.collider.handle);
+        if (c?.parent()?.handle === this.body.handle) return g;
+        continue;
+      }
       // Nothing between the hull and the spot (the hull itself aside: the ray starts inside it).
       const dir = g.clone().setY(g.y + 0.9).sub(this.pos);
       const dist = dir.length();
@@ -705,6 +745,7 @@ export class Vehicle implements Damageable {
     const world = this.physics.world;
     if (this.controller) world.removeVehicleController(this.controller);
     this.physics.untrackOccluder(this.collider);
+    for (const c of this.parts) this.physics.untrackOccluder(c);
     world.removeRigidBody(this.body);
   }
 }

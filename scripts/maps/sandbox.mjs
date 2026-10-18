@@ -121,7 +121,11 @@ const map = {
   objects,
   props,
   targets,
-  vehicles: [{ kind: 'boat', pos: [PIER.x1 - 4, PIER.z + 4.5], yaw: -90 }],
+  // The assault boat at the pier's end; a patrol boat lying off it (step 4's walkable deck: get in, get out onto the deck).
+  vehicles: [
+    { kind: 'boat', pos: [PIER.x1 - 4, PIER.z + 4.5], yaw: -90 },
+    { kind: 'patrol', pos: [PIER.x1 + 24, PIER.z - 8], yaw: -90 },
+  ],
 };
 writeFileSync(new URL('../../public/maps/sandbox.json', import.meta.url), JSON.stringify(map));
 console.log(`sandbox: ${objects.length} objects, sea at ${SEA_LEVEL} m`);

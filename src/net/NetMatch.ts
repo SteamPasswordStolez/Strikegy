@@ -61,9 +61,18 @@ interface Sample {
   flags: number;
   weapon: WeaponId;
   shots: number;
+  /** Standing on a ship's deck at that tick: which, and where in its frame (drawn there on the ship as it is drawn now). */
+  deck?: { v: Vehicle; x: number; y: number; z: number; yaw: number };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+
+/** Heading of a body's forward (-z) axis, as a view's yaw. */
+function headingOf(q: THREE.Quaternion): number {
+  const fx = -2 * (q.x * q.z + q.w * q.y);
+  const fz = -(1 - 2 * (q.x * q.x + q.y * q.y));
+  return Math.atan2(-fx, -fz);
+}
 /** Ticks without a snapshot after which someone counts as gone from view (allies come in every one). */
 const GAP = 12;
 /** Samples kept per soldier (a second at 30 Hz). */
@@ -252,7 +261,17 @@ class Remote {
     this.prevPos.copy(this.pos);
     this.pos.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
     const dy = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
-    const yaw = a.yaw + dy * f;
+    let yaw = a.yaw + dy * f;
+    // On a deck: placed on the ship as it is drawn, so the driver (whose own ship is
+    // ahead of the snapshots) sees the people aboard where they stand.
+    const da = a.deck;
+    const db = b.deck;
+    if (da && db && da.v === db.v && !da.v.wrecked) {
+      const root = da.v.model.root;
+      this.pos.set(da.x + (db.x - da.x) * f, da.y + (db.y - da.y) * f, da.z + (db.z - da.z) * f).applyQuaternion(root.quaternion).add(root.position);
+      const dl = Math.atan2(Math.sin(db.yaw - da.yaw), Math.cos(db.yaw - da.yaw));
+      yaw = da.yaw + dl * f + headingOf(root.quaternion);
+    }
     this.yaw = yaw;
     const pitch = a.pitch + (b.pitch - a.pitch) * f;
     const flags = f < 0.5 ? a.flags : b.flags;
@@ -444,7 +463,14 @@ export class NetMatch {
   /** Inputs sent that the server hasn't stepped yet: over UDP the last few go again with every frame (a lost frame costs nothing). */
   private readonly unacked: NetInput[] = [];
   /** Where this browser had its soldier after each input it stepped, by seq. */
-  private readonly predicted = new Map<number, { x: number; y: number; z: number }>();
+  /**
+   * Where this soldier ended up after each input; on a moving deck also which
+   * vehicle and the spot in its frame (2026-10-18, step 4): the server's word
+   * is then compared in the ship's frame, so a ship drawn a little behind its
+   * server copy (others' ships are shown as the server had them a moment ago)
+   * doesn't read as the soldier being out of place.
+   */
+  private readonly predicted = new Map<number, { x: number; y: number; z: number; deck?: { vid: number; x: number; y: number; z: number } }>();
   private readonly offs: (() => void)[] = [];
   /** Snapshots received (for the F3 panel), and the last one's own part. */
   snapshots = 0;
@@ -551,9 +577,17 @@ export class NetMatch {
     return n;
   }
 
-  /** Where the soldier ended up after input `seq` here. */
-  stepped(seq: number, feet: THREE.Vector3): void {
-    this.predicted.set(seq, { x: feet.x, y: feet.y, z: feet.z });
+  /** Where the soldier ended up after input `seq` here (and on which deck, where in its frame). */
+  stepped(seq: number, feet: THREE.Vector3, platform: { body: { handle: number }; local: THREE.Vector3 } | null = null): void {
+    let deck: { vid: number; x: number; y: number; z: number } | undefined;
+    if (platform) {
+      for (const tr of this.tracks.values()) {
+        if (tr.v.body.handle !== platform.body.handle) continue;
+        deck = { vid: tr.v.id, x: platform.local.x, y: platform.local.y, z: platform.local.z };
+        break;
+      }
+    }
+    this.predicted.set(seq, { x: feet.x, y: feet.y, z: feet.z, deck });
     // Old ones the server never acked (off the field meanwhile) don't pile up.
     if (this.predicted.size > 600) {
       const cut = seq - 300;
@@ -606,6 +640,8 @@ export class NetMatch {
     const sample = snap.tick - (performance.now() * TICK_HZ) / 1000;
     if (this.offset === null || Math.abs(sample - this.offset) > 30) this.offset = sample;
     else this.offset += (sample - this.offset) * (sample > this.offset ? 0.3 : 0.02);
+    // Vehicles first: who stands on a deck is placed in its frame.
+    this.takeVehicles(snap.tick, snap.vehicles);
     for (const s of snap.soldiers) {
       if (s.id === this.myId) continue;
       let r = this.remotes.get(s.id);
@@ -616,7 +652,7 @@ export class NetMatch {
         r.ally = !MATCH.ffa && r.team === this.myTeam;
         this.remotes.set(s.id, r);
       }
-      r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots });
+      r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots, deck: s.flags & SF.riding ? undefined : this.deckAt(snap.tick, s.x, s.y, s.z, s.yaw) });
       r.hidden = this.owned.has(s.id);
       if (r.hidden) this.onOwned(s.id, s.flags, s.health);
     }
@@ -631,7 +667,6 @@ export class NetMatch {
       th.samples.push({ tick: snap.tick, x: t.x, y: t.y, z: t.z });
       if (th.samples.length > 12) th.samples.shift();
     }
-    this.takeVehicles(snap.tick, snap.vehicles);
     const mine = snap.soldiers.find((s) => s.id === this.myId);
     if (snap.self) {
       const ack = snap.self.ack;
@@ -639,8 +674,23 @@ export class NetMatch {
       while (n < this.unacked.length && this.unacked[n]!.seq <= ack) n++;
       if (n) this.unacked.splice(0, n);
     }
-    if (snap.self && mine) this.correct(snap.self, mine.flags);
+    if (snap.self && mine) this.correct(snap.self, mine.flags, snap.tick);
     this.lastSelf = snap.self;
+  }
+
+  /** A ship's deck under (x, y, z) at `tick` (the ships' poses from the same snapshot), as a spot in its frame. */
+  private deckAt(tick: number, x: number, y: number, z: number, yaw: number): Sample['deck'] {
+    for (const tr of this.tracks.values()) {
+      const deck = tr.v.spec.deck;
+      if (!deck) continue;
+      const at = tr.samples.find((s) => s.tick === tick);
+      if (!at) continue;
+      const local = this.tmpV.set(x, y, z).sub(at.pos).applyQuaternion(this.tmpQ.copy(at.quat).invert());
+      const [hx, hy, hz] = tr.v.spec.half;
+      if (Math.abs(local.x) > hx + 0.4 || Math.abs(local.z) > hz + 0.6 || local.y < hy - 0.8 || local.y > hy + 6) continue;
+      return { v: tr.v, x: local.x, y: local.y, z: local.z, yaw: yaw - headingOf(at.quat) };
+    }
+    return undefined;
   }
 
   // ---------------------------------------------------------------------------
@@ -762,7 +812,7 @@ export class NetMatch {
   }
 
   /** The server's word on where this browser's soldier was after input `ack`. */
-  private correct(self: NonNullable<Snapshot['self']>, flags: number): void {
+  private correct(self: NonNullable<Snapshot['self']>, flags: number, tick: number): void {
     const me = this.me;
     const p = me.player;
     if (!(flags & SF.deployed) || !(flags & SF.alive) || !me.deployed || !p.alive) return;
@@ -776,6 +826,7 @@ export class NetMatch {
     const then = this.predicted.get(self.ack);
     for (const k of this.predicted.keys()) if (k <= self.ack) this.predicted.delete(k);
     if (!then) return;
+    if (then.deck && this.correctOnDeck(self, then.deck, tick)) return;
     const dx = self.x - then.x;
     const dy = self.y - then.y;
     const dz = self.z - then.z;
@@ -791,6 +842,44 @@ export class NetMatch {
     // Far off (a shove, a wall the server had): take its motion too.
     if (err > 0.5) p.velocity.set(self.vx, self.vy, self.vz);
   }
+
+  /**
+   * The server's word for a soldier predicted on a deck: both spots in the
+   * ship's frame (the server's at the ship as it had it at that tick), the
+   * difference put back through the ship as drawn now. False when the ship's
+   * pose at that tick isn't known (then the plain comparison runs).
+   */
+  private correctOnDeck(self: NonNullable<Snapshot['self']>, deck: { vid: number; x: number; y: number; z: number }, tick: number): boolean {
+    const tr = this.tracks.get(deck.vid);
+    const at = tr?.samples.find((s) => s.tick === tick);
+    if (!tr || !at) return false;
+    const inv = this.tmpQ.copy(at.quat).invert();
+    const local = this.tmpV.set(self.x, self.y, self.z).sub(at.pos).applyQuaternion(inv);
+    const lx = local.x - deck.x;
+    const ly = local.y - deck.y;
+    const lz = local.z - deck.z;
+    const err = Math.hypot(lx, ly, lz);
+    this.lastCorrection = err;
+    if (err < CORRECT_MIN) return true;
+    const d = this.tmpV.set(lx, ly, lz).applyQuaternion(tr.v.quat);
+    this.me.player.nudge(d.x, d.y, d.z);
+    const pf = this.me.player.platform;
+    if (pf) pf.local.add(this.tmpV2.set(lx, ly, lz));
+    for (const v of this.predicted.values()) {
+      v.x += d.x;
+      v.y += d.y;
+      v.z += d.z;
+      if (v.deck?.vid === deck.vid) {
+        v.deck.x += lx;
+        v.deck.y += ly;
+        v.deck.z += lz;
+      }
+    }
+    return true;
+  }
+  private readonly tmpQ = new THREE.Quaternion();
+  private readonly tmpV = new THREE.Vector3();
+  private readonly tmpV2 = new THREE.Vector3();
 
   /** Draws everyone else, grenades in the air and explosions due, for this frame. */
   render(dt: number): void {

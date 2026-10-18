@@ -1612,7 +1612,7 @@ export class Game {
       const busy = me.throwBlock > 0 || this.medkitUse > 0 || reviving || me.working >= 0 || me.buildMode || me.gadgetOut || this.supportAim !== null || me.using;
       me.stepOnFoot(dt, input, busy, this.fort?.slowAt(p.feet) ?? 1);
       this.stepSway(dt, input.holdBreath);
-      net.stepped(n.seq, p.feet);
+      net.stepped(n.seq, p.feet, p.platform);
     } else if (this.playerDowned) this.me.stepDowned(dt, input.jumpHeld);
     else this.respawnTimer -= dt;
     this.me.syncBoxes();

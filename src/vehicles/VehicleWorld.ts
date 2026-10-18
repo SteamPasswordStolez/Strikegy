@@ -155,7 +155,7 @@ export class VehicleWorld {
     v.water = this.water;
     v.usedAt = this.time;
     this.vehicles.push(v);
-    for (const c of [v.collider, v.wingCollider]) {
+    for (const c of [v.collider, v.wingCollider, ...v.parts]) {
       if (!c) continue;
       this.byHandle.set(c.handle, v);
       this.registry.register(c.handle, v, 'body');
@@ -259,7 +259,7 @@ export class VehicleWorld {
   /** Off the map and out of the physics. */
   remove(v: Vehicle): void {
     this.vehicles.splice(this.vehicles.indexOf(v), 1);
-    for (const c of [v.collider, v.wingCollider]) {
+    for (const c of [v.collider, v.wingCollider, ...v.parts]) {
       if (!c) continue;
       this.byHandle.delete(c.handle);
       this.registry.unregister(c.handle);

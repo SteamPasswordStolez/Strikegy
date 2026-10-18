@@ -220,4 +220,4 @@ export interface MapDef {
 }
 
 /** Vehicle kinds a map may place (see vehicles/vehicleData.ts). */
-export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat' | 'lcvp';
+export type MapVehicleKind = 'jeep' | 'apc' | 'bike' | 'boat' | 'lcvp' | 'patrol';

@@ -29,6 +29,17 @@ const CLIMB = { speed: 2.6, off: 0.55, reach: 0.85, face: 0.35, onto: 0.95 };
  * walking up the beach: once it is shallower again they stand.
  */
 export const SWIM = { speed: 1.5, fast: 2.3, accel: 5, float: 1.35, rise: 3, again: 0.15 };
+const DOWN = { x: 0, y: -1, z: 0 };
+/** Standing on a moving deck, each step starts this far above it (m). */
+const PLATFORM_LIFT = 0.02;
+
+/** Heading of a body's forward (-z) axis (0 = -z, as the view's yaw). */
+function yawOfQuat(q: THREE.Quaternion): number {
+  const fx = -2 * (q.x * q.z + q.w * q.y);
+  const fz = -(1 - 2 * (q.x * q.x + q.y * q.y));
+  return Math.atan2(-fx, -fz);
+}
+
 /** Meters travelled per footstep sound. */
 const STRIDE = { walk: 1.9, sprint: 2.5, crouch: 1.5 };
 
@@ -61,6 +72,12 @@ export class Player {
   water: WaterMap | null = null;
   /** Swimming (deep water): moving slowly at the surface, guns down. */
   swimming = false;
+  /**
+   * The moving body underfoot (a boat's deck, a vehicle's roof; 2026-10-18, big
+   * maps plan step 4) and where the feet are in its frame: each step starts by
+   * carrying the player as far as it moved and turned since (`ridePlatform`).
+   */
+  platform: { body: RAPIER.RigidBody; local: THREE.Vector3; yaw: number } | null = null;
   /** Class passives (set by the game each step): speed multiplier and how much of the wading slowdown applies. */
   speedBonus = 1;
   wadePenalty = 1;
@@ -127,6 +144,7 @@ export class Player {
     this.slideLeft = 0;
     this.ladder = null;
     this.swimming = false;
+    this.platform = null;
     this.yaw = yaw;
     this.pitch = 0;
     this.body.setTranslation(this.centerFromFeet(), true);
@@ -155,6 +173,7 @@ export class Player {
     this.grounded = true;
     this.sprinting = false;
     this.swimming = false;
+    this.platform = null;
   }
 
   /** Off the vehicle: capsule back, standing at `feet`. */
@@ -179,6 +198,8 @@ export class Player {
 
   step(dt: number, input: InputState, ads: boolean, firing: boolean): void {
     this.prevFeet.copy(this.feet);
+    this.lastDt = dt;
+    const carry = this.ridePlatform();
     if (this.ladder || this.takeLadder(input)) {
       this.stepLadder(dt, input);
       this.body.setNextKinematicTranslation(this.centerFromFeet());
@@ -189,6 +210,7 @@ export class Player {
     const depth = level > this.feet.y ? level - this.feet.y : 0;
     this.swimming = depth > SWIM_DEPTH - (this.swimming ? SWIM.again : 0);
     if (this.swimming) {
+      this.platform = null;
       this.stepSwim(dt, input, level);
       this.body.setNextKinematicTranslation(this.centerFromFeet());
       this.health.step(dt);
@@ -248,7 +270,8 @@ export class Player {
       this.velocity.y = Math.max(this.velocity.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
     }
 
-    const desired = { x: this.velocity.x * dt, y: this.velocity.y * dt, z: this.velocity.z * dt };
+    // The deck's own move along goes in with the step (the controller works from where the capsule was).
+    const desired = { x: this.velocity.x * dt + carry.x, y: this.velocity.y * dt, z: this.velocity.z * dt + carry.z };
     const filter = groups(0xffff, Layer.WORLD | Layer.PLAYER | Layer.BOT | Layer.BOUNDS);
     this.controller.computeColliderMovement(this.collider, desired, undefined, filter);
     let moved = this.controller.computedMovement();
@@ -257,13 +280,19 @@ export class Player {
       // contact at time 0 with an upward normal). Moving level gets through.
       this.controller.computeColliderMovement(this.collider, { x: desired.x, y: 0, z: desired.z }, undefined, filter);
       moved = this.controller.computedMovement();
+      // On a moving deck the capsule can end a step a hair inside the floor (it moved
+      // under the feet): lifted clear by a couple of centimetres it gets through.
+      if (this.platform && this.snaggedOnFloor(desired, moved)) {
+        this.controller.computeColliderMovement(this.collider, { x: desired.x, y: 0.03, z: desired.z }, undefined, filter);
+        moved = this.controller.computedMovement();
+      }
     }
     const wasGrounded = this.grounded;
     this.grounded = this.controller.computedGrounded();
 
-    // Use the collision-corrected displacement so walls kill velocity naturally.
-    this.velocity.x = moved.x / dt;
-    this.velocity.z = moved.z / dt;
+    // Use the collision-corrected displacement so walls kill velocity naturally (relative to the deck one stands on).
+    this.velocity.x = (moved.x - carry.x) / dt;
+    this.velocity.z = (moved.z - carry.z) / dt;
     if (this.grounded && this.velocity.y < 0) {
       if (!wasGrounded && this.velocity.y < -7) {
         this.bus.emit('player:landed', { impactSpeed: -this.velocity.y, surface: this.groundSurface() });
@@ -280,7 +309,86 @@ export class Player {
     this.body.setNextKinematicTranslation(this.centerFromFeet());
     this.health.step(dt);
     this.stepFootsteps(Math.hypot(moved.x, moved.z));
+    this.findPlatform();
   }
+
+  /**
+   * Carried by the platform: how far the feet's spot on it has moved since the
+   * last step (before the physics step moved it, that spot was where the feet
+   * ended), returned to go in with this step's own move (so the controller
+   * sorts out walls and the deck itself); the view turns as the deck turns.
+   */
+  private ridePlatform(): { x: number; y: number; z: number } {
+    const carry = this.carry;
+    carry.x = 0;
+    carry.y = 0;
+    carry.z = 0;
+    const pf = this.platform;
+    if (!pf) return carry;
+    // Gone (a wreck cleared away): standing on nothing that moves any more.
+    if (!this.physics.world.bodies.get(pf.body.handle)) {
+      this.platform = null;
+      return carry;
+    }
+    const t = pf.body.translation();
+    const r = pf.body.rotation();
+    const q = this.tmpQ.set(r.x, r.y, r.z, r.w);
+    const at = this.tmpP.copy(pf.local).applyQuaternion(q).add(t);
+    const dx = at.x - this.feet.x;
+    const dy = at.y - this.feet.y;
+    const dz = at.z - this.feet.z;
+    // A jump far beyond a step (the body was put somewhere else): let go.
+    if (dx * dx + dy * dy + dz * dz > 25) {
+      this.platform = null;
+      return carry;
+    }
+    // Up and down at once, the capsule with it (the controller won't push out of a deck
+    // that rose into it); along the deck with this step's own move.
+    // Kept clear of the deck by the controller's own gap: started touching it (the deck
+    // came up into it), the controller would let the step's fall go straight through.
+    const below = this.physics.raycast(this.tmpP.set(this.feet.x, this.feet.y + dy + 0.3, this.feet.z), DOWN, 0.3 + PLATFORM_LIFT, Layer.WORLD);
+    const lift = dy + (below ? PLATFORM_LIFT - (below.distance - 0.3) : 0);
+    this.feet.y += lift;
+    this.prevFeet.y += lift;
+    const c = this.centerFromFeet();
+    this.body.setTranslation(c, true);
+    this.collider.setTranslation(c);
+    carry.x = dx;
+    carry.z = dz;
+    const yaw = yawOfQuat(q);
+    this.yaw += Math.atan2(Math.sin(yaw - pf.yaw), Math.cos(yaw - pf.yaw));
+    return carry;
+  }
+  /** This step's carry by the deck (m), and the step's length. */
+  private readonly carry = { x: 0, y: 0, z: 0 };
+  private lastDt = 0;
+
+  /**
+   * After moving: standing on (or just above, mid-jump) a body that moves?
+   * Then remember the spot in its frame. Fixed ground and the open air clear it.
+   */
+  private findPlatform(): void {
+    const from = this.tmpP.set(this.feet.x, this.feet.y + 0.3, this.feet.z);
+    const hit = this.physics.raycast(from, DOWN, this.platform ? 2.5 : 0.7, Layer.WORLD);
+    const collider = hit && hit.collider.handle >= 0 ? this.physics.world.getCollider(hit.collider.handle) : null;
+    const body = collider?.parent() ?? null;
+    if (!body || body.isFixed()) {
+      // Off a moving deck (jumped, walked off its end): its speed comes along.
+      if (this.platform && this.lastDt > 0) {
+        this.velocity.x += this.carry.x / this.lastDt;
+        this.velocity.z += this.carry.z / this.lastDt;
+      }
+      this.platform = null;
+      return;
+    }
+    const t = body.translation();
+    const r = body.rotation();
+    const q = this.tmpQ.set(r.x, r.y, r.z, r.w);
+    const local = (this.platform?.body === body ? this.platform.local : new THREE.Vector3()).set(this.feet.x - t.x, this.feet.y - t.y, this.feet.z - t.z).applyQuaternion(q.invert());
+    this.platform = { body, local, yaw: yawOfQuat(q.invert()) };
+  }
+  private readonly tmpQ = new THREE.Quaternion();
+  private readonly tmpP = new THREE.Vector3();
 
   /**
    * Walking at a ladder takes it: from below (facing it, at its foot or part
