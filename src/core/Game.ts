@@ -3666,7 +3666,8 @@ export class Game {
     const dir = this.aimDir.set(0, 0, -1).applyQuaternion(cam.quaternion);
     const hit = this.physics.raycast(cam.position, dir, AIM_ID_RANGE, Layer.WORLD | Layer.HITBOX, undefined, undefined, undefined, this.me.boxes.slot);
     const owner = hit ? this.registry.lookup(hit.collider.handle)?.owner : undefined;
-    if (!owner || !owner.alive || owner.id === this.myId || owner.team === undefined || owner.team === null) return (this.aimSeen = null);
+    // Soldiers only (a vehicle's hull is no one to name).
+    if (!owner || !owner.alive || owner.id === this.myId || owner.team === undefined || owner.team === null || this.vehicles?.get(owner.id)) return (this.aimSeen = null);
     const ally = !foes(owner as { id: number; team: Team }, this.playerCombatant);
     return (this.aimSeen = { side: ally ? 'ally' : 'enemy', name: owner.name });
   }

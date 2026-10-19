@@ -159,8 +159,11 @@ roughnessFactor = mix(roughnessFactor, 0.7, seaFoam);`,
     this.mesh.name = 'sea';
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
-    // With the ground (after the other opaque things): what the land hides isn't shaded.
-    this.mesh.renderOrder = 1;
+    // After the other opaque things, just before the ground: the sea is opaque,
+    // so the bed under it is then rejected by the depth test before its
+    // layered shading (Coral Reach: sea + terrain 1.66 -> 0.79 ms looking over
+    // the fleet, 2.95 -> 2.0 at the island; Iris Xe 1152x648, 2026-10-19).
+    this.mesh.renderOrder = 0.95;
     this.mesh.matrixAutoUpdate = false;
   }
 

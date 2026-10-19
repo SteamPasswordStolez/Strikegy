@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import type { Team } from '@/world/mapTypes';
 import { WEAPONS, type WeaponDef } from '@/weapons/weaponData';
 import { buildGun } from '@/weapons/gunModels';
+import { weld, withIndex } from '@/render/geometryIndex';
 
 /**
  * Procedural soldier: one rigidly skinned mesh (a single draw call) with a
@@ -195,7 +196,7 @@ function gunParts(def: WeaponDef): { parts: Part[]; support: THREE.Vector3; muzz
 function buildGeometry(parts: Part[]): THREE.BufferGeometry {
   const c = new THREE.Color();
   const prepared = parts.map(({ geo, bone, color }) => {
-    const g = geo.index ? geo.toNonIndexed() : geo;
+    const g = withIndex(geo);
     for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
     const n = g.getAttribute('position').count;
     const colors = new Float32Array(n * 3);
@@ -212,8 +213,11 @@ function buildGeometry(parts: Part[]): THREE.BufferGeometry {
     g.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight, 4));
     return g;
   });
-  const merged = mergeGeometries(prepared, false)!;
+  const soup = mergeGeometries(prepared, false)!;
   prepared.forEach((g) => g.dispose());
+  // Each corner once (rounded boxes and the gun come as triangle soups): a third of the vertices to skin.
+  const merged = weld(soup);
+  soup.dispose();
   merged.computeBoundingSphere();
   return merged;
 }
@@ -439,7 +443,7 @@ export function buildFarSoldierPose(team: Team, pose: 'stand' | 'run' | 'crouch'
   lowDetail = false;
   const c = new THREE.Color();
   const geos = parts.map(({ geo, bone, color }) => {
-    const g = (geo.index ? geo.toNonIndexed() : geo).applyMatrix4(skin[bone]!);
+    const g = withIndex(geo).applyMatrix4(skin[bone]!);
     for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
     const n = g.getAttribute('position').count;
     const col = new Float32Array(n * 3);
@@ -448,8 +452,10 @@ export function buildFarSoldierPose(team: Team, pose: 'stand' | 'run' | 'crouch'
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     return g;
   });
-  const merged = mergeGeometries(geos, false)!;
+  const soup = mergeGeometries(geos, false)!;
   geos.forEach((g) => g.dispose());
+  const merged = weld(soup);
+  soup.dispose();
   merged.computeBoundingSphere();
   return merged;
 }

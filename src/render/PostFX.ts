@@ -65,6 +65,13 @@ export interface PostFXOptions {
 export class PostFX {
   readonly composer: EffectComposer;
   private readonly fxaa: ShaderPass;
+  /**
+   * The tone-mapped frame (display values, sRGB) on its way to FXAA: 8 bits a
+   * channel, what the screen gets anyway. In the half-float ping-pong buffer
+   * the two passes moved twice the bytes (2026-10-19: tone map + FXAA
+   * 1.4 -> see CLAUDE.md, Iris Xe 1152x648).
+   */
+  private readonly ldr: THREE.WebGLRenderTarget;
   private readonly labels = new Map<Pass, string>();
 
   constructor(
@@ -114,8 +121,17 @@ export class PostFX {
     // Glow over 1.6 (sun, flashes, fire), added while tone mapping.
     const bloom = opts.bloom ? new BloomPass(1.6) : null;
     if (bloom) this.add('bloom', bloom);
-    this.add('tonemap', new FinalPass(bloom, 0.075));
+    const final = new FinalPass(bloom, 0.075);
+    this.ldr = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.UnsignedByteType, depthBuffer: false });
+    const ldr = this.ldr;
+    const finalRender = final.render.bind(final);
+    final.render = (renderer, _write, read, delta, mask) => finalRender(renderer, ldr, read, delta, mask);
+    final.needsSwap = false;
+    this.add('tonemap', final);
     this.fxaa = new ShaderPass(FXAAShader);
+    // Reads the 8-bit frame, not the composer's buffer.
+    this.fxaa.textureID = '';
+    this.fxaa.uniforms.tDiffuse!.value = ldr.texture;
     this.add('fxaa', this.fxaa);
   }
 
@@ -127,6 +143,7 @@ export class PostFX {
   setSize(w: number, h: number, pixelRatio: number): void {
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(w, h);
+    this.ldr.setSize(w * pixelRatio, h * pixelRatio);
     this.fxaa.material.uniforms.resolution!.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
   }
 
@@ -144,6 +161,7 @@ export class PostFX {
   }
 
   dispose(): void {
+    this.ldr.dispose();
     this.composer.dispose();
   }
 }
