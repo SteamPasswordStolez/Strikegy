@@ -295,7 +295,7 @@ interface Profile {
   classXp: Record<ClassId, number>;
   weapons: Record<WeaponId, { xp: number; kills: number; headshots: number; longshots: number; streaks3: number; camos: number }>;
   vehicles: Record<string, { kills: number; time: number }>;
-  unlocks: string[];          // 'weapon:ar2', 'att:ar1:suppressor', 'camo:ar1:tiger', 'card:...'
+  unlocks: { id: string; at: number; from: string; seen: boolean }[];  // 'weapon:ar2', 'att:ar1:suppressor', 'camo:ar1:tiger', 'card:...' + 얻은 때·출처·무기고에서 봤는지
   equipped: { card?: string; emblem?: string; camo: Partial<Record<WeaponId, string>>; skin: Partial<Record<WeaponId | VehicleKind, string>>; killFx: Partial<Record<WeaponId, string>>; attachments: Partial<Record<WeaponId, Partial<Record<Slot, string>>>> };
   missions: { daily: MissionState[]; weekly: MissionState[]; long: Record<string, number>; rolledAt: number };
   stats: CareerStats;         // 3-8의 숫자들
