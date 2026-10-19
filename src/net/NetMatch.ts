@@ -110,6 +110,39 @@ function nameTag(name: string, ally: boolean): THREE.Sprite {
 
 /** Name tags show within this distance (m). */
 const TAG_RANGE = 120;
+/** Allies (people past their name tag's range, and bots) get a chevron within this distance (m), as solo bots do. */
+const MARK_RANGE = 160;
+
+/**
+ * The ally chevron and the downed ally's cross, seen through walls (the same
+ * shapes as BotManager's): in multiplayer the server's bots had no marker at
+ * all and both sides wear olive, so allies and enemies looked alike (owner,
+ * 2026-10-19: players found friend and foe hard to tell apart).
+ */
+const allyMarks: { chevron?: THREE.SpriteMaterial; cross?: THREE.SpriteMaterial } = {};
+function allyMark(kind: 'chevron' | 'cross'): THREE.SpriteMaterial {
+  let mat = allyMarks[kind];
+  if (mat) return mat;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = kind === 'chevron' ? '#4d8cff' : '#6bdc6b';
+  g.strokeStyle = 'rgba(0,0,0,0.65)';
+  g.lineWidth = 4;
+  g.beginPath();
+  const pts =
+    kind === 'chevron'
+      ? [[12, 18], [32, 46], [52, 18], [32, 30]]
+      : [[24, 8], [40, 8], [40, 24], [56, 24], [56, 40], [40, 40], [40, 56], [24, 56], [24, 40], [8, 40], [8, 24], [24, 24]];
+  for (const [x, y] of pts) g.lineTo(x!, y!);
+  g.closePath();
+  g.stroke();
+  g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  mat = allyMarks[kind] = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false, toneMapped: false });
+  return mat;
+}
 
 class Remote {
   readonly samples: Sample[] = [];
@@ -119,6 +152,8 @@ class Remote {
   ally = false;
   private tag: THREE.Sprite | null = null;
   private tagText = '';
+  /** Ally chevron / downed cross (see allyMark). */
+  private mark: THREE.Sprite | null = null;
   model: SoldierModel | null = null;
   private weapon: WeaponId | null = null;
   readonly boxes: CharacterHitboxes;
@@ -253,7 +288,7 @@ class Remote {
       this.visible = this.alive = false;
       this.boxes.setEnabled(false);
       this.model?.root.removeFromParent();
-      this.tag?.removeFromParent();
+      this.dropMarks();
       return;
     }
     const span = b.tick - a.tick;
@@ -304,7 +339,7 @@ class Remote {
     if (this.hidden) {
       this.boxes.setEnabled(false);
       this.model?.root.removeFromParent();
-      this.tag?.removeFromParent();
+      this.dropMarks();
       this.shotsSeen = -1;
       return;
     }
@@ -316,7 +351,7 @@ class Remote {
     const weapon = (f < 0.5 ? a : b).weapon;
     if (!this.visible || this.riding) {
       this.model?.root.removeFromParent();
-      this.tag?.removeFromParent();
+      this.dropMarks();
       return;
     }
     if (!this.model || weapon !== this.weapon) {
@@ -364,9 +399,30 @@ class Remote {
     v.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(v.camera.position), this.id, def.id);
   }
 
-  /** The name over a person's head while up (and within range). */
+  private dropMarks(): void {
+    this.tag?.removeFromParent();
+    this.mark?.removeFromParent();
+  }
+
+  /** The name over a person's head while up (and within range); a chevron over other allies, a cross over downed ones. */
   private updateTag(): void {
-    const show = this.human && this.alive && this.pos.distanceTo(this.view.camera.position) < TAG_RANGE;
+    const dist = this.pos.distanceTo(this.view.camera.position);
+    const show = this.human && this.alive && dist < TAG_RANGE;
+    const downed = this.downFor >= 0;
+    const mark = this.ally && !show && (downed || (this.alive && dist < MARK_RANGE)) ? (downed ? 'cross' : 'chevron') : null;
+    if (mark) {
+      const mat = allyMark(mark);
+      if (!this.mark) {
+        this.mark = new THREE.Sprite(mat);
+        this.mark.renderOrder = 10;
+        this.mark.layers.set(LAYER_FX);
+      }
+      this.mark.material = mat;
+      const size = mark === 'cross' ? 0.03 : 0.022;
+      this.mark.scale.set(size, size, 1);
+      this.mark.position.set(this.pos.x, this.pos.y + (downed ? 0.9 : 2.15 - this.crouch * 0.6), this.pos.z);
+      if (!this.mark.parent) this.view.scene.add(this.mark);
+    } else this.mark?.removeFromParent();
     if (!show) {
       this.tag?.removeFromParent();
       return;
@@ -385,7 +441,7 @@ class Remote {
   dispose(): void {
     this.model?.dispose();
     this.boxes.dispose();
-    this.tag?.removeFromParent();
+    this.dropMarks();
     this.tag?.material.map?.dispose();
     this.tag?.material.dispose();
   }
@@ -806,7 +862,7 @@ export class NetMatch {
     view.effects.muzzleFlash(muzzle, dir);
     if (m.gun.shell) {
       if (m.id === 'rockets') view.audio.gadget('rocket', muzzle);
-      else view.audio.bigGun(muzzle, dist);
+      else view.audio.bigGun(muzzle, dist, `v${v.id}.${seat}`);
       return;
     }
     for (let i = 0; i < n; i++) {
@@ -814,7 +870,7 @@ export class NetMatch {
       const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : muzzle.clone().addScaledVector(dir, m.gun.range);
       view.effects.spawnShots([{ from: muzzle.clone(), to }], muzzle);
     }
-    view.audio.remoteGunshot(m.gun.blast > 0 ? 'sr' : 'lmg', muzzle, dist);
+    view.audio.remoteGunshot(m.gun.blast > 0 ? 'sr' : 'lmg', muzzle, dist, `v${v.id}.${seat}`);
   }
 
   /** The server's word on where this browser's soldier was after input `ack`. */

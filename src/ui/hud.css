@@ -81,6 +81,26 @@
   top: -1px;
   background: #fff;
 }
+/* Crosshair on someone: the side's colour; an ally's name under it. */
+.crosshair.on-ally .ch,
+.crosshair.on-ally .ch-dot {
+  background: var(--ally-text);
+}
+.crosshair.on-enemy .ch,
+.crosshair.on-enemy .ch-dot {
+  background: var(--enemy-text);
+}
+.ch-name {
+  position: absolute;
+  top: calc(var(--gap) + 14px);
+  left: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ally-text);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.8);
+}
 .hitmarker {
   position: absolute;
   left: 50%;

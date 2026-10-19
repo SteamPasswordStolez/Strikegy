@@ -57,6 +57,12 @@ export interface HudFrame {
   prompt: { text: string; progress: number | null } | null;
   fps: number | null;
   debug: string | null;
+  /**
+   * Who the crosshair is on (owner, 2026-10-19: friend and foe were hard to
+   * tell apart): the crosshair turns the side's colour, an ally's name shows
+   * under it (no shooting your own by mistake).
+   */
+  aimAt?: { side: Side; name: string } | null;
 }
 
 export type Side = 'ally' | 'enemy';
@@ -131,6 +137,7 @@ const FEED_MAX = 5;
 export class HUD {
   readonly root: HTMLDivElement;
   private crosshair: HTMLDivElement;
+  private aimName: HTMLDivElement;
   private hitmarker: HTMLDivElement;
   private ammo: HTMLDivElement;
   private ammoMag: HTMLSpanElement;
@@ -198,6 +205,7 @@ export class HUD {
     this.crosshair = el('div', 'crosshair', this.root);
     for (const side of ['t', 'b', 'l', 'r']) el('div', `ch ch-${side}`, this.crosshair);
     el('div', 'ch-dot', this.crosshair);
+    this.aimName = el('div', 'ch-name', this.crosshair);
     this.hitmarker = el('div', 'hitmarker', this.root);
     this.damageRing = el('div', 'damage-ring', this.root);
     this.feed = el('div', 'killfeed', this.root);
@@ -327,6 +335,12 @@ export class HUD {
     const dead = f.respawnIn !== null || f.down !== null;
     const chOpacity = dead ? '0' : (1 - f.adsBlend).toFixed(2);
     this.set('chOp', chOpacity, () => (this.crosshair.style.opacity = chOpacity));
+    const aim = dead ? null : (f.aimAt ?? null);
+    this.set('aimAt', aim ? `${aim.side}:${aim.name}` : '', () => {
+      this.crosshair.classList.toggle('on-ally', aim?.side === 'ally');
+      this.crosshair.classList.toggle('on-enemy', aim?.side === 'enemy');
+      this.aimName.textContent = aim?.side === 'ally' ? aim.name : '';
+    });
     // Scope: fades in over the last part of aiming, the eye box shadow drifts with sway.
     const sc = f.scope && !dead ? f.scope : null;
     const scopeIn = sc ? Math.min(1, Math.max(0, (f.adsBlend - 0.82) / 0.14)) : 0;

@@ -2551,7 +2551,7 @@ export class Game {
       } else vel = dir.clone().multiplyScalar(sh.speed).add(v.flight ? v.velocity : new THREE.Vector3());
       this.gadgets.fireShell(muzzle.clone().addScaledVector(dir, 0.4), vel, sh.gravity, { ...shooter, squad: null }, m.id, undefined, v.body);
       if (m.id === 'rockets') this.audio.gadget('rocket', byPlayer ? null : muzzle);
-      else this.audio.bigGun(muzzle, listenerDist);
+      else this.audio.bigGun(muzzle, listenerDist, `v${v.id}.${seat}`);
       if (byPlayer) this.shake = Math.min(0.06, this.shake + 0.035);
       return;
     }
@@ -2571,7 +2571,7 @@ export class Game {
     }
     if (hit && gun.blast > 0) this.blast('cannon', to, shooter, name);
     this.effects.spawnShots([{ from: muzzle, to }], muzzle);
-    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, byPlayer ? 0 : listenerDist);
+    this.audio.remoteGunshot(gun.blast > 0 ? 'sr' : 'lmg', muzzle, byPlayer ? 0 : listenerDist, `v${v.id}.${seat}`);
     this.bots?.nearMiss(muzzle, to, shooter, target?.owner.id ?? -1, 1);
     if (byPlayer) this.shake = Math.min(0.03, this.shake + (gun.blast > 0 ? 0.012 : 0.004));
   }
@@ -3648,6 +3648,28 @@ export class Game {
 
   private readonly assistEye = new THREE.Vector3();
   private readonly assistAt = new THREE.Vector3();
+  private aimCheckIn = 0;
+  private aimSeen: { side: 'ally' | 'enemy'; name: string } | null = null;
+  private readonly aimDir = new THREE.Vector3();
+
+  /**
+   * Who the crosshair is on, for the HUD (owner, 2026-10-19: friend and foe
+   * were hard to tell apart): one ray from the view ten times a second, the
+   * first wall or soldier within `AIM_ID_RANGE` m.
+   */
+  private aimAtFor(dt: number): { side: 'ally' | 'enemy'; name: string } | null {
+    if (!this.player.alive || this.playerDowned || this.ride) return (this.aimSeen = null);
+    this.aimCheckIn -= dt;
+    if (this.aimCheckIn > 0) return this.aimSeen;
+    this.aimCheckIn = 0.1;
+    const cam = this.renderer.camera;
+    const dir = this.aimDir.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    const hit = this.physics.raycast(cam.position, dir, AIM_ID_RANGE, Layer.WORLD | Layer.HITBOX, undefined, undefined, undefined, this.me.boxes.slot);
+    const owner = hit ? this.registry.lookup(hit.collider.handle)?.owner : undefined;
+    if (!owner || !owner.alive || owner.id === this.myId || owner.team === undefined || owner.team === null) return (this.aimSeen = null);
+    const ally = !foes(owner as { id: number; team: Team }, this.playerCombatant);
+    return (this.aimSeen = { side: ally ? 'ally' : 'enemy', name: owner.name });
+  }
 
   /**
    * Touch aim assist: the visible enemy closest to the crosshair within a
@@ -3891,6 +3913,7 @@ export class Game {
         score: this.bots ? { allies: this.bots.score(this.myTeam), enemies: this.bots.score(otherTeam(this.myTeam)) } : null,
         zone: this.zoneHud(),
         squad: this.squadHud(),
+        aimAt: this.aimAtFor(dt),
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
           ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)}`
@@ -5417,6 +5440,8 @@ const ORBIT = { min: -0.85, max: 0.45, height: 1.6 };
  */
 const SHIP_CAM = { dist: 30, distPerLength: 0.55, height: 6, heightPerLength: 0.035, overSea: 2.5 };
 
+/** The crosshair names who it is on within this distance (m). */
+const AIM_ID_RANGE = 150;
 /** Player jet cannon: fires at the crosshair within this angle of the nose (rad), onto an enemy aircraft this close to the crosshair. */
 const JET_GUN = { cone: 0.21, assist: 0.031 };
 /** Parachute: falling speed and how fast it can be steered sideways (m/s). */

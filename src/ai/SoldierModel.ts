@@ -60,9 +60,15 @@ interface Palette {
   mark: number;
 }
 
+/**
+ * Each side's kit, told apart by colour and brightness and matching its
+ * vehicles' camouflage: blue in woodland green, red in desert tan (owner,
+ * 2026-10-19: friend and foe were hard to tell apart; both sides wore near
+ * the same olive and only the arm / helmet bands differed).
+ */
 const PALETTES: Record<Team, Palette> = {
-  blue: { uniform: 0x5e5a48, uniformDark: 0x4a4636, gear: 0x403e33, helmet: 0x4a4836, skin: 0xb3876a, boots: 0x2b241d, glove: 0x2a2620, mark: 0x3f7bd9 },
-  red: { uniform: 0x444a37, uniformDark: 0x33382b, gear: 0x2f3228, helmet: 0x363a29, skin: 0x9c7458, boots: 0x231f1a, glove: 0x23211d, mark: 0xc9402f },
+  blue: { uniform: 0x343d29, uniformDark: 0x2a3121, gear: 0x252a1f, helmet: 0x2f3626, skin: 0xb3876a, boots: 0x2b241d, glove: 0x2a2620, mark: 0x3f7bd9 },
+  red: { uniform: 0x8c7752, uniformDark: 0x72603f, gear: 0x5c4e36, helmet: 0x7b6845, skin: 0x9c7458, boots: 0x3a2e22, glove: 0x4a3d2c, mark: 0xc9402f },
 };
 
 
