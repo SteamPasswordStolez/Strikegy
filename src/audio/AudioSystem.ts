@@ -158,6 +158,11 @@ const STEAL_RATIO = 2;
 /** Voices low-priority sounds (impacts, steps, smoke hiss) never take. */
 const LOW_RESERVE = 8;
 const VOICE_LIMITS: VoiceLimits = { max: MAX_SPATIAL, lowReserve: LOW_RESERVE, stealRatio: STEAL_RATIO };
+/** A shared panner can still contain hundreds of sources. Bound the actual mixer work too. */
+const MAX_SOURCES = 96;
+const SOURCE_LIMITS: VoiceLimits = { max: MAX_SOURCES, lowReserve: 32, stealRatio: STEAL_RATIO };
+/** Distant or incidental sounds at the same source / direction merge within 50 ms. */
+const REPEAT_SEC = 0.05;
 /** Gunfire, cracks and gear sounds nearer than this are `near` (never dropped for further or quieter ones). */
 const NEAR_M = 40;
 /** Big guns (tank, howitzer, cannon) nearer than this are `near`; further than `BIG_SHARE_M` they share a voice per direction. */
@@ -178,6 +183,9 @@ const REMOTE_STEP_RANGE_M = 30;
 
 interface Voice extends VoiceSlot {
   until: number;
+  nextAt: number;
+  sources: Set<PlayingSource>;
+  nodes: AudioNode[];
   /** Rough loudness at the listener, used to pick which voices to drop. */
   loud: number;
   hrtf: boolean;
@@ -187,6 +195,14 @@ interface Voice extends VoiceSlot {
   key?: string;
   /** Its panner (moved to where the source is now when shared). */
   panner?: PannerNode;
+}
+
+interface PlayingSource extends VoiceSlot {
+  source: AudioScheduledSourceNode;
+  nodes: AudioNode[];
+  voice?: Voice;
+  until: number;
+  done: boolean;
 }
 
 /**
@@ -210,6 +226,8 @@ export class AudioSystem {
   private raw = new Map<string, ArrayBuffer[]>();
   private samples = new Map<string, AudioBuffer[]>();
   private voices: Voice[] = [];
+  private readonly sourceVoices = new WeakMap<AudioNode, Voice>();
+  private readonly playing: PlayingSource[] = [];
   /** Playing voices by source key (a shooter, a walker, a spot being hit). */
   private keyed = new Map<string, Voice>();
   private listenerPos = { x: 0, y: 0, z: 0 };
@@ -248,7 +266,7 @@ export class AudioSystem {
     const live = this.voices.filter((v) => v.until > t).length;
     const play = (ctx as AudioContext & { playoutStats?: { fallbackFramesEvents?: number } }).playoutStats;
     const glitches = play?.fallbackFramesEvents;
-    return `audio ${ctx.state} · ${live}/${MAX_SPATIAL} voices · ${r.perSecond} dropped/s · ${this.nearLost} near lost${glitches !== undefined ? ` · ${glitches} glitches` : ''}`;
+    return `audio ${ctx.state} · ${live}/${MAX_SPATIAL} voices · ${this.playing.length}/${MAX_SOURCES} sources · ${r.perSecond} dropped/s · ${this.nearLost} near lost${glitches !== undefined ? ` · ${glitches} glitches` : ''}`;
   }
 
   /** Must be called from a user gesture. */
@@ -329,12 +347,16 @@ export class AudioSystem {
   private sample(id: string, dest: AudioNode, t: number, gain: number, rate = 1): boolean {
     const bufs = this.samples.get(id);
     if (!bufs || bufs.length === 0) return false;
+    // Intentionally skipped is still "handled": don't start a procedural
+    // replacement for a recording the source budget just refused.
+    if (!this.sourceRoom(dest)) return true;
     const src = this.ctx!.createBufferSource();
     src.buffer = bufs[Math.floor(Math.random() * bufs.length)]!;
     src.playbackRate.value = rate;
     const g = this.ctx!.createGain();
     g.gain.value = gain;
     src.connect(g).connect(dest);
+    this.trackSource(src, [src, g], dest, t + src.buffer.duration / rate);
     src.start(t);
     return true;
   }
@@ -453,6 +475,69 @@ export class AudioSystem {
 
   // ---------- building blocks ----------
 
+  /** Own shots / feedback bypass this world budget, so a crowd cannot mute them. */
+  private sourceRoom(dest: AudioNode): boolean {
+    const voice = this.sourceVoices.get(dest);
+    if (!voice) return true;
+    if (!this.voices.includes(voice)) return false;
+    const at = placeVoice(this.playing, voice.loud, voice.prio, SOURCE_LIMITS);
+    if (at === null) {
+      this.culled++;
+      if (voice.prio === PRIO.near) this.nearLost++;
+      if (!voice.sources.size) this.releaseVoice(voice);
+      return false;
+    }
+    if (at >= 0) {
+      this.culled++;
+      if (this.playing[at]!.prio === PRIO.near) this.nearLost++;
+      this.finishSource(this.playing[at]!, true, voice);
+    }
+    return true;
+  }
+
+  private trackSource(source: AudioScheduledSourceNode, nodes: AudioNode[], dest: AudioNode, until: number): void {
+    const voice = this.sourceVoices.get(dest);
+    const playing: PlayingSource = {
+      source, nodes, voice, until, done: false,
+      get loud() { return voice?.loud ?? Infinity; },
+      get prio() { return voice?.prio ?? PRIO.near; },
+    };
+    if (voice) {
+      voice.until = Math.max(voice.until, until);
+      voice.sources.add(playing);
+      this.playing.push(playing);
+    }
+    source.onended = () => this.finishSource(playing, false);
+  }
+
+  /** A muted source still costs mixer work: stop it, including any future start, and disconnect its chain. */
+  private finishSource(playing: PlayingSource, stop: boolean, keep?: Voice): void {
+    if (playing.done) return;
+    playing.done = true;
+    playing.source.onended = null;
+    if (stop) playing.source.stop();
+    for (const n of playing.nodes) n.disconnect();
+    const at = this.playing.indexOf(playing);
+    if (at >= 0) this.playing.splice(at, 1);
+    const voice = playing.voice;
+    if (voice) {
+      voice.sources.delete(playing);
+      if (!voice.sources.size && voice !== keep) this.releaseVoice(voice);
+    }
+  }
+
+  private releaseVoice(voice: Voice): void {
+    for (const n of voice.nodes) n.disconnect();
+    if (voice.key && this.keyed.get(voice.key) === voice) this.keyed.delete(voice.key);
+    const at = this.voices.indexOf(voice);
+    if (at >= 0) this.voices.splice(at, 1);
+  }
+
+  private stopVoice(voice: Voice): void {
+    for (const source of [...voice.sources]) this.finishSource(source, true, voice);
+    this.releaseVoice(voice);
+  }
+
   /** Length of a loaded recording (s), 0 when it isn't loaded. */
   private length(id: string): number {
     return this.samples.get(id)?.[0]?.duration ?? 0;
@@ -472,18 +557,12 @@ export class AudioSystem {
   /**
    * Reserves a world voice for `seconds`. Returns null when the sound should be
    * skipped because enough louder sounds are already playing; a louder new sound
-   * fades out the quietest one instead.
+   * takes the quietest one's place, releasing its sources too.
    */
   private claimVoice(pos: THREE.Vector3, weight: number, seconds: number, prio: Prio): Voice | null {
     const now = this.ctx!.currentTime;
-    // Drop finished voices in place.
     const vs = this.voices;
-    let live = 0;
-    for (const v of vs) {
-      if (v.until > now) vs[live++] = v;
-      else if (v.key && this.keyed.get(v.key) === v) this.keyed.delete(v.key);
-    }
-    vs.length = live;
+    for (let i = vs.length - 1; i >= 0; i--) if (vs[i]!.until <= now) this.stopVoice(vs[i]!);
     const dist = this.distanceTo(pos);
     const loud = weight / Math.max(2.5, dist);
     const at = placeVoice(vs, loud, prio, VOICE_LIMITS);
@@ -497,13 +576,11 @@ export class AudioSystem {
       const cut = vs[at]!;
       this.culled++;
       if (cut.prio === PRIO.near) this.nearLost++;
-      cut.gain?.gain.setTargetAtTime(0, now, 0.015);
-      vs.splice(at, 1);
-      if (cut.key && this.keyed.get(cut.key) === cut) this.keyed.delete(cut.key);
+      this.stopVoice(cut);
     }
     let hrtfCount = 0;
     for (const v of vs) if (v.hrtf) hrtfCount++;
-    const voice: Voice = { until: now + seconds, loud, prio, hrtf: dist < HRTF_RANGE_M && hrtfCount < this.maxHrtf, gain: null };
+    const voice: Voice = { until: now + seconds, nextAt: now + REPEAT_SEC, sources: new Set(), nodes: [], loud, prio, hrtf: dist < HRTF_RANGE_M && hrtfCount < this.maxHrtf, gain: null };
     vs.push(voice);
     return voice;
   }
@@ -517,14 +594,22 @@ export class AudioSystem {
   private out(pos: THREE.Vector3, reverbSend: number, weight: number, seconds: number, ref: number | undefined, key: string | undefined, prio: Prio): AudioNode | null;
   private out(pos: THREE.Vector3 | null, reverbSend: number, weight = 1, seconds = 1, ref = 2.5, key?: string, prio: Prio = PRIO.normal): AudioNode | null {
     const ctx = this.ctx!;
+    // Reclaim sources even when the main thread delivered `ended` late.
+    for (let i = this.playing.length - 1; i >= 0; i--) {
+      const s = this.playing[i]!;
+      if (s.until <= ctx.currentTime) this.finishSource(s, true);
+    }
     // Sounds from a source that is still sounding (a burst from one gun, steps
-    // of one runner, rounds landing on one spot) play through its voice: they
-    // are all heard, for one panner. A big fight asked for 110+ voices a
+    // of one runner, rounds landing on one spot) share a panner. Coincident
+    // distant sounds merge and the source budget bounds the layers inside it.
+    // A big fight asked for 110+ voices a
     // second and dropped ~80 of them (Iron Gate 32v32 at the front, 2026-10-11).
     if (pos && key) {
       const v = this.keyed.get(key);
       const now = ctx.currentTime;
       if (v && v.gain && v.until > now && this.voices.includes(v)) {
+        if (prio !== PRIO.near && now < v.nextAt) return null;
+        v.nextAt = now + REPEAT_SEC;
         // The source may have moved (a gunner running while firing).
         if (v.panner) {
           v.panner.positionX.setValueAtTime(pos.x, now);
@@ -538,8 +623,8 @@ export class AudioSystem {
           }
         }
         v.until = Math.max(v.until, now + seconds);
-        v.loud = Math.max(v.loud, weight / Math.max(2.5, this.distanceTo(pos)));
-        if (prio > v.prio) v.prio = prio;
+        v.loud = weight / Math.max(2.5, this.distanceTo(pos));
+        v.prio = prio;
         return v.gain;
       }
     }
@@ -551,6 +636,10 @@ export class AudioSystem {
       this.keyed.set(key, voice);
     }
     const input = ctx.createGain();
+    if (voice) {
+      voice.nodes.push(input);
+      this.sourceVoices.set(input, voice);
+    }
     let dry: AudioNode = input;
     if (pos && voice) {
       voice.gain = input;
@@ -564,12 +653,14 @@ export class AudioSystem {
       p.positionY.value = pos.y;
       p.positionZ.value = pos.z;
       voice.panner = p;
+      voice.nodes.push(p);
       input.connect(p);
       dry = p;
     }
     dry.connect(this.world!);
     if (reverbSend > 0) {
       const send = ctx.createGain();
+      voice?.nodes.push(send);
       send.gain.value = reverbSend;
       dry.connect(send).connect(this.reverb!);
     }
@@ -584,6 +675,7 @@ export class AudioSystem {
     filter: { type: BiquadFilterType; freq: number; q?: number; endFreq?: number },
     rate = 1,
   ): void {
+    if (!this.sourceRoom(dest)) return;
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
@@ -598,6 +690,7 @@ export class AudioSystem {
     g.gain.exponentialRampToValueAtTime(gain, t + 0.002);
     g.gain.exponentialRampToValueAtTime(0.0001, t + len);
     src.connect(f).connect(g).connect(dest);
+    this.trackSource(src, [src, f, g], dest, t + len + 0.02);
     src.start(t, Math.random() * 0.5);
     src.stop(t + len + 0.02);
   }
@@ -611,6 +704,7 @@ export class AudioSystem {
     type: OscillatorType = 'sine',
     endFreq?: number,
   ): void {
+    if (!this.sourceRoom(dest)) return;
     const ctx = this.ctx!;
     const osc = ctx.createOscillator();
     osc.type = type;
@@ -621,6 +715,7 @@ export class AudioSystem {
     g.gain.exponentialRampToValueAtTime(gain, t + 0.003);
     g.gain.exponentialRampToValueAtTime(0.0001, t + len);
     osc.connect(g).connect(dest);
+    this.trackSource(osc, [osc, g], dest, t + len + 0.02);
     osc.start(t);
     osc.stop(t + len + 0.02);
   }
@@ -1140,7 +1235,7 @@ export class AudioSystem {
     const t = this.ctx!.currentTime + (distance > DELAY_FROM_M ? Math.min(3, distance / SOUND_SPEED) : 0);
     this.excite((b.weight / 2) / Math.max(4, distance));
     const far = distance > (b.big ? 90 : 60);
-    // Blasts share a voice per direction (all of them heard, through one panner):
+    // Blasts share a voice per direction (coincident distant reports merge):
     // far ones per eighth of the compass, near ones per eighth and two distance
     // bands. A barrage landing round the listener held all 32 voices with its
     // tails and nearby gunfire found none (2026-10-19).
