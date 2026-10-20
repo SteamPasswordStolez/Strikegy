@@ -20,7 +20,7 @@ function line() {
     texts,
     snaps,
     events: () => texts.flatMap((m) => (m.t === 'ev' ? m.ev : [])) as MatchEvent[],
-    line: { text: (m: ServerMsg) => texts.push(m), binary: (d: Uint8Array) => snaps.push(decodeSnapshot(d)!) },
+    line: { text: (m: ServerMsg) => texts.push(JSON.parse(JSON.stringify(m)) as ServerMsg), binary: (d: Uint8Array) => snaps.push(decodeSnapshot(d)!) },
   };
 }
 
@@ -51,6 +51,42 @@ describe('match data on the wire', () => {
 });
 
 describe('a match room on the game server', () => {
+  it.each(['rush', 'snd', 'escort'])('%s: ready, deploy and reconnect keep sending state after bots have stepped', async (mode) => {
+    const room = await MatchRoom.create({ room: 'r-state', map: 'persia', mode, lineup: 'usersBots', size: 4 });
+    try {
+      const a = line();
+      room.join({ uid: 'ua', name: 'alpha' }, a.line);
+      // The server runs while the browser loads. These modes retain the live
+      // combatants for planting / defusing / pushing, including their physics.
+      room.tick();
+      room.ready('ua');
+      const state = a.texts.find((m) => m.t === 'mstate');
+      expect(state).toMatchObject({ rules: { kind: mode } });
+      expect(state && state.t === 'mstate' && state.rules).not.toHaveProperty('present');
+
+      room.deploy('ua', 'base', { cls: 'assault' });
+      for (let seq = 1; seq <= 20; seq++) {
+        room.binary('ua', encodeInputs([packInput(createInputState(), seq, room.sim.tick, 0, 0, 0, 0)]));
+        room.tick();
+      }
+      expect(a.events()).toContainEqual(expect.objectContaining({ k: 'spawn', id: 1000 }));
+      expect(a.snaps.at(-1)?.self?.ack).toBeGreaterThan(0);
+      expect(a.texts.filter((m) => m.t === 'mstate').length).toBeGreaterThan(1);
+
+      room.detach('ua');
+      const back = line();
+      room.join({ uid: 'ua', name: 'alpha' }, back.line);
+      room.ready('ua');
+      room.tick();
+      room.tick();
+      expect(back.texts).toContainEqual(expect.objectContaining({ t: 'match', match: expect.objectContaining({ life: expect.any(Object) }) }));
+      expect(back.texts).toContainEqual(expect.objectContaining({ t: 'mstate', rules: expect.objectContaining({ kind: mode }) }));
+      expect(back.snaps.length).toBeGreaterThan(0);
+    } finally {
+      room.dispose();
+    }
+  }, 60_000);
+
   it('two players: deploy, move by inputs, shots judged where the shooter saw the target', async () => {
     const room = await MatchRoom.create({ room: 'r1', map: 'lyon', mode: 'zone' });
     const a = line();

@@ -884,7 +884,12 @@ function cleanKit(raw: unknown): Loadout {
   return sanitizeLoadout({ ...r, cls });
 }
 
-/** The rules' state as plain data (functions such as the random source left out). */
+/**
+ * The rules' state as plain data. `present` in Rush / S&D / Escort holds
+ * live combatants, whose physics links back to the world: it is server-only
+ * input, not match state. Traversing it used to crash the room on `ready`
+ * (or the next state update) once any bot or player was on the field.
+ */
 export function rulesState(rules: object): unknown {
-  return JSON.parse(JSON.stringify(rules, (k, v: unknown) => (typeof v === 'function' || k === 'rand' ? undefined : v)));
+  return JSON.parse(JSON.stringify(rules, (k, v: unknown) => (typeof v === 'function' || k === 'rand' || k === 'present' ? undefined : v)));
 }
