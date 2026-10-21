@@ -109,6 +109,8 @@ Cloudflare 무료 플랜은 한국 접속을 LAX(로스앤젤레스)로 보내 �
 - 게임은 `public/servers.json`의 첫 주소 `wss://game.strikegy.xyz/play`, 안 되면 예전 터널 주소로
 - UDP(2026-10-05): 경기 데이터는 WebRTC 데이터 채널로도 오갑니다. 채널은 노트북이 아니라 **오라클 중계의 edge**(`server/edge.ts`, `/opt/strikegy-edge`, systemd `strikegy-edge`, Node 22는 `/opt/node22`)에서 끝납니다: Caddy가 `/play`를 edge(127.0.0.1:18788)로 보내고, edge는 WebSocket을 그대로 터널(18787)로 넘기면서 데이터 채널만 직접 받아 UDP 50000 하나로 씁니다(사설 주소를 공인 주소로 바꿔 알림). 노트북은 WebRTC를 하지 않아 집 IP가 드러날 일이 없습니다(처음엔 노트북이 TURN 중계만 쓰게 했지만 libdatachannel이 직접 연결해 버려 바로 걷어냄). 오라클 iptables에 50000/udp 허용, **오라클 보안 목록에도 UDP 50000 수신 규칙이 있어야** 채널이 열립니다(없으면 WebSocket만). edge 갱신: `npm run server:build` 후 `dist-server/edge.js`와 `dist-server/assets/rtc-*.js`를 `/opt/strikegy-edge`(와 `assets/`)에 복사하고 `sudo systemctl restart strikegy-edge`. 확인: `node scripts/udpCheck.mjs wss://game.strikegy.xyz/play`
 
+UDP 단절 회귀 확인: `node scripts/udpCheck.mjs wss://game.strikegy.xyz/play 15 30000 18000 24000 125`. 상태 알림을 80회 이상 보낸 뒤 18~24초에 UDP를 막습니다. 차단 중에는 TCP 스냅샷이 계속 들어오고, 24초 이후 UDP가 회복되어야 합니다. 알림 제한은 시간에 따라 보충됩니다. 브라우저는 입력이 멎어도 250ms마다 수신 상태를 확인하고, 양쪽 모두 최근 UDP 수신을 확인했을 때만 UDP로 전송합니다. edge를 갱신할 때는 `edge.js`가 실제로 import하는 `assets/rtc*.js` 파일도 함께 복사하세요(공유 청크 이름이 `rtcLimit-*.js`일 수 있습니다).
+
 ## 7. 업데이트
 
 운영자 페이지(https://strikegy.xyz/admin/)의 키는 처음 켤 때 `~/strikegy/.strikegy-admin-key`에 만들어집니다(`cat ~/strikegy/.strikegy-admin-key`로 확인, git에 안 올라감). 바꾸려면 파일을 지우고 서버를 재시작하거나 `STRIKEGY_ADMIN_KEY` 환경 변수를 주세요. 차단·채금·금칙어는 `~/strikegy/.strikegy-admin.json`에 저장됩니다.

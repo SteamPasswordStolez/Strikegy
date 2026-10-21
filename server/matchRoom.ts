@@ -119,8 +119,8 @@ interface Seat {
   botStates: Map<number, NetBotState>;
   botEvents: NetBotEvent[];
   botView: number;
-  /** Bot moves refused (too fast): logged now and then. */
-  botRefused: number;
+  /** Bots whose browser copy diverged: this seat leaves them on the server for this match. */
+  serverBots: Set<number>;
   /** Sim time of the last input frame (a tab in the background sends none: its bots go back to the server). */
   lastFrameAt: number;
   /** How far behind the server its inputs say this player sees others (ticks, smoothed; see `clampView`). */
@@ -238,7 +238,7 @@ export class MatchRoom {
       const team = this.opts.lineup === 'coop' ? 'blue' : (player.team ?? this.smallerTeam());
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, botRefused: 0, lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false };
+      seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false };
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -281,6 +281,8 @@ export class MatchRoom {
     seat.conn = null;
     seat.ready = false;
     seat.queue.length = 0;
+    seat.drive = null;
+    seat.input = createInputState();
   }
 
   /** Gone for good: the soldier leaves the field. */
@@ -304,8 +306,42 @@ export class MatchRoom {
     seat.lastSeq = 0;
     seat.ack = 0;
     seat.queue.length = 0;
+    seat.drive = null;
+    seat.input = createInputState();
     seat.readyTick = this.sim.tick;
     seat.stepped = 0;
+    // The browser may spend seconds loading after `match`: restore what the
+    // soldier is doing NOW, including news it missed while not ready.
+    const s = seat.soldier;
+    seat.events.length = 0;
+    if (s.deployed && (s.alive || s.downed) && seat.kit) {
+      const seed = (Math.random() * 2 ** 32) >>> 0;
+      s.weapons.rand = seeded(seed);
+      const f = s.player.feet;
+      seat.events.push({
+        k: 'spawn',
+        id: s.id,
+        pos: [f.x, f.y, f.z],
+        yaw: s.player.yaw,
+        seed,
+        kit: seat.kit,
+      });
+      if (s.downed) seat.events.push({ k: 'down', id: s.id, by: s.killedBy, cause: 'bullet' });
+      else if (s.ride) seat.events.push({ k: 'seat', v: s.ride.v.id, seat: s.ride.seat });
+      else if (s.chute)
+        seat.events.push({
+          k: 'seat',
+          v: null,
+          seat: -1,
+          chute: [f.x, f.y, f.z, s.chute.x, s.chute.y, s.chute.z],
+        });
+    } else if (seat.kit) {
+      seat.events.push({
+        k: 'died',
+        id: s.id,
+        respawn: Number.isFinite(s.respawnTimer) ? Math.max(0, s.respawnTimer) : -1,
+      });
+    }
     // Who joined while this player was loading.
     seat.conn?.text({ t: 'roster', roster: this.roster() });
     this.sendState(seat);
@@ -344,7 +380,9 @@ export class MatchRoom {
     }
     // The driven vehicle's place only from a frame with something new (not a late or second copy putting it back).
     if (tail?.drive && fresh) seat.drive = tail.drive;
-    if (tail?.bots) this.takeBots(seat, tail.bots);
+    // Bot actions may arrive late over TCP while newer poses came over UDP.
+    // Keep those reliable actions, but never rewind bots to the older pose.
+    if (tail?.bots) this.takeBots(seat, tail.bots, fresh);
   }
 
   // ---------------------------------------------------------------------------
@@ -459,9 +497,11 @@ export class MatchRoom {
   private readonly owners = new Map<number, Seat>();
 
   /** What a browser sent for the bots it runs: kept for the next tick. */
-  private takeBots(seat: Seat, frame: NetBots): void {
-    seat.botView = frame.view;
-    for (const st of frame.states) if (this.owners.get(st.id) === seat) seat.botStates.set(st.id, st);
+  private takeBots(seat: Seat, frame: NetBots, fresh: boolean): void {
+    if (fresh) {
+      seat.botView = frame.view;
+      for (const st of frame.states) if (this.owners.get(st.id) === seat) seat.botStates.set(st.id, st);
+    }
     for (const e of frame.events) if (seat.botEvents.length < 64 && this.owners.get(e.id) === seat) seat.botEvents.push(e);
   }
 
@@ -472,8 +512,15 @@ export class MatchRoom {
     for (const st of seat.botStates.values()) {
       const b = byId(st.id);
       if (b && !this.sim.puppetMove(b, new THREE.Vector3(st.x, st.y, st.z), st.yaw, st.aimYaw, st.aimPitch, st.crouch)) {
-        if (++seat.botRefused % 120 === 1) this.opts.log?.(`suspect: ${seat.name} (${seat.uid.slice(0, 8)}) in room ${this.opts.room}: bot moved too fast or through a wall (${seat.botRefused})`);
-        if (seat.botRefused >= KICK.refused) this.kick(seat, 'bot teleport');
+        // A rejected path can leave the two copies on opposite sides of a
+        // wall. Keeping it delegated repeats that rejection every frame and
+        // used to kick a normal player for their AI. Reject the move AND its
+        // actions, then keep this bot authoritative here for the match.
+        this.owners.delete(b.id);
+        seat.serverBots.add(b.id);
+        this.sim.unpuppet(b);
+        seat.events.push({ k: 'release', ids: [b.id] });
+        this.opts.log?.(`room ${this.opts.room}: bot ${b.id} returned to server after rejected move from ${seat.name}`);
       }
     }
     seat.botStates.clear();
@@ -523,7 +570,7 @@ export class MatchRoom {
       if (!owner) continue;
       for (const m of sq.members) {
         const b = bots.bots.find((x) => x.id === m.id);
-        if (!b || !b.alive || b.benched || b.riding) continue;
+        if (!b || !b.alive || b.benched || b.riding || owner.serverBots.has(b.id)) continue;
         const n = load.get(owner) ?? 0;
         if (n >= HOST_MAX) break;
         load.set(owner, n + 1);

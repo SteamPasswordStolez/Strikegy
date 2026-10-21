@@ -14,6 +14,7 @@
 import { createServer } from 'node:http';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { ServerRtc, edgeRtcSetup, parseRtc } from './rtc.ts';
+import { RtcLimit } from './rtcLimit.ts';
 
 const PORT = Number(process.env.EDGE_PORT) || 18788;
 const UPSTREAM = process.env.EDGE_UPSTREAM ?? 'ws://127.0.0.1:18787/play';
@@ -42,7 +43,7 @@ wss.on('connection', (client, req) => {
   const queue: { data: RawData; binary: boolean }[] = [];
   let channel: ServerRtc | null = null;
   let asks = 0;
-  let rtcMsgs = 0;
+  const rtcLimit = new RtcLimit();
   const end = (): void => {
     channel?.close();
     channel = null;
@@ -69,7 +70,7 @@ wss.on('connection', (client, req) => {
       const text = data.toString();
       const rtc = parseRtc(text);
       if (rtc) {
-        if (++rtcMsgs > 80) return;
+        if (!rtcLimit.take()) return;
         if ('ask' in rtc) {
           if (++asks > 4) return;
           channel?.close();

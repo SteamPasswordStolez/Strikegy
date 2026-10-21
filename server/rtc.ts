@@ -53,7 +53,7 @@ const MAX_IN = 16 * 1024;
  * "UDP 0/s" and the match stood still). Each end counts the channel as heard
  * while something came down it within `UDP_RX` ms and tells the other end
  * over the WebSocket when that changes (`{t:'rtc', rx}`); each end sends down
- * the channel only while the other end hears it, else by the WebSocket with a
+ * the channel only while both ends hear it, else by the WebSocket with a
  * copy down the channel every `UDP_PROBE` ms so the other end notices when it
  * gets through again. The same numbers in `ServerLink`.
  */
@@ -123,11 +123,17 @@ export class ServerRtc {
       send({ t: 'rtc', cand: fix(cand), mid });
     });
     this.pc.onStateChange((state) => {
-      if (state === 'failed' || state === 'closed') this.open = false;
+      if (state === 'failed' || state === 'closed') {
+        this.open = false;
+        this.report();
+      }
     });
     this.dc = this.pc.createDataChannel('match', { unordered: true, maxRetransmits: 0 });
     this.dc.onOpen(() => (this.open = true));
-    this.dc.onClosed(() => (this.open = false));
+    this.dc.onClosed(() => {
+      this.open = false;
+      this.report();
+    });
     this.dc.onMessage((msg) => {
       if (typeof msg === 'string' || msg.byteLength > MAX_IN) return;
       const u8 = msg instanceof ArrayBuffer ? new Uint8Array(msg) : new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
@@ -167,16 +173,16 @@ export class ServerRtc {
   }
 
   /**
-   * Sends over UDP if the channel is up, the browser hears it and it isn't
+   * Sends over UDP if the channel is up, both ends hear it and it isn't
    * backed up; false: use the WebSocket (while the browser doesn't hear it, a
    * copy still goes down the channel now and then: see `UDP_RX`).
    */
   send(data: Uint8Array): boolean {
-    if (!this.open || this.closed) return false;
     this.report();
+    if (!this.open || this.closed) return false;
     try {
       if (this.dc.bufferedAmount() > BACKLOG) return false;
-      if (this.peerHears) return this.dc.sendMessageBinary(data);
+      if (this.peerHears && this.heard) return this.dc.sendMessageBinary(data);
       const now = Date.now();
       if (now - this.lastProbe >= UDP_PROBE) {
         this.lastProbe = now;
@@ -192,6 +198,7 @@ export class ServerRtc {
     if (this.closed) return;
     this.closed = true;
     this.open = false;
+    this.report();
     try {
       this.dc.close();
       this.pc.close();

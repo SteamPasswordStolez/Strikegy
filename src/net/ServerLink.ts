@@ -42,6 +42,9 @@ export class ServerLink {
   private peerHears = false;
   private lastProbe = -Infinity;
 
+  private lastReport = -Infinity;
+  private udpWatch: ReturnType<typeof setInterval> | null = null;
+
   private constructor(private readonly ws: WebSocket) {
     ws.binaryType = 'arraybuffer';
     ws.addEventListener('message', (e) => {
@@ -59,6 +62,7 @@ export class ServerLink {
       this.listeners.get(msg.t)?.forEach((fn) => fn(msg));
     });
     ws.addEventListener('close', () => {
+      this.stopUdpWatch();
       this.pc?.close();
       this.pc = this.dc = null;
       this.listeners.get('close')?.forEach((fn) => (fn as () => void)());
@@ -71,24 +75,34 @@ export class ServerLink {
     if (this.udpAsked || typeof RTCPeerConnection === 'undefined') return;
     this.udpAsked = true;
     this.send({ t: 'rtc' });
+    // Inputs stop in menus / background tabs; a dead downlink must still be
+    // reported so snapshots resume over the WebSocket.
+    this.udpWatch = setInterval(() => this.report(), UDP_PROBE);
   }
 
-  /** Match data goes out over UDP: the channel is up and the server hears it. */
+  /** Match data goes out over UDP: the channel is up and both ends hear it. */
   get udp(): boolean {
-    return this.dc?.readyState === 'open' && this.peerHears;
+    return this.udpIn && this.peerHears;
   }
 
   /** Match data comes in over UDP (the channel is heard from). */
   get udpIn(): boolean {
-    return this.heard;
+    return this.dc?.readyState === 'open' && performance.now() - this.lastIn < UDP_RX;
   }
 
   /** Whether the channel is heard from now; the server is told when that changes. */
   private report(): void {
-    const heard = this.dc?.readyState === 'open' && performance.now() - this.lastIn < UDP_RX;
-    if (heard === this.heard) return;
+    const now = performance.now();
+    const heard = this.udpIn;
+    if (heard === this.heard && now - this.lastReport < 1000) return;
     this.heard = heard;
+    this.lastReport = now;
     this.send({ t: 'rtc', rx: heard });
+  }
+
+  private stopUdpWatch(): void {
+    if (this.udpWatch !== null) clearInterval(this.udpWatch);
+    this.udpWatch = null;
   }
 
   private async onRtc(m: Extract<ServerMsg, { t: 'rtc' }>): Promise<void> {
@@ -99,21 +113,28 @@ export class ServerLink {
     try {
       if (m.sdp && m.type === 'offer') {
         this.pc?.close();
+        this.dc = null;
+        this.lastIn = -Infinity;
+        this.report();
         // STUN on the relay: this browser's public address, so the relay lets its packets through.
         this.peerHears = false;
         const pc = (this.pc = new RTCPeerConnection({ iceServers: m.stun ? [{ urls: `stun:${m.stun}` }] : [] }));
         pc.ondatachannel = (e) => {
+          if (this.pc !== pc) return;
           const dc = e.channel;
           dc.binaryType = 'arraybuffer';
           dc.onopen = () => {
+            if (this.pc !== pc) return;
             this.dc = dc;
             if (import.meta.env.DEV) console.info('[strikegy] match data over UDP');
           };
           dc.onclose = () => {
-            if (this.dc === dc) this.dc = null;
+            if (this.dc !== dc) return;
+            this.dc = null;
             this.report();
           };
           dc.onmessage = (ev) => {
+            if (this.dc !== dc) return;
             if (ev.data instanceof ArrayBuffer) {
               this.lastIn = performance.now();
               this.report();
@@ -177,7 +198,7 @@ export class ServerLink {
 
   /**
    * Match data (inputs): over UDP when `reliable` is false, the channel is up
-   * and the server hears it, else the WebSocket (with now and then a copy
+   * and both ends hear it, else the WebSocket (with now and then a copy
    * down the channel, so the server notices when it gets through again).
    */
   sendBinary(data: Uint8Array, reliable = true): void {
@@ -185,7 +206,7 @@ export class ServerLink {
     const dc = this.dc;
     if (!reliable && dc && dc.readyState === 'open' && dc.bufferedAmount < UDP_BACKLOG) {
       try {
-        if (this.peerHears) {
+        if (this.peerHears && this.heard) {
           dc.send(data as Uint8Array<ArrayBuffer>);
           return;
         }
@@ -242,6 +263,7 @@ export class ServerLink {
   }
 
   close(): void {
+    this.stopUdpWatch();
     this.pc?.close();
     this.ws.close();
   }

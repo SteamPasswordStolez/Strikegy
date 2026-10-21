@@ -15,6 +15,7 @@ import { LobbyCore, type AdminData, type AdminStore, type MatchHost } from './lo
 import { Matches } from './matches.ts';
 import { WorkerMatches } from './workerMatches.ts';
 import { ServerRtc, localRtcSetup, parseRtc } from './rtc.ts';
+import { RtcLimit } from './rtcLimit.ts';
 
 /** Open connections one address may have (a household's tabs), and the server in all. */
 const PER_ADDRESS = 12;
@@ -182,7 +183,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     /** This player's UDP data channel, once asked for (snapshots go there while it is up). */
     let channel: ServerRtc | null = null;
     let channelAsks = 0;
-    let rtcMsgs = 0;
+    const rtcLimit = new RtcLimit();
     const id = core.open({
       send: (text) => {
         if (ws.readyState === ws.OPEN) ws.send(text);
@@ -200,10 +201,10 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
         return;
       }
       const text = data.toString();
-      // The data channel's set-up is the gateway's own business (a few messages a connection).
+      // Channel set-up and ongoing health reports are handled by the gateway.
       const set = parseRtc(text);
       if (set || text.startsWith('{"t":"rtc"')) {
-        if (!rtc || !set || ++rtcMsgs > 80) return;
+        if (!rtc || !set || !rtcLimit.take()) return;
         if ('ask' in set) {
           if (++channelAsks > 4) return;
           channel?.close();

@@ -326,9 +326,22 @@ describe("bots run in a person's browser", () => {
     frame({ view: sim.tick, states: [state(from.x + 0.1)], events: [] });
     room.tick();
     expect(bot.feet.x).toBeCloseTo(from.x + 0.1, 3);
-    frame({ view: sim.tick, states: [state(from.x + 40)], events: [] });
+    // A reliable action frame can arrive after a newer UDP pose. Its action
+    // still runs, but its older position must not rewind the bot.
+    const late = encodeInputFrame([packInput(idle, seq, sim.tick, 0, 0, 0, 0)], null, {
+      view: sim.tick,
+      states: [state(from.x)],
+      events: [{ k: 'shot', id: bot.id, dir: [0, 0, -1] }],
+    });
+    frame({ view: sim.tick, states: [state(from.x + 0.2)], events: [] });
+    const beforeLate = bot.shots;
+    room.binary('ua', late);
     room.tick();
-    expect(bot.feet.x).toBeCloseTo(from.x + 0.1, 3);
+    expect(bot.feet.x).toBeCloseTo(from.x + 0.2, 3);
+    expect(bot.shots).toBe(beforeLate + 1);
+    expect(sim.puppetMove(bot, from.clone().setX(from.x + 40), 0, 0, 0, false)).toBe(false);
+    expect(bot.feet.x).toBeCloseTo(from.x + 0.2, 3);
+    for (let i = 0; i < 12; i++) { frame(); room.tick(); }
     // Half inside a vehicle's hull (bots walking up to get in end up so):
     // it can still step out (every move used to be refused as through a wall).
     const hull = sim.vehicles!.world.vehicles.find((v) => !v.flight && v.seats.every((s) => !s))!;
@@ -353,7 +366,7 @@ describe("bots run in a person's browser", () => {
 });
 
 describe('a room with bots', () => {
-  it('fills both sides with bots; a person takes a bot\'s place; bots move, fight and capture', async () => {
+  it("fills both sides with bots; a person takes a bot's place; bots move, fight and capture", async () => {
     const room = await MatchRoom.create({ room: 'rb', map: 'lyon', mode: 'zone', lineup: 'usersBots', size: 8 });
     const sim = room.sim;
     expect(sim.bots!.bots).toHaveLength(8);
@@ -461,6 +474,121 @@ describe('lobby seats', () => {
 });
 
 describe('a match room when frames come unevenly (2026-10-18)', () => {
+  it('a diverged browser bot returns to server control instead of trapping and kicking its player', async () => {
+    const kicks: string[] = [];
+    const room = await MatchRoom.create({
+      room: 'r-bot-recover',
+      map: 'persia',
+      mode: 'zone',
+      lineup: 'usersBots',
+      size: 8,
+      kick: (_uid, why) => kicks.push(why),
+    });
+    try {
+      const a = line();
+      room.join({ uid: 'ua', name: 'alpha' }, a.line);
+      room.ready('ua', true);
+      let seq = 0;
+      const frame = (bots: Parameters<typeof encodeInputFrame>[2] = null) =>
+        room.binary(
+          'ua',
+          encodeInputFrame(
+            [packInput(createInputState(), ++seq, room.sim.tick, 0, 0, 0, 0)],
+            null,
+            bots,
+          ),
+        );
+      for (let i = 0; i < 61; i++) {
+        frame();
+        room.tick();
+      }
+      const adopt = a.events().find((e) => e.k === 'adopt');
+      expect(adopt?.k).toBe('adopt');
+      const id = adopt?.k === 'adopt' ? adopt.bots[0]!.id : -1;
+      const bot = room.sim.bots!.bots.find((b) => b.id === id)!;
+      const bad = {
+        id,
+        x: bot.feet.x + 80,
+        y: bot.feet.y,
+        z: bot.feet.z,
+        yaw: 0,
+        aimYaw: 0,
+        aimPitch: 0,
+        crouch: false,
+      };
+      const shots = bot.shots;
+      frame({ view: room.sim.tick, states: [bad], events: [{ k: 'shot', id, dir: [0, 0, -1] }] });
+      room.tick();
+      expect(bot.puppet).toBe(false);
+      expect(bot.feet.x).not.toBeCloseTo(bad.x, 1);
+      expect(bot.shots).toBe(shots);
+      expect(a.events()).toContainEqual({ k: 'release', ids: [id] });
+      for (let i = 0; i < 310; i++) {
+        frame({ view: room.sim.tick, states: [bad], events: [] });
+        room.tick();
+      }
+      expect(kicks).toEqual([]);
+      expect(bot.puppet).toBe(false);
+      expect(
+        a
+          .events()
+          .filter((e) => e.k === 'adopt')
+          .flatMap((e) => (e.k === 'adopt' ? e.bots.map((b) => b.id) : []))
+          .filter((x) => x === id),
+      ).toHaveLength(1);
+      expect(a.snaps.at(-1)?.self?.ack).toBeGreaterThan(300);
+    } finally {
+      room.dispose();
+    }
+  }, 60_000);
+
+  it('reconnect restores a current vehicle seat, parachute or downed state after the browser finishes loading', async () => {
+    const room = await MatchRoom.create({
+      room: 'r-reconnect',
+      map: 'iron_gate',
+      mode: 'zone',
+      size: 24,
+    });
+    try {
+      room.join({ uid: 'ua', name: 'alpha' }, line().line);
+      room.ready('ua');
+      room.deploy('ua', 'tank:tank', { cls: 'assault' });
+      room.tick();
+      const s = room.sim.soldiers.get(1000)!;
+      expect(s.ride).not.toBeNull();
+      const vehicle = s.ride!.v.id;
+      const back = () => {
+        room.detach('ua');
+        const a = line();
+        room.join({ uid: 'ua', name: 'alpha' }, a.line);
+        room.ready('ua');
+        room.tick();
+        return a;
+      };
+      expect(back().events()).toContainEqual(
+        expect.objectContaining({ k: 'seat', v: vehicle, seat: 0 }),
+      );
+      room.sim.vehicles!.leave(s);
+      s.chute = new THREE.Vector3(1, -8, 0);
+      expect(back().events()).toContainEqual(
+        expect.objectContaining({ k: 'seat', v: null, chute: expect.any(Array) }),
+      );
+      s.chute = null;
+      s.damage(999, null, 'bullet');
+      expect(s.downed).toBe(true);
+      const down = back();
+      const spawn = down.events().findIndex((e) => e.k === 'spawn');
+      const fallen = down
+        .events()
+        .map((e) => e.k)
+        .lastIndexOf('down');
+      expect(spawn).toBeGreaterThanOrEqual(0);
+      expect(fallen).toBeGreaterThan(spawn);
+    } finally {
+      room.dispose();
+    }
+  }, 60_000);
+
   it('a downed player holding give-up goes even when the browser sends one frame in four ticks', async () => {
     const room = await MatchRoom.create({ room: 'r-down', map: 'lyon', mode: 'zone' });
     const a = line();

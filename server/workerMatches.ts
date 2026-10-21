@@ -95,13 +95,23 @@ export class WorkerMatches implements MatchHost {
     });
     const t: RoomThread = { worker, lines: new Map(), loaded, ready: false, ended: false, stepMs: 0 };
     this.rooms.set(room, t);
+    const failed = (err: Error): void => {
+      fail(err);
+      // After `loaded` the start promise is already settled. A later crash
+      // must still return the lobby to waiting, or clients sit in a dead
+      // match forever with an open WebSocket and 0 snapshots/s.
+      if (!t.ready || this.rooms.get(room) !== t) return;
+      this.stop(room);
+      if (!t.ended) setTimeout(() => this.opts.ended?.(room), 0);
+    };
     worker.on('message', (m: FromRoom) => {
+      if (this.rooms.get(room) !== t) return;
       switch (m.t) {
         case 'loaded':
           t.ready = true;
           return done();
         case 'failed':
-          return fail(new Error(m.error));
+          return failed(new Error(m.error));
         case 'text':
           return t.lines.get(m.uid)?.text(m.msg);
         case 'bin':
@@ -121,13 +131,12 @@ export class WorkerMatches implements MatchHost {
     });
     worker.on('error', (err: unknown) => {
       this.opts.log?.(`room ${room}: thread failed: ${String(err)}`);
-      fail(err instanceof Error ? err : new Error(String(err)));
+      failed(err instanceof Error ? err : new Error(String(err)));
     });
     worker.on('exit', (code) => {
       if (this.rooms.get(room) === t) {
-        this.rooms.delete(room);
         if (code !== 0) this.opts.log?.(`room ${room}: thread stopped (${code})`);
-        fail(new Error(`thread stopped (${code})`));
+        failed(new Error(`thread stopped (${code})`));
       }
     });
     try {
