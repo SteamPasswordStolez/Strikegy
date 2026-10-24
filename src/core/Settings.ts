@@ -25,6 +25,11 @@ export interface Settings {
   crouchHold: boolean;
   /** A live battle behind the main menu (desktop; touch screens never run it). */
   menuScene: boolean;
+  /**
+   * Keyboard and mouse or touch controls: picked by the device (`auto`), or
+   * forced when that guess is wrong (a touch-screen laptop, a tablet with a mouse).
+   */
+  inputMode: 'auto' | 'desktop' | 'touch';
   /** Music in the menus, loading and results (0..1, under the master volume). */
   musicVolume: number;
   /** Level ups and promotions near the top of the screen during a match. */
@@ -49,6 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
   menuScene: true,
   progressNotices: 'all',
   musicVolume: 0.5,
+  inputMode: 'auto',
 };
 
 /** Korean for browsers set to Korean, English for everyone else (until the player picks one). */
@@ -65,8 +71,26 @@ export function saveSettings(s: Settings): void {
   saveJSON(KEY, s);
 }
 
+/**
+ * Touch controls or keyboard and mouse: the setting (조작 → 조작 방식) when it
+ * is forced, else the device. A finger as the main pointer is touch; a mouse or
+ * touchpad anywhere is keyboard and mouse even with a touch screen (touch-screen
+ * laptops report touch points too: counting those put the phone controls and no
+ * pointer lock on some PCs, owner 2026-10-24); touch points alone are touch.
+ */
 export function isTouchDevice(): boolean {
-  return matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  const mode = loadJSON<Partial<Settings>>(KEY)?.inputMode;
+  if (mode === 'touch') return true;
+  if (mode === 'desktop') return false;
+  return detectTouch();
+}
+
+/** What the device looks like, settings aside. */
+export function detectTouch(): boolean {
+  const media = (q: string) => typeof matchMedia === 'function' && matchMedia(q).matches;
+  if (media('(pointer: coarse)')) return true;
+  if (media('(any-pointer: fine)') || media('(any-hover: hover)')) return false;
+  return typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
 }
 
 /** Unmasked GPU name via a throwaway WebGL context ('' if unavailable). */

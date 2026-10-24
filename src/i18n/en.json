@@ -1163,5 +1163,10 @@
   "rec.res.stopped": "Ended",
   "acct.name.test": "test account",
   "lobby.musicVolume": "Music volume",
-  "setDesc.musicVolume": "Music in the main menu, loading, the multiplayer waiting room and the result screen. There is no music in battle."
+  "setDesc.musicVolume": "Music in the main menu, loading, the multiplayer waiting room, the start of a match, firefights and the result screen.",
+  "lobby.inputMode": "Controls",
+  "lobby.input.auto": "Auto",
+  "lobby.input.desktop": "Keyboard & mouse",
+  "lobby.input.touch": "Touch",
+  "setDesc.inputMode": "Keyboard and mouse or touch controls. Pick one if auto guesses wrong (e.g. touch buttons on a touch-screen laptop and the mouse won't lock)."
 }

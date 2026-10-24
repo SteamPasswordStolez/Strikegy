@@ -1,5 +1,5 @@
 import { setLocale, t, type MessageKey } from '@/i18n';
-import { resolveQuality, saveSettings, type Settings } from '@/core/Settings';
+import { resolveQuality, saveSettings, type Settings, detectTouch } from '@/core/Settings';
 import { RESERVED, bind, bindings, commitBindings, conflicts, keyName, resetBindings, type Action } from '@/input/bindings';
 import { uiSound } from '@/audio/uiSounds';
 import './settingsPanel.css';
@@ -83,6 +83,8 @@ export class SettingsPanel {
       this.slider(rows, 'lobby.adsSensitivity', 'adsSensitivity', 0.3, 1.5, 0.05, (v) => v.toFixed(2));
       this.toggle(rows, 'lobby.invertY', 'invertY');
       this.toggle(rows, 'lobby.crouchHold', 'crouchHold', ['lobby.crouchToggle', 'lobby.crouchHeld']);
+      const guess = t(detectTouch() ? 'lobby.input.touch' : 'lobby.input.desktop');
+      this.choice(rows, 'lobby.inputMode', 'inputMode', ['auto', 'desktop', 'touch'] as const, (v) => (v === 'auto' ? `${t('lobby.input.auto')} (${guess})` : t(`lobby.input.${v}` as MessageKey)));
     } else if (this.cat === 'keys') {
       this.keyRows(rows);
     } else if (this.cat === 'video') {
@@ -142,7 +144,7 @@ export class SettingsPanel {
     const r = el('div', 'sp-row', parent);
     el('div', 'sp-label', r).textContent = t(label);
     const ctl = el('div', 'sp-ctl', r);
-    const later = this.opts.live && (key === 'quality' || key === 'locale');
+    const later = this.opts.live && (key === 'quality' || key === 'locale' || key === 'inputMode');
     const text = t(`setDesc.${key}` as MessageKey) + (later ? ` ${t('settings.nextMatch')}` : '');
     r.addEventListener('pointerenter', () => this.describe(t(label), text));
     if (later) r.classList.add('later');
@@ -169,7 +171,7 @@ export class SettingsPanel {
     });
   }
 
-  private choice<K extends 'quality' | 'locale' | 'progressNotices', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
+  private choice<K extends 'quality' | 'locale' | 'progressNotices' | 'inputMode', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const v of values) {
       const b = el('button', v === this.s[key] ? 'sel' : '', seg);

@@ -9,15 +9,18 @@
  * matching track keeps playing when a screen asks for it again, and nothing
  * starts before the browser allows sound (the first click or key).
  */
-export type MusicSlot = 'menu' | 'loading' | 'lobby' | 'victory' | 'defeat';
+export type MusicSlot = 'menu' | 'loading' | 'lobby' | 'briefing' | 'engaging' | 'victory' | 'defeat';
 
 const FALLBACK: Partial<Record<MusicSlot, MusicSlot>> = { loading: 'menu', lobby: 'menu' };
-/** Tracks that play once (the result's sting), the rest loop. */
-const ONCE: readonly MusicSlot[] = ['victory', 'defeat'];
+/** Tracks that play once (the match's start, a firefight, the result), the rest loop. */
+const ONCE: readonly MusicSlot[] = ['briefing', 'engaging', 'victory', 'defeat'];
+/** In the battle the music sits under the gunfire. */
+const LEVEL: Partial<Record<MusicSlot, number>> = { briefing: 0.8, engaging: 0.55 };
 const FADE_IN = 1.6;
 const FADE_OUT = 1.2;
 
 interface Playing {
+  slot: MusicSlot;
   file: string;
   el: HTMLAudioElement;
   gain: GainNode;
@@ -79,7 +82,11 @@ class MusicPlayer {
     const gain = ctx.createGain();
     gain.gain.value = 0;
     ctx.createMediaElementSource(el).connect(gain).connect(this.out);
-    const playing: Playing = { file, el, gain };
+    const playing: Playing = { slot, file, el, gain };
+    // A track that plays once lets go of the slot when it ends (the next ask starts it again).
+    el.addEventListener('ended', () => {
+      if (this.current === playing) this.fadeOut(0.1);
+    });
     this.current = playing;
     try {
       await el.play();
@@ -87,7 +94,12 @@ class MusicPlayer {
       if (this.current === playing) this.current = null;
       return;
     }
-    gain.gain.setTargetAtTime(1, ctx.currentTime, FADE_IN / 3);
+    gain.gain.setTargetAtTime(LEVEL[slot] ?? 1, ctx.currentTime, FADE_IN / 3);
+  }
+
+  /** The slot playing now (null: none). */
+  get playing(): MusicSlot | null {
+    return this.current?.slot ?? null;
   }
 
   /** Fades the music out (`sec`). */

@@ -1163,5 +1163,10 @@
   "rec.res.stopped": "중단",
   "acct.name.test": "테스트 계정",
   "lobby.musicVolume": "음악 크기",
-  "setDesc.musicVolume": "메인 메뉴, 로딩, 멀티 대기실, 결과 화면 음악의 크기입니다. 전투 중에는 음악이 없습니다."
+  "setDesc.musicVolume": "메인 메뉴, 로딩, 멀티 대기실, 경기 시작, 교전, 결과 화면 음악의 크기입니다.",
+  "lobby.inputMode": "조작 방식",
+  "lobby.input.auto": "자동",
+  "lobby.input.desktop": "키보드·마우스",
+  "lobby.input.touch": "터치",
+  "setDesc.inputMode": "키보드·마우스 화면과 터치 화면 중 무엇을 쓸지 정합니다. 자동이 틀리면(터치스크린 노트북에서 터치 버튼이 뜨고 마우스가 잠기지 않는 경우 등) 직접 고르세요."
 }

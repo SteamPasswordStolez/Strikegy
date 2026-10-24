@@ -1,3 +1,4 @@
+import { isTouchDevice } from '@/core/Settings';
 import { t } from '@/i18n';
 import { actionKey, bindingsVersion } from '@/input/bindings';
 import { playerName } from '@/net/identity';
@@ -185,7 +186,7 @@ export class HUD {
   private hitTimer = 0;
   private hurtPulse = 0;
   private last: Record<string, string> = {};
-  private readonly touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  private readonly touch = isTouchDevice();
 
   constructor(parent: HTMLElement) {
     // On the design system (hud.css, BFV theme): the HUD is its own `ds-root`.

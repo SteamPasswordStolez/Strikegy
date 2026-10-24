@@ -1,3 +1,4 @@
+import { isTouchDevice } from '@/core/Settings';
 import { t } from '@/i18n';
 import { uiSound } from '@/audio/uiSounds';
 import type { MapImage } from './mapPainter';
@@ -110,7 +111,7 @@ export class DeployScreen {
   /** Longest wait seen since the screen opened (the button's fill runs against it). */
   private waitFrom = 0;
   private wasReady = false;
-  private readonly touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  private readonly touch = isTouchDevice();
 
   constructor(
     parent: HTMLElement,

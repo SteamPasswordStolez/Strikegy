@@ -1,0 +1,10 @@
+{
+  "tracks": {
+    "menu": "menu.mp3",
+    "loading": "loading.mp3",
+    "briefing": "briefing.mp3",
+    "engaging": "engaging.mp3",
+    "victory": "victory.mp3",
+    "defeat": "defeat.mp3"
+  }
+}

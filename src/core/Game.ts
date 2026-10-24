@@ -197,6 +197,14 @@ const VIEW_KEEP = { desktop: 0.9, touch: 0.4 } as const;
 const SPACE_PROBE = { up: 10, round: 30, room: 9 } as const;
 /** Being shot knocks the aim up: rad a point of damage, at most, and the share down the sights. */
 const FLINCH = { perDamage: 0.0005, max: 0.025, ads: 0.6 } as const;
+/**
+ * When the music comes and goes in a match: the briefing plays at most `briefing`
+ * s and `afterDeploy` s past the first deploy, then fades over `briefingFade`;
+ * the firefight track starts at `start` heat (a hit dealt 1, being hit 1.2, a
+ * kill or death 2; it cools `cool` a second), fades `combatFade` after `quietFor`
+ * s under `calm`, and waits `again` s before it may come back.
+ */
+const MUSIC = { briefing: 45, afterDeploy: 20, briefingFade: 6, hit: 1, hurt: 1.2, kill: 2, cool: 0.25, start: 5, calm: 1, quietFor: 12, combatFade: 4, again: 120 } as const;
 /** Camera shake by blast size (big shells shake from further off). */
 const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1.1, shell: 1.4, heavy: 1.8 };
 
@@ -919,8 +927,7 @@ export class Game {
   private begin(): void {
     if (!this.options.showcase) this.toast ??= new ProgressToast(this.container, this.settings.progressNotices);
     this.setupProgress();
-    // The loading screen's music ends as the match begins (none in battle).
-    if (!this.options.showcase) music.stop(2.5);
+    if (!this.options.showcase) this.setupMusic();
     this.startTutorial();
     this.audio.unlock();
     this.running = true;
@@ -1309,6 +1316,7 @@ export class Game {
       live: true,
       onChange: (key) => {
         if (key === 'masterVolume') this.audio.setVolume(this.settings.masterVolume);
+        if (key === 'masterVolume' || key === 'musicVolume') music.setVolume(this.settings.musicVolume, this.settings.masterVolume);
         if (key === 'voiceVolume') this.audio.setVoiceVolume(this.settings.voiceVolume);
         if (key === 'subtitles') this.briefing?.setSubtitles(this.settings.subtitles);
         if (key === 'progressNotices') this.toast?.setSetting(this.settings.progressNotices);
@@ -3797,6 +3805,7 @@ export class Game {
 
   private updateHud(dt: number): void {
     this.toast?.update(dt);
+    this.stepMusic(dt);
     this.updateMinimap(dt);
     const w = this.weapons;
     const s = w.state;
@@ -5084,6 +5093,66 @@ export class Game {
     if (this.fort) this.fort.onLost = (slot) => tr.lostAt(slot.id, this.simTime);
     this.progress = tr;
     beginLiveMatch({ kind: 'bots', map: this.mapId, mode: zm.kind, at: Date.now() });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Music (owner, 2026-10-24): the briefing as a match begins, fading out once
+  // the player is on the field; a firefight's track when the fighting round the
+  // player gets thick; the result's (victory / defeat) from endMatch.
+
+  /** How thick the fighting round the player is (hits, kills, being hit), easing off by itself. */
+  private combatHeat = 0;
+  private combatQuiet = 0;
+  private musicClock = 0;
+  /** No firefight track again before this (music clock, s). */
+  private combatNext = 20;
+  private wasEngaging = false;
+  /** Seconds the briefing still plays (-1: not playing). */
+  private briefingLeft = -1;
+  /** A match with music (not the range or a showcase). */
+  private musicOn = false;
+
+  private setupMusic(): void {
+    // The range and the tutorial: no music. A match: the briefing over the deploy screen.
+    if (!this.deployFlow) {
+      music.stop(2.5);
+      return;
+    }
+    this.musicOn = true;
+    void music.play('briefing');
+    this.briefingLeft = MUSIC.briefing;
+    this.bus.on('combat:hit', (e) => {
+      if (e.byPlayer) this.combatHeat += MUSIC.hit;
+    });
+    this.bus.on('player:damaged', () => (this.combatHeat += MUSIC.hurt));
+    this.bus.on('combat:kill', (e) => {
+      if (e.attackerId === this.myId || e.victimId === this.myId || e.byPlayer) this.combatHeat += MUSIC.kill;
+    });
+  }
+
+  private stepMusic(dt: number): void {
+    if (!this.musicOn) return;
+    this.musicClock += dt;
+    if (this.briefingLeft >= 0) {
+      // On the field: the briefing has a little longer, then goes.
+      if (this.deployed) this.briefingLeft = Math.min(this.briefingLeft, MUSIC.afterDeploy);
+      this.briefingLeft -= dt;
+      if (this.briefingLeft < 0 && music.playing === 'briefing') music.stop(MUSIC.briefingFade);
+    }
+    this.combatHeat = Math.max(0, this.combatHeat - dt * MUSIC.cool);
+    const engaging = music.playing === 'engaging';
+    if (engaging) {
+      this.combatQuiet = this.combatHeat < MUSIC.calm ? this.combatQuiet + dt : 0;
+      if (this.combatQuiet > MUSIC.quietFor) music.stop(MUSIC.combatFade);
+    } else if (this.wasEngaging) {
+      // Over (it plays once, or the fighting stopped): not again for a while.
+      this.combatNext = this.musicClock + MUSIC.again;
+    } else if (!this.matchOver && this.combatHeat >= MUSIC.start && this.musicClock >= this.combatNext && this.player.alive) {
+      this.briefingLeft = -1;
+      this.combatQuiet = 0;
+      void music.play('engaging');
+    }
+    this.wasEngaging = engaging;
   }
 
   /** Weapon ids by the name kill events carry. */

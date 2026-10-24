@@ -94,10 +94,8 @@ body.overlay-up .pt {
   }
 }
 /* Touch: over the gun's numbers is taken; keep it under the zone bar, a little lower. */
-@media (pointer: coarse) {
-  .pt {
-    top: calc(var(--u) * 10);
-  }
+.is-touch .pt {
+  top: calc(var(--u) * 10);
 }
 
 /* ---------- Result screen: the match's XP over the standings (Overlay.setResult) ---------- */

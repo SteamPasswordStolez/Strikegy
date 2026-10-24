@@ -64,6 +64,8 @@ else {
     (key) => {
       const s = loadSettings();
       if (key === 'musicVolume' || key === 'masterVolume') music.setVolume(s.musicVolume, s.masterVolume);
+      // The menu was laid out for the other kind of controls: again for this one.
+      if (key === 'inputMode') location.reload();
       if (key !== 'menuScene') return;
       if (s.menuScene) startShowcase();
       else stopShowcase();
@@ -95,9 +97,14 @@ function startShowcase(): void {
   void import('@/menu/MenuScene')
     .then(({ MenuScene }) => {
       if (showcase !== host) return;
-      const s = new MenuScene(host, resolveQuality(loadSettings().quality));
+      return MenuScene.create(host, resolveQuality(loadSettings().quality));
+    })
+    .then((s) => {
+      if (!s) return;
+      if (showcase !== host) return s.dispose();
       s.onReady = () => host.classList.add('ready');
       scene = s;
+      if (import.meta.env.DEV) (window as unknown as { __menuScene: unknown }).__menuScene = s;
     })
     .catch(() => host.remove());
 }
