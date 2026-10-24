@@ -1,4 +1,4 @@
-// The music the owner supplied (2026-10-24, assets-src/sounds/), levelled and
+// The music the owner supplied (2026-10-24, assets-src/sounds/; made with Suno and Google Lyria on paid plans), levelled and
 // encoded for the site: `npm run music` -> public/music/<slot>.mp3 + index.json
 // (src/audio/music.ts reads it). Loudness-normalised (EBU R128, -16 LUFS,
 // -1.5 dBTP) so a track never jumps out over another, 44.1 kHz stereo 128 kbps.
@@ -16,6 +16,7 @@ const TRACKS = {
   engaging: 'Engaging.mp3', // a firefight (when: src/core/Game.ts `combatMusic`)
   victory: 'Symphony_of_Iron.mp3',
   defeat: 'Advance_at_Will.mp3',
+  marshal: 'lobby.mp3', // the menu's track from level 1000 (원수) on (owner, 2026-10-24)
 };
 
 const SRC = 'assets-src/sounds';

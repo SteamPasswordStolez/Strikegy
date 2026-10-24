@@ -1168,5 +1168,9 @@
   "lobby.input.auto": "자동",
   "lobby.input.desktop": "키보드·마우스",
   "lobby.input.touch": "터치",
-  "setDesc.inputMode": "키보드·마우스 화면과 터치 화면 중 무엇을 쓸지 정합니다. 자동이 틀리면(터치스크린 노트북에서 터치 버튼이 뜨고 마우스가 잠기지 않는 경우 등) 직접 고르세요."
+  "setDesc.inputMode": "키보드·마우스 화면과 터치 화면 중 무엇을 쓸지 정합니다. 자동이 틀리면(터치스크린 노트북에서 터치 버튼이 뜨고 마우스가 잠기지 않는 경우 등) 직접 고르세요.",
+  "lobby.marshalMusic": "메뉴 음악",
+  "lobby.menuTrack.usual": "기본 곡",
+  "lobby.menuTrack.marshal": "원수의 곡",
+  "setDesc.marshalMusic": "레벨 1000 원수에 오르면 열리는 메뉴 곡입니다. 기본 곡으로 되돌릴 수 있습니다."
 }

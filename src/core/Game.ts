@@ -200,11 +200,13 @@ const FLINCH = { perDamage: 0.0005, max: 0.025, ads: 0.6 } as const;
 /**
  * When the music comes and goes in a match: the briefing plays at most `briefing`
  * s and `afterDeploy` s past the first deploy, then fades over `briefingFade`;
- * the firefight track starts at `start` heat (a hit dealt 1, being hit 1.2, a
- * kill or death 2; it cools `cool` a second), fades `combatFade` after `quietFor`
- * s under `calm`, and waits `again` s before it may come back.
+ * the firefight track (owner, 2026-10-24: more often, and longer once on)
+ * starts at `start` heat (a hit dealt 1, being hit 1.2, a kill or death 2; it
+ * cools `cool` a second), not in the first `first` s, plays at least `minPlay`
+ * s, then fades `combatFade` after `quietFor` s under `calm`, and waits `again`
+ * s before it may come back.
  */
-const MUSIC = { briefing: 45, afterDeploy: 20, briefingFade: 6, hit: 1, hurt: 1.2, kill: 2, cool: 0.25, start: 5, calm: 1, quietFor: 12, combatFade: 4, again: 120 } as const;
+const MUSIC = { briefing: 45, afterDeploy: 20, briefingFade: 6, hit: 1, hurt: 1.2, kill: 2, cool: 0.2, start: 3, calm: 1, quietFor: 15, minPlay: 40, combatFade: 4, again: 45, first: 10 } as const;
 /** Camera shake by blast size (big shells shake from further off). */
 const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1.1, shell: 1.4, heavy: 1.8 };
 
@@ -5105,7 +5107,9 @@ export class Game {
   private combatQuiet = 0;
   private musicClock = 0;
   /** No firefight track again before this (music clock, s). */
-  private combatNext = 20;
+  private combatNext: number = MUSIC.first;
+  /** When the firefight track started (music clock). */
+  private combatFrom = 0;
   private wasEngaging = false;
   /** Seconds the briefing still plays (-1: not playing). */
   private briefingLeft = -1;
@@ -5143,13 +5147,14 @@ export class Game {
     const engaging = music.playing === 'engaging';
     if (engaging) {
       this.combatQuiet = this.combatHeat < MUSIC.calm ? this.combatQuiet + dt : 0;
-      if (this.combatQuiet > MUSIC.quietFor) music.stop(MUSIC.combatFade);
+      if (this.combatQuiet > MUSIC.quietFor && this.musicClock - this.combatFrom > MUSIC.minPlay) music.stop(MUSIC.combatFade);
     } else if (this.wasEngaging) {
       // Over (it plays once, or the fighting stopped): not again for a while.
       this.combatNext = this.musicClock + MUSIC.again;
     } else if (!this.matchOver && this.combatHeat >= MUSIC.start && this.musicClock >= this.combatNext && this.player.alive) {
       this.briefingLeft = -1;
       this.combatQuiet = 0;
+      this.combatFrom = this.musicClock;
       void music.play('engaging');
     }
     this.wasEngaging = engaging;

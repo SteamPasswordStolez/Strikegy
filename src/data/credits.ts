@@ -7,7 +7,7 @@
 export interface Credit {
   work: string;
   author: string;
-  license: 'CC-BY 3.0' | 'CC0' | 'OFL 1.1' | 'ElevenLabs';
+  license: 'CC-BY 3.0' | 'CC0' | 'OFL 1.1' | 'ElevenLabs' | 'Suno' | 'Lyria';
   url: string;
 }
 
@@ -25,4 +25,7 @@ export const CREDITS: readonly Credit[] = [
   // Battle briefing radio voices, generated (eleven-v4-turbo via OpenRouter; check the commercial terms before release).
   { work: 'Battle briefing voices (brian, callum)', author: 'ElevenLabs', license: 'ElevenLabs', url: 'https://elevenlabs.io' },
   { work: 'Textures, skies (HDRIs) and models', author: 'Poly Haven', license: 'CC0', url: 'https://polyhaven.com' },
+  // Music made for the game by the owner with AI on paid plans (2026-10-24): one-word titles with Suno, the longer ones with Lyria.
+  { work: "Music: Sneaking, Briefing, Engaging, the marshal's track", author: 'Strikegy, made with Suno', license: 'Suno', url: 'https://suno.com' },
+  { work: 'Music: Orders from the High Ground, Symphony of Iron, Advance at Will', author: 'Strikegy, made with Google Lyria', license: 'Lyria', url: 'https://deepmind.google/models/lyria/' },
 ];

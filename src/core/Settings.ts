@@ -32,6 +32,8 @@ export interface Settings {
   inputMode: 'auto' | 'desktop' | 'touch';
   /** Music in the menus, loading and results (0..1, under the master volume). */
   musicVolume: number;
+  /** From level 1000 (원수): the marshal's track in the menu instead of the usual one. */
+  marshalMusic: boolean;
   /** Level ups and promotions near the top of the screen during a match. */
   progressNotices: 'all' | 'levels' | 'off';
 }
@@ -54,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   menuScene: true,
   progressNotices: 'all',
   musicVolume: 0.5,
+  marshalMusic: true,
   inputMode: 'auto',
 };
 

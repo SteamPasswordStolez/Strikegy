@@ -5,6 +5,12 @@ import { Lobby } from '@/ui/Lobby';
 import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
 import { isTouchDevice, loadSettings, resolveQuality } from '@/core/Settings';
 import { music } from '@/audio/music';
+import { currentProfile } from '@/net/account';
+import { levelOf } from '@/progression/levels';
+import { MARSHAL_MUSIC_LEVEL } from '@/progression/unlocks';
+
+/** The menu's track: the marshal's from level 1000 on (unless the setting says the usual one). */
+const menuTrack = () => (levelOf(currentProfile().xp).level >= MARSHAL_MUSIC_LEVEL && loadSettings().marshalMusic ? 'marshal' : 'menu');
 import { MAPS } from '@/data/maps';
 import { watchInstall } from '@/ui/install';
 
@@ -64,6 +70,7 @@ else {
     (key) => {
       const s = loadSettings();
       if (key === 'musicVolume' || key === 'masterVolume') music.setVolume(s.musicVolume, s.masterVolume);
+      if (key === 'marshalMusic') void music.play(menuTrack());
       // The menu was laid out for the other kind of controls: again for this one.
       if (key === 'inputMode') location.reload();
       if (key !== 'menuScene') return;
@@ -75,7 +82,7 @@ else {
   setTimeout(() => startShowcase(), 200);
   const s = loadSettings();
   music.setVolume(s.musicVolume, s.masterVolume);
-  void music.play('menu');
+  void music.play(menuTrack());
 }
 
 /**

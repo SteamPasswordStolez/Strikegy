@@ -1168,5 +1168,9 @@
   "lobby.input.auto": "Auto",
   "lobby.input.desktop": "Keyboard & mouse",
   "lobby.input.touch": "Touch",
-  "setDesc.inputMode": "Keyboard and mouse or touch controls. Pick one if auto guesses wrong (e.g. touch buttons on a touch-screen laptop and the mouse won't lock)."
+  "setDesc.inputMode": "Keyboard and mouse or touch controls. Pick one if auto guesses wrong (e.g. touch buttons on a touch-screen laptop and the mouse won't lock).",
+  "lobby.marshalMusic": "Menu music",
+  "lobby.menuTrack.usual": "Usual",
+  "lobby.menuTrack.marshal": "Marshal's track",
+  "setDesc.marshalMusic": "The menu track opened at level 1000 (General of the Army). You can go back to the usual one."
 }

@@ -9,7 +9,7 @@
  * matching track keeps playing when a screen asks for it again, and nothing
  * starts before the browser allows sound (the first click or key).
  */
-export type MusicSlot = 'menu' | 'loading' | 'lobby' | 'briefing' | 'engaging' | 'victory' | 'defeat';
+export type MusicSlot = 'menu' | 'loading' | 'lobby' | 'briefing' | 'engaging' | 'victory' | 'defeat' | 'marshal';
 
 const FALLBACK: Partial<Record<MusicSlot, MusicSlot>> = { loading: 'menu', lobby: 'menu' };
 /** Tracks that play once (the match's start, a firefight, the result), the rest loop. */

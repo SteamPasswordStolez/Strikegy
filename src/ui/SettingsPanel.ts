@@ -1,3 +1,6 @@
+import { currentProfile } from '@/net/account';
+import { levelOf } from '@/progression/levels';
+import { MARSHAL_MUSIC_LEVEL } from '@/progression/unlocks';
 import { setLocale, t, type MessageKey } from '@/i18n';
 import { resolveQuality, saveSettings, type Settings, detectTouch } from '@/core/Settings';
 import { RESERVED, bind, bindings, commitBindings, conflicts, keyName, resetBindings, type Action } from '@/input/bindings';
@@ -101,6 +104,8 @@ export class SettingsPanel {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       this.slider(rows, 'lobby.voiceVolume', 'voiceVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       this.slider(rows, 'lobby.musicVolume', 'musicVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
+      // The marshal's track (level 1000): or the usual one.
+      if (levelOf(currentProfile().xp).level >= MARSHAL_MUSIC_LEVEL) this.toggle(rows, 'lobby.marshalMusic', 'marshalMusic', ['lobby.menuTrack.usual', 'lobby.menuTrack.marshal']);
       this.toggle(rows, 'lobby.subtitles', 'subtitles');
       this.choice(rows, 'lobby.language', 'locale', ['ko', 'en'] as const, (v) => (v === 'ko' ? '한국어' : 'English'));
     }
@@ -187,7 +192,7 @@ export class SettingsPanel {
   }
 
   /** Two choices, off / on (or named by `names`). */
-  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene' | 'subtitles', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
+  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene' | 'subtitles' | 'marshalMusic', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const on of [false, true]) {
       const b = el('button', on === this.s[key] ? 'sel' : '', seg);

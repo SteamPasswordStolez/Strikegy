@@ -137,7 +137,7 @@ function rewards(level) {
   if (GUN_SKINS[level]) out.push(`총 스킨: ${GUN_SKINS[level]}`);
   if (VEHICLE_SKINS[level]) out.push(`차량 스킨: ${VEHICLE_SKINS[level]}`);
   if (KILL_FX[level]) out.push(`킬 효과: ${KILL_FX[level]}`);
-  if (level === 1000) out.push('원수 카드(움직임), 지휘봉 엠블럼');
+  if (level === 1000) out.push('원수 카드(움직임), 지휘봉 엠블럼, 메뉴 음악 「원수의 곡」');
   if (level < 100) {
     if (level % 10 === 0) out.push(`위장: ${CAMO_PRIVATE[level / 10 - 1]}`);
     else if (level % 10 === 5) out.push(`카드 ${++card}`);
