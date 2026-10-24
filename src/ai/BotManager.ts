@@ -23,7 +23,7 @@ import type { Throwables } from '@/weapons/Throwables';
 import { PLAYER_ID, PLAYER_TEAM, otherTeam, type Combatant } from './types';
 import { CLASSES, GIVE_RANGE, MEDKIT, type ClassId } from '@/data/classes';
 import type { WaterMap } from '@/world/water';
-import { REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Fortifications } from '@/modes/fortify';
+import { REFILL_POINTS, STATION, canRefill, isPost, type FortJob, type FortSlot, type Fortifications } from '@/modes/fortify';
 import type { GadgetWorld } from '@/modes/gadgetWorld';
 import { RIFLE_SMOKE, ROCKET } from '@/data/gadgets';
 import { SUPPORT, type SupportId } from '@/data/support';
@@ -31,6 +31,7 @@ import type { Danger } from '@/modes/supportWorld';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Vehicle, DriveInput } from '@/vehicles/Vehicle';
 import { TANK_KINDS } from '@/vehicles/vehicleData';
+import { layGun } from '@/vehicles/ship';
 import { t as tr } from '@/i18n';
 import type { TacticalMap } from './tactics';
 import { DangerMap } from './danger';
@@ -48,6 +49,16 @@ const BOAT_WAIT = 9;
 /** How far bots look for a free seat: at their base (within `VEHICLE_BASE` m of it) / elsewhere. */
 const VEHICLE_REACH = { base: 60, field: 30 };
 const VEHICLE_BASE = 45;
+/**
+ * Bots on the fixed weapons (owner, 2026-10-24): a bot near one by its
+ * objective (or at its base) may take it (`chance` a second check, within
+ * `reach` m); the AA gun only while enemy aircraft are up within `aaReach`;
+ * it gets up after `idle` s with nothing to shoot or when its objective has
+ * moved over `leave` m off, or after `outOfArc` s with the enemy it is after
+ * where the gun can't turn. Field guns and AA guns miss by `spread` of the
+ * range on the first try of each shot (a new miss every shot).
+ */
+const POST_AI = { chance: 0.35, reach: 28, aaReach: 1500, idle: 25, leave: 70, base: 70, spread: 0.012, outOfArc: 2.5 };
 const STEP = 1 / 60;
 const DOWN = new THREE.Vector3(0, -1, 0);
 
@@ -212,6 +223,14 @@ const LOB = { minScore: 2, still: 0.5, spread: 0.08, min: 8, bracket: [1, 0.7, 0
 const ARMOUR = { stand: { tank: 60, td: 85, lob: 170 }, hurt: 0.35, hurtStand: 1.7, rethink: 25, pick: 0.6, reach: 450, holdAt: 9 };
 
 /** Gun armour (tanks, the rocket truck): crews stay aboard and hold a position. */
+/** Whether a seat's gun can turn to bear on `p` (its traverse either side of where it faces on the hull). */
+function inArc(v: Vehicle, seat: number, p: THREE.Vector3): boolean {
+  const s = v.spec.seats[seat]!;
+  const yaw = Math.atan2(-(p.x - v.pos.x), -(p.z - v.pos.z));
+  const rel = Math.atan2(Math.sin(yaw - v.yaw - (s.facing ?? 0)), Math.cos(yaw - v.yaw - (s.facing ?? 0)));
+  return Math.abs(rel) <= (s.traverse ?? Math.PI) + 0.05;
+}
+
 function armoured(v: Vehicle): boolean {
   return TANK_KINDS.includes(v.kind) || v.kind === 'rocket';
 }
@@ -374,6 +393,11 @@ interface BotEntry {
   } | null;
   /** Riding without a driver since (gunners hold on a little). */
   alone?: number;
+  /** On a fixed weapon: when it last had something to shoot at, and this shot's miss (field / AA guns). */
+  postBusy?: number;
+  postErr?: THREE.Vector3;
+  /** Since when the one it is after has been out of the gun's arc (it gets up and fights on foot). */
+  postOut?: number;
   /** Bot pilots: what they're going after, and a pull-up after an attack run. */
   flightPlan?: { target: Vehicle | Combatant | null; kind: 'air' | 'ground' | 'none'; until: number; pullUntil: number; breakUntil?: number; breakSide?: number; threatAt?: number };
   /** Direction to watch when idle at a guard post or around the leader. */
@@ -2118,14 +2142,15 @@ export class BotManager implements BotServices {
         continue;
       }
       if (b.inCombat(this.time) || b.downed || !e.objective) continue;
+      if (this.manPost(e, vw)) continue;
       if (e.objective.pos.distanceTo(b.feet) < VEHICLE_TRIP) continue;
       // A vehicle close by with a seat nobody has claimed (further afield at the base, where the
       // motor pool is: bots spawning there walked past rides 30 m off and set out on foot).
       const reach = b.feet.distanceTo(this.teams[b.team].base) < VEHICLE_BASE ? VEHICLE_REACH.base : VEHICLE_REACH.field;
       let best: { v: Vehicle; seat: number; d: number } | null = null;
       for (const v of vw.vehicles) {
-        // Aircraft are only boarded on the deploy screen (one flying low past isn't a ride).
-        if (v.flight || v.spec.boat || v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
+        // Aircraft are only boarded on the deploy screen (one flying low past isn't a ride); fixed weapons aren't rides.
+        if (v.flight || v.spec.fixed || v.spec.boat || v.wrecked || (v.team && v.team !== b.team) || (v.home && v.home !== b.team)) continue;
         const d = v.pos.distanceTo(b.feet);
         if (d > reach || (best && d >= best.d)) continue;
         const seat = v.seats.findIndex((s, i) => !s && !this.claimed(v.id, i) && (i > 0 || v.driverOnly === null || v.driverOnly === b.id));
@@ -2221,6 +2246,7 @@ export class BotManager implements BotServices {
 
   private boardBot(e: BotEntry, v: Vehicle, seat: number): void {
     e.board = null;
+    if (v.spec.fixed) e.postBusy = this.time;
     v.seats[seat] = { id: e.bot.id, team: e.bot.team };
     const spec = v.spec.seats[seat]!;
     e.bot.board(v.id, seat, spec.exposed);
@@ -2331,6 +2357,21 @@ export class BotManager implements BotServices {
       } else if (v.mounts[r.seat]) this.ships.gunner(v, r.seat, all, bot.team, shooter, this.time, dt);
       return;
     }
+    // A fixed weapon: on it while there is something to shoot and the objective is still near.
+    if (v.spec.fixed) {
+      this.postGunner(e, v, r.seat);
+      const goal = e.objective?.pos;
+      const moved = !!goal && goal.distanceTo(v.pos) > POST_AI.leave && v.pos.distanceTo(this.teams[bot.team].base) > POST_AI.base;
+      const t = bot.target?.alive ? bot.target : null;
+      if (t && !inArc(v, r.seat, t.feet)) e.postOut ??= this.time;
+      else e.postOut = undefined;
+      const flanked = e.postOut !== undefined && this.time - e.postOut > POST_AI.outOfArc;
+      if (moved || flanked || this.time - (e.postBusy ?? this.time) > POST_AI.idle) {
+        e.postBusy = e.postOut = undefined;
+        this.alightBot(e);
+      }
+      return;
+    }
     const boat = !!v.spec.boat && !v.spec.wheels.length;
     if (role === 'driver' && v.flight) this.pilot(e, v);
     else if (role === 'driver' && boat) this.boatPilot(e, v, dt);
@@ -2351,6 +2392,131 @@ export class BotManager implements BotServices {
       e.alone = undefined;
       this.alightBot(e);
     } else if (!noDriver) e.alone = undefined;
+  }
+
+  /**
+   * A free fixed weapon by a bot's objective (or at its own base) to man:
+   * walks to it (`board`) now and then. False when it took none.
+   */
+  private manPost(e: BotEntry, vw: VehicleWorld): boolean {
+    if (Math.random() > POST_AI.chance) return false;
+    const b = e.bot;
+    const goal = e.objective!;
+    const base = this.teams[b.team].base;
+    let best: Vehicle | null = null;
+    let bestD = POST_AI.reach;
+    for (const v of vw.vehicles) {
+      if (!v.spec.fixed || v.wrecked || v.seats[0] || this.claimed(v.id, 0)) continue;
+      const d = v.pos.distanceTo(b.feet);
+      if (d >= bestD) continue;
+      if (goal.pos.distanceTo(v.pos) > goal.radius + 30 && v.pos.distanceTo(base) > POST_AI.base) continue;
+      if (v.kind === 'aagun' && !this.enemyAircraft(b.team, v.pos)) continue;
+      best = v;
+      bestD = d;
+    }
+    if (!best) return false;
+    e.board = { vehicle: best.id, seat: 0, until: this.time + 20 };
+    return true;
+  }
+
+  /** The nearest enemy the side spotted just now between 60 m and `range` from `from` (a field gun with nothing better to shell), or null. */
+  private spottedFar(bot: Bot, from: THREE.Vector3, range: number): Combatant | null {
+    let best: Combatant | null = null;
+    let bestD = range;
+    for (const e of this.enemies[bot.team]) {
+      if (!e.alive || this.time - (this.spottedAt.get(e.id) ?? -Infinity) > SPOT_SEC) continue;
+      const d = e.feet.distanceTo(from);
+      if (d > 60 && d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  /** The nearest enemy aircraft in the air within `POST_AI.aaReach` of `from`, or null. */
+  private enemyAircraft(team: Team, from: THREE.Vector3): Vehicle | null {
+    let best: Vehicle | null = null;
+    let bestD = POST_AI.aaReach;
+    for (const o of this.vehicles?.vehicles ?? []) {
+      if (!o.flight || o.wrecked || o.deck || (o.team ?? o.home) === team) continue;
+      const d = o.pos.distanceTo(from);
+      if (d < bestD) {
+        bestD = d;
+        best = o;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * A bot on a fixed weapon. The machine gun swings onto whoever it sees
+   * (`botGunner`, within its traverse); the field gun lays onto an enemy
+   * vehicle, else whoever it sees, else a group the side spotted within its
+   * range; the AA gun onto the nearest enemy aircraft it can see, led by the
+   * shell's flight time. Laid guns fire once on (layGun), missing by a bit.
+   */
+  private postGunner(e: BotEntry, v: Vehicle, seat: number): void {
+    const bot = e.bot;
+    const m = v.mounts[seat];
+    if (!m) return;
+    const spec = v.spec.seats[seat]!;
+    if (!bot.target?.alive) {
+      // Nobody seen: watch along the gun, swept slowly across its arc, so whoever comes is noticed.
+      const sweep = Math.sin(this.time * 0.35 + v.id) * Math.min(spec.traverse ?? Math.PI, 1.2) * 0.7;
+      bot.aimYaw = bot.yaw = v.yaw + (spec.facing ?? 0) + sweep;
+      bot.aimPitch = 0;
+    }
+    if (!spec.lay) {
+      if (bot.target?.alive) e.postBusy = this.time;
+      this.botGunner(bot, v, seat);
+      return;
+    }
+    const eye = v.seatEye(seat, this.tmp2);
+    const speed = m.gun.shell?.speed ?? 800;
+    let aim: THREE.Vector3 | null = null;
+    let vel: THREE.Vector3 | null = null;
+    if (v.kind === 'aagun') {
+      const plane = this.enemyAircraft(bot.team, eye);
+      if (plane && !this.physics.blocked(eye, plane.pos, Layer.WORLD)) {
+        aim = plane.pos.clone();
+        vel = plane.velocity;
+      }
+    } else {
+      const prey = this.armourPrey(e, v, eye);
+      const t = bot.target?.alive ? bot.target : null;
+      if (prey) {
+        aim = prey.pos.clone().setY(prey.pos.y + 0.5);
+        vel = prey.velocity;
+      } else if (t && t.feet.distanceTo(eye) > 15) aim = t.feet.clone().setY(t.feet.y + 0.6);
+      else {
+        // Out of sight: a group the side spotted, else anyone it spotted just now past the near ground.
+        const far = this.lobTarget(bot, v.pos, m.gun.range) ?? this.spottedFar(bot, v.pos, m.gun.range);
+        if (far) aim = far.feet.clone();
+      }
+    }
+    if (!aim) {
+      v.pullTrigger(seat, false, this.time, STEP);
+      return;
+    }
+    e.postBusy = this.time;
+    // Ahead of a moving target by the shell's flight time (twice round: the lead changes the time).
+    if (vel) {
+      const at = aim.clone();
+      for (let i = 0; i < 2; i++) aim.copy(at).addScaledVector(vel, aim.distanceTo(eye) / speed);
+    }
+    const dist = aim.distanceTo(eye);
+    if (!e.postErr) {
+      const k = dist * POST_AI.spread * this.skill.aimErrorMin;
+      e.postErr = new THREE.Vector3((Math.random() - 0.5) * 2 * k, (Math.random() - 0.5) * k, (Math.random() - 0.5) * 2 * k);
+    }
+    aim.add(e.postErr);
+    const { aim: along, laid } = layGun(v, seat, aim, STEP);
+    bot.aimYaw = bot.yaw = Math.atan2(-(aim.x - eye.x), -(aim.z - eye.z));
+    if (dist > m.gun.range || !laid || !v.pullTrigger(seat, true, this.time, STEP)) return;
+    this.fireMount?.(v, seat, { id: bot.id, name: bot.name, team: bot.team }, along);
+    e.postErr = undefined;
+    bot.firingUntil = this.time + 0.4;
   }
 
   /** Boats run up on a shore this moment (their crews get out). */
@@ -3353,7 +3519,7 @@ export class BotManager implements BotServices {
 
   fortifiedAt(p: THREE.Vector3): boolean {
     for (const s of this.fort?.slots ?? []) {
-      if (s.built && s.kind !== 'wire' && s.kind !== 'hedgehog' && s.pos.distanceToSquared(p) < 9) return true;
+      if (s.built && s.kind !== 'wire' && s.kind !== 'hedgehog' && !isPost(s.kind) && s.pos.distanceToSquared(p) < 9) return true;
     }
     return false;
   }

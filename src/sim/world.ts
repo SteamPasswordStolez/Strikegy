@@ -9,7 +9,7 @@ import { Boundary, Terrain } from '@/world/terrain';
 import { WaterMap } from '@/world/water';
 import { Sea } from '@/world/waves';
 import type { SurfaceLibrary } from '@/render/textures';
-import { planFortifications, worldProbe, type FortPlan } from '@/modes/fortify';
+import { planFortifications, worldProbe, type FortPlan, type PlanContext } from '@/modes/fortify';
 import type * as THREE from 'three';
 
 /**
@@ -59,7 +59,7 @@ export function buildWorld(map: MapDef, physics: PhysicsWorld, impacts: SurfaceR
  * the map and its colliders the same way on the game server and in the
  * browser (the same plan, the same ids). Run before anything moves in.
  */
-export function fortPlanFor(sw: SimWorld, physics: PhysicsWorld): FortPlan {
+export function fortPlanFor(sw: SimWorld, physics: PhysicsWorld, vehicles = false): FortPlan {
   const { map, terrain, water, built } = sw;
   physics.step();
   const probe = worldProbe(
@@ -79,5 +79,17 @@ export function fortPlanFor(sw: SimWorld, physics: PhysicsWorld): FortPlan {
     const n = Math.max(1, own.length);
     return [x / n, z / n] as const;
   });
-  return planFortifications(map.zones ?? [], built.windows, built.footprints, probe, { rivers: map.world.terrain?.rivers ?? [], bases });
+  return planFortifications(map.zones ?? [], built.windows, built.footprints, probe, { rivers: map.world.terrain?.rivers ?? [], bases, posts: postsFor(map, vehicles) });
+}
+
+/**
+ * Which fixed weapons a match gets (fortify.ts POSTS): none without vehicles
+ * or at sea; machine-gun nests at every zone; field guns where armour is
+ * allowed; AA guns where aircraft are. The same on the game server and in
+ * the browsers (the build spots' ids follow from it).
+ */
+export function postsFor(map: MapDef, vehicles: boolean): PlanContext['posts'] {
+  const v = map.world.vehicles;
+  if (!vehicles || v === 'fixed' || !map.zones?.length) return undefined;
+  return { hmg: true, guns: v !== 'light', aa: v !== 'light' && v !== 'noJets' };
 }

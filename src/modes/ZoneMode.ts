@@ -414,6 +414,8 @@ export class ZoneMode {
   /** Who may use a zone's supply stations and build there when `team` asks: the owner; in the free-spawn and solo modes anyone. */
   stationOwner(id: string, team: Team): Team | null {
     if (this.freeSpawns || this.solo) return team;
+    // A base's own fixed weapons (fortify.ts planPosts): always that side's.
+    if (id === 'base:blue' || id === 'base:red') return id.slice(5) as Team;
     return this.zone(id)?.owner ?? null;
   }
 

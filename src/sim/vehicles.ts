@@ -19,6 +19,7 @@ import type { InputState } from '@/input/InputState';
 import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
+import { PostKeeper, postPlaces } from '@/vehicles/posts';
 import { layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
 import { CARRIER_PLANES, PLANE_COST, isCarrierPlane, launchBlock, planeCap, type CarrierPlaneKind } from '@/vehicles/carrierPlanes';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
@@ -111,7 +112,7 @@ export function lockTarget(v: Vehicle, team: Team, vehicles: Iterable<Vehicle>, 
  * zones, tank spots, the air space), the same on the server and in the
  * browser so ids, limits and spots agree. `size`: soldiers the room holds.
  */
-export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry, hooks: VehicleHooks, map: MapDef, size: number, water: WaterMap | null = null): VehicleWorld {
+export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry, hooks: VehicleHooks, map: MapDef, size: number, water: WaterMap | null = null, posts: readonly THREE.Vector3[] = []): VehicleWorld {
   const bases: { team: Team; pos: THREE.Vector3; facing: number }[] = [];
   for (const team of ['blue', 'red'] as const) {
     const sp = map.spawns.filter((s) => s.team === team || (team === 'blue' && s.team === 'player'));
@@ -124,7 +125,7 @@ export function vehicleWorldFor(physics: PhysicsWorld, registry: HitboxRegistry,
   const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
   // A sea map's fleet: only what the map places (no motor pool, no jets off the edge).
   const fixed = map.world.vehicles === 'fixed';
-  const plan = fixed ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(physics, bases, zones, Boundary.fromMap(map));
+  const plan = fixed ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(physics, bases, zones, Boundary.fromMap(map), posts);
   const heavy = map.world.vehicles !== 'light';
   const pads = heavy ? plan.pads : plan.pads.filter((p) => p.kind === 'jeep');
   const level = water ? (x: number, z: number) => water.levelAt(x, z) : null;
@@ -153,6 +154,8 @@ export class MatchVehicles {
   onRocketTank: (team: Team, zone: string, who: string, id: number) => void = () => {};
   /** A vehicle gun fired a blast round or a shell went off (browsers show it). */
   onBoom: (kind: BlastKind | 'wreck' | 'splash', point: THREE.Vector3) => void = () => {};
+  /** The fixed weapons (vehicles/posts.ts), or null without zones. */
+  readonly posts: PostKeeper | null;
   private botTankAt = 20;
   private botJetAt = BOT_JETS.first;
   private readonly jetFreeSince: Record<Team, number> = { blue: -1, red: -1 };
@@ -174,8 +177,12 @@ export class MatchVehicles {
       damage: (v, by, taken) => {
         if (sea) sim.scores.award(by.id, seaDamagePoints(v, by, taken));
       },
+      removed: (v) => this.posts?.removed(v),
     };
-    this.world = vehicleWorldFor(sim.physics, sim.registry, hooks, map, size, sim.world.water);
+    this.world = vehicleWorldFor(sim.physics, sim.registry, hooks, map, size, sim.world.water, postPlaces(sim.fortPlan));
+    // The fixed weapons at the zones and bases, all up from the start.
+    this.posts = sim.fortPlan ? new PostKeeper(this.world, sim.fortPlan.slots, sim.fort) : null;
+    this.posts?.start();
     const bots = sim.bots;
     if (bots) {
       bots.vehicles = this.world;
@@ -215,6 +222,7 @@ export class MatchVehicles {
       else if (v.remote && this.sim.time - at > DRIVE_QUIET) v.setRemote(false);
     }
     this.world.step(dt, this.driveInputs, this.walkers());
+    this.posts?.step(dt);
   }
 
   /** After the physics step: bodies read back, riders carried along. */
@@ -321,8 +329,8 @@ export class MatchVehicles {
     }
     v.seats[seat] = { id: s.id, team: s.team };
     s.ride = { v, seat };
-    if (seat === 0) {
-      // Driven from the person's browser from now on.
+    if (seat === 0 && !v.spec.fixed) {
+      // Driven from the person's browser from now on (a fixed weapon has nothing to drive).
       v.setRemote(true);
       this.driveAt.set(v.id, this.sim.time);
     }
@@ -406,7 +414,12 @@ export class MatchVehicles {
       p.ride(v.seatEye(at, this.tmp), v.velocity);
       return;
     }
-    if (spec.gun) {
+    if (spec.gun && spec.lay) {
+      // A field gun or an AA gun lays itself onto what the look from the seat lands on, like a warship's.
+      const eye = v.seatEye(at, new THREE.Vector3());
+      const target = lookPoint(this.physics, eye, viewDir(p.yaw, p.pitch, this.tmp2), v.mounts[at]!.gun.range, this.sim.world.water?.levelAt(eye.x, eye.z) ?? NaN, v.body);
+      this.shipGun(v, at, target, input.fire, dt, shooter);
+    } else if (spec.gun) {
       v.aimMount(at, p.yaw, p.pitch, dt);
       if (v.pullTrigger(at, input.fire, this.sim.time, dt)) {
         // A gun with a turn rate fires where it points (it follows the look with a delay), others where the view is.

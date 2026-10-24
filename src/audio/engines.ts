@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { VehicleKind } from '@/vehicles/vehicleData';
+import type { EmplacementKind } from '@/vehicles/emplacements';
 
 /**
  * Engine sounds for vehicles and aircraft. A running engine is held open for
@@ -17,7 +18,8 @@ import type { VehicleKind } from '@/vehicles/vehicleData';
  * fade out and give their nodes back.
  */
 
-export type EngineKind = VehicleKind | 'recon';
+/** What has an engine (fixed weapons don't). */
+export type EngineKind = Exclude<VehicleKind, EmplacementKind> | 'recon';
 
 interface EngineVoice {
   /** Recording and its playback rate at rest / flat out (ground and prop engines). */

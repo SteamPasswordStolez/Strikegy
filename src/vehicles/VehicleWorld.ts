@@ -50,6 +50,8 @@ export interface VehicleHooks {
   roadkill(v: Vehicle, victim: Walker): void;
   /** `by` took `taken` health off `v` (on the side that owns vehicle health): RP at sea. */
   damage?(v: Vehicle, by: DamageSource, taken: number): void;
+  /** `v` is gone from the world (a wreck cleared, an abandoned one taken back): a fixed weapon's spot becomes a blueprint. */
+  removed?(v: Vehicle): void;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -295,8 +297,8 @@ export class VehicleWorld {
     this.stockBikes();
     for (let i = this.vehicles.length - 1; i >= 0; i--) {
       const v = this.vehicles[i]!;
-      // Warships stay out empty (they are the fleet, not something one leaves lying about).
-      const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v) && !v.spec.ship && !(v.spec.plane && v.parked);
+      // Warships stay out empty (they are the fleet, not something one leaves lying about), and fixed weapons where they were built.
+      const unused = v.empty && this.time - v.usedAt > ABANDON && !this.onPad(v) && !v.spec.ship && !v.spec.fixed && !(v.spec.plane && v.parked);
       // Aircraft nobody flies: they come down; wrecks in the air fall and are cleared on landing.
       if (this.time > v.removeAt || unused || v.pos.y < -50) this.remove(v);
       else if (v.flight && v.crashed && !v.wrecked) v.health = 0;
@@ -356,6 +358,7 @@ export class VehicleWorld {
       b.vehicle = null;
       b.lostAt = this.time;
     }
+    this.hooks.removed?.(v);
   }
 
   private onPad(v: Vehicle): boolean {
@@ -526,9 +529,11 @@ export function planVehicleSpots(
   bases: { team: Team; pos: THREE.Vector3; facing: number }[],
   zones: { id: string; pos: THREE.Vector3; radius: number }[],
   boundary: Boundary | null = null,
+  /** Fixed weapons' places (pads, tank spots and bikes keep clear of them). */
+  avoid: readonly THREE.Vector3[] = [],
 ): { pads: PadSpot[]; bikes: BikeSpot[]; tankSpots: TankSpot[] } {
   const pads: PadSpot[] = [];
-  const taken: THREE.Vector3[] = [];
+  const taken: THREE.Vector3[] = [...avoid];
   const flat = (x: number, z: number, y0: number, hx: number, hz: number, yaw: number) => (inPlay(boundary, x, z, hx, hz) ? flatSpot(physics, x, z, y0, hx, hz, yaw) : null);
   const clear = (p: THREE.Vector3, r: number) => taken.every((t) => t.distanceTo(p) > r);
   for (const b of bases) {

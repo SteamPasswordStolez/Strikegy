@@ -20,10 +20,11 @@
 import type { DamageKind } from '@/combat/Hitboxes';
 import { BATTLESHIP, CARRIER, DESTROYER, NAVAL_GUNS, SUBMARINE } from './warships';
 import { CARRIER_PLANE_SPECS, PLANE_GUNS, type CarrierPlaneKind } from './carrierPlanes';
+import { EMPLACEMENT_GUNS, EMPLACEMENT_SPECS, type EmplacementKind } from './emplacements';
 
-export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol' | 'dd' | 'cv' | 'bb' | 'ss' | CarrierPlaneKind;
+export type VehicleKind = 'jeep' | 'apc' | 'bike' | 'tank' | 'spg' | 'td' | 'rocket' | 'fighter' | 'cas' | 'boat' | 'lcvp' | 'patrol' | 'dd' | 'cv' | 'bb' | 'ss' | CarrierPlaneKind | EmplacementKind;
 export type SeatRole = 'driver' | 'gunner' | 'passenger';
-export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'naval5in' | 'naval6in' | 'naval16in' | 'aa40' | 'torpedo' | 'depthcharge' | 'deckgun' | 'planeMg' | 'rearMg' | 'bomb' | 'airTorpedo' | 'airDepth' | 'planeRockets';
+export type VehicleGunId = 'mg' | 'autocannon' | 'tankgun' | 'howitzer' | 'atgun' | 'rockets' | 'jetcannon' | 'gau' | 'aam' | 'jetrockets' | 'naval5in' | 'naval6in' | 'naval16in' | 'aa40' | 'torpedo' | 'depthcharge' | 'deckgun' | 'planeMg' | 'rearMg' | 'bomb' | 'airTorpedo' | 'airDepth' | 'planeRockets' | 'hmgpost' | 'fieldgun';
 /** Tank kinds (one limit for all of them). */
 export const TANK_KINDS: readonly VehicleKind[] = ['tank', 'spg', 'td'];
 /** Jet kinds (one limit for all of them). */
@@ -58,6 +59,10 @@ export interface SeatSpec {
    * on deck one stands to man it (walk up, E). Getting out puts you back there.
    */
   station?: { kind: StationKind; at: readonly [number, number, number] };
+  /** The gun lays itself onto what the view is on, elevation for the range (warship guns do this anyway; field guns, AA). */
+  lay?: boolean;
+  /** First-person view in this seat when it isn't the usual one for its gun and cover (Game.rideViewKind). */
+  view?: 'open' | 'sight' | 'mg';
 }
 
 /** What a warship's station does (plan section 3). */
@@ -108,6 +113,8 @@ export interface VehicleSpec {
   ship?: ShipSpec;
   /** A carrier plane (see carrierPlanes.ts): launched from a carrier's deck for `cost` RP. */
   plane?: { cost: number };
+  /** Never moves (emplacements.ts): a fixed body, origin on the ground; `half` is its solid box above it. */
+  fixed?: boolean;
 }
 
 /** What makes a vehicle a warship. */
@@ -602,6 +609,8 @@ export const VEHICLES: Record<VehicleKind, VehicleSpec> = {
   bb: BATTLESHIP,
   ss: SUBMARINE,
   ...CARRIER_PLANE_SPECS,
+  // Last: snapshots number vehicle kinds in this order (matchProtocol VEHICLE_KINDS).
+  ...EMPLACEMENT_SPECS,
 };
 
 /** A gun that fires a shell (flies and drops) instead of a hitscan round. */
@@ -659,6 +668,7 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
   jetrockets: { rpm: 600, damage: 999, spread: 0.9, range: 1000, vsVehicle: 220, blast: 5, burst: 14, cool: 12, shell: { speed: 230, gravity: 2 } },
   ...NAVAL_GUNS,
   ...PLANE_GUNS,
+  ...EMPLACEMENT_GUNS,
 };
 
 /** Base pads: seconds after a vehicle leaves before the next, the least time between two, how far it has to go to count as gone. */

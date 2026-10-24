@@ -120,6 +120,9 @@ function buildParts(kind: VehicleKind, team: Team | null): VehicleModel {
   if (kind === 'bb') return buildBattleship(team);
   if (kind === 'ss') return buildSubmarine(team);
   if (isCarrierPlane(kind)) return buildCarrierPlane(kind, team);
+  if (kind === 'hmg') return buildHmgPost(team);
+  if (kind === 'fieldgun') return buildFieldGun(team);
+  if (kind === 'aagun') return buildAaGun(team);
   return buildBike(team);
 }
 
@@ -598,6 +601,13 @@ function wheel(r: number, width: number, side: number, team: Team | null = null)
   b.lod = undefined;
   bakeInto(g, b, team);
   return g;
+}
+
+/** Fixed weapons are nobody's: plain olive drab instead of a side's camouflage. */
+const EMPLACEMENT_PAINT = '#4d5236';
+function olive(b: KitBuilder): KitBuilder {
+  for (const p of b.pieces) if (p.mat === 'paint' && !p.tint) p.tint = EMPLACEMENT_PAINT;
+  return b;
 }
 
 function addWheels(root: THREE.Group, kind: VehicleKind, team: Team | null = null): THREE.Object3D[] {
@@ -1212,4 +1222,155 @@ function buildCas(team: Team | null): VehicleModel {
   const gun = fixedMount(root, 0, -0.35, -8.0);
   const rear = mgMount(root, 0, 1.2, -1.6, team);
   return { root, wheels: [], mounts: [gun, rear] };
+}
+
+/**
+ * Fixed weapons (emplacements.ts; origin on the ground under the gun, front -z).
+ * A tripod heavy machine gun firing over the sandbag nest round it: three
+ * splayed legs, the traversing head, the gun with its water-jacketed barrel,
+ * spade grips and an ammo box on the feed side.
+ */
+function buildHmgPost(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  const head: [number, number, number] = [0, 1.1, 0];
+  for (const foot of [[-0.48, 0.02, -0.55], [0.48, 0.02, -0.55], [0, 0.02, 0.8]] as [number, number, number][]) {
+    b.rod('dark', head, foot, 0.028, 6);
+    b.box('dark', [0.12, 0.03, 0.16], foot);
+  }
+  // Leg clamps, the elevating screw, the head.
+  b.cyl('dark', 0.09, 0.11, 0.12, [0, 1.08, 0], [0, 0, 0], 12);
+  b.rod('dark', [0, 0.75, 0.42], [0, 1.08, 0.22], 0.018, 6);
+  b.tinted('#4a4e3a', () => b.box('paint', [0.3, 0.22, 0.4], [0.32, 0.12, 0.45]));
+  bakeInto(root, olive(b), team);
+  const turret = new THREE.Group();
+  turret.position.set(0, 1.2, 0);
+  root.add(turret);
+  const gun = new THREE.Group();
+  turret.add(gun);
+  const gb = new KitBuilder();
+  gb.box('dark', [0.17, 0.19, 0.72], [0, 0, 0.02]);
+  gb.box('dark', [0.18, 0.05, 0.32], [0, 0.12, -0.08]);
+  gb.cyl('dark', 0.065, 0.065, 0.46, [0, 0.01, -0.56], [Math.PI / 2, 0, 0], 12);
+  for (let k = 0; k < 5; k++) gb.cyl('dark', 0.068, 0.068, 0.02, [0, 0.01, -0.38 - k * 0.09], [Math.PI / 2, 0, 0], 12);
+  gb.cyl('dark', 0.026, 0.026, 0.5, [0, 0.01, -1.02], [Math.PI / 2, 0, 0], 8);
+  gb.cyl('dark', 0.04, 0.032, 0.1, [0, 0.01, -1.3], [Math.PI / 2, 0, 0], 8);
+  for (const s of [-1, 1]) gb.rod('dark', [s * 0.07, -0.02, 0.36], [s * 0.08, -0.15, 0.46], 0.02, 6);
+  gb.tinted('#3c4232', () => gb.box('paint', [0.16, 0.22, 0.32], [-0.19, -0.05, -0.04]));
+  // Belt into the feed tray, the leaf sight.
+  gb.box('dark', [0.08, 0.03, 0.16], [-0.12, 0.06, -0.05], [0, 0, -0.3]);
+  gb.box('dark', [0.03, 0.1, 0.03], [0, 0.16, -0.32]);
+  bakeInto(gun, olive(gb), team);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0.01, -1.36);
+  gun.add(muzzle);
+  return { root, wheels: [], mounts: [{ turret, gun, muzzle }] };
+}
+
+/**
+ * A field gun (75 mm class): two spoked wheels on an axle, the split trail
+ * spread behind with its spades dug in, the shield with a sighting window,
+ * the barrel over its recoil cylinder with a muzzle brake, the breech block
+ * and the dial sight on the left.
+ */
+function buildFieldGun(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  b.rod('dark', [-0.9, 0.55, 0.1], [0.9, 0.55, 0.1], 0.05, 10);
+  for (const s of [-1, 1]) {
+    // Trail legs from the axle back to the spades on the ground.
+    b.rod('paint', [s * 0.22, 0.55, 0.25], [s * 0.78, 0.12, 2.85], 0.07, 6);
+    b.box('paint', [0.16, 0.12, 0.5], [s * 0.74, 0.14, 2.6], [0.15, s * 0.22, 0]);
+    b.box('dark', [0.42, 0.34, 0.05], [s * 0.8, 0.05, 2.95], [-0.5, s * 0.22, 0]);
+    b.rod('dark', [s * 0.72, 0.2, 2.75], [s * 0.72, 0.45, 2.6], 0.025, 6);
+  }
+  b.box('paint', [0.5, 0.22, 0.5], [0, 0.55, 0.2]);
+  // Wheels: a tyre, a dished disc and the hub, part of the carriage (they never turn).
+  for (const s of [-1, 1]) {
+    const x = s * 0.92;
+    b.lathe('rubber', [[0.4, -0.08], [0.5, -0.08], [0.55, -0.04], [0.55, 0.04], [0.5, 0.08], [0.4, 0.08]], [0, 0, 0], 20);
+    b.pieces[b.pieces.length - 1]!.geo.rotateZ(Math.PI / 2).translate(x, 0.55, 0.1);
+    b.cyl('paint', 0.4, 0.4, 0.1, [x, 0.55, 0.1], [0, 0, Math.PI / 2], 16);
+    b.cyl('dark', 0.1, 0.12, 0.2, [x + s * 0.04, 0.55, 0.1], [0, 0, Math.PI / 2], 10);
+  }
+  bakeInto(root, olive(b), team);
+  const turret = new THREE.Group();
+  turret.position.set(0, 0.85, 0.05);
+  root.add(turret);
+  const tb = new KitBuilder();
+  // The shield: a lower apron, the main plate with a window for the sight, a bent top.
+  tb.box('paint', [1.9, 0.5, 0.05], [0, -0.05, -0.36]);
+  tb.box('paint', [0.75, 0.62, 0.05], [-0.58, 0.5, -0.36]);
+  tb.box('paint', [0.9, 0.62, 0.05], [0.5, 0.5, -0.36]);
+  tb.box('paint', [0.25, 0.36, 0.05], [-0.08, 0.63, -0.36]);
+  tb.box('paint', [1.9, 0.05, 0.22], [0, 0.82, -0.28], [-0.4, 0, 0]);
+  tb.box('dark', [0.3, 0.3, 0.42], [0, 0.0, 0.0]);
+  for (const s of [-1, 1]) tb.rod('dark', [s * 0.28, 0.05, -0.33], [s * 0.2, -0.25, 0.1], 0.025, 6);
+  bakeInto(turret, olive(tb), team);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.2, 0);
+  turret.add(gun);
+  const gb = new KitBuilder();
+  gb.cyl('paint', 0.11, 0.11, 1.5, [0, -0.13, -0.45], [Math.PI / 2, 0, 0], 12);
+  gb.cyl('dark', 0.075, 0.075, 0.8, [0, 0, -0.35], [Math.PI / 2, 0, 0], 14);
+  gb.cyl('dark', 0.058, 0.064, 1.85, [0, 0, -1.65], [Math.PI / 2, 0, 0], 14);
+  gb.cyl('dark', 0.085, 0.085, 0.24, [0, 0, -2.66], [Math.PI / 2, 0, 0], 12);
+  for (const s of [-1, 1]) gb.box('dark', [0.04, 0.12, 0.16], [s * 0.09, 0, -2.66]);
+  gb.box('dark', [0.24, 0.24, 0.42], [0, 0, 0.3]);
+  gb.rod('dark', [0.12, 0, 0.42], [0.22, -0.12, 0.5], 0.015, 5);
+  gb.box('dark', [0.08, 0.14, 0.12], [-0.22, 0.12, 0.05]);
+  gb.cyl('dark', 0.025, 0.025, 0.2, [-0.22, 0.22, 0.05], [Math.PI / 2, 0, 0], 8);
+  bakeInto(gun, olive(gb), team);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0, -2.82);
+  gun.add(muzzle);
+  return { root, wheels: [], mounts: [{ turret, gun, muzzle }] };
+}
+
+/**
+ * A 40 mm AA gun on a cruciform platform: four outriggers on jacks, the
+ * pedestal, the carriage that turns all round with the layers' seats, the
+ * gun with its loader on top, the long barrel with a cone flash hider.
+ */
+function buildAaGun(team: Team | null): VehicleModel {
+  const root = new THREE.Group();
+  const b = new KitBuilder();
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+    const x = Math.sin(a);
+    const z = Math.cos(a);
+    b.box('paint', [0.16, 0.14, 1.6], [x * 0.85, 0.22, z * 0.85], [0, a, 0]);
+    b.cyl('dark', 0.13, 0.15, 0.05, [x * 1.62, 0.03, z * 1.62], [0, 0, 0], 10);
+    b.rod('dark', [x * 1.62, 0.05, z * 1.62], [x * 1.55, 0.3, z * 1.55], 0.03, 6);
+  }
+  b.cyl('paint', 0.42, 0.5, 0.75, [0, 0.55, 0], [0, 0, 0], 16);
+  bakeInto(root, olive(b), team);
+  const turret = new THREE.Group();
+  turret.position.set(0, 0.95, 0);
+  root.add(turret);
+  const tb = new KitBuilder();
+  tb.cyl('dark', 0.55, 0.55, 0.12, [0, 0.0, 0], [0, 0, 0], 18);
+  for (const s of [-1, 1]) {
+    tb.box('paint', [0.08, 0.6, 0.7], [s * 0.36, 0.32, 0.0]);
+    tb.box('dark', [0.32, 0.06, 0.3], [s * 0.62, 0.32, 0.35]);
+    tb.cyl('dark', 0.1, 0.1, 0.06, [s * 0.46, 0.45, 0.1], [0, 0, Math.PI / 2], 12);
+  }
+  bakeInto(turret, olive(tb), team);
+  const gun = new THREE.Group();
+  gun.position.set(0, 0.48, 0);
+  turret.add(gun);
+  const gb = new KitBuilder();
+  gb.box('dark', [0.26, 0.34, 0.9], [0, 0, 0.12]);
+  gb.box('dark', [0.2, 0.32, 0.28], [0, 0.3, 0.05]);
+  gb.cyl('dark', 0.07, 0.07, 0.5, [0, 0.02, -0.55], [Math.PI / 2, 0, 0], 12);
+  gb.cyl('dark', 0.045, 0.05, 1.7, [0, 0.02, -1.6], [Math.PI / 2, 0, 0], 12);
+  gb.cyl('dark', 0.085, 0.05, 0.28, [0, 0.02, -2.55], [Math.PI / 2, 0, 0], 12);
+  // Reflector sight on its arm.
+  gb.rod('dark', [-0.16, 0.12, -0.1], [-0.3, 0.3, -0.1], 0.015, 5);
+  gb.box('dark', [0.12, 0.1, 0.02], [-0.3, 0.36, -0.1]);
+  bakeInto(gun, olive(gb), team);
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0, 0.02, -2.72);
+  gun.add(muzzle);
+  return { root, wheels: [], mounts: [{ turret, gun, muzzle }] };
 }

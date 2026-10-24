@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SurfaceLibrary } from '@/render/textures';
 import { buildKit, kitMaterials, type KitMaterial } from './modelKits';
+import { buildVehicleModel } from '@/vehicles/vehicleModels';
+import type { EmplacementKind } from '@/vehicles/emplacements';
 
 /**
  * Procedural models for things built or used at zones during a match:
@@ -12,7 +14,7 @@ import { buildKit, kitMaterials, type KitMaterial } from './modelKits';
  * barricade is centred on its window opening), long side along x, the front
  * (toward the enemy / out of the window) toward -z.
  */
-export type FortModelKind = 'sandbag' | 'sandbagLow' | 'sandbagCorner' | 'nest' | 'timber' | 'wire' | 'barricade' | 'hedgehog' | 'ammo' | 'medical';
+export type FortModelKind = 'sandbag' | 'sandbagLow' | 'sandbagCorner' | 'nest' | 'timber' | 'wire' | 'barricade' | 'hedgehog' | 'ammo' | 'medical' | 'hmgPost' | 'gunPost' | 'aaPost';
 
 type Mat = KitMaterial | 'olive' | 'white' | 'green' | 'yellow' | 'planks' | 'burlap';
 
@@ -32,6 +34,10 @@ export const FORT_SIZE = {
   hedgehog: [1.5, 1.1, 1.5],
   ammo: [1.9, 1.15, 1.2],
   medical: [2.0, 1.0, 1.3],
+  // Fixed weapons' blueprints (the gun itself once built: emplacements.ts).
+  hmgPost: [0.9, 1.5, 2.2],
+  gunPost: [2.3, 1.5, 5.8],
+  aaPost: [3.3, 2.6, 3.3],
 } as const;
 
 const SANDBAG_COLOR = '#9c8f76';
@@ -195,7 +201,30 @@ function bags(out: Piece[], w: number, h: number, d: number, x = 0, z = 0, yaw =
   }
 }
 
+/**
+ * A fixed weapon's blueprint: the weapon's own model (emplacements.ts) as one
+ * shape (its near look; the merged far stand-ins left out). Built, the spot
+ * shows the weapon itself, so these pieces are only ever drawn as a ghost.
+ */
+function postPieces(kind: EmplacementKind): Piece[] {
+  const m = buildVehicleModel(kind, null);
+  m.root.updateMatrixWorld(true);
+  const out: Piece[] = [];
+  m.root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || mesh.name === 'far' || mesh.userData.farOnly) return;
+    const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    out.push({ geo: g, mat: 'metal' });
+  });
+  m.root.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+  return out;
+}
+
 const PIECES: Record<FortModelKind, (size?: readonly [number, number, number]) => Piece[]> = {
+  hmgPost: () => postPieces('hmg'),
+  gunPost: () => postPieces('fieldgun'),
+  aaPost: () => postPieces('aagun'),
   sandbag() {
     const out: Piece[] = [];
     bags(out, ...FORT_SIZE.sandbag);

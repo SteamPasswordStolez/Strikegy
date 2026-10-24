@@ -156,6 +156,24 @@ export class Vehicle implements Damageable {
       this.syncModel(1);
       return;
     }
+    if (spec.fixed) {
+      // A fixed weapon (emplacements.ts): a fixed body on the ground, its solid box standing on it.
+      this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
+      const [hx, hy, hz] = spec.half;
+      this.collider = world.createCollider(
+        RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+          .setTranslation(0, hy, 0)
+          .setCollisionGroups(groups(Layer.WORLD | Layer.HITBOX, Layer.WORLD | Layer.BOUNDS | Layer.VEHICLE_BLOCK)),
+        this.body,
+      );
+      physics.trackOccluder(this.collider);
+      this.model = buildVehicleModel(kind, home);
+      this.readBody();
+      this.prevPos.copy(this.pos);
+      this.prevQuat.copy(this.quat);
+      this.syncModel(1);
+      return;
+    }
     if (spec.boat && !spec.wheels.length) {
       // A boat: a dynamic hull the floats hold up (`sail`); no wheels.
       this.body = world.createRigidBody(
@@ -334,7 +352,7 @@ export class Vehicle implements Damageable {
 
   /** Before the physics step: wheels, engine, brakes, a hand keeping it upright (aircraft: `fly`). */
   drive(dt: number, input: DriveInput | null): void {
-    if (this.remote) return;
+    if (this.remote || this.spec.fixed) return;
     if (this.flight) {
       this.fly(dt, input);
       return;
@@ -769,6 +787,8 @@ export class Vehicle implements Damageable {
   setRemote(on: boolean): void {
     if (this.remote === on) return;
     this.remote = on;
+    // A fixed weapon stays where it was built (a copy in a browser is put there once, by `snap`).
+    if (this.spec.fixed) return;
     if (this.flight) {
       // Flying on by itself from where it was put: its heading from the hull.
       if (!on) this.flightFromQuat();
@@ -780,6 +800,10 @@ export class Vehicle implements Damageable {
 
   /** A remote vehicle to `pos` / `quat` at the next physics step, moving at `vel`. */
   place(pos: THREE.Vector3, quat: THREE.Quaternion, vel: THREE.Vector3): void {
+    if (this.spec.fixed) {
+      this.velocity.set(0, 0, 0);
+      return;
+    }
     if (this.spec.deck) {
       // A ship people walk on is put there straight away: a kinematic body moved to a
       // next pose drags a character controller standing on it along now and then by

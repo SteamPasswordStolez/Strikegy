@@ -63,6 +63,7 @@ import { BOT_WEAPONS } from '@/ai/personality';
 import { loadTactics } from '@/ai/tacticsLoad';
 import { wishDirection } from '@/player/movement';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
+import { isEmplacement } from '@/vehicles/emplacements';
 import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
@@ -123,7 +124,8 @@ import {
 } from '@/data/classes';
 import { LoadoutStore } from '@/data/loadoutStore';
 import { LoadoutPanel } from '@/ui/LoadoutPanel';
-import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, type FortJob, type FortSlot, type Station } from '@/modes/fortify';
+import { FORT, Fortifications, REFILL_POINTS, STATION, canRefill, type FortJob, type FortPlan, type FortSlot, type Station } from '@/modes/fortify';
+import { PostKeeper, postPlaces } from '@/vehicles/posts';
 import { FortModels } from '@/world/fortModels';
 import { NetMatch, type NetOptions } from '@/net/NetMatch';
 import { forgetPlay } from './session';
@@ -329,6 +331,10 @@ export class Game {
     | null = null;
   /** Zone supply stations and build spots. */
   private fort: Fortifications | null = null;
+  /** The zones' stations, build spots and fixed weapons (a simplified match has no building but keeps its fixed weapons). */
+  private fortPlan: FortPlan | null = null;
+  /** The fixed weapons (solo play; on the game server the server keeps them). */
+  private posts: PostKeeper | null = null;
   /** Holding E at a build spot or station (hands busy, hammer out) and for how long. */
   /** Build mode (T): the hammer is out, build spots show clearly, the trigger builds the one aimed at. */
   /** Rockets, rifle grenades, beacons and mines in the world. */
@@ -769,7 +775,7 @@ export class Game {
     const mode = this.options.mode ?? 'auto';
     if (mode !== 'skirmish' && (mode !== 'auto' || this.bots) && (map.zones?.length ?? 0) > 0) {
       this.setupZoneMode(map, terrain, mode === 'auto' ? undefined : mode);
-      if (!MATCH.simple) this.setupFortifications(map, terrain, water, built);
+      this.setupFortifications(map, terrain, water, built);
       if (this.bots && !this.options.sandbox && MATCH.vehicles) this.setupVehicles(map, water);
     }
     // The range and other maps with vehicles at fixed spots (a boat at the pier) but no zone match.
@@ -1646,12 +1652,12 @@ export class Game {
     const spec = v.spec.seats[seat]!;
     if (spec.station?.kind === 'flight') this.flightStation(v, input);
     if (spec.role === 'driver' && net.drive === v) v.drive(dt, { throttle: input.moveY, steer: input.moveX, brake: input.jumpHeld, aimYaw: p.yaw, aimPitch: p.pitch });
-    if (v.ship && spec.gun) {
+    if ((v.ship || spec.lay) && spec.gun) {
       // Laid here for the look; the server lays and fires its own (from the seat's look).
       const eye = v.seatEye(seat, new THREE.Vector3());
       const target = lookPoint(this.physics, eye, viewDir(p.yaw, p.pitch), v.mounts[seat]!.gun.range, this.gadgets.water?.(eye.x, eye.z) ?? NaN, v.body);
       const { laid } = layGun(v, seat, target, dt);
-      if (!v.ship.broken.has(seat) && v.pullTrigger(seat, input.fire && laid, this.simTime, dt)) net.mountFired(v, seat, 1);
+      if (!v.ship?.broken.has(seat) && v.pullTrigger(seat, input.fire && laid, this.simTime, dt)) net.mountFired(v, seat, 1);
     } else if (spec.gun) {
       v.aimMount(seat, p.yaw, p.pitch, dt);
       this.keepLookInReach(v, seat);
@@ -1701,8 +1707,8 @@ export class Game {
     this.buildMode = false;
     this.supportAim = null;
     this.weapons.adsBlend = 0;
-    if (seat === 0) {
-      // This browser drives it from here on.
+    if (seat === 0 && !v.spec.fixed) {
+      // This browser drives it from here on (a fixed weapon has nothing to drive).
       v.setRemote(false);
       this.net!.drive = v;
     }
@@ -1852,6 +1858,7 @@ export class Game {
     this.botJets();
     this.seatPending();
     this.vehicles?.step(dt, this.driveInputs, this.vehicleWalkers());
+    this.posts?.step(dt);
     this.physics.step();
     this.vehicles?.afterStep();
     consumePulses(input);
@@ -1890,7 +1897,7 @@ export class Game {
     }
     const zones = (map.zones ?? []).map((z) => ({ id: z.id, pos: new THREE.Vector3(...z.pos), radius: z.radius }));
     this.boundary = Boundary.fromMap(map);
-    const plan = fixedOnly || map.world.vehicles === 'fixed' ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(this.physics, bases, zones, this.boundary);
+    const plan = fixedOnly || map.world.vehicles === 'fixed' ? { pads: [], bikes: [], tankSpots: [] } : planVehicleSpots(this.physics, bases, zones, this.boundary, postPlaces(this.fortPlan));
     // Small maps: jeeps and motorbikes only.
     const heavy = map.world.vehicles !== 'light';
     // At sea RP comes from damage dealt (owner, 2026-10-18).
@@ -1910,6 +1917,7 @@ export class Game {
         damage: (v, by, taken) => {
           if (sea) this.scores.award(by.id, seaDamagePoints(v, by, taken));
         },
+        removed: (v) => this.posts?.removed(v),
       },
       pads,
       bikes,
@@ -1921,6 +1929,11 @@ export class Game {
     this.vehicles.water = level;
     this.gadgets.water = level;
     this.renderer.scene.add(this.vehicles.group);
+    // The fixed weapons at the zones and bases, all up from the start.
+    if (!fixedOnly && this.fortPlan) {
+      this.posts = new PostKeeper(this.vehicles, this.fortPlan.slots, this.fort);
+      this.posts.start();
+    }
     if (this.bots) {
       const bots = this.bots;
       bots.vehicles = this.vehicles;
@@ -2306,8 +2319,8 @@ export class Game {
   /** The player's seat gun: follows the view; the trigger fires it (MGs overheat, shell guns reload). */
   private stepVehicleGun(v: Vehicle, seat: number, trigger: boolean, dt: number): void {
     const p = this.player;
-    if (v.ship) {
-      // A ship's gun lays itself onto what the view is on (sea surface included), elevation for the range.
+    if (v.ship || v.spec.seats[seat]!.lay) {
+      // A ship's gun (a field gun, an AA gun) lays itself onto what the view is on (sea surface included), elevation for the range.
       const cam = this.renderer.camera;
       const range = v.mounts[seat]!.gun.range;
       const target = lookPoint(this.physics, cam.position, new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion), range, this.gadgets.water?.(cam.position.x, cam.position.z) ?? NaN, v.body);
@@ -2463,7 +2476,7 @@ export class Game {
   /** In third person aboard, the camera orbits on its own (see `orbit`). */
   private orbiting(): boolean {
     const r = this.ride;
-    return !!r && this.rideThird && this.player.alive && !r.v.flight && (!!r.v.spec.seats[r.seat]!.turn || !!r.v.ship);
+    return !!r && this.rideThird && this.player.alive && !r.v.flight && (!!r.v.spec.seats[r.seat]!.turn || !!r.v.ship || !!r.v.spec.seats[r.seat]!.lay);
   }
 
   /** What the third-person camera aboard looks at (world): over the hull's middle; over a warship, high enough to see the whole ship. */
@@ -3379,6 +3392,7 @@ export class Game {
     const list = this.engineList;
     list.length = 0;
     for (const v of this.vehicles?.vehicles ?? []) {
+      if (isEmplacement(v.kind)) continue;
       list.push({ id: v.id, kind: v.kind, pos: v.model.root.position, velocity: v.velocity, crewed: v.seats.some(Boolean), wrecked: v.wrecked, throttle: v.flight?.throttle ?? null });
     }
     let i = 0;
@@ -3413,6 +3427,7 @@ export class Game {
   private rideViewKind(v: Vehicle, seat: number): VehicleViewKind {
     const s = v.spec.seats[seat]!;
     if (v.flight && s.role === 'driver') return 'cockpit';
+    if (s.view) return s.view;
     if (s.exposed) return 'open';
     const gun = v.mounts[seat]?.gun;
     if (!gun) return 'port';
@@ -3470,7 +3485,8 @@ export class Game {
       // A pilot's view banks with the plane.
       if (kind === 'cockpit' && v.flight) this.camRoll = v.flight.roll;
       // A driver working the main gun sees through its sight: where the gun points, which follows the look at its turn rate.
-      if (v.spec.seats[seat]!.turn) this.gunView = v.mountAim(seat);
+      // A gun that lays itself (field gun) follows the look instead: the view is the aim point, the barrel goes where the shell needs.
+      if (v.spec.seats[seat]!.turn && !v.spec.seats[seat]!.lay) this.gunView = v.mountAim(seat);
       return;
     }
     this.rideEyeSet = false;
@@ -4035,7 +4051,11 @@ export class Game {
   /** Supply stations and build spots at every zone, found on the loaded world. */
   private setupFortifications(map: MapDef, terrain: Terrain, water: WaterMap | null, built: BuiltMap): void {
     const t0 = performance.now();
-    const plan = fortPlanFor({ map, terrain, water, sea: water?.sea ?? null, built, shaped: true }, this.physics);
+    // Fixed weapons where there will be vehicles: on the game server (its plan has them too: the same spot ids), or a solo match with bots.
+    const vehicles = MATCH.vehicles && (!!this.options.net || (!!this.bots && !this.options.sandbox));
+    const plan = (this.fortPlan = fortPlanFor({ map, terrain, water, sea: water?.sea ?? null, built, shaped: true }, this.physics, vehicles));
+    // No stations or building in a simplified match.
+    if (MATCH.simple) return;
     const fort = new Fortifications(plan, new FortModels(this.surfaces), this.physics, this.impacts, this.nav);
     fort.onChange = () => this.renderer.requestShadowUpdate();
     fort.onPoints = (id, points) => this.scores.award(id, points);
@@ -5035,7 +5055,7 @@ export class Game {
     net.onState = (m) => this.onNetState(m);
     // Vehicles (zone matches): copies of the server's, in a world laid out the same way (pads, tank spots, limits).
     if ((map.zones?.length ?? 0) > 0) {
-      this.vehicles = vehicleWorldFor(this.physics, this.registry, { destroyed: () => {}, roadkill: () => {} }, map, opts.start.size ?? 24, water);
+      this.vehicles = vehicleWorldFor(this.physics, this.registry, { destroyed: () => {}, roadkill: () => {} }, map, opts.start.size ?? 24, water, postPlaces(this.fortPlan));
       this.vehicles.authority = false;
       r.scene.add(this.vehicles.group);
       net.vehicles = this.vehicles;

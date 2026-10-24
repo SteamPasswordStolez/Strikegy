@@ -9,6 +9,7 @@ import type { ClassId } from '@/data/classes';
 import type { WindowSpot } from '@/world/buildings';
 import type { ZoneDef } from '@/world/mapTypes';
 import { FORT_SIZE, TIMBER_SLIT, type FortModels, stationIcon } from '@/world/fortModels';
+import type { EmplacementKind } from '@/vehicles/emplacements';
 
 /*
  * Zone fortifications and supply stations (design doc section 5).
@@ -21,7 +22,17 @@ import { FORT_SIZE, TIMBER_SLIT, type FortModels, stationIcon } from '@/world/fo
  * loads (no map data needed).
  */
 
-export type FortKind = 'sandbag' | 'sandbagLow' | 'sandbagCorner' | 'nest' | 'timber' | 'wire' | 'barricade' | 'hedgehog';
+export type FortKind = 'sandbag' | 'sandbagLow' | 'sandbagCorner' | 'nest' | 'timber' | 'wire' | 'barricade' | 'hedgehog' | PostKind;
+/**
+ * A fixed weapon's spot (owner, 2026-10-24, after Battlefield V): built, it is
+ * the weapon itself (a vehicle that never moves, emplacements.ts; nothing of
+ * the fortification's own); wrecked, it is a blueprint built back like the rest.
+ */
+export type PostKind = 'hmgPost' | 'gunPost' | 'aaPost';
+export const POST_VEHICLE: Record<PostKind, EmplacementKind> = { hmgPost: 'hmg', gunPost: 'fieldgun', aaPost: 'aagun' };
+export function isPost(kind: FortKind): kind is PostKind {
+  return kind === 'hmgPost' || kind === 'gunPost' || kind === 'aaPost';
+}
 export type StationKind = 'ammo' | 'medical';
 
 /** Seconds of work to build (supports work twice as fast) and health once built. */
@@ -34,6 +45,10 @@ export const FORT: Record<FortKind, { build: number; health: number }> = {
   wire: { build: 5, health: 120 },
   barricade: { build: 4, health: 140 },
   hedgehog: { build: 8, health: 390 },
+  // Fixed weapons: their health is the weapon's (a vehicle), not the spot's.
+  hmgPost: { build: 10, health: 0 },
+  gunPost: { build: 18, health: 0 },
+  aaPost: { build: 15, health: 0 },
 };
 
 /** Walking speed factor inside built barbed wire. */
@@ -203,7 +218,26 @@ export const FORT_WEIGHT = { river: 2, middle: 1.5, max: 2.5, riverReach: 40, mi
 export interface PlanContext {
   rivers?: readonly { pts: readonly (readonly [number, number])[]; width: number; bank?: number; crossings?: readonly (readonly [number, number])[] }[];
   bases?: readonly (readonly [number, number])[];
+  /** Which fixed weapons the map gets (planPosts): machine guns at the zones, field guns and AA guns at the bases and rear zones. */
+  posts?: { hmg: boolean; guns: boolean; aa: boolean };
 }
+
+/**
+ * Where fixed weapons go (owner, 2026-10-24: at set places by the zones, like
+ * Battlefield V, chosen from the map): every zone a machine-gun nest facing
+ * each side's way in (one, facing the far base, at small zones); the zone
+ * nearest each base a field gun behind it facing the enemy, with low sandbags
+ * in front and walls at its sides; each base a field gun and (maps with
+ * aircraft) an AA gun out toward the battle.
+ */
+export const POSTS = {
+  /** Zones this big or bigger get a nest facing each base; smaller ones one, facing the farther. */
+  twoNests: 20,
+  /** Room the clearance check wants for each (w, h, d, centred on the spot; the field gun's trail runs back 3 m). */
+  clear: { hmgPost: [3.1, 1.7, 2.6], gunPost: [2.6, 1.7, 6.2], aaPost: [3.6, 2.6, 3.6] } as Record<PostKind, readonly [number, number, number]>,
+  /** How far from a base's spawns (m) its field gun and AA gun may stand. */
+  baseReach: [16, 56] as const,
+};
 
 /** Closest point of a polyline to (x, z), its distance and the line's unit direction there. */
 function nearestOnLine(pts: readonly (readonly [number, number])[], x: number, z: number): { x: number; z: number; d: number; tx: number; tz: number } {
@@ -332,6 +366,34 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
     const ammo = plan.stations.at(-1);
     if (!stationAt('medical', ammo && ammo.zone === zone.id ? { x: ammo.pos[0], z: ammo.pos[2] } : null)) stationAt('medical', null);
 
+    // Fixed weapons (POSTS): a nest facing each side's way in, a field gun behind the zones nearest the bases.
+    const bases = ctx.bases?.length === 2 ? ctx.bases : null;
+    if (ctx.posts && bases) {
+      const toward = bases.map(([bx, bz]) => Math.atan2(bz - cz, bx - cx));
+      const far = bases.map(([bx, bz]) => Math.hypot(bx - cx, bz - cz));
+      if (ctx.posts.hmg) {
+        const ways = R >= POSTS.twoNests ? toward : [toward[far[0]! > far[1]! ? 0 : 1]!];
+        for (const a0 of ways) {
+          const spot = findPost('hmgPost', a0, [0.72, 0.58, 0.86], R, cx, cz, 1, free, 3.4);
+          if (!spot) continue;
+          plan.slots.push({ kind: 'hmgPost', zone: zone.id, pos: spot.pos, yaw: spot.yaw, stand: spot.stand });
+          // The sandbag nest round it (built in build mode); the gun fires over its front.
+          plan.slots.push({ kind: 'nest', zone: zone.id, pos: spot.pos, yaw: spot.yaw, stand: spot.stand });
+          taken.push({ x: spot.pos[0], z: spot.pos[2], r: 3.4 });
+        }
+      }
+      if (ctx.posts.guns) {
+        bases.forEach(([bx, bz], i) => {
+          // The zone nearest this base (and nearer it than the other base).
+          const nearest = zones.reduce((a, b) => (Math.hypot(b.pos[0] - bx, b.pos[2] - bz) < Math.hypot(a.pos[0] - bx, a.pos[2] - bz) ? b : a));
+          if (nearest !== zone || far[i]! > far[1 - i]!) return;
+          // Behind the zone toward its own base, facing the enemy (outward = away from the base, so the angle is the other way).
+          const spot = findPost('gunPost', toward[1 - i]!, [0.7, 0.9, 0.5, 1.1], -R, cx, cz, 1, free, 4);
+          if (spot) addGun(spot, zone.id, taken);
+        });
+      }
+    }
+
     // Build spots round the zone: front (-z) facing out, long side across the way in.
     for (const r of RECIPE) {
       const count = Math.round(r.count * scale);
@@ -424,7 +486,92 @@ export function planFortifications(zones: readonly ZoneDef[], windows: readonly 
       boards++;
     }
   }
+  // The bases' own: a field gun and an AA gun out toward the battle (zone `base:<team>`, always that side's).
+  const bases = ctx.bases?.length === 2 ? ctx.bases : null;
+  if (ctx.posts && bases) {
+    const free = (x: number, z: number, r: number) => banksTaken.every((t) => Math.hypot(t.x - x, t.z - z) >= t.r + r) && plan.slots.every((s) => Math.hypot(s.pos[0] - x, s.pos[2] - z) >= r + 1.5);
+    bases.forEach(([bx, bz], i) => {
+      const team = i === 0 ? 'blue' : 'red';
+      const [ox, oz] = bases[1 - i]!;
+      const toward = Math.atan2(oz - bz, ox - bx);
+      const [r0, r1] = POSTS.baseReach;
+      for (const kind of ['gunPost', 'aaPost'] as const) {
+        if (kind === 'gunPost' ? !ctx.posts!.guns : !ctx.posts!.aa) continue;
+        let spot: ReturnType<typeof findPost> = null;
+        for (let r = r0; r <= r1 && !spot; r += 6) spot = findPost(kind, toward + (kind === 'aaPost' ? 0.7 : 0), [1], r, bx, bz, 2.6, free, kind === 'aaPost' ? 3 : 4, toward);
+        if (!spot) continue;
+        if (kind === 'gunPost') addGun(spot, `base:${team}`, banksTaken);
+        else {
+          plan.slots.push({ kind, zone: `base:${team}`, pos: spot.pos, yaw: spot.yaw, stand: spot.stand });
+          banksTaken.push({ x: spot.pos[0], z: spot.pos[2], r: 3 });
+        }
+      }
+    });
+  }
   return plan;
+
+  /**
+   * A fixed weapon's spot round (cx, cz): `r` times each of `rings` out along
+   * angle `a0` (a negative r: behind the middle), then turned a little either
+   * side (`spread` x 0.28 rad a step, up to two steps); level ground, clear of
+   * buildings and of what is already there (`free`, `room`), the weapon's
+   * room clear (POSTS.clear). Its front faces along `a0`, or along `face`.
+   */
+  function findPost(kind: PostKind, a0: number, rings: readonly number[], r: number, cx: number, cz: number, spread: number, free: (x: number, z: number, r: number) => boolean, room: number, face?: number): { pos: [number, number, number]; yaw: number; stand: [number, number, number] } | null {
+    for (const f of rings) {
+      for (const k of [0, -1, 1, -2, 2]) {
+        const a = a0 + k * 0.28 * spread;
+        const x = cx + Math.cos(a) * r * f;
+        const z = cz + Math.sin(a) * r * f;
+        const g = probe.ground(x, z);
+        if (!g || !g.level || nearBuilding(footprints, x, z, 2.5) || !free(x, z, room)) continue;
+        // Out from the middle (r > 0), or toward a0 from behind the middle (r < 0): either way along a0.
+        const out = face ?? a0;
+        const ox = Math.cos(out);
+        const oz = Math.sin(out);
+        const yaw = Math.atan2(-ox, -oz);
+        if (!probe.clear(x, g.y, z, POSTS.clear[kind], yaw)) continue;
+        // A field gun's trail runs back onto ground about as high.
+        if (kind === 'gunPost') {
+          const t = probe.ground(x - ox * 2.8, z - oz * 2.8);
+          if (!t || Math.abs(t.y - g.y) > 0.5) continue;
+        }
+        const back = kind === 'gunPost' ? 1.6 : 1.3;
+        const sg = probe.ground(x - ox * back, z - oz * back);
+        if (!sg || Math.abs(sg.y - g.y) > 0.6) continue;
+        return { pos: [x, g.y, z], yaw, stand: [x - ox * back, sg.y, z - oz * back] };
+      }
+    }
+    return null;
+  }
+
+  /** A field gun's spot, low sandbags in front of it and a sandbag wall at each side. */
+  function addGun(spot: { pos: [number, number, number]; yaw: number; stand: [number, number, number] }, zone: string, list: { x: number; z: number; r: number }[]): void {
+    const [x, y, z] = spot.pos;
+    const c = Math.cos(spot.yaw);
+    const s = Math.sin(spot.yaw);
+    // Local (lx, lz) -> world, as the slot's yaw turns it.
+    const at = (lx: number, lz: number): [number, number] => [x + lx * c + lz * s, z - lx * s + lz * c];
+    const fwd: [number, number] = [-s, -c];
+    const side = (lx: number): [number, number] => [Math.sign(lx) * c, -Math.sign(lx) * s];
+    plan.slots.push({ kind: 'gunPost', zone, pos: spot.pos, yaw: spot.yaw, stand: spot.stand });
+    const pieces: { kind: Exclude<FortKind, 'barricade' | PostKind>; lx: number; lz: number; out: [number, number] }[] = [
+      { kind: 'sandbagLow', lx: 0, lz: -2.1, out: fwd },
+      { kind: 'sandbag', lx: -1.95, lz: -0.6, out: side(-1) },
+      { kind: 'sandbag', lx: 1.95, lz: -0.6, out: side(1) },
+    ];
+    for (const p of pieces) {
+      const [px, pz] = at(p.lx, p.lz);
+      const g = probe.ground(px, pz);
+      if (!g || Math.abs(g.y - y) > 0.6) continue;
+      const yaw = Math.atan2(-p.out[0], -p.out[1]);
+      const size = FORT_SIZE[p.kind];
+      if (!probe.clear(px, g.y, pz, [size[0], size[1], size[2]], yaw)) continue;
+      const back = size[2] / 2 + 0.75;
+      plan.slots.push({ kind: p.kind, zone, pos: [px, g.y, pz], yaw, stand: [px - p.out[0] * back, g.y, pz - p.out[1] * back] });
+    }
+    list.push({ x, z, r: 3.2 }, { x: x - fwd[0] * 2.8, z: z - fwd[1] * 2.8, r: 1.6 });
+  }
 }
 
 /** Probe over the real world: ground from terrain + physics, clearance from colliders. */
@@ -503,6 +650,8 @@ export class Fortifications {
   onChange: (() => void) | null = null;
   /** Score for building / refilling (combatant id, points; fractions are fine). */
   onPoints: ((id: number, points: number) => void) | null = null;
+  /** A fixed weapon's spot finished (built back, or up at the start): the side that keeps the vehicles brings the weapon out there. */
+  onPost: ((slot: FortSlot) => void) | null = null;
   private readonly icons: Record<StationKind, THREE.SpriteMaterial>;
 
   constructor(
@@ -705,6 +854,13 @@ export class Fortifications {
     slot.health = FORT[slot.kind].health;
     slot.ghost.visible = false;
     this.showProgress(slot);
+    if (isPost(slot.kind)) {
+      // The weapon stands there now (a vehicle): nothing of the spot's own.
+      slot.model.visible = false;
+      this.onPost?.(slot);
+      this.onChange?.();
+      return;
+    }
     if (slot.kind === 'wire') this.wires.push(slot);
     // Finished: drawn with the other static ones.
     this.batch.add(slot.id, slot.model);
@@ -742,7 +898,8 @@ export class Fortifications {
   blast(point: THREE.Vector3, radius: number, dmg: (distance: number) => number): FortSlot[] {
     const broken: FortSlot[] = [];
     for (const s of this.slots) {
-      if (!s.built) continue;
+      // A fixed weapon takes its blast damage as the vehicle it is.
+      if (!s.built || isPost(s.kind)) continue;
       const d = Math.max(0, s.center.distanceTo(point) - 0.4);
       if (d > radius) continue;
       s.health -= dmg(d);

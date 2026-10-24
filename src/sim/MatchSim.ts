@@ -20,7 +20,7 @@ import { t } from '@/i18n';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
 import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { simplifyInput } from '@/modes/simple';
-import { Fortifications } from '@/modes/fortify';
+import { Fortifications, type FortPlan } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { EscortRules, FleetRules, GunGameRules, LastStandRules, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
@@ -129,6 +129,8 @@ export class MatchSim {
   readonly throwables: Throwables;
   /** Zone supply stations and build spots (zone matches). */
   readonly fort: Fortifications | null;
+  /** Where the zones' stations, build spots and fixed weapons go (also in a simplified match, which has no building: its fixed weapons still stand). */
+  readonly fortPlan: FortPlan | null;
   /** Escort: the payload's hull. */
   private readonly escort: EscortWorld | null;
   /** Rockets, rifle grenades, beacons and mines. */
@@ -193,7 +195,8 @@ export class MatchSim {
     const em = this.zoneMode?.match;
     this.escort = em instanceof EscortRules ? new EscortWorld(physics, null, em.attacker) : null;
     // No stations or building in a simplified match.
-    this.fort = this.zoneMode && !MATCH.simple ? new Fortifications(fortPlanFor(world, physics), new FortModels(null), physics, impacts, nav) : null;
+    this.fortPlan = this.zoneMode ? fortPlanFor(world, physics, MATCH.vehicles) : null;
+    this.fort = this.fortPlan && !MATCH.simple ? new Fortifications(this.fortPlan, new FortModels(null), physics, impacts, nav) : null;
     this.gadgets = new GadgetWorld(physics, this.registry, {
       explode: (kind, point, owner) => {
         this.blast(kind, point, owner, t(kind === 'rocket' ? 'gadget.assault' : 'gadget.mine'));

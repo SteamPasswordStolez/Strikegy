@@ -72,6 +72,7 @@ describe('vehicle handling and armour', () => {
     expect(VEHICLES.jeep.seats).toHaveLength(2);
     expect(VEHICLES.apc.seats).toHaveLength(4);
     expect(VEHICLES.bike.seats).toHaveLength(1);
-    for (const v of Object.values(VEHICLES)) expect(v.seats[0]!.role).toBe('driver');
+    // Seat 0 drives everything that moves; a fixed weapon's one seat is its gunner's.
+    for (const v of Object.values(VEHICLES)) expect(v.seats[0]!.role).toBe(v.fixed ? 'gunner' : 'driver');
   });
 });
