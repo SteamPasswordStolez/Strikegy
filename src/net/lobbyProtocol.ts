@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -277,10 +277,13 @@ export type MatchEvent =
   | { k: 'spotted'; ids: number[]; sec: number }
   /** To the earner: points popping up under the crosshair. */
   | { k: 'points'; points: number; reason: string }
-  | { k: 'end'; winner: Side; winnerId?: number };
+  | { k: 'end'; winner: Side; winnerId?: number }
+  /** This player reached a level during the match (progression: the HUD's notice); `xp` is the live total. */
+  | { k: 'prog'; level: number; promoted: string | null; xp: number };
 
 export type ClientMsg =
-  | { t: 'hello'; v: number; name: string; uid: string; device: Device }
+  /** `token`: the account's session (signed in with Google / Discord); rooms need one. */
+  | { t: 'hello'; v: number; name: string; uid: string; device: Device; token?: string }
   | { t: 'list' }
   | { t: 'create'; settings: RoomSettings; password?: string }
   /** `team`: the side wanted (rooms where players pick their own). */
@@ -326,10 +329,19 @@ export type ErrorCode =
   | 'rate'
   | 'banned'
   | 'words'
+  /** Rooms are for signed-in players only (owner, 2026-10-19). */
+  | 'login'
   | 'bad';
 
 export type ServerMsg =
-  | { t: 'welcome'; id: string; name: string; tag: string }
+  /** `account`: the hello's token was good (the tag is the account's). */
+  | { t: 'welcome'; id: string; name: string; tag: string; account?: boolean }
+  /**
+   * A match's progress confirmed into the account (its end, or leaving it):
+   * the summary (progression `MatchSummary`), the account's XP before and
+   * after, the ranks reached.
+   */
+  | { t: 'progress'; summary: unknown; before: number; after: number; promotions: string[] }
   | { t: 'chat'; line: ChatLine }
   /** The room's recent chat, on joining it. */
   | { t: 'chatLog'; lines: ChatLine[] }
@@ -373,7 +385,11 @@ export type AdminOp =
   | { op: 'mute'; client: string; minutes: number }
   | { op: 'unmute'; id: string }
   | { op: 'notice'; text: string }
-  | { op: 'word'; word: string; on: boolean };
+  | { op: 'word'; word: string; on: boolean }
+  /** Accounts: find by game name or id, reset one's progress, sign it out everywhere. */
+  | { op: 'accounts'; q: string }
+  | { op: 'acctReset'; id: string }
+  | { op: 'acctRevoke'; id: string };
 
 /** A connected person as the admin page sees them (`addr`: a short hash of the address, never the address). */
 export interface AdminPerson {
@@ -420,6 +436,20 @@ export interface AdminState {
   mutes: AdminMark[];
   /** Words the server masks besides the built-in list. */
   words: string[];
+  /** Accounts on the server, and the last search's results. */
+  accountCount?: number;
+  accounts?: AdminAccount[];
+}
+
+/** An account as the admin page sees it (no provider numbers: only which providers). */
+export interface AdminAccount {
+  id: string;
+  name: string;
+  xp: number;
+  level: number;
+  matches: number;
+  updated: number;
+  providers: string[];
 }
 
 const okId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,40}$/.test(v);
@@ -447,6 +477,11 @@ export function parseAdminOp(raw: unknown): AdminOp | null {
       return str(raw.text, CHAT_MAX * 2) ? { op: 'notice', text: raw.text } : null;
     case 'word':
       return str(raw.word, 32) && typeof raw.on === 'boolean' ? { op: 'word', word: raw.word, on: raw.on } : null;
+    case 'accounts':
+      return str(raw.q, 40) ? { op: 'accounts', q: raw.q } : null;
+    case 'acctReset':
+    case 'acctRevoke':
+      return okId(raw.id) ? { op: raw.op, id: raw.id } : null;
     default:
       return null;
   }
@@ -515,7 +550,7 @@ export function parseClientMsg(text: string): ClientMsg | null {
   switch (raw.t) {
     case 'hello':
       // The uid ends up in logs and as a key: letters, digits, '_' and '-' only (no forged log lines).
-      return typeof raw.v === 'number' && str(raw.name, 64) && str(raw.uid, 64) && /^[\w-]{1,64}$/.test(raw.uid) && (raw.device === 'desktop' || raw.device === 'mobile')
+      return typeof raw.v === 'number' && str(raw.name, 64) && str(raw.uid, 64) && /^[\w-]{1,64}$/.test(raw.uid) && (raw.device === 'desktop' || raw.device === 'mobile') && (raw.token === undefined || str(raw.token, 512))
         ? (raw as ClientMsg)
         : null;
     case 'ready':

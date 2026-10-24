@@ -124,3 +124,44 @@ npm ci
 npm run nav
 sudo systemctl restart strikegy
 ```
+
+## 8. 계정과 로그인 (성장 2단계, 2026-10-24)
+
+로그인은 게임 서버의 Better Auth가 맡습니다(`server/accounts.ts`, `server/accountApi.ts`). 사이트는 `https://game.strikegy.xyz/api/...`를 부르고, 오사카 중계의 Caddy는 `/play` 말고 나머지를 전부 터널로 보내므로 `/api/*`도 따로 설정 없이 노트북에 닿습니다. Caddy에는 접속 로그(`log`)가 없습니다. 개인정보 처리방침의 "중계는 저장하지 않음"이 이 상태를 전제하니, 로그를 켜게 되면 처리방침도 고치세요.
+
+**저장 파일** (작업 폴더 `~/strikegy`, 모두 git에 안 올라감)
+- `.strikegy-accounts.db`(+`-wal`, `-shm`): 계정·로그인 연결·세션·진행(SQLite, `better-sqlite3` 12.x, Node 20 그대로)
+- `.strikegy-auth-secret`: Better Auth 비밀값. `BETTER_AUTH_SECRET`이 없으면 처음 켤 때 만들어집니다. 바꾸면 모두 로그아웃됩니다.
+- `.strikegy-account-key`: 로그인 제공자의 번호를 해시로 바꾸는 키(`STRIKEGY_ACCOUNT_KEY`). **잃으면 모든 계정을 잃습니다.** 백업에 같이 들어갑니다.
+
+**환경 파일**: 비밀값은 `/etc/strikegy.env`에만 둡니다(root 소유, 600, systemd가 읽음; 채팅·git에 붙이지 않기). 유닛 파일 `server/strikegy.service`가 `EnvironmentFile=-/etc/strikegy.env`로 읽습니다.
+
+```bash
+sudo install -m 600 -o root -g root /dev/null /etc/strikegy.env
+sudo nano /etc/strikegy.env
+```
+
+넣을 줄(값은 오너가 직접):
+
+```
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+DISCORD_CLIENT_ID=...
+DISCORD_CLIENT_SECRET=...
+```
+
+구글이나 디스코드 중 하나라도 들어가면 그때부터 멀티 방은 로그인해야 들어갈 수 있습니다. 하나도 없으면 지금처럼 손님도 방에 들어갑니다. `STRIKEGY_PUBLIC_URL=https://game.strikegy.xyz`는 유닛 파일에 이미 있습니다.
+
+**앱 등록** (되돌아올 주소)
+- Google Cloud Console → API 및 서비스 → OAuth 동의 화면(외부, 범위는 `openid`만) → 사용자 인증 정보 → OAuth 클라이언트 ID(웹 애플리케이션). 승인된 리디렉션 URI: `https://game.strikegy.xyz/api/auth/callback/google`
+- Discord Developer Portal → Applications → New Application → OAuth2. Redirects: `https://game.strikegy.xyz/api/auth/callback/discord`(범위는 `identify`만, 서버가 정함)
+
+**백업** (하루 한 번, 7일치, `.strikegy-backups/`에 DB gz와 두 키). `crontab -e`에 한 줄 넣습니다.
+
+```
+20 4 * * * cd /home/steampasswordstolen/strikegy && /usr/bin/node scripts/backup-accounts.mjs >> /home/steampasswordstolen/strikegy-backup.log 2>&1
+```
+
+백업이 같은 노트북 디스크에만 있으니, 가끔 다른 곳(오너 PC 등)으로 `scp`해 두면 안전합니다.
+
+**로컬 시험**: `.claude/launch.json`의 `strikegy-server-accounts`(`STRIKEGY_DEV_LOGIN=1`)는 제공자 없이 "테스트 계정으로 로그인"을 켭니다. 공개 주소가 localhost일 때만, 로컬 요청에만 됩니다.

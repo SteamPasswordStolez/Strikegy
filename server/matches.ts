@@ -7,6 +7,7 @@
 import type { ClientMsg, RoomSettings } from '../src/net/lobbyProtocol.ts';
 import type { MatchHost, MatchLine, MatchPlayer } from './lobby.ts';
 import { MatchRoom } from './matchRoom.ts';
+import type { MatchSummary } from '../src/progression/profile.ts';
 
 /** A finished match keeps running this long so the last news reaches everyone (ms). */
 const LINGER = 3000;
@@ -18,6 +19,8 @@ export interface MatchesOptions {
   ended?: (room: string) => void;
   /** The anticheat put a player out of a room's match. */
   kick?: (room: string, uid: string, reason: string) => void;
+  /** A signed-in player's match progress to confirm into their account. */
+  progress?: (room: string, uid: string, summary: MatchSummary) => void;
 }
 
 export class Matches implements MatchHost {
@@ -57,6 +60,7 @@ export class Matches implements MatchHost {
       mapsDir: this.opts.mapsDir,
       ended: () => setTimeout(() => this.opts.ended?.(room), 0),
       kick: (uid, reason) => setTimeout(() => this.opts.kick?.(room, uid, reason), 0),
+      progress: (uid, summary) => setTimeout(() => this.opts.progress?.(room, uid, summary), 0),
     }).catch((err: unknown) => {
       this.opts.log?.(`room ${room}: ${String(err)}`);
       return null;
@@ -98,7 +102,11 @@ export class Matches implements MatchHost {
     this.rooms.delete(room);
     // Over: a moment for the last news (the result) to go out first.
     if (m.ended) setTimeout(() => m.dispose(), LINGER);
-    else m.dispose();
+    else {
+      // Taken down without a winner: everyone's progress so far into their accounts first.
+      m.settle();
+      m.dispose();
+    }
   }
 
   message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void {

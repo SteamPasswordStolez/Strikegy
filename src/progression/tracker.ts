@@ -367,6 +367,23 @@ export class ProgressTracker {
   }
 
   /**
+   * Ended without a winner by someone else (the room's owner, the staff, the
+   * server stopping): what rose so far and the completion bonus for the time
+   * played, no win bonus (not one's own doing; progression.md 3-1-1).
+   */
+  stop(): MatchSummary {
+    if (this.ended) return this.summary('stopped');
+    this.gain('complete', Math.min(XP.completeMax, (XP.complete * this.seconds) / (XP.completeMinutes * 60)));
+    this.ended = true;
+    return this.summary('stopped');
+  }
+
+  /** Done already (finished, left or stopped). */
+  get done(): boolean {
+    return this.ended;
+  }
+
+  /**
    * Left before the end with `humans` people in the match: in bot matches and
    * rooms of two or fewer everything is undone (an empty summary: the record
    * keeps the quit), otherwise what rose so far is kept without the bonuses.

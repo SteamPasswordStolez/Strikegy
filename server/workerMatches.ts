@@ -10,6 +10,7 @@ import { Worker } from 'node:worker_threads';
 import type { ClientMsg, RoomSettings } from '../src/net/lobbyProtocol.ts';
 import type { MatchHost, MatchLine, MatchPlayer } from './lobby.ts';
 import type { FromRoom, RoomWorkerData, ToRoom } from './roomWorker.ts';
+import type { MatchSummary } from '../src/progression/profile.ts';
 
 /** A finished match keeps running this long so the last news reaches everyone (ms). */
 const LINGER = 3000;
@@ -25,6 +26,8 @@ const MATCHES_MAX = Number(process.env.STRIKEGY_MATCHES_MAX) || 6;
 const LOADING_MAX = 1;
 /** A room just starting counts as this busy (ms a tick) until it reports. */
 const STARTING_MS = 4;
+/** A room taken down without a winner gets this long to settle its players' progress (ms). */
+const SETTLE_MS = 1500;
 /** A server tick (ms). */
 const TICK_MS = 1000 / 60;
 
@@ -34,6 +37,8 @@ export interface WorkerMatchesOptions {
   ended?: (room: string) => void;
   /** The anticheat put a player out of a room's match. */
   kick?: (room: string, uid: string, reason: string) => void;
+  /** A signed-in player's match progress to confirm into their account. */
+  progress?: (room: string, uid: string, summary: MatchSummary) => void;
 }
 
 interface RoomThread {
@@ -105,6 +110,9 @@ export class WorkerMatches implements MatchHost {
       if (!t.ended) setTimeout(() => this.opts.ended?.(room), 0);
     };
     worker.on('message', (m: FromRoom) => {
+      // Progress still comes in while a stopped room settles (it is off the list by then).
+      if (m.t === 'progress') return this.opts.progress?.(room, m.uid, m.summary);
+      if (m.t === 'settled') return void t.worker.terminate();
       if (this.rooms.get(room) !== t) return;
       switch (m.t) {
         case 'loaded':
@@ -179,7 +187,11 @@ export class WorkerMatches implements MatchHost {
     this.rooms.delete(room);
     // Over: a moment for the last news (the result) to go out first.
     if (t.ended) setTimeout(() => void t.worker.terminate(), LINGER);
-    else void t.worker.terminate();
+    else if (t.ready) {
+      // Taken down without a winner: the thread settles everyone's progress first (or is let go after a moment).
+      t.worker.postMessage({ t: 'stop' } satisfies ToRoom);
+      setTimeout(() => void t.worker.terminate(), SETTLE_MS);
+    } else void t.worker.terminate();
   }
 
   message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void {

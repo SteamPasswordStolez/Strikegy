@@ -22,7 +22,7 @@ import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
-import { loadProfile, settleAbandoned } from '@/progression/profile';
+import { currentProfile, onAccountChange, refreshAccount, settleLeft, signedIn } from '@/net/account';
 import { insigniaAt, rankLabel } from './rankInsignia';
 import { renderServiceRecord } from './ServiceRecord';
 
@@ -137,7 +137,12 @@ export class Lobby {
     this.render();
     for (const m of [...MAPS.map((e) => e.id), RANGE_ID]) void this.load(m);
     // A bot match left unfinished (the menu, a closed tab): its progress is gone; say so once.
-    if (settleAbandoned()) this.note(t('note.cancelled'));
+    if (settleLeft()) this.note(t('note.cancelled'));
+    // Signed in: the account's progress fresh from the server; redrawn when it (or the sign-in) changes.
+    void refreshAccount();
+    onAccountChange(() => {
+      if (this.screen === 'main' || this.screen === 'record') this.render();
+    });
     // First visit: a name before anything else.
     if (!this.playerName) this.editName(true);
     // Back from a match (or reloaded in one): straight to the multiplayer pages.
@@ -437,13 +442,14 @@ export class Lobby {
       this.toggleLocale();
     });
     // The player's card: rank, level and the XP bar; it opens the service record.
-    const at = levelOf(loadProfile().xp);
+    const at = levelOf(currentProfile().xp);
     const prof = el('button', 'mm-profile mm-card', corner);
     prof.title = t('menu.recordDesc');
     el('span', 'mm-card-pic', prof).innerHTML = insigniaAt(at.level);
     const line = el('span', 'mm-card-line', prof);
     el('span', 'mm-card-rank', line).textContent = rankLabel(at.level);
     el('span', 'mm-card-name', line).textContent = this.playerName ?? '—';
+    if (!signedIn()) el('span', 'mm-card-guest ds-dim', line).textContent = t('acct.guest');
     const bar = el('span', 'mm-card-bar', prof);
     el('i', '', bar).style.setProperty('--p', (at.into / at.need).toFixed(4));
     prof.addEventListener('click', () => {

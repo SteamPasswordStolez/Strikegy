@@ -53,6 +53,8 @@ import {
   type ServerMsg,
   type Side,
 } from '../src/net/lobbyProtocol.ts';
+import type { AdminAccount } from '../src/net/lobbyProtocol.ts';
+import type { Applied, MatchSummary, Profile } from '../src/progression/profile.ts';
 
 /** Messages a connection may send: a bucket of this many, refilled per second. */
 const RATE = { burst: 120, perSecond: 60 } as const;
@@ -82,6 +84,8 @@ export interface MatchPlayer {
   name: string;
   tag: string;
   team?: Side;
+  /** Signed in: the account's XP (the match keeps this person's progress); none for guests. */
+  xp?: number;
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -116,6 +120,22 @@ export interface LobbyOptions {
   store?: AdminStore;
   /** The server's numbers for the admin page (load, matches, step time...). */
   stats?: () => Record<string, number | string | undefined>;
+  /** Accounts (server/accounts.ts); none: everyone is a guest and rooms are open to all. */
+  accounts?: AccountHost | null;
+}
+
+/** What the lobby needs of the accounts (server/accounts.ts `Accounts`; tests use a stand-in). */
+export interface AccountHost {
+  session(token: string | undefined): Promise<string | null>;
+  profile(userId: string): Profile;
+  apply(userId: string, summary: MatchSummary): Applied;
+  setName(userId: string, name: string): void;
+  find(query: string): AdminAccount[];
+  reset(userId: string): void;
+  revoke(userId: string): void;
+  readonly count: number;
+  /** Signing in is possible (a provider is set up, or local test logins): rooms then need it. */
+  readonly required: boolean;
 }
 
 /** A ban or mute the staff set: by the browser's hidden id and its address. */
@@ -125,6 +145,8 @@ export interface StaffMark {
   uid: string;
   /** The address it came from (kept on the server only; the admin page sees a hash). */
   addr: string;
+  /** The account (signed in): the mark follows it to any browser. */
+  account?: string;
   name: string;
   tag: string;
   reason: string;
@@ -194,6 +216,10 @@ interface Client {
   chatRepeats: number;
   /** Logged in on the admin page. */
   admin: boolean;
+  /** Signed in: the account's id (null: a guest). */
+  account: string | null;
+  /** The admin page's account search. */
+  adminQuery: string;
 }
 
 /** Chat: lines in a burst, refilled per second; the same line in a row at most this often. */
@@ -275,6 +301,9 @@ export class LobbyCore {
   /** Wrong admin keys lately: by address, and from everyone (ms timestamps). */
   private readonly adminTries = new Map<string, number[]>();
   private adminTriesAll: number[] = [];
+  /** A player's hidden id -> their account (a match's progress is confirmed there, also after they left). */
+  private readonly accountOf = new Map<string, string>();
+  private readonly accounts: AccountHost | null;
 
   constructor(private readonly opts: LobbyOptions = {}) {
     this.log = opts.log ?? (() => {});
@@ -284,6 +313,26 @@ export class LobbyCore {
     this.serverMax = opts.serverMax ?? SERVER_MAX;
     this.matches = opts.matches ?? null;
     this.now = opts.now ?? Date.now;
+    this.accounts = opts.accounts ?? null;
+  }
+
+  /**
+   * A match's progress for a player (the end, leaving, a stop), confirmed into
+   * their account and told to them if they are still connected.
+   */
+  matchProgress(room: string, uid: string, summary: MatchSummary): void {
+    const id = this.accountOf.get(uid);
+    if (!this.accounts || !id) return;
+    let applied: Applied;
+    try {
+      applied = this.accounts.apply(id, summary);
+    } catch (err) {
+      this.log(`account ${id.slice(0, 8)}: could not save the match in room ${room}: ${String(err)}`);
+      return;
+    }
+    const after = applied.profile.xp;
+    const msg: ServerMsg = { t: 'progress', summary, before: after - Math.floor(summary.xp), after, promotions: applied.promotions };
+    for (const c of this.clients.values()) if (c.uid === uid && c.awayUntil === null) this.send(c, msg);
   }
 
   get roomCount(): number {
@@ -309,7 +358,7 @@ export class LobbyCore {
   /** A new connection; returns its client id. */
   open(conn: Conn, id = randomHex(4), addr = ''): string {
     const now = this.now();
-    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [], tag: '', team: null, chatTokens: CHAT_RATE.burst, lastChat: now, chatText: '', chatRepeats: 0, admin: false });
+    this.clients.set(id, { conn, id, name: null, device: 'desktop', uid: '', room: null, watching: false, tokens: RATE.burst, lastRefill: now, binTokens: BIN_RATE.burst, lastBinRefill: now, awayUntil: null, strikes: 0, addr, passwordTries: [], tag: '', team: null, chatTokens: CHAT_RATE.burst, lastChat: now, chatText: '', chatRepeats: 0, admin: false, account: null, adminQuery: '' });
     return id;
   }
 
@@ -671,7 +720,9 @@ export class LobbyCore {
   }
 
   private player(c: Client): MatchPlayer {
-    return { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined };
+    const p: MatchPlayer = { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined };
+    if (c.account && this.accounts) p.xp = this.accounts.profile(c.account).xp;
+    return p;
   }
 
   /**
@@ -705,18 +756,27 @@ export class LobbyCore {
       const name = cleanName(msg.name);
       if (!name) return this.fail(c, 'name');
       if (profane(name, this.staff.words)) return this.fail(c, 'words', 'name');
-      const ban = this.marked(this.staff.bans, { uid: msg.uid, addr: c.addr });
+      if (c.name) return this.fail(c, 'bad', 'hello again');
+      // Signed in: the token says which account (a bad or old one: a guest, and the welcome says so).
+      const account = msg.token && this.accounts ? await this.accounts.session(msg.token) : null;
+      if (this.clients.get(c.id) !== c || c.name) return;
+      const ban = this.marked(this.staff.bans, { uid: msg.uid, addr: c.addr, account: account ?? undefined });
       if (ban) {
         this.fail(c, 'banned', ban.reason);
         c.conn.close();
         return;
       }
-      if (c.name) return this.fail(c, 'bad', 'hello again');
       c.name = name;
       c.uid = msg.uid;
-      c.tag = tagOf(this.tagSecret, msg.uid);
+      c.account = account;
+      // The tag comes from the account when signed in (the same on every device), else from the browser.
+      c.tag = tagOf(this.tagSecret, account ? `acct${account.replace(/-/g, '')}` : msg.uid);
       c.device = msg.device;
-      this.send(c, { t: 'welcome', id: c.id, name, tag: c.tag });
+      if (account) {
+        this.accountOf.set(c.uid, account);
+        this.accounts?.setName(account, name);
+      }
+      this.send(c, { t: 'welcome', id: c.id, name, tag: c.tag, account: !!account });
       if (c.uid) this.rejoin(c);
       return;
     }
@@ -734,6 +794,7 @@ export class LobbyCore {
         return this.send(c, { t: 'rooms', rooms: this.roomList() });
       case 'create': {
         if (r) return this.fail(c, 'busy');
+        if (this.accounts?.required && !c.account) return this.fail(c, 'login');
         // A title passing for staff or the server: said as such (cleanSettings refuses it).
         if (typeof msg.settings.name === 'string' && reservedText(msg.settings.name)) return this.fail(c, 'words', 'title');
         const settings = cleanSettings(msg.settings);
@@ -757,6 +818,7 @@ export class LobbyCore {
       }
       case 'join': {
         if (r) return this.fail(c, 'busy');
+        if (this.accounts?.required && !c.account) return this.fail(c, 'login');
         const rec = this.rooms.get(msg.room);
         if (!rec) return this.fail(c, 'noRoom');
         if (this.isBanned(rec, c)) return this.fail(c, 'banned');
@@ -895,7 +957,7 @@ export class LobbyCore {
   // The staff: bans, mutes, words, the admin page
 
   /** A live ban / mute matching this browser or address (expired ones are dropped). */
-  private marked(list: StaffMark[], who: { uid: string; addr: string }): StaffMark | null {
+  private marked(list: StaffMark[], who: { uid: string; addr: string; account?: string | null }): StaffMark | null {
     const now = this.now();
     const live = list.filter((m) => m.until === 0 || m.until > now);
     if (live.length !== list.length) {
@@ -903,7 +965,7 @@ export class LobbyCore {
       this.saveStaff();
     }
     const uid = uidBase(who.uid);
-    return list.find((m) => (uid && m.uid === uid) || (!!who.addr && m.addr === who.addr)) ?? null;
+    return list.find((m) => (uid && m.uid === uid) || (!!who.addr && m.addr === who.addr) || (!!who.account && m.account === who.account)) ?? null;
   }
 
   private saveStaff(): void {
@@ -942,7 +1004,7 @@ export class LobbyCore {
     c.admin = true;
     this.log(`admin: logged in from ${this.addrHash(c.addr)}`);
     this.send(c, { t: 'adminOk' });
-    this.send(c, { t: 'admState', state: this.adminState() });
+    this.send(c, { t: 'admState', state: this.adminState(c) });
   }
 
   private person(c: Client): AdminPerson {
@@ -964,7 +1026,7 @@ export class LobbyCore {
     return { id: m.id, name: m.name, tag: m.tag, addr: this.addrHash(m.addr), reason: m.reason, at: m.at, until: m.until };
   }
 
-  private adminState(): AdminState {
+  private adminState(admin: Client): AdminState {
     // (Dropping expired marks on the way.)
     this.marked(this.staff.bans, { uid: '', addr: '' });
     this.marked(this.staff.mutes, { uid: '', addr: '' });
@@ -984,13 +1046,14 @@ export class LobbyCore {
       bans: this.staff.bans.map((m) => this.mark(m)),
       mutes: this.staff.mutes.map((m) => this.mark(m)),
       words: this.staff.words,
+      ...(this.accounts ? { accountCount: this.accounts.count, accounts: this.accounts.find(admin.adminQuery) } : {}),
     };
   }
 
-  /** Every connection of a browser or address. */
-  private connsOf(uid: string, addr: string): Client[] {
+  /** Every connection of a browser, an address or an account. */
+  private connsOf(uid: string, addr: string, account?: string | null): Client[] {
     const base = uidBase(uid);
-    return [...this.clients.values()].filter((m) => !m.admin && ((base && uidBase(m.uid) === base) || (!!addr && m.addr === addr)));
+    return [...this.clients.values()].filter((m) => !m.admin && ((base && uidBase(m.uid) === base) || (!!addr && m.addr === addr) || (!!account && m.account === account)));
   }
 
   private closeRoom(r: RoomRec): void {
@@ -1028,10 +1091,10 @@ export class LobbyCore {
         break;
       case 'ban': {
         if (!target || target.admin) break;
-        this.staff.bans.push({ id: randomHex(4), uid: uidBase(target.uid), addr: target.addr, name: target.name ?? '?', tag: target.tag, reason: op.reason.trim().slice(0, 120), at: now, until });
+        this.staff.bans.push({ id: randomHex(4), uid: uidBase(target.uid), addr: target.addr, account: target.account ?? undefined, name: target.name ?? '?', tag: target.tag, reason: op.reason.trim().slice(0, 120), at: now, until });
         this.saveStaff();
         this.log(`admin: banned ${target.name ?? '?'}#${target.tag} (${op.minutes || 'for good'} min)`);
-        for (const m of this.connsOf(target.uid, target.addr)) {
+        for (const m of this.connsOf(target.uid, target.addr, target.account)) {
           this.send(m, { t: 'error', code: 'banned', detail: op.reason });
           if (m.room) this.leaveRoom(m, 'kicked');
           if (m.awayUntil !== null) this.clients.delete(m.id);
@@ -1041,7 +1104,7 @@ export class LobbyCore {
       }
       case 'mute':
         if (!target || target.admin) break;
-        this.staff.mutes.push({ id: randomHex(4), uid: uidBase(target.uid), addr: '', name: target.name ?? '?', tag: target.tag, reason: '', at: now, until });
+        this.staff.mutes.push({ id: randomHex(4), uid: uidBase(target.uid), addr: '', account: target.account ?? undefined, name: target.name ?? '?', tag: target.tag, reason: '', at: now, until });
         this.saveStaff();
         break;
       case 'unban':
@@ -1072,9 +1135,24 @@ export class LobbyCore {
         this.saveStaff();
         break;
       }
+      case 'accounts':
+        c.adminQuery = op.q;
+        break;
+      case 'acctReset':
+        if (!this.accounts) break;
+        this.accounts.reset(op.id);
+        this.log(`admin: account ${op.id.slice(0, 8)} progress reset`);
+        break;
+      case 'acctRevoke':
+        if (!this.accounts) break;
+        this.accounts.revoke(op.id);
+        // Signed out everywhere: connections of that account go too (they come back as guests).
+        for (const m of this.clients.values()) if (m.account === op.id && !m.admin) m.conn.close();
+        this.log(`admin: account ${op.id.slice(0, 8)} signed out everywhere`);
+        break;
     }
     this.pushList();
-    this.send(c, { t: 'admState', state: this.adminState() });
+    this.send(c, { t: 'admState', state: this.adminState(c) });
   }
 
   private roomList(): RoomInfo[] {

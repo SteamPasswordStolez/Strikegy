@@ -347,7 +347,7 @@ describe('game server gateway', () => {
   const url = (): string => `ws://127.0.0.1:${server.port}/play`;
 
   beforeAll(async () => {
-    server = await startGateway({ port: 0, host: '127.0.0.1', log: () => {}, tagSecret: 'test-key', adminKey: null, adminStore: null });
+    server = await startGateway({ port: 0, host: '127.0.0.1', log: () => {}, tagSecret: 'test-key', adminKey: null, adminStore: null, accounts: null });
   });
   afterAll(async () => {
     await server.close();

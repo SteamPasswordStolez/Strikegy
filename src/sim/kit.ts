@@ -32,6 +32,9 @@ export interface KitWorld {
   owner(s: Soldier): GadgetOwner;
   /** Score (fractions are fine). */
   points(id: number, points: number, reason: 'build' | 'refill'): void;
+  /** Someone finished a structure / refilled a station by one use (progress: XP once, not by time). */
+  built?(id: number, slot: FortSlot): void;
+  refilled?(id: number): void;
   /** What the local view does about it (sounds); none on the server. */
   feedback?: KitFeedback;
 }
@@ -180,13 +183,17 @@ function hammer(s: Soldier, job: FortJob, dt: number, prev: number, w: KitWorld)
   if (job.type === 'refill') {
     if (fort.refill(job.station, dt)) {
       w.points(s.id, REFILL_POINTS, 'refill');
+      w.refilled?.(s.id);
       w.feedback?.refilled?.();
     }
     return;
   }
   const r = fort.work(job.slot, dt, s.cls, (slot) => w.inTheWay(slot));
   w.points(s.id, r.points, 'build');
-  if (r.done) w.feedback?.built?.(job.slot);
+  if (r.done) {
+    w.built?.(s.id, job.slot);
+    w.feedback?.built?.(job.slot);
+  }
 }
 
 /** Next time a giver may hand the same mate the same thing again (sim seconds), by 'giver>mate:kind'. */

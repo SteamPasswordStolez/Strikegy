@@ -24,6 +24,19 @@
       "port": 8787
     },
     {
+      "name": "strikegy-server-accounts",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "server"
+      ],
+      "port": 8787,
+      "env": {
+        "STRIKEGY_DEV_LOGIN": "1",
+        "STRIKEGY_ACCOUNTS_DB": ".strikegy-accounts-dev.db"
+      }
+    },
+    {
       "name": "strikegy-server-udp",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

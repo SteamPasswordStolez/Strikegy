@@ -16,6 +16,8 @@ export interface CareerStats {
   quits: number;
   /** Not confirmed: idle for most of the match. */
   idle: number;
+  /** Ended by the room's owner, the staff or the server (no winner: not in the win rate). */
+  stopped: number;
   seconds: number;
   score: number;
   xp: number;
@@ -36,7 +38,8 @@ export interface CareerStats {
 }
 
 export type MatchKind = 'bots' | 'multi';
-export type MatchResult = 'win' | 'loss' | 'left' | 'idle';
+/** `stopped`: ended by the staff or the room's owner, or the server stopped (not one's own doing). */
+export type MatchResult = 'win' | 'loss' | 'left' | 'idle' | 'stopped';
 
 export interface MatchRecord {
   at: number;
@@ -74,7 +77,9 @@ export interface Profile {
   modes: Record<string, { matches: number; wins: number }>;
   history: MatchRecord[];
   /** One-off things already given (the tutorial's bonus). */
-  flags: { tutorial?: boolean };
+  flags: { tutorial?: boolean; imported?: boolean };
+  /** Bot-match XP taken on the server today (its daily cap; UTC day). */
+  solo?: { day: string; xp: number };
   created: number;
 }
 
@@ -111,6 +116,7 @@ export function emptyStats(): CareerStats {
     wins: 0,
     quits: 0,
     idle: 0,
+    stopped: 0,
     seconds: 0,
     score: 0,
     xp: 0,
@@ -191,7 +197,7 @@ export function cleanProfile(raw: unknown): Profile | null {
   ]);
   p.maps = cleanTable<{ matches: number; wins: number }>(o.maps, ['matches', 'wins']);
   p.modes = cleanTable<{ matches: number; wins: number }>(o.modes, ['matches', 'wins']);
-  const results: readonly MatchResult[] = ['win', 'loss', 'left', 'idle'];
+  const results: readonly MatchResult[] = ['win', 'loss', 'left', 'idle', 'stopped'];
   p.history = (Array.isArray(o.history) ? o.history : [])
     .map(obj)
     .filter((h) => results.includes(h.result as MatchResult))
@@ -212,6 +218,9 @@ export function cleanProfile(raw: unknown): Profile | null {
       return rec;
     });
   if (obj(o.flags).tutorial === true) p.flags.tutorial = true;
+  if (obj(o.flags).imported === true) p.flags.imported = true;
+  const solo = obj(o.solo);
+  if (typeof solo.day === 'string') p.solo = { day: solo.day.slice(0, 10), xp: num(solo.xp) };
   return p;
 }
 
@@ -286,17 +295,18 @@ export function applySummary(prev: Profile, s: MatchSummary, now = Date.now()): 
   const after = levelOf(p.xp);
   const promotions = promotionsBetween(prev.xp, p.xp);
   const st = p.stats[s.kind];
-  const finished = s.result === 'win' || s.result === 'loss';
+  const finished = s.result === 'win' || s.result === 'loss' || s.result === 'stopped';
   st.matches++;
   if (s.result === 'win') st.wins++;
   if (s.result === 'left') st.quits++;
   if (s.result === 'idle') st.idle++;
+  if (s.result === 'stopped') st.stopped++;
   // A match left in a small room (or idled through) was undone: only the quit is kept.
   const counts = finished || s.xp > 0;
   if (counts) {
     for (const [k, v] of Object.entries(s.stats) as [keyof CareerStats, number][]) {
       if (k === 'bestStreak' || k === 'bestScore') st[k] = Math.max(st[k], v);
-      else if (k !== 'matches' && k !== 'wins' && k !== 'quits' && k !== 'idle') st[k] += v;
+      else if (k !== 'matches' && k !== 'wins' && k !== 'quits' && k !== 'idle' && k !== 'stopped') st[k] += v;
     }
     st.score += s.score;
     st.xp += Math.floor(s.xp);
@@ -377,6 +387,37 @@ export function endLiveMatch(): void {
   }
 }
 
+/** A match summary from outside (a browser's bot match sent to the server): anything wrong put right, null if it isn't one. */
+export function cleanSummary(raw: unknown): MatchSummary | null {
+  const o = obj(raw);
+  const results: readonly MatchResult[] = ['win', 'loss', 'left', 'idle', 'stopped'];
+  if (!results.includes(o.result as MatchResult)) return null;
+  const lineKeys: readonly XpLineKey[] = ['score', 'sea', 'build', 'refill', 'complete', 'win', 'tutorial'];
+  const multKeys: readonly MultKey[] = ['bots', 'easy', 'hard'];
+  const list = (v: unknown) => (Array.isArray(v) ? v.slice(0, 16).map(obj) : []);
+  const stats: Partial<CareerStats> = {};
+  const st = obj(o.stats);
+  for (const k of Object.keys(emptyStats()) as (keyof CareerStats)[]) if (k in st) stats[k] = num(st[k]);
+  return {
+    kind: o.kind === 'multi' ? 'multi' : 'bots',
+    map: String(o.map ?? '').slice(0, 32),
+    mode: String(o.mode ?? '').slice(0, 32),
+    result: o.result as MatchResult,
+    seconds: num(o.seconds),
+    score: num(o.score),
+    xp: Math.floor(num(o.xp)),
+    lines: list(o.lines)
+      .filter((l) => lineKeys.includes(l.key as XpLineKey))
+      .map((l) => ({ key: l.key as XpLineKey, base: num(l.base), xp: num(l.xp) })),
+    mult: list(o.mult)
+      .filter((m) => multKeys.includes(m.key as MultKey))
+      .map((m) => ({ key: m.key as MultKey, x: Math.min(2, num(m.x)) })),
+    stats,
+    weapons: cleanTable<{ xp: number; kills: number; headshots: number }>(o.weapons, ['xp', 'kills', 'headshots']),
+    classes: cleanTable<{ xp: number; seconds: number; kills: number }>(o.classes, ['xp', 'seconds', 'kills']),
+  };
+}
+
 /** The empty summary of a match that was left (its progress undone). */
 export function leftSummary(
   m: Pick<LiveMatch, 'kind' | 'map' | 'mode'>,
@@ -402,7 +443,9 @@ export function leftSummary(
  * A match left unfinished earlier (menu, closed tab, a crash): recorded as left
  * and the marker cleared. Returns it, or null when there was none.
  */
-export function settleAbandoned(): LiveMatch | null {
+export function settleAbandoned(
+  record: (s: MatchSummary) => void = (s) => saveProfile(applySummary(loadProfile(), s).profile),
+): LiveMatch | null {
   let m: LiveMatch | null = null;
   try {
     const raw = localStorage.getItem(LIVE_KEY);
@@ -420,6 +463,6 @@ export function settleAbandoned(): LiveMatch | null {
   }
   if (!m) return null;
   endLiveMatch();
-  saveProfile(applySummary(loadProfile(), leftSummary(m)).profile);
+  record(leftSummary(m));
   return m;
 }

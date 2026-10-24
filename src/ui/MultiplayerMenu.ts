@@ -11,6 +11,8 @@ import { modeName, renderMatchSetup, simpleField, stepGroup, stepMode, thumb, ty
 import { uiSound } from '@/audio/uiSounds';
 import { icon } from './icons';
 import './multiplayer.css';
+import { accountConfig, signedIn, token } from '@/net/account';
+import { loginButtons } from './loginButtons';
 
 const CREATE_KEY = 'strikegy.mpCreate.v1';
 const LINEUPS: readonly Lineup[] = ['users', 'usersBots', 'coop'];
@@ -23,7 +25,7 @@ const SIZES = TEAM_SIZES.map((n) => n * 2);
 /** How often the round trip to the server is measured (ms). */
 const PING_EVERY = 2000;
 
-type View = 'connecting' | 'offline' | 'list' | 'create' | 'edit' | 'room';
+type View = 'connecting' | 'offline' | 'login' | 'list' | 'create' | 'edit' | 'room';
 type Filter = 'all' | 'lobby' | 'playing';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
@@ -139,9 +141,16 @@ export class MultiplayerMenu {
     this.notice = null;
     const id = loadIdentity();
     try {
+      // Rooms are for signed-in players (once the server has a sign-in set up): that first.
+      const cfg = await accountConfig();
+      if (cfg && (cfg.providers.length || cfg.devLogin) && !signedIn()) {
+        this.view = 'login';
+        this.host.redraw();
+        return;
+      }
       const urls = await serverUrls();
       if (!urls.length) throw new ServerError('connect', 'no server');
-      const link = await ServerLink.connect(urls, { name: id.name ?? 'player', uid: seatId(), device: this.host.device });
+      const link = await ServerLink.connect(urls, { name: id.name ?? 'player', uid: seatId(), device: this.host.device, token: token() ?? undefined });
       this.link = link;
       const store = chatOf(link);
       this.chat?.dispose();
@@ -283,6 +292,13 @@ export class MultiplayerMenu {
     } catch (err) {
       const code = err instanceof ServerError ? err.code : 'bad';
       this.notice = t(`mp.err.${code}` as MessageKey) || String(err);
+      // Signed out meanwhile (or the session ran out): the sign-in page, then back here.
+      if (code === 'login') {
+        const link = this.link;
+        this.handOver();
+        link?.close();
+        this.view = 'login';
+      }
       this.host.redraw();
     }
   }
@@ -380,6 +396,21 @@ export class MultiplayerMenu {
           this.host.redraw();
         });
       }
+      return;
+    }
+    if (this.view === 'login') {
+      const box = el('div', 'mp-status mp-login', body);
+      if (this.notice) el('div', 'mp-status-note', box, this.notice);
+      el('div', 'mp-login-title', box, t('acct.needLogin'));
+      el('div', 'ds-dim', box, t('acct.needLoginWhy'));
+      loginButtons(
+        box,
+        () => void this.connect(),
+        (text) => {
+          this.notice = text;
+          this.host.redraw();
+        },
+      );
       return;
     }
     if (this.view === 'list') this.renderList(body);

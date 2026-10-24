@@ -8,6 +8,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import type { ClientMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
 import type { MatchPlayer } from './lobby.ts';
 import { MatchRoom, type MatchConn, type MatchRoomOptions } from './matchRoom.ts';
+import type { MatchSummary } from '../src/progression/profile.ts';
 
 /** What the gateway tells a room's thread. */
 export type ToRoom =
@@ -15,7 +16,9 @@ export type ToRoom =
   | { t: 'detach'; uid: string }
   | { t: 'leave'; uid: string }
   | { t: 'msg'; uid: string; msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }> }
-  | { t: 'bin'; uid: string; data: Uint8Array };
+  | { t: 'bin'; uid: string; data: Uint8Array }
+  /** Being taken down without a winner: settle everyone's progress, then say `settled`. */
+  | { t: 'stop' };
 
 /** What a room's thread tells the gateway. */
 export type FromRoom =
@@ -28,9 +31,13 @@ export type FromRoom =
   /** The anticheat puts a player out (the lobby takes them out of the room). */
   | { t: 'kick'; uid: string; reason: string }
   /** Average step time over the last second (ms) and people in the room. */
-  | { t: 'stats'; stepMs: number; players: number };
+  | { t: 'stats'; stepMs: number; players: number }
+  /** A signed-in player's progress to confirm into their account. */
+  | { t: 'progress'; uid: string; summary: MatchSummary }
+  /** Done with `stop`: the thread may go. */
+  | { t: 'settled' };
 
-export type RoomWorkerData = Omit<MatchRoomOptions, 'log' | 'ended' | 'kick'>;
+export type RoomWorkerData = Omit<MatchRoomOptions, 'log' | 'ended' | 'kick' | 'progress'>;
 
 const port = parentPort!;
 const send = (m: FromRoom, transfer?: ArrayBuffer[]): void => port.postMessage(m, transfer ?? []);
@@ -71,13 +78,17 @@ function handle(m: ToRoom): void {
       return r.callIn(m.uid, m.msg.kind, m.msg.point);
     case 'bin':
       return r.binary(m.uid, m.data);
+    case 'stop':
+      r.stop();
+      r.settle();
+      return send({ t: 'settled' });
   }
 }
 
 port.on('message', (m: ToRoom) => handle(m));
 
 try {
-  room = await MatchRoom.create({ ...opts, log: (line) => send({ t: 'log', line }), ended: () => send({ t: 'ended' }), kick: (uid, reason) => send({ t: 'kick', uid, reason }) });
+  room = await MatchRoom.create({ ...opts, log: (line) => send({ t: 'log', line }), ended: () => send({ t: 'ended' }), kick: (uid, reason) => send({ t: 'kick', uid, reason }), progress: (uid, summary) => send({ t: 'progress', uid, summary }) });
   room.start();
   send({ t: 'loaded' });
   for (const m of early.splice(0)) handle(m);

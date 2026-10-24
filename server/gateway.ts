@@ -7,7 +7,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION, SERVER_MAX } from '../src/net/lobbyProtocol.ts';
@@ -16,6 +16,9 @@ import { Matches } from './matches.ts';
 import { WorkerMatches } from './workerMatches.ts';
 import { ServerRtc, localRtcSetup, parseRtc } from './rtc.ts';
 import { RtcLimit } from './rtcLimit.ts';
+import { accountsFromEnv, type Accounts } from './accounts.ts';
+import { accountApi } from './accountApi.ts';
+import type { MatchSummary } from '../src/progression/profile.ts';
 
 /** Open connections one address may have (a household's tabs), and the server in all. */
 const PER_ADDRESS = 12;
@@ -37,6 +40,22 @@ export interface GatewayOptions {
   adminKey?: string | null;
   /** Where the staff's bans, mutes and words are kept (default: `.strikegy-admin.json`; null: memory only). */
   adminStore?: AdminStore | null;
+  /** Accounts and the `/api` routes (default: set up from the environment; null: none, everyone a guest). */
+  accounts?: Accounts | null;
+}
+
+/**
+ * Who is on the other end: behind the relay (Caddy on Oracle, down an SSH tunnel)
+ * the socket is local and the visitor is in X-Forwarded-For; behind the
+ * Cloudflare tunnel, in CF-Connecting-IP.
+ */
+function visitorOf(req: IncomingMessage): string {
+  const local = /^(::ffff:)?127\.|^::1$/.test(req.socket.remoteAddress ?? '');
+  const header = (name: string) => {
+    const v = req.headers[name];
+    return (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim();
+  };
+  return (local ? (header('cf-connecting-ip') ?? header('x-forwarded-for')) : undefined) ?? req.socket.remoteAddress ?? '?';
 }
 
 /** The admin page's key between restarts (git-ignored). */
@@ -110,7 +129,15 @@ export interface Gateway {
 export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> {
   const log = opts.log ?? ((line: string) => console.log(`[server] ${line}`));
   let lobby: LobbyCore | null = null;
-  const hostOpts = { log, mapsDir: opts.mapsDir, ended: (room: string) => lobby?.matchOver(room), kick: (room: string, uid: string, reason: string) => lobby?.kick(room, uid, reason) };
+  const accounts = opts.accounts === undefined ? await accountsFromEnv(log) : opts.accounts;
+  const api = accounts ? accountApi(accounts, log) : null;
+  const hostOpts = {
+    log,
+    mapsDir: opts.mapsDir,
+    ended: (room: string) => lobby?.matchOver(room),
+    kick: (room: string, uid: string, reason: string) => lobby?.kick(room, uid, reason),
+    progress: (room: string, uid: string, summary: MatchSummary) => lobby?.matchProgress(room, uid, summary),
+  };
   const own = opts.matches === undefined ? (opts.workers ? new WorkerMatches(hostOpts) : new Matches(hostOpts)) : null;
   const matches = opts.matches === undefined ? own : opts.matches;
   const stats = () => ({
@@ -128,6 +155,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     adminKey: opts.adminKey === undefined ? adminKey(log) : opts.adminKey,
     store: opts.adminStore === undefined ? fileAdminStore() : (opts.adminStore ?? undefined),
     stats,
+    accounts,
   });
   const core = lobby;
   const sweep = setInterval(() => core.sweep(), 5000);
@@ -153,6 +181,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       );
       return;
     }
+    if (req.url?.startsWith('/api/') && api) return api(req, res, visitorOf(req));
     res.writeHead(404);
     res.end();
   });
@@ -161,14 +190,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const perAddress = new Map<string, number>();
 
   wss.on('connection', (ws, req) => {
-    // Through the relay (Caddy on Oracle, down an SSH tunnel) the socket is local and the
-    // visitor is in X-Forwarded-For; through the Cloudflare tunnel, in CF-Connecting-IP.
-    const local = /^(::ffff:)?127\.|^::1$/.test(req.socket.remoteAddress ?? '');
-    const header = (name: string) => {
-      const v = req.headers[name];
-      return (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim();
-    };
-    const addr = (local ? (header('cf-connecting-ip') ?? header('x-forwarded-for')) : undefined) ?? req.socket.remoteAddress ?? '?';
+    const addr = visitorOf(req);
     const open = perAddress.get(addr) ?? 0;
     if (open >= PER_ADDRESS || wss.clients.size > CONNECTIONS_MAX) {
       ws.close(1013, 'too many connections');
@@ -238,6 +260,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       new Promise<void>((resolve) => {
         clearInterval(sweep);
         own?.dispose();
+        if (opts.accounts === undefined) accounts?.close();
         for (const ws of wss.clients) ws.terminate();
         wss.close();
         http.close(() => resolve());

@@ -49,6 +49,9 @@ import { Sight, type Viewer } from './sight.ts';
 import type { WeaponId } from '../src/weapons/weaponData.ts';
 import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
+import { ProgressTracker } from '../src/progression/tracker.ts';
+import type { MatchSummary } from '../src/progression/profile.ts';
+import { WEAPONS } from '../src/weapons/weaponData.ts';
 
 // Navmeshes baked ahead of time (`npm run nav`) come from the checkout's disk.
 setNavFiles(async (key) => {
@@ -131,6 +134,10 @@ interface Seat {
   snapHeads: number;
   /** Put out by the anticheat already (the lobby is on it). */
   kicked: boolean;
+  /** This person's progress through the match (signed in; progression.md 3-1-1), null for guests. */
+  progress: ProgressTracker | null;
+  /** The aim at the last input stepped (whether they looked round: idle check). */
+  lastAim: [number, number];
 }
 
 /** Aim swing (rad) within `SNAP_STEPS` steps before a headshot that counts as a snap. */
@@ -171,6 +178,8 @@ export interface MatchRoomOptions {
   botShare?: boolean;
   /** Simplified controls for everyone (the room's setting). */
   simple?: boolean;
+  /** A signed-in player's match progress to confirm into their account (the end, leaving, a stop). */
+  progress?: (uid: string, summary: MatchSummary) => void;
 }
 
 export class MatchRoom {
@@ -230,7 +239,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -238,7 +247,8 @@ export class MatchRoom {
       const team = this.opts.lineup === 'coop' ? 'blue' : (player.team ?? this.smallerTeam());
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
-      seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false };
+      seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
+      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp);
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -289,6 +299,9 @@ export class MatchRoom {
   leave(uid: string): void {
     const seat = this.seats.get(uid);
     if (!seat) return;
+    // Left before the end: undone with two people or fewer, kept without the bonuses with more (the anticheat's kick: undone).
+    const tr = seat.progress;
+    if (tr && !tr.done) this.opts.progress?.(uid, tr.leave(this.seats.size, seat.kicked));
     this.releaseAll(seat);
     this.sim.removeSoldier(seat.soldier.id);
     this.seats.delete(uid);
@@ -356,6 +369,7 @@ export class MatchRoom {
     const at = this.sim.deploy(s.id, ok ? key : 'base', kit);
     if (!at) return;
     seat.kit = kit;
+    seat.progress?.setClass(kit.cls);
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
     // Into a vehicle after the spawn (its browser takes the seat after the new life).
     if (ok && /^(tank|jet|veh):/.test(key)) this.sim.vehicles?.board(s, key);
@@ -401,6 +415,26 @@ export class MatchRoom {
     this.timer = null;
   }
 
+  /**
+   * The match is being taken down without a winner (the owner ended it, the
+   * staff closed the room, the server stops): everyone signed in keeps what
+   * rose and the completion bonus for the time played (not their doing).
+   */
+  settle(): void {
+    for (const seat of this.seats.values()) {
+      const tr = seat.progress;
+      if (tr && !tr.done) this.opts.progress?.(seat.uid, tr.stop());
+    }
+  }
+
+  /** A signed-in player's tracker: levels reached are told to them as they happen. */
+  private tracker(seat: Seat, xp: number): ProgressTracker {
+    const lineup = this.opts.lineup ?? 'users';
+    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp });
+    tr.onLevel = (l) => seat.events.push({ k: 'prog', level: l.level, promoted: l.promoted, xp: tr.liveXp });
+    return tr;
+  }
+
   dispose(): void {
     this.stop();
     this.sim.dispose();
@@ -433,12 +467,18 @@ export class MatchRoom {
       // Never more inputs than ticks since ready (plus a little slack): no speed hack by flooding.
       const budget = this.sim.tick - seat.readyTick + INPUT_SLACK - seat.stepped;
       const take = Math.min(budget, seat.queue.length > QUEUE_CATCH_UP ? 2 : seat.queue.length ? 1 : 0);
+      let moved = false;
       for (let i = 0; i < take; i++) {
         const inp = seat.queue.shift()!;
         seat.stepped++;
         inp.swayYaw = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayYaw));
         inp.swayPitch = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, inp.swayPitch));
         applyInput(inp, seat.input);
+        if (seat.progress) {
+          const looked = inp.yaw !== seat.lastAim[0] || inp.pitch !== seat.lastAim[1];
+          seat.lastAim = [inp.yaw, inp.pitch];
+          moved ||= looked || seat.input.moveX !== 0 || seat.input.moveY !== 0 || seat.input.fire || seat.input.jump;
+        }
         seat.aims.push([inp.yaw, inp.pitch]);
         if (seat.aims.length > SNAP_STEPS + 1) seat.aims.shift();
         s.weapons.shotCaster = sim.casterFor(s.id, inp.view, maxRewind);
@@ -449,6 +489,7 @@ export class MatchRoom {
       // Down, the keys stay as last sent: browsers' frames come unevenly, and a tick without
       // one used to let go of the give-up key, so holding it often never got there (2026-10-18).
       if (!take && !(s.alive && s.deployed)) sim.stepSoldier(s, s.downed ? { state: seat.input, yaw: s.player.yaw, pitch: s.player.pitch } : null);
+      if (seat.progress && !this.over) seat.progress.tick(SIM_DT, moved);
       this.applyBots(seat, maxRewind);
       // The vehicle this player drives: where their browser has it.
       if (seat.drive && sim.vehicles) {
@@ -829,11 +870,38 @@ export class MatchRoom {
     bus.on('match:ended', (e) => {
       if (this.over) return;
       this.over = true;
+      // Everyone signed in still here: the completion and win bonuses, then into their accounts.
+      for (const seat of this.seats.values()) {
+        const tr = seat.progress;
+        if (!tr || tr.done) continue;
+        const s = seat.soldier;
+        const won = e.winnerId !== undefined ? e.winnerId === s.id : e.winner === s.team;
+        tr.score = this.sim.scores.get(s.id)?.score ?? 0;
+        this.opts.progress?.(seat.uid, tr.finish(won));
+      }
       this.broadcastEvents.push({ k: 'end', winner: e.winner, winnerId: e.winnerId });
       this.opts.log?.(`match in room ${this.opts.room} ended: ${e.winner}`);
       this.opts.ended?.(e.winner);
     });
     this.sim.scores.onPoints = (id, points, reason) => this.byId.get(id)?.events.push({ k: 'points', points, reason });
+    // Progress (signed-in players): score into XP, kills to the weapon, building once a structure.
+    const now = () => this.sim.tick * SIM_DT;
+    this.sim.scores.onScore = (id, points, reason, other) => this.byId.get(id)?.progress?.points(reason, points, now(), other);
+    const weaponIds = new Map(Object.values(WEAPONS).map((w) => [w.name, w.id]));
+    bus.on('combat:kill', (e) => {
+      const tr = e.attackerId === undefined ? undefined : this.byId.get(e.attackerId)?.progress;
+      if (!tr || e.victimId === e.attackerId) return;
+      if (!MATCH.ffa && e.victimTeam && e.victimTeam === e.attackerTeam) return;
+      tr.kill(weaponIds.get(e.weapon) ?? null, e.headshot, !!e.melee);
+    });
+    bus.on('combatant:died', (e) => this.byId.get(e.id)?.progress?.death());
+    this.sim.onBuilt = (id, slot) => this.byId.get(id)?.progress?.builtAt(slot.id, slot.kind, now(), MATCH.truce);
+    this.sim.onRefilled = (id) => this.byId.get(id)?.progress?.refilled();
+    if (this.sim.fort) {
+      this.sim.fort.onLost = (slot) => {
+        for (const seat of this.seats.values()) seat.progress?.lostAt(slot.id, now());
+      };
+    }
     const vehicles = this.sim.vehicles;
     if (vehicles) {
       vehicles.onSeat = (s, v, seat, chute) => {

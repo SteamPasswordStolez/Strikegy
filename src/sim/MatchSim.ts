@@ -20,7 +20,7 @@ import { t } from '@/i18n';
 import { consumePulses, createInputState, type InputState } from '@/input/InputState';
 import { ZoneMode, matchFlagsFor, pickMode } from '@/modes/ZoneMode';
 import { simplifyInput } from '@/modes/simple';
-import { Fortifications, type FortPlan } from '@/modes/fortify';
+import { Fortifications, type FortPlan, type FortSlot } from '@/modes/fortify';
 import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWorld';
 import { EscortRules, FleetRules, GunGameRules, LastStandRules, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
@@ -123,6 +123,9 @@ export class MatchSim {
   readonly bus = new EventBus<GameEvents>();
   readonly registry = new HitboxRegistry();
   readonly scores = new ScoreTracker();
+  /** A person (or bot) finished a structure / refilled a station by one use (the game server's progress). */
+  onBuilt: ((id: number, slot: FortSlot) => void) | null = null;
+  onRefilled: ((id: number) => void) | null = null;
   readonly soldiers = new Map<number, Soldier>();
   readonly zoneMode: ZoneMode | null;
   /** Grenades in the world (their meshes go into a scene nobody draws). */
@@ -244,6 +247,8 @@ export class MatchSim {
       },
       owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: this.squadKey(s.id) }),
       points: (id, p, reason) => this.scores.award(id, p, reason),
+      built: (id, slot) => this.onBuilt?.(id, slot),
+      refilled: (id) => this.onRefilled?.(id),
     };
     this.bots = nav && opts.bots ? this.makeBots(nav, opts.bots) : null;
     if (this.bots) this.bots.vehicleNav = vehicleNav;

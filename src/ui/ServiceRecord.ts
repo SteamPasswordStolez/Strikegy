@@ -10,7 +10,6 @@ import { levelOf, nextRank, rankAt, xpForLevel } from '@/progression/levels';
 import {
   exportProfile,
   importProfile,
-  loadProfile,
   saveProfile,
   totalStats,
   type CareerStats,
@@ -18,6 +17,8 @@ import {
   type Profile,
 } from '@/progression/profile';
 import { uiSound } from '@/audio/uiSounds';
+import { accountConfig, cachedAccount, currentProfile, deleteAccount, linkProvider, signOut, signedIn } from '@/net/account';
+import { loginButtons } from './loginButtons';
 import { insigniaAt, rankLabel, rankTitle } from './rankInsignia';
 import './progress.css';
 
@@ -61,7 +62,7 @@ export interface ServiceRecordOptions {
 
 export function renderServiceRecord(body: HTMLElement, o: ServiceRecordOptions): void {
   body.classList.add('lb-record');
-  const p = loadProfile();
+  const p = currentProfile();
   const sr = el('div', 'sr', body);
   head(sr, p);
   const left = el('div', 'sr-section', sr);
@@ -129,7 +130,7 @@ function numbers(parent: HTMLElement, s: CareerStats): void {
       el('div', 'ds-num', tile, v);
     }
   };
-  const finished = s.matches - s.quits - s.idle;
+  const finished = s.matches - s.quits - s.idle - s.stopped;
   group('rec.summary', [
     ['rec.matches', n(s.matches)],
     ['rec.winRate', pct(s.wins, finished)],
@@ -188,52 +189,93 @@ function recent(parent: HTMLElement, list: MatchRecord[]): void {
 
 function account(parent: HTMLElement, p: Profile, o: ServiceRecordOptions): void {
   el('div', 'ds-label sr-group', parent, t('rec.account'));
+  const acc = cachedAccount();
   const acts = el('div', 'sr-acts', parent);
-  const button = (label: MessageKey, fn: () => void) => {
-    const b = el('button', 'ds-btn ghost', acts, t(label));
+  const button = (label: MessageKey, fn: () => void, cls = 'ghost') => {
+    const b = el('button', `ds-btn ${cls}`, acts, t(label));
     b.type = 'button';
     b.addEventListener('pointerenter', () => uiSound('hover'));
     b.addEventListener('click', fn);
+    return b;
   };
   button('rec.rename', () => {
     uiSound('open');
     o.rename();
   });
-  button('rec.export', () => {
-    uiSound('select');
-    const blob = new Blob([exportProfile(p)], { type: 'application/json' });
-    const a = document.createElement('a');
-    const d = new Date();
-    a.href = URL.createObjectURL(blob);
-    a.download = `strikegy-profile-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  });
-  const file = el('input', '', acts);
-  file.type = 'file';
-  file.accept = '.json,application/json';
-  file.hidden = true;
-  file.addEventListener('change', () => {
-    const f = file.files?.[0];
-    file.value = '';
-    if (!f) return;
-    void f.text().then((text) => {
-      const got = importProfile(text);
-      if (!got) return dialog(o.root, t('rec.importBad'), null);
-      const ask = t('rec.importAsk')
-        .replace('{n}', String(levelOf(p.xp).level))
-        .replace('{m}', String(levelOf(got.xp).level));
-      dialog(o.root, ask, () => {
-        saveProfile(got);
-        o.redraw();
+  if (signedIn()) {
+    // Signed in: which providers, joining the other one, signing out, deleting the account.
+    const who = acc?.providers.length ? acc.providers.map((x) => t(`acct.name.${x}` as MessageKey)).join(' · ') : t(acc ? 'acct.name.test' : 'acct.checking');
+    el('div', 'sr-acts-note', parent, t('acct.signedInWith').replace('{who}', who));
+    void accountConfig().then((cfg) => {
+      for (const prov of cfg?.providers ?? [])
+        if (acc && !acc.providers.includes(prov))
+          button(
+            `acct.link.${prov}` as MessageKey,
+            () =>
+              void linkProvider(prov).then((ok) => {
+                if (!ok) dialog(o.root, t('acct.linkFailed'), null);
+                o.redraw();
+              }),
+          );
+    });
+    button('acct.signOut', () => {
+      uiSound('back');
+      void signOut().then(o.redraw);
+    });
+    button('acct.delete', () =>
+      dialog(o.root, t('acct.deleteAsk'), () => {
+        void deleteAccount().then((ok) => {
+          if (!ok) dialog(o.root, t('acct.deleteFailed'), null);
+          o.redraw();
+        });
+      }),
+    ).classList.add('danger');
+    el('div', 'sr-acts-note', parent, t('acct.savedOnServer'));
+  } else {
+    // A guest: signing in (the progress here moves into the account), and the file buttons meanwhile.
+    button('rec.export', () => {
+      uiSound('select');
+      const blob = new Blob([exportProfile(p)], { type: 'application/json' });
+      const a = document.createElement('a');
+      const d = new Date();
+      a.href = URL.createObjectURL(blob);
+      a.download = `strikegy-profile-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    const file = el('input', '', acts);
+    file.type = 'file';
+    file.accept = '.json,application/json';
+    file.hidden = true;
+    file.addEventListener('change', () => {
+      const f = file.files?.[0];
+      file.value = '';
+      if (!f) return;
+      void f.text().then((text) => {
+        const got = importProfile(text);
+        if (!got) return dialog(o.root, t('rec.importBad'), null);
+        const ask = t('rec.importAsk')
+          .replace('{n}', String(levelOf(p.xp).level))
+          .replace('{m}', String(levelOf(got.xp).level));
+        dialog(o.root, ask, () => {
+          saveProfile(got);
+          o.redraw();
+        });
       });
     });
-  });
-  button('rec.import', () => {
-    uiSound('select');
-    file.click();
-  });
-  el('div', 'sr-acts-note', parent, t('rec.localNote'));
+    button('rec.import', () => {
+      uiSound('select');
+      file.click();
+    });
+    el('div', 'sr-acts-note', parent, t('rec.localNote'));
+    el('div', 'ds-label sr-group', parent, t('acct.title'));
+    el('div', 'sr-acts-note', parent, t('acct.guestNote'));
+    loginButtons(parent, o.redraw, (text) => dialog(o.root, text, null));
+  }
+  const privacy = el('a', 'sr-privacy', parent, t('acct.privacy'));
+  privacy.href = `${import.meta.env.BASE_URL}privacy/`;
+  privacy.target = '_blank';
+  privacy.rel = 'noopener';
 }
 
 /** A small design-system dialog: a line, then OK (and cancel when there is something to confirm). */

@@ -11,6 +11,9 @@ Type=simple
 User=steampasswordstolen
 WorkingDirectory=/home/steampasswordstolen/strikegy
 Environment=PORT=8787
+# Accounts (docs/server-setup.md 8): the public address here, the secrets in a root-only file.
+Environment=STRIKEGY_PUBLIC_URL=https://game.strikegy.xyz
+EnvironmentFile=-/etc/strikegy.env
 # Bundle the server from the checkout, then run it.
 ExecStartPre=/usr/bin/npm run server:build
 ExecStart=/usr/bin/node dist-server/main.js

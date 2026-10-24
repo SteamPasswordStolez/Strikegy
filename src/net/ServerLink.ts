@@ -162,7 +162,7 @@ export class ServerLink {
   }
 
   /** Connects to the first server that answers and says hello. */
-  static async connect(urls: readonly string[], hello: { name: string; uid: string; device: Device }): Promise<ServerLink> {
+  static async connect(urls: readonly string[], hello: { name: string; uid: string; device: Device; token?: string }): Promise<ServerLink> {
     let last: unknown = new ServerError('connect', 'no server');
     for (const url of urls) {
       try {

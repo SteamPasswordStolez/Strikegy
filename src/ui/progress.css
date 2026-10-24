@@ -415,3 +415,32 @@ body.overlay-up .pt {
     font-size: calc(var(--u) * 3.2);
   }
 }
+
+/* ---------- Accounts (step 2): sign-in buttons, the record's account row ---------- */
+.login-btns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.mp-login-title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+.mm-card-guest {
+  font-size: var(--fs-xs);
+}
+.sr-acts .ds-btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.sr-privacy {
+  display: inline-block;
+  margin-top: var(--s4);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.sr-privacy:hover {
+  color: var(--ink);
+}

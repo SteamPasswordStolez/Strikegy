@@ -83,7 +83,9 @@ import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay, renderHint, type OverlayAction, type ResultProgress } from '@/ui/Overlay';
 import { ProgressToast } from '@/ui/ProgressToast';
 import { ProgressTracker, XP } from '@/progression/tracker';
-import { applySummary, beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, settleAbandoned } from '@/progression/profile';
+import { beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, type MatchSummary } from '@/progression/profile';
+import { commitMatch, currentProfile, noteServerProgress, settleLeft, signedIn } from '@/net/account';
+import type { RankId } from '@/progression/levels';
 import { Briefing } from '@/audio/briefing/Briefing';
 import { voiceLangFor } from '@/audio/briefing/cues';
 import { BriefingDirector } from '@/modes/briefingDirector';
@@ -277,6 +279,8 @@ export class Game {
   private progress: ProgressTracker | null = null;
   private toast: ProgressToast | null = null;
   private mapId = '';
+  /** A multiplayer match's progress as the server confirmed it (its `progress` message). */
+  private netProgress: ResultProgress | null = null;
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
   private mapImage: MapImage | null = null;
@@ -1236,6 +1240,8 @@ export class Game {
 
   /** XP for finishing the tutorial's basics, once a profile (progression plan 3-1-1). */
   private tutorialBonus(): void {
+    // A guest's profile (moved into an account on signing in); an account has it there already or goes without.
+    if (signedIn()) return;
     const prof = loadProfile();
     if (prof.flags.tutorial) return;
     const applied = grantXp(prof, XP.tutorial);
@@ -4997,7 +5003,7 @@ export class Game {
         line,
         ...this.resultStats(),
         board,
-        progress,
+        progress: progress ?? this.netProgress ?? undefined,
         actions: this.net
           ? [
               { label: t('mp.backToRoom'), onClick: () => location.reload() },
@@ -5056,8 +5062,8 @@ export class Game {
     const zm = this.zoneMode;
     if (this.progress || this.options.net || this.options.showcase || this.options.sandbox || this.options.tutorial || !b || b.enemies <= 0 || !zm) return;
     // A match left earlier (reloaded in the middle of it) counts as left before this one starts.
-    settleAbandoned();
-    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: loadProfile().xp });
+    settleLeft();
+    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: currentProfile().xp });
     tr.setClass(this.cls);
     tr.onLevel = (l) => this.toast?.level(l.level, l.promoted, tr.liveXp);
     this.scores.onScore = (id, pts, reason, other) => {
@@ -5112,11 +5118,10 @@ export class Game {
     this.progress = null;
     tr.score = this.scores.get(this.myId)?.score ?? 0;
     const summary = tr.finish(won);
-    const before = loadProfile();
-    const applied = applySummary(before, summary);
-    saveProfile(applied.profile);
+    // Signed in: into the account (the server checks it), else this browser's profile.
+    const done = commitMatch(summary);
     endLiveMatch();
-    return { summary, beforeXp: before.xp, afterXp: applied.profile.xp, promotions: applied.promotions };
+    return { summary, ...done };
   }
 
   /**
@@ -5125,6 +5130,17 @@ export class Game {
    */
   private confirmQuit(): void {
     const tr = this.progress;
+    // A room on the server (signed in): with three people or more leaving keeps what rose.
+    if (this.net && signedIn() && !this.matchOver) {
+      let people = 0;
+      for (const s of this.net.roster.values()) if (!s.bot) people++;
+      this.overlay.show(t('pause.leaveTitle'), t(people >= ProgressTracker.KEEP_AT ? 'pause.leaveKeep' : 'pause.leaveNet'), 'info');
+      this.overlay.setActions([
+        { label: t('pause.leaveGo'), primary: true, onClick: () => this.quit() },
+        { label: t('pause.leaveStay'), onClick: () => this.pause() },
+      ]);
+      return;
+    }
     if (!tr || this.matchOver) return this.quit();
     const cost = tr.leaveCost(1);
     const levels = cost.levels > 0 ? t('pause.leaveLevels').replace('{n}', String(cost.levels)) : '';
@@ -5154,6 +5170,12 @@ export class Game {
     const net = new NetMatch(opts.link, opts.start, this.me, { scene: r.scene, physics: this.physics, registry: this.registry, audio: this.audio, effects: this.effects, camera: r.camera });
     this.net = net;
     net.onEvents = (ev) => this.onNetEvents(ev);
+    // The match confirmed into the account (its end, or leaving): the result screen's XP.
+    opts.link.on('progress', (m) => {
+      const summary = m.summary as MatchSummary;
+      noteServerProgress(m.after, summary);
+      this.netProgress = { summary, beforeXp: m.before, afterXp: m.after, promotions: m.promotions as RankId[] };
+    });
     net.onRoster = () => this.netSquads(net);
     this.netSquads(net);
     // The room's chat (owner, 2026-10-14): Enter for everyone, Y for one's side (bindable).
@@ -5339,6 +5361,9 @@ export class Game {
           break;
         case 'spawn':
           if (e.id === this.myId) this.netSpawned(e);
+          break;
+        case 'prog':
+          this.toast?.level(e.level, e.promoted as RankId | null, e.xp);
           break;
         case 'down':
           if (e.id === this.myId) me.netDown(e.cause, e.by);

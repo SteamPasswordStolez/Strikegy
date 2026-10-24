@@ -56,7 +56,9 @@ const MAP: Record<string, string> = { iron_gate: '철문 주둔지', ardennes: '
 class AdminPage {
   private ws: WebSocket | null = null;
   private state: AdminState | null = null;
-  private tab: 'rooms' | 'people' | 'marks' | 'tools' = 'rooms';
+  private tab: 'rooms' | 'people' | 'marks' | 'accounts' | 'tools' = 'rooms';
+  /** The accounts tab's search (game name or id). */
+  private acctQuery = '';
   private open = new Set<string>();
   private timer = 0;
   private status: HTMLElement | null = null;
@@ -207,6 +209,7 @@ class AdminPage {
       ['rooms', `방 ${s.rooms.length}`],
       ['people', `접속자 ${people}`],
       ['marks', `제재 ${s.bans.length + s.mutes.length}`],
+      ...(s.accounts ? ([['accounts', `계정 ${s.accountCount ?? 0}`]] as const) : []),
       ['tools', '공지 · 금칙어'],
     ] as const) {
       const b = el('button', `ad-tab${this.tab === id ? ' sel' : ''}`, this.tabs, label);
@@ -223,6 +226,7 @@ class AdminPage {
     if (this.tab === 'rooms') this.rooms(s);
     else if (this.tab === 'people') this.people(s);
     else if (this.tab === 'marks') this.marks(s);
+    else if (this.tab === 'accounts') this.accounts(s);
     if (keep) {
       this.body.appendChild(keep);
       (keep as HTMLElement).hidden = this.tab !== 'tools';
@@ -323,6 +327,46 @@ class AdminPage {
         el('td', '', tr, until(m));
         this.button(el('td', 'ad-acts', tr), '해제', () => this.op({ op, id: m.id }), `${m.name}#${m.tag} 의 ${title}를 풀까요?`);
       }
+    }
+  }
+
+  /** Accounts (progression step 2): find by game name or id, reset progress, sign out everywhere. */
+  private accounts(s: AdminState): void {
+    el('p', 'ad-desc', this.body, '로그인한 계정입니다. 이름은 마지막에 쓴 게임 이름이고, 로그인 제공자의 번호·이메일은 서버에도 없습니다(해시만). 차단·채금은 접속자 탭에서 하면 계정에도 걸립니다.');
+    const row = el('div', 'ad-row', this.body);
+    const q = el('input', 'ad-input', row);
+    q.maxLength = 40;
+    q.placeholder = '게임 이름 일부 또는 계정 id 앞부분 (비우면 최근 순)';
+    q.value = this.acctQuery;
+    const go = (): void => {
+      this.acctQuery = q.value.trim();
+      this.op({ op: 'accounts', q: this.acctQuery });
+    };
+    el('button', 'ad-btn', row, '찾기').addEventListener('click', go);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') go();
+    });
+    const list = s.accounts ?? [];
+    if (!list.length) {
+      el('div', 'ad-empty', this.body, '찾은 계정이 없습니다.');
+      return;
+    }
+    const table = el('table', 'ad-table', this.body);
+    const head = el('tr', '', el('thead', '', table));
+    for (const h of ['이름', '레벨', '경험치', '경기', '로그인', '최근', 'id', '']) el('th', '', head, h);
+    const tbody = el('tbody', '', table);
+    for (const a of list) {
+      const tr = el('tr', '', tbody);
+      el('td', 'ad-who', tr, a.name || '-');
+      el('td', '', tr, `Lv ${a.level}`);
+      el('td', '', tr, a.xp.toLocaleString());
+      el('td', '', tr, String(a.matches));
+      el('td', '', tr, a.providers.map((p) => (p === 'google' ? 'Google' : p === 'discord' ? 'Discord' : p)).join(' · ') || '-');
+      el('td', '', tr, a.updated ? time(a.updated) : '-');
+      el('td', 'ad-mono', tr, a.id.slice(0, 10));
+      const acts = el('td', 'ad-acts', tr);
+      this.button(acts, '진행 초기화', () => this.op({ op: 'acctReset', id: a.id }), `${a.name || a.id} 의 진행(레벨, 전적, 기록)을 처음으로 되돌릴까요? 되돌릴 수 없습니다.`, true);
+      this.button(acts, '모든 기기 로그아웃', () => this.op({ op: 'acctRevoke', id: a.id }), `${a.name || a.id} 를 모든 기기에서 로그아웃시킬까요?`);
     }
   }
 
