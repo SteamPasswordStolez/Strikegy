@@ -12,6 +12,8 @@ import { writeFileSync } from 'node:fs';
  *   200 · e^(0.18 · (ln level)^1.3)   a smooth climb, steep early and gentler later but never flat
  *   × the promotion walls so far      (`WALLS`: 하사 ×2.5 the big one)
  *   × 1.012^tiers                     a step every 10 levels from 100 (tiers = ⌊(level − 100) / 10⌋ + 1)
+ *   × 2^⌊(level − 1000) / 20⌋          past the marshal, doubling every 20 levels (owner, 2026-10-24:
+ *                                     like Maple's 260-300; only there, so 원수 itself stays reachable)
  * Levels 1-100 stay cheap (owner, 2026-10-19).
  */
 const WALLS = {
@@ -35,6 +37,7 @@ const WALLS = {
   1000: 1.12,
 };
 const CLIMB = { base: 200, k: 0.18, p: 1.3, tier: 1.012 };
+const BOOM = { from: 1000, every: 20, x: 2 };
 
 /** XP from `level` to the next one. */
 export function xpToNext(level) {
@@ -42,7 +45,8 @@ export function xpToNext(level) {
   for (const [at, x] of Object.entries(WALLS)) if (Number(at) <= level) walls *= x;
   const tiers = level >= 100 ? Math.floor((level - 100) / 10) + 1 : 0;
   const climb = CLIMB.base * Math.exp(CLIMB.k * Math.log(level) ** CLIMB.p);
-  return Math.floor(climb * walls * CLIMB.tier ** tiers);
+  const boom = level >= BOOM.from ? BOOM.x ** Math.floor((level - BOOM.from) / BOOM.every) : 1;
+  return Math.floor(climb * walls * CLIMB.tier ** tiers * boom);
 }
 
 /** Korean military ranks by first level (owner, 2026-10-19), with insignia and title. */
@@ -192,7 +196,7 @@ function rewards(level) {
     if (level % 25 === 0) out.push(`카드 ${++card} (별 ${rankOf(level)[2].slice(-1)})`);
   } else {
     if (level === 1000) out.push(`위장: ${CAMO_GENERAL[1000]} (모든 총)`);
-    else if (level % 50 === 0) out.push(`원수 카드 변형 ${(level - 1000) / 50}`);
+    else if (level % 20 === 0) out.push(`원수 카드 변형 ${(level - 1000) / 20} (XP ×2 벽)`);
   }
   return out;
 }
@@ -232,7 +236,7 @@ md.push(
   '- **다음까지**: 그 레벨에서 다음 레벨로 가는 데 필요한 XP. **누적**: 그 레벨에 처음 닿을 때까지 모은 XP.',
 );
 md.push(
-  '- 필요 XP 식(메이플식, 오너 2026-10-24): `⌊ 200 · e^(0.18 · (ln 레벨)^1.3) × 진급 벽 × 1.012^구간 ⌋`. 진급 벽은 그때까지 거친 진급의 곱(일병·상병·병장 ×1.05, 하사 ×2.5, 중사·상사 ×1.08, 원사 ×1.1, 소위 ×1.12, 소령 ×1.08, 준장 ×1.1, 원수 ×1.12, 나머지 ×1.04), 구간은 100부터 10레벨마다 하나(⌊(레벨−100)/10⌋+1). 원수 뒤에도 평평해지지 않는다. 수치는 스크립트의 `WALLS` / `CLIMB`.',
+  '- 필요 XP 식(메이플식, 오너 2026-10-24): `⌊ 200 · e^(0.18 · (ln 레벨)^1.3) × 진급 벽 × 1.012^구간 ⌋`. 진급 벽은 그때까지 거친 진급의 곱(일병·상병·병장 ×1.05, 하사 ×2.5, 중사·상사 ×1.08, 원사 ×1.1, 소위 ×1.12, 소령 ×1.08, 준장 ×1.1, 원수 ×1.12, 나머지 ×1.04), 구간은 100부터 10레벨마다 하나(⌊(레벨−100)/10⌋+1). 원수(1000) 뒤에는 메이플 260-300 구간처럼 20레벨마다 ×2(1020, 1040 …; `× 2^⌊(레벨−1000)/20⌋`). 수치는 스크립트의 `WALLS` / `CLIMB` / `BOOM`.',
 );
 md.push(
   `- **시간**은 추정: 멀티 한 시간 약 ${n(PER_HOUR)} XP(10분 경기 한 판 약 3,000), 봇전(보통 난이도)은 XP 절반이라 두 배. 봇전 쉬움(×0.66)은 봇전 칸의 약 1.5배, 어려움(×1.2)은 약 0.83배. 부스터 없이. 실측은 만들 때.`,
