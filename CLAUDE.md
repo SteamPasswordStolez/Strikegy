@@ -1,7 +1,5 @@
 # Strikegy — notes for Claude
 
-> **Pending laptop update (2026-10-24, cloud session):** `v2` now carries `PROTOCOL_VERSION` 16 (fixed weapons: three new vehicle kinds in snapshots, new build spot ids), but the game server on the owner's laptop still runs protocol 15 (`server/laptop.json` = f9ff20f). A session on the owner's PC has to run `git pull && npm ci && npm run nav && sudo systemctl restart strikegy` in `~/strikegy` (the Oracle edge only if `server/rtc.ts` / `server/edge.ts` changed; they didn't), then set `server/laptop.json` to the commit and protocol it now runs and push + mirror. Until then the site's multiplayer runs on the old build under `/mp/` (no fixed weapons there). Remove this line once that is done.
-
 Browser FPS, a from-scratch rewrite of the older "Strikegy p1" (reference only; it lives outside this repo on the owner's PC and is not available in cloud sessions). Stack: Vite + TypeScript (strict) + Three.js + Rapier (`@dimforge/rapier3d-compat`) + recast-navigation. See README.md for commands, controls and layout.
 
 The owner writes in Korean; reply in Korean.
