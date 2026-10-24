@@ -431,10 +431,10 @@ N의 숫자들, 맨 아래 계정(연결된 구글·디스코드, 이름 바꾸�
 
 ## Q. 서버와 프로토콜
 
-**HTTP** (게임 서버 게이트웨이, Oracle Caddy가 `/auth/*`, `/api/*`를 노트북으로)
-- `GET /auth/google`, `/auth/discord` → 제공자로(PKCE `code_challenge`, `state`는 서버 메모리 10분)
-- `GET /auth/callback/<provider>` → 계정 찾기/만들기, 세션 토큰 발급, 팝업 페이지가 `postMessage({t:'login', token}, 'https://strikegy.xyz')` 후 닫힘(사이트 주소 목록에 있는 곳만)
-- `POST /api/logout`, `POST /api/delete` (토큰 필요)
+**HTTP** (게임 서버 게이트웨이, Oracle Caddy가 `/api/*`를 노트북으로; 로그인은 Better Auth, progression.md 4-1)
+- `/api/auth/*` → Better Auth (`signIn.social`, `callback/<provider>`, `sign-out`, `get-session`; `bearer` 플러그인이 응답 머리 `set-auth-token`으로 토큰을 준다)
+- 되돌림 페이지(사이트 쪽 작은 HTML)가 토큰을 `postMessage({t:'login', token}, <사이트 주소>)`로 본 창에 넘기고 닫힘(사이트 주소 목록에 있는 곳만)
+- `POST /api/delete` (토큰 필요: 계정·진행 전부 지움; Better Auth `deleteUser`와 진행 표)
 
 **웹소켓** (`lobbyProtocol.ts`에 추가, 프로토콜 버전 올림)
 - 위로: `hello`에 `token?`; `{t:'profile'}`(내 프로필 달라), `{t:'equip', ...}`, `{t:'buy', item}`, `{t:'boost', kind}`(가진 부스터 켜기), `{t:'box', n}`, `{t:'craft', item}`, `{t:'reroll', mission}`, `{t:'solo', summary}`(봇전 결과)
@@ -444,10 +444,10 @@ N의 숫자들, 맨 아래 계정(연결된 구글·디스코드, 이름 바꾸�
 
 **인벤토리**: `Profile.unlocks`는 꾸밈마다 `{ id, at, from, seen }`(얻은 때, 출처, 무기고에서 봤는지 → 빨간 점). 장착은 `equipped`(총별·차량 종류별·병과별·신분). 무기고에서 바꾸면 `{t:'equip'}`로 서버에(멀티 계정), 로컬 프로필은 바로 저장.
 
-**저장** (`.strikegy-accounts/`, git-ignored)
-- 계정마다 `<해시>.json`(`Profile`), 원자적 쓰기(임시 파일 → 이름 바꾸기), 바뀔 때만.
-- `sessions.json`(토큰 해시 → 계정, 만료), `shop.json`(이번 주 상품, 시리즈), 상자 결과는 계정 파일에 먼저 쓰고 보낸다.
-- 하루 한 번 압축 백업 7일치(노트북 cron).
+**저장** (`.strikegy-accounts.db`, SQLite, git-ignored; `better-sqlite3` 12.x — 13은 Node 22 이상)
+- Better Auth 표(`user`, `account`, `session`, `verification`) + `profile`(계정 id → `Profile` JSON, 바뀔 때만 한 줄 쓰기, 트랜잭션).
+- `shop`(이번 주 상품, 시리즈); 상자 결과는 `profile`에 먼저 쓰고 보낸다.
+- 하루 한 번 `.backup`으로 떠서 압축, 7일치(노트북 cron).
 
 **확인(안티치트)**: 솔로 요약의 상식 검사(4-2), 가진 것만 장착, 상자 결과는 서버 난수, 보급표는 서버 계산, 경기 정산은 서버 점수표에서.
 
