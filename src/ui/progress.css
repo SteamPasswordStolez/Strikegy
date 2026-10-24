@@ -1,0 +1,417 @@
+/*
+ * Progress on the design system (progression plan, step 1): rank insignia, the
+ * match's level notices (ProgressToast), the result screen's XP block (Overlay),
+ * the main menu's player card and the service record page (Lobby).
+ */
+
+/* ---------- Insignia (rankInsignia.ts) ---------- */
+.rk {
+  display: block;
+  height: 1em;
+  width: auto;
+  fill: currentColor;
+  --rk-cut: var(--bg, #0c0c0b);
+}
+.rk[data-tier='general'] {
+  fill: #d9b45b;
+}
+
+/* ---------- In-match notices: under the objective bar, over the deploy screen too ---------- */
+.pt {
+  position: fixed;
+  top: calc(var(--u) * 8.5);
+  left: 50%;
+  z-index: 47;
+  display: none;
+  align-items: center;
+  gap: var(--s3);
+  min-width: calc(var(--u) * 15);
+  max-width: min(calc(var(--u) * 26), calc(100vw - 32px));
+  padding: var(--s2) var(--s4) var(--s2) var(--s3);
+  border-left: var(--bar-w) solid var(--accent);
+  background: rgb(12 12 11 / 0.84);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+/* Not over the pause menu, the result or a message (the deploy screen isn't one of those). */
+body.overlay-up .pt {
+  display: none;
+}
+.pt.on {
+  display: flex;
+  animation: pt-in var(--t-slow) var(--ease) both;
+}
+.pt-pic {
+  flex: none;
+  font-size: calc(var(--u) * 2);
+  color: var(--ink);
+}
+.pt.promo .pt-pic {
+  font-size: calc(var(--u) * 3);
+  color: var(--accent);
+}
+.pt-body {
+  min-width: 0;
+  flex: 1;
+}
+.pt-title {
+  font: 700 var(--fs-md) / 1.15 var(--font-ui);
+}
+.pt.promo .pt-title {
+  font-size: var(--fs-lg);
+  color: var(--accent);
+}
+.pt-text {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt-bar {
+  height: 3px;
+  margin-top: var(--s2);
+  background: var(--surface-3);
+}
+.pt-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(var(--p, 0));
+  animation: pt-fill 0.9s 0.15s var(--ease) both;
+}
+@keyframes pt-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(var(--s2) * -1));
+  }
+}
+@keyframes pt-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+/* Touch: over the gun's numbers is taken; keep it under the zone bar, a little lower. */
+@media (pointer: coarse) {
+  .pt {
+    top: calc(var(--u) * 10);
+  }
+}
+
+/* ---------- Result screen: the match's XP over the standings (Overlay.setResult) ---------- */
+.rs-xp {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 var(--s6);
+  flex: none;
+  margin-bottom: var(--s4);
+  padding-bottom: var(--s4);
+  border-bottom: var(--line-w) solid var(--line);
+  animation: rs-in var(--t-slow) 0.35s var(--ease) both;
+}
+.rs-xp > .ds-label {
+  grid-column: 1 / -1;
+}
+.rs-xp-side {
+  min-width: 0;
+}
+.rs-xp-lines {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--s4);
+  margin-top: var(--s2);
+  font-size: var(--fs-sm);
+}
+.rs-xp-lines .x {
+  color: var(--ink-3);
+}
+.rs-xp-lines .ds-num {
+  text-align: right;
+}
+.rs-xp-lines .sum {
+  padding-top: var(--s1);
+  border-top: var(--line-w) solid var(--line);
+  font-weight: 700;
+  font-size: var(--fs-md);
+}
+.rs-xp-lines .sum.ds-num {
+  color: var(--accent);
+}
+.rs-lv {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin-top: var(--s2);
+}
+.rs-lv-pic {
+  font-size: calc(var(--u) * 2.25);
+}
+.rs-lv-name {
+  font-weight: 700;
+  font-size: var(--fs-lg);
+}
+.rs-lv-next {
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+  text-align: right;
+}
+.rs-lv-bar {
+  grid-column: 1 / -1;
+  height: calc(var(--bar-w) * 1.5);
+  background: var(--surface-3);
+}
+.rs-lv-bar i {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--accent);
+}
+.rs-lv.up .rs-lv-name {
+  animation: rs-pop 0.4s var(--ease);
+}
+.rs-promo {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin-top: var(--s4);
+  padding: var(--s3) var(--s4);
+  border-left: var(--bar-w) solid var(--accent);
+  background: var(--surface-1);
+  animation: rs-in var(--t-slow) var(--ease) both;
+}
+.rs-promo .rk {
+  height: calc(var(--u) * 3);
+  color: var(--accent);
+}
+.rs-promo-title {
+  font-weight: 800;
+  font-size: var(--fs-xl);
+  color: var(--accent);
+}
+.rs-promo-text {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.rs-xp-note {
+  margin-top: var(--s3);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.rs-xp-note.warn {
+  color: var(--warn);
+}
+@keyframes rs-pop {
+  40% {
+    color: var(--accent);
+    transform: scale(1.06);
+  }
+}
+
+/* ---------- Main menu: the player's card (rank, level, XP bar) ---------- */
+.mm-profile.mm-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: var(--s3);
+  row-gap: 3px;
+  height: auto;
+  min-width: calc(var(--u) * 15);
+  padding: var(--s2) var(--s4) var(--s2) var(--s3);
+  text-align: left;
+}
+.mm-card-pic {
+  grid-row: 1 / 3;
+  font-size: calc(var(--u) * 1.9);
+}
+.mm-card-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.mm-card-rank {
+  font-weight: 700;
+}
+.mm-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+  font-weight: 500;
+  font-size: var(--fs-sm);
+}
+.mm-card-bar {
+  height: 3px;
+  background: var(--surface-3);
+}
+.mm-card-bar i {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--accent);
+}
+.mm-note {
+  position: absolute;
+  top: var(--s7);
+  left: 50%;
+  z-index: 5;
+  max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+  animation: mm-note 6s var(--ease) both;
+}
+@keyframes mm-note {
+  0% {
+    opacity: 0;
+  }
+  5%,
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ---------- Service record (병적부) ---------- */
+.lb-record {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.sr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--u) * 26));
+  gap: var(--s6) var(--s7);
+  align-content: start;
+}
+.sr-head {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s2) var(--s5);
+}
+.sr-pic {
+  grid-row: 1 / 4;
+  font-size: calc(var(--u) * 4.5);
+}
+.sr-rank {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  line-height: 1;
+}
+.sr-title {
+  color: var(--ink-2);
+}
+.sr-bar {
+  height: calc(var(--bar-w) * 1.5);
+  background: var(--surface-3);
+}
+.sr-bar i {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--accent);
+}
+.sr-next {
+  grid-column: 2 / 4;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s2) var(--s5);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.sr-total {
+  grid-row: 1;
+  grid-column: 3;
+  text-align: right;
+}
+.sr-total .ds-num {
+  font-size: var(--fs-xl);
+}
+.sr-section {
+  min-width: 0;
+}
+.sr-section > .ds-label {
+  display: block;
+  margin-bottom: var(--s2);
+}
+.sr-kinds {
+  margin-bottom: var(--s3);
+}
+.sr-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--u) * 8.5), 1fr));
+  gap: var(--line-w);
+}
+.sr-tile {
+  padding: var(--s2) var(--s3);
+  background: var(--surface-1);
+}
+.sr-tile .ds-num {
+  margin-top: 2px;
+  font-size: var(--fs-xl);
+  line-height: 1.1;
+}
+.sr-group {
+  display: block;
+  margin: var(--s4) 0 var(--s2);
+}
+.sr-matches .ds-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--s3);
+  align-items: center;
+}
+.sr-res {
+  width: calc(var(--u) * 3.2);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+}
+.sr-res.win {
+  color: var(--ally);
+}
+.sr-res.loss {
+  color: var(--enemy);
+}
+.sr-res.left,
+.sr-res.idle {
+  color: var(--ink-3);
+}
+.sr-match-main {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sr-match-side {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  text-align: right;
+  white-space: nowrap;
+}
+.sr-empty {
+  color: var(--ink-3);
+}
+.sr-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.sr-acts-note {
+  margin-top: var(--s2);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+@media (max-width: 860px), (max-height: 480px) {
+  .sr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sr-pic {
+    font-size: calc(var(--u) * 3.2);
+  }
+}

@@ -93,6 +93,7 @@ export class SettingsPanel {
       const auto = t(`lobby.q.${autoQuality}` as MessageKey);
       this.choice(rows, 'lobby.quality', 'quality', ['auto', 'low', 'medium', 'high'] as const, (v) => (v === 'auto' ? `${t('lobby.q.auto')} (${auto})` : t(`lobby.q.${v}` as MessageKey)));
       this.toggle(rows, 'lobby.showFps', 'showFps');
+      this.choice(rows, 'lobby.progressNotices', 'progressNotices', ['all', 'levels', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.pn.${v}` as MessageKey)));
       if (!this.opts.live) this.toggle(rows, 'lobby.menuScene', 'menuScene');
     } else {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
@@ -167,7 +168,7 @@ export class SettingsPanel {
     });
   }
 
-  private choice<K extends 'quality' | 'locale', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
+  private choice<K extends 'quality' | 'locale' | 'progressNotices', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const v of values) {
       const b = el('button', v === this.s[key] ? 'sel' : '', seg);

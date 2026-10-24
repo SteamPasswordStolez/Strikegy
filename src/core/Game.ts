@@ -80,7 +80,10 @@ import { HUD } from '@/ui/HUD';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
-import { Overlay, renderHint, type OverlayAction } from '@/ui/Overlay';
+import { Overlay, renderHint, type OverlayAction, type ResultProgress } from '@/ui/Overlay';
+import { ProgressToast } from '@/ui/ProgressToast';
+import { ProgressTracker, XP } from '@/progression/tracker';
+import { applySummary, beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, settleAbandoned } from '@/progression/profile';
 import { Briefing } from '@/audio/briefing/Briefing';
 import { voiceLangFor } from '@/audio/briefing/cues';
 import { BriefingDirector } from '@/modes/briefingDirector';
@@ -270,6 +273,10 @@ export class Game {
   /** Last soldier standing: the circle and the crates. */
   private lastStandVisuals: LastStandVisuals | null = null;
   private matchOver = false;
+  /** This match's progress (solo bot matches; progression step 1), and the notices it raises. */
+  private progress: ProgressTracker | null = null;
+  private toast: ProgressToast | null = null;
+  private mapId = '';
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
   private mapImage: MapImage | null = null;
@@ -453,6 +460,7 @@ export class Game {
   }
   private set cls(c: ClassId) {
     this.me.cls = c;
+    this.progress?.setClass(c);
   }
   /** Bot matches use a deploy screen: the player is off the field until deploying. */
   private get deployFlow(): boolean {
@@ -713,6 +721,7 @@ export class Game {
     this.playerSpawns = map.spawns.filter(ownSpawn);
     this.mapSpawns = map.spawns;
     this.mapName = map.meta.name;
+    this.mapId = map.meta.id;
 
     const botOpts = this.options.bots ?? null;
     if (!botOpts) {
@@ -903,6 +912,8 @@ export class Game {
    * click is too long ago, the first click on the game takes it.
    */
   private begin(): void {
+    if (!this.options.showcase) this.toast ??= new ProgressToast(this.container, this.settings.progressNotices);
+    this.setupProgress();
     this.startTutorial();
     this.audio.unlock();
     this.running = true;
@@ -1181,7 +1192,7 @@ export class Game {
             },
           ]
         : []),
-      { label: t('pause.quit'), primary: true, onClick: () => this.quit() },
+      { label: t('pause.quit'), primary: true, onClick: () => this.confirmQuit() },
     ];
   }
 
@@ -1220,6 +1231,19 @@ export class Game {
     saveSeen(seen);
     this.tutorial = null;
     this.tutorialEndLeft = skipped ? 0 : 5;
+    if (!skipped && seen.basics) this.tutorialBonus();
+  }
+
+  /** XP for finishing the tutorial's basics, once a profile (progression plan 3-1-1). */
+  private tutorialBonus(): void {
+    const prof = loadProfile();
+    if (prof.flags.tutorial) return;
+    const applied = grantXp(prof, XP.tutorial);
+    applied.profile.flags.tutorial = true;
+    saveProfile(applied.profile);
+    const xp = applied.profile.xp;
+    this.toast?.bonus(t('prog.tutorial'), t('prog.tutorialXp').replace('{n}', XP.tutorial.toLocaleString()), xp);
+    for (let l = applied.before.level + 1; l <= applied.after.level; l++) this.toast?.level(l, null, xp);
   }
 
   /** Feeds the tutorial what the player did this frame (input still holds its presses). */
@@ -1278,6 +1302,7 @@ export class Game {
         if (key === 'masterVolume') this.audio.setVolume(this.settings.masterVolume);
         if (key === 'voiceVolume') this.audio.setVoiceVolume(this.settings.voiceVolume);
         if (key === 'subtitles') this.briefing?.setSubtitles(this.settings.subtitles);
+        if (key === 'progressNotices') this.toast?.setSetting(this.settings.progressNotices);
         if (key === 'renderScale') this.renderer.setRenderScale(this.settings.renderScale);
         // Toggled down when crouching becomes held: stand up (the key isn't held).
         if (key === 'crouchHold' && this.settings.crouchHold && this.player.crouchToggled) this.kbm.flipCrouchOnce();
@@ -1495,6 +1520,7 @@ export class Game {
     const p = this.player;
     this.simTime += dt;
     if (this.sea) this.sea.time = this.simTime;
+    if (this.progress && !this.matchOver) this.progress.tick(dt, input.moveX !== 0 || input.moveY !== 0 || input.fire || input.jump || input.lookYaw !== 0 || input.lookPitch !== 0);
     this.throwBlock = Math.max(0, this.throwBlock - dt);
     this.throwCooldown = Math.max(0, this.throwCooldown - dt);
 
@@ -1915,7 +1941,7 @@ export class Game {
         destroyed: (v, by) => this.vehicleDestroyed(v, by),
         roadkill: (v, victim) => this.roadkill(v, victim),
         damage: (v, by, taken) => {
-          if (sea) this.scores.award(by.id, seaDamagePoints(v, by, taken));
+          if (sea) this.scores.award(by.id, seaDamagePoints(v, by, taken), 'sea');
         },
         removed: (v) => this.posts?.removed(v),
       },
@@ -3070,7 +3096,7 @@ export class Game {
       if (input.interactPressed) {
         give.medkits = MEDKIT.carried;
         this.giveReady.set(`${this.myId}>${give.id}:kit`, this.simTime + MEDKIT.giveCooldown);
-        this.scores.resupply(this.myId);
+        this.scores.resupply(this.myId, give.id);
         this.audio.resupply();
       }
       return;
@@ -3157,13 +3183,16 @@ export class Game {
     if (job.type === 'use') return;
     if (job.type === 'refill') {
       if (fort.refill(job.station, dt)) {
-        this.scores.award(this.myId, REFILL_POINTS);
+        this.scores.award(this.myId, REFILL_POINTS, 'refill');
+        this.progress?.refilled();
         this.audio.resupply();
       }
     } else {
       const r = fort.work(job.slot, dt, this.cls, (s) => this.inTheWay(s));
-      this.scores.award(this.myId, r.points);
+      this.scores.award(this.myId, r.points, 'build');
       if (r.done) {
+        // XP once for the finished structure (half in the fortress build phase), not for the time spent.
+        this.progress?.builtAt(job.slot.id, job.slot.kind, this.simTime, MATCH.truce);
         this.hud.notify(`${t(`fort.${job.slot.kind}` as MessageKey)} ${t('fort.built')}`, 'ally');
         this.audio.resupply();
       }
@@ -3193,7 +3222,7 @@ export class Game {
       if (needKit && b.cls === 'medic' && this.giveOk(`${b.id}>${this.myId}:kit`)) {
         this.medkits = MEDKIT.carried;
         this.giveReady.set(`${b.id}>${this.myId}:kit`, this.simTime + MEDKIT.giveCooldown);
-        this.scores.resupply(b.id);
+        this.scores.resupply(b.id, this.myId);
         this.hud.notify(`${t('notify.gotMedkit')} — ${b.name}`, 'ally');
         this.audio.resupply();
         return;
@@ -3201,7 +3230,7 @@ export class Game {
       if (needAmmo && b.cls === 'support' && this.giveOk(`${b.id}>${this.myId}:ammo`)) {
         this.weapons.refillReserve();
         this.giveReady.set(`${b.id}>${this.myId}:ammo`, this.simTime + AMMO_GIVE_COOLDOWN);
-        this.scores.resupply(b.id);
+        this.scores.resupply(b.id, this.myId);
         this.hud.notify(`${t('notify.gotAmmo')} — ${b.name}`, 'ally');
         this.audio.resupply();
         return;
@@ -3758,6 +3787,7 @@ export class Game {
   }
 
   private updateHud(dt: number): void {
+    this.toast?.update(dt);
     this.updateMinimap(dt);
     const w = this.weapons;
     const s = w.state;
@@ -4058,7 +4088,7 @@ export class Game {
     if (MATCH.simple) return;
     const fort = new Fortifications(plan, new FortModels(this.surfaces), this.physics, this.impacts, this.nav);
     fort.onChange = () => this.renderer.requestShadowUpdate();
-    fort.onPoints = (id, points) => this.scores.award(id, points);
+    fort.onPoints = (id, points, reason) => this.scores.award(id, points, reason);
     this.renderer.scene.add(fort.group);
     // Bake the stations into the navmesh now rather than over the first frames.
     this.nav?.update(4096);
@@ -4193,7 +4223,7 @@ export class Game {
     }
     // One sector open: start on what each side holds nearest the fight (the base can be far from it).
     if (zm && zm.kind !== 'zone') bots.redeployAll();
-    this.bus.on('combatant:resupplied', (e) => this.scores.resupply(e.byId));
+    this.bus.on('combatant:resupplied', (e) => this.scores.resupply(e.byId, e.id));
     // Revives: points to the reviver, a line in the feed for the player's side.
     this.bus.on('combatant:revived', (e) => {
       this.scores.revive(e.byId, e.medic);
@@ -4875,7 +4905,7 @@ export class Game {
     }
     if (e.type === 'tag') {
       // Points on the scoreboard for whoever picked it up; the popup is the player's own.
-      this.scores.award(e.by, e.confirmed ? 50 : 30);
+      this.scores.award(e.by, e.confirmed ? 50 : 30, 'tag');
       if (e.by === this.myId) this.hud.scorePopup(e.confirmed ? 50 : 30, t(e.confirmed ? 'points.confirm' : 'points.deny'));
       return;
     }
@@ -4943,6 +4973,8 @@ export class Game {
     const solo = this.zoneMode?.match instanceof SoloRules;
     const won = solo ? (winnerId ?? this.zoneMode?.match.winnerId) === this.myId : winner === this.myTeam;
     this.briefDirector?.end(won);
+    // Confirmed at once (the result screen's "again" reloads the page).
+    const progress = this.confirmProgress(won);
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;
@@ -4965,6 +4997,7 @@ export class Game {
         line,
         ...this.resultStats(),
         board,
+        progress,
         actions: this.net
           ? [
               { label: t('mp.backToRoom'), onClick: () => location.reload() },
@@ -5013,6 +5046,95 @@ export class Game {
 
   // ---------------------------------------------------------------------------
   // A match on the game server
+
+  // ---------------------------------------------------------------------------
+  // Progress (progression plan step 1): solo bot matches add to the local profile.
+
+  /** A bot match that can end (zones, a mode) counts; the range, the tutorial and a skirmish don't. */
+  private setupProgress(): void {
+    const b = this.options.bots;
+    const zm = this.zoneMode;
+    if (this.progress || this.options.net || this.options.showcase || this.options.sandbox || this.options.tutorial || !b || b.enemies <= 0 || !zm) return;
+    // A match left earlier (reloaded in the middle of it) counts as left before this one starts.
+    settleAbandoned();
+    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: loadProfile().xp });
+    tr.setClass(this.cls);
+    tr.onLevel = (l) => this.toast?.level(l.level, l.promoted, tr.liveXp);
+    this.scores.onScore = (id, pts, reason, other) => {
+      if (id === this.myId) tr.points(reason, pts, this.simTime, other);
+    };
+    this.bus.on('combat:kill', (e) => this.progressKill(e));
+    this.bus.on('combatant:died', (e) => {
+      if (e.id === this.myId) tr.death();
+    });
+    this.bus.on('weapon:fired', () => tr.shot());
+    this.bus.on('combat:hit', (e) => {
+      if (e.byPlayer && e.damage > 0) tr.hit();
+    });
+    if (this.fort) this.fort.onLost = (slot) => tr.lostAt(slot.id, this.simTime);
+    this.progress = tr;
+    beginLiveMatch({ kind: 'bots', map: this.mapId, mode: zm.kind, at: Date.now() });
+  }
+
+  /** Weapon ids by the name kill events carry. */
+  private static weaponByName: Map<string, WeaponId> | null = null;
+
+  /** One's own kill for the record (and the weapon's), or a teammate's beside one's own structure. */
+  private progressKill(e: GameEvents['combat:kill']): void {
+    const tr = this.progress;
+    if (!tr || this.matchOver) return;
+    const find = (id: number | undefined) => {
+      if (id !== undefined) for (const c of this.combatants()) if (c.id === id) return c;
+      return undefined;
+    };
+    const victim = find(e.victimId);
+    if (e.attackerId === this.myId) {
+      if (!victim || victim.id === this.myId || friends(victim, this.meSide)) return;
+      Game.weaponByName ??= new Map(Object.values(WEAPONS).map((w) => [w.name, w.id as WeaponId]));
+      tr.kill(Game.weaponByName.get(e.weapon) ?? null, e.headshot, !!e.melee);
+      return;
+    }
+    // Cover: a teammate's kill from within 2 m of a structure one built.
+    const fort = this.fort;
+    const by = find(e.attackerId);
+    if (!fort || !by || by.id === this.myId || !friends(by, this.meSide) || (victim && friends(victim, this.meSide))) return;
+    for (const sl of fort.slots)
+      if (sl.built && tr.owns(sl.id) && fort.occupies(sl, by.feet, 2)) {
+        tr.coverAssist(sl.id);
+        return;
+      }
+  }
+
+  /** The match is over with the player in it: the bonuses, then the profile saved. */
+  private confirmProgress(won: boolean): ResultProgress | undefined {
+    const tr = this.progress;
+    if (!tr) return undefined;
+    this.progress = null;
+    tr.score = this.scores.get(this.myId)?.score ?? 0;
+    const summary = tr.finish(won);
+    const before = loadProfile();
+    const applied = applySummary(before, summary);
+    saveProfile(applied.profile);
+    endLiveMatch();
+    return { summary, beforeXp: before.xp, afterXp: applied.profile.xp, promotions: applied.promotions };
+  }
+
+  /**
+   * The pause menu's quit: in a match that counts, first what leaving costs
+   * (a bot match left early is undone; the main menu records it as left).
+   */
+  private confirmQuit(): void {
+    const tr = this.progress;
+    if (!tr || this.matchOver) return this.quit();
+    const cost = tr.leaveCost(1);
+    const levels = cost.levels > 0 ? t('pause.leaveLevels').replace('{n}', String(cost.levels)) : '';
+    const line = cost.xp > 0 ? t('pause.leaveLose').replace('{xp}', cost.xp.toLocaleString()).replace('{levels}', levels) : t('pause.leaveNothing');
+    this.overlay.show(t('pause.leaveTitle'), line, 'info');
+    this.overlay.setActions([
+      { label: t('pause.leaveGo'), primary: true, onClick: () => this.quit() },
+      { label: t('pause.leaveStay'), onClick: () => this.pause() },
+    ]);
+  }
 
   /** Out of the match to the main menu (the room is left first, so the seat isn't kept). */
   private quit(): void {

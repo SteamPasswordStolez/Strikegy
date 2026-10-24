@@ -848,7 +848,7 @@ export class BotManager implements BotServices {
     if (job.type === 'build') {
       if (job.slot.built) return false;
       const r = fort.work(job.slot, dt, bot.cls, this.fortBlocked ?? (() => false));
-      fort.onPoints?.(bot.id, r.points);
+      fort.onPoints?.(bot.id, r.points, 'build');
       return !r.done;
     }
     const st = job.station;
@@ -861,7 +861,7 @@ export class BotManager implements BotServices {
       return false;
     }
     if (st.uses >= STATION.uses) return false;
-    if (fort.refill(st, dt)) fort.onPoints?.(bot.id, REFILL_POINTS);
+    if (fort.refill(st, dt)) fort.onPoints?.(bot.id, REFILL_POINTS, 'refill');
     return st.uses < STATION.uses;
   }
 

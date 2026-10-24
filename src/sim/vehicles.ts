@@ -175,7 +175,7 @@ export class MatchVehicles {
       destroyed: (v, by) => this.destroyed(v, by),
       roadkill: (v, w) => this.roadkill(v, w),
       damage: (v, by, taken) => {
-        if (sea) sim.scores.award(by.id, seaDamagePoints(v, by, taken));
+        if (sea) sim.scores.award(by.id, seaDamagePoints(v, by, taken), 'sea');
       },
       removed: (v) => this.posts?.removed(v),
     };

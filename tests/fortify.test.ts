@@ -204,7 +204,7 @@ describe('fortifications at runtime', () => {
   it('scores fractions of points without losing them', () => {
     const s = new ScoreTracker();
     s.add(1, 'A', 'blue');
-    for (let i = 0; i < 60; i++) s.award(1, 10 / 60);
+    for (let i = 0; i < 60; i++) s.award(1, 10 / 60, 'build');
     expect(s.get(1)!.score).toBe(10);
   });
 });

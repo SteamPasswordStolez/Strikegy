@@ -21,16 +21,20 @@ import { simpleAllowed, type MatchStart } from '@/net/lobbyProtocol';
 import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
+import { levelOf } from '@/progression/levels';
+import { loadProfile, settleAbandoned } from '@/progression/profile';
+import { insigniaAt, rankLabel } from './rankInsignia';
+import { renderServiceRecord } from './ServiceRecord';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
 
 /** The main menu's entries, top to bottom: play the biggest, then two more, then the small ones. */
-const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'credits'] as const;
+const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'record', 'credits'] as const;
 type Entry = (typeof ALL_ENTRIES)[number];
 const ENTRIES: readonly Entry[] = ALL_ENTRIES;
 const BIG_ENTRIES: readonly Entry[] = ['multi', 'range'];
-type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits';
+type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits' | 'record';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -132,6 +136,8 @@ export class Lobby {
     for (const ev of ['pointerdown', 'keydown'] as const) document.addEventListener(ev, () => void loadUiSounds(), { once: true });
     this.render();
     for (const m of [...MAPS.map((e) => e.id), RANGE_ID]) void this.load(m);
+    // A bot match left unfinished (the menu, a closed tab): its progress is gone; say so once.
+    if (settleAbandoned()) this.note(t('note.cancelled'));
     // First visit: a name before anything else.
     if (!this.playerName) this.editName(true);
     // Back from a match (or reloaded in one): straight to the multiplayer pages.
@@ -149,6 +155,13 @@ export class Lobby {
       },
       () => this.toggleLocale(),
     );
+  }
+
+  /** A line at the top for a few seconds. */
+  private note(text: string): void {
+    const n = el('div', 'ds-toast mm-note', this.root);
+    n.textContent = text;
+    setTimeout(() => n.remove(), 6500);
   }
 
   /** Korean <-> English, at once (a button named in the other language, so either reader finds it). */
@@ -296,7 +309,7 @@ export class Lobby {
     this.frame.dataset.dsTheme = 'bfv';
     if (!main)
       this.renderPageHead(
-        this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : this.screen === 'credits' ? 'menu.credits' : 'menu.settings',
+        this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : this.screen === 'credits' ? 'menu.credits' : this.screen === 'record' ? 'menu.record' : 'menu.settings',
       );
     const body = el('div', 'lb-body', this.frame);
     if (this.screen === 'main') this.renderMain(body);
@@ -306,6 +319,8 @@ export class Lobby {
       body.classList.add('lb-controls');
       const keys = el('div', 'ds-keys lb-keys', body);
       renderHint(keys, t(this.touch ? 'start.hintTouch' : 'start.hint'));
+    } else if (this.screen === 'record') {
+      renderServiceRecord(body, { rename: () => this.editName(false), redraw: () => this.render(), root: this.root });
     } else if (this.screen === 'credits') {
       body.classList.add('lb-credits');
       el('p', 'lb-credit-note', body).textContent = t('credits.note');
@@ -421,13 +436,19 @@ export class Lobby {
       uiSound('select');
       this.toggleLocale();
     });
-    const prof = el('button', 'mm-profile', corner);
-    prof.title = t('name.label');
-    prof.innerHTML = icon('user');
-    el('span', 'mm-profile-name', prof).textContent = this.playerName ?? '—';
+    // The player's card: rank, level and the XP bar; it opens the service record.
+    const at = levelOf(loadProfile().xp);
+    const prof = el('button', 'mm-profile mm-card', corner);
+    prof.title = t('menu.recordDesc');
+    el('span', 'mm-card-pic', prof).innerHTML = insigniaAt(at.level);
+    const line = el('span', 'mm-card-line', prof);
+    el('span', 'mm-card-rank', line).textContent = rankLabel(at.level);
+    el('span', 'mm-card-name', line).textContent = this.playerName ?? '—';
+    const bar = el('span', 'mm-card-bar', prof);
+    el('i', '', bar).style.setProperty('--p', (at.into / at.need).toFixed(4));
     prof.addEventListener('click', () => {
       uiSound('open');
-      this.editName(false);
+      this.go('record');
     });
     for (const b of [lang, prof]) b.addEventListener('pointerenter', () => uiSound('hover'));
 

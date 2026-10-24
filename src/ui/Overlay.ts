@@ -6,6 +6,10 @@ import './loading.css';
 import './result.css';
 import './pause.css';
 import './dialogs.css';
+import './progress.css';
+import { levelOf, type RankId } from '@/progression/levels';
+import type { MatchSummary } from '@/progression/profile';
+import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
 
 /** What the loading screen says about the match (Game sets it once the map is in). */
 export interface LoadingInfo {
@@ -16,6 +20,14 @@ export interface LoadingInfo {
   facts: string;
   /** The map from above (ui/mapPainter `paintMapCard`). */
   picture?: HTMLCanvasElement;
+}
+
+/** The result screen's XP block: what the match was worth and where it took the level. */
+export interface ResultProgress {
+  summary: MatchSummary;
+  beforeXp: number;
+  afterXp: number;
+  promotions: RankId[];
 }
 
 /** What the result screen shows (Game fills it when a match ends). */
@@ -36,6 +48,8 @@ export interface ResultInfo {
   board?: HTMLElement | null;
   /** First = Enter (the main one), second = Esc. */
   actions: OverlayAction[];
+  /** The match's XP, confirmed (progression), if it counted. */
+  progress?: ResultProgress;
 }
 
 /** What the pause menu shows (Game fills it on every pause). */
@@ -303,6 +317,8 @@ export class Overlay {
     }
 
     const board = div('rs-board', rs);
+    // The match's XP over the standings (the wide column has the room).
+    if (r.progress) this.resultXp(board, r.progress);
     if (r.board) {
       div('ds-label rs-board-label', board, t('result.board'));
       board.appendChild(r.board);
@@ -310,6 +326,97 @@ export class Overlay {
 
     this.buttons(div('rs-foot', rs), r.actions, 'start');
     this.root.classList.add('result');
+  }
+
+  /**
+   * The match's XP: each part and the multipliers, the sum, then the level bar
+   * filling from where the match started to where it ended (levels popping on
+   * the way; a click skips to the end) and the promotion, if there was one.
+   */
+  private resultXp(parent: HTMLElement, p: ResultProgress): void {
+    this.stopXpAnim();
+    const div = (cls: string, at: HTMLElement, text?: string): HTMLDivElement => {
+      const e = document.createElement('div');
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      at.appendChild(e);
+      return e;
+    };
+    const s = p.summary;
+    const box = div('rs-xp', parent);
+    div('ds-label', box, t('result.xp'));
+    if (s.result === 'idle') {
+      div('rs-xp-note warn', box, t('result.idle'));
+      return;
+    }
+    const lines = div('rs-xp-lines', box);
+    const n = (v: number) => Math.round(v).toLocaleString();
+    for (const l of s.lines) {
+      div('', lines, t(`xpLine.${l.key}` as MessageKey));
+      div('ds-num', lines, n(l.base));
+    }
+    for (const m of s.mult) {
+      div('x', lines, t(`mult.${m.key}` as MessageKey));
+      div('ds-num x', lines, `×${m.x}`);
+    }
+    div('sum', lines, t('result.xpTotal'));
+    div('sum ds-num', lines, `+${n(s.xp)}`);
+
+    const side = div('rs-xp-side', box);
+    const lv = div('rs-lv', side);
+    const pic = div('rs-lv-pic', lv);
+    const name = div('rs-lv-name', lv);
+    const next = div('rs-lv-next', lv);
+    const bar = div('rs-lv-bar', lv);
+    const fill = document.createElement('i');
+    bar.appendChild(fill);
+    let shown = -1;
+    const draw = (xp: number) => {
+      const at = levelOf(xp);
+      if (at.level !== shown) {
+        if (shown > 0) {
+          lv.classList.remove('up');
+          void lv.offsetWidth;
+          lv.classList.add('up');
+        }
+        shown = at.level;
+        pic.innerHTML = insigniaAt(at.level);
+        name.textContent = rankLabel(at.level);
+      }
+      fill.style.setProperty('--p', (at.into / at.need).toFixed(4));
+      next.textContent = t('result.toNext').replace('{n}', n(at.need - at.into));
+    };
+    draw(p.beforeXp);
+    const promo = p.promotions[p.promotions.length - 1];
+    const finish = () => {
+      this.stopXpAnim();
+      draw(p.afterXp);
+      if (promo && !box.querySelector('.rs-promo')) {
+        const pr = div('rs-promo', side);
+        pr.innerHTML = insigniaAt(levelOf(p.afterXp).level);
+        const txt = div('', pr);
+        div('rs-promo-title', txt, `${t('prog.promoted')} · ${rankName(levelOf(p.afterXp).level)}`);
+        div('rs-promo-text', txt, rankTitle(promo));
+      }
+      if (!box.querySelector('.rs-xp-note')) div('rs-xp-note', side, t(s.result === 'left' ? 'result.savedLeft' : 'result.saved'));
+    };
+    // After the rest has come in: about 1.6 s of filling, eased out.
+    const t0 = performance.now() + 900;
+    const len = 1600;
+    const step = (now: number) => {
+      const u = Math.min(1, Math.max(0, (now - t0) / len));
+      draw(p.beforeXp + (p.afterXp - p.beforeXp) * (1 - (1 - u) ** 3));
+      if (u >= 1) finish();
+      else this.xpAnim = requestAnimationFrame(step);
+    };
+    this.xpAnim = requestAnimationFrame(step);
+    box.addEventListener('click', finish);
+  }
+  private xpAnim = 0;
+
+  private stopXpAnim(): void {
+    cancelAnimationFrame(this.xpAnim);
+    this.xpAnim = 0;
   }
 
   /**
@@ -425,6 +532,7 @@ export class Overlay {
 
   hide(): void {
     this.stopTips();
+    this.stopXpAnim();
     this.stopActionKeys();
     this.stopPauseKeys();
     this.root.classList.add('hidden');

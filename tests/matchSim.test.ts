@@ -224,7 +224,7 @@ describe('a match on the game server (no view)', () => {
     const target = red.player.feet.clone();
     // No RP yet; then points for the squad: still only its leader may spend them.
     expect(sim.callIn(1, 'mortar', target)).toBe(false);
-    sim.scores.award(2, 900);
+    sim.scores.award(2, 900, 'tag');
     expect(sim.callIn(2, 'mortar', target)).toBe(false);
     const calls: string[] = [];
     sim.onCallIn = (k) => calls.push(k);
@@ -232,7 +232,7 @@ describe('a match on the game server (no view)', () => {
     expect(calls).toEqual(['mortar']);
     expect(sim.squadRp(sim.squadOf(1)!)).toBe(100);
     // The side's cooldown.
-    sim.scores.award(3, 900);
+    sim.scores.award(3, 900, 'tag');
     expect(sim.callIn(1, 'mortar', target)).toBe(false);
     run(sim, 8);
     expect(red.player.health.value < 100 || red.downed).toBe(true);

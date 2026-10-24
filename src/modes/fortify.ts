@@ -649,7 +649,9 @@ export class Fortifications {
   /** Fired when something that casts shadows appears or goes. */
   onChange: (() => void) | null = null;
   /** Score for building / refilling (combatant id, points; fractions are fine). */
-  onPoints: ((id: number, points: number) => void) | null = null;
+  onPoints: ((id: number, points: number, reason: 'build' | 'refill') => void) | null = null;
+  /** A finished structure went down (whoever built it). */
+  onLost: ((slot: FortSlot) => void) | null = null;
   /** A fixed weapon's spot finished (built back, or up at the start): the side that keeps the vehicles brings the weapon out there. */
   onPost: ((slot: FortSlot) => void) | null = null;
   private readonly icons: Record<StationKind, THREE.SpriteMaterial>;
@@ -915,6 +917,7 @@ export class Fortifications {
   /** Knocked down: back to an empty spot. */
   destroy(slot: FortSlot): void {
     if (!slot.built) return;
+    this.onLost?.(slot);
     slot.built = false;
     slot.work = 0;
     slot.health = 0;

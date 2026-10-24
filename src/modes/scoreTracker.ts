@@ -1,5 +1,6 @@
 import type { Team } from '@/world/mapTypes';
 import { friends } from './matchFlags';
+import type { ScoreReason } from '@/progression/tracker';
 
 /** Points per action (BF-style score column). */
 export const POINTS = { kill: 100, headshot: 25, capture: 150, neutralize: 75, revive: 100, reviveMedic: 150, resupply: 20 } as const;
@@ -26,6 +27,8 @@ export class ScoreTracker {
   private readonly rows = new Map<number, ScoreRow>();
   /** Points just earned (the player's become popups on the HUD; building points don't). */
   onPoints: ((id: number, points: number, reason: PointsReason) => void) | null = null;
+  /** Every point anyone scores and what for (progress: XP; `other` = who was handed something). */
+  onScore: ((id: number, points: number, reason: ScoreReason, other?: number) => void) | null = null;
 
   add(id: number, name: string, team: Team): void {
     if (!this.rows.has(id)) this.rows.set(id, { id, name, team, kills: 0, deaths: 0, captures: 0, score: 0 });
@@ -51,7 +54,11 @@ export class ScoreTracker {
     if (headshot) a.headshots = (a.headshots ?? 0) + 1;
     a.score += POINTS.kill + (headshot ? POINTS.headshot : 0);
     this.onPoints?.(a.id, POINTS.kill, 'kill');
-    if (headshot) this.onPoints?.(a.id, POINTS.headshot, 'headshot');
+    this.onScore?.(a.id, POINTS.kill, 'kill');
+    if (headshot) {
+      this.onPoints?.(a.id, POINTS.headshot, 'headshot');
+      this.onScore?.(a.id, POINTS.headshot, 'headshot');
+    }
   }
 
   death(id: number): void {
@@ -67,20 +74,23 @@ export class ScoreTracker {
     r.revives = (r.revives ?? 0) + 1;
     r.score += pts;
     this.onPoints?.(id, pts, 'revive');
+    this.onScore?.(id, pts, 'revive');
   }
 
-  /** Handed a teammate a medkit or ammo. */
-  resupply(id: number): void {
+  /** Handed a teammate (`to`) a medkit or ammo. */
+  resupply(id: number, to?: number): void {
     const r = this.rows.get(id);
     if (!r) return;
     r.score += POINTS.resupply;
     this.onPoints?.(id, POINTS.resupply, 'resupply');
+    this.onScore?.(id, POINTS.resupply, 'resupply', to);
   }
 
-  /** Points for building and refilling stations (fractions carry over). */
-  award(id: number, points: number): void {
+  /** Points for building, refilling stations, sea damage and dog tags (fractions carry over). */
+  award(id: number, points: number, reason: Extract<ScoreReason, 'build' | 'refill' | 'sea' | 'tag'>): void {
     const r = this.rows.get(id);
     if (!r) return;
+    this.onScore?.(id, points, reason);
     const carry = (this.carry.get(id) ?? 0) + points;
     // A hair of slack so sums like 60 x 1/6 don't land just under a whole point.
     const whole = Math.floor(carry + 1e-9);
@@ -98,6 +108,7 @@ export class ScoreTracker {
       const pts = kind === 'capture' ? POINTS.capture : POINTS.neutralize;
       r.score += pts;
       this.onPoints?.(id, pts, kind);
+      this.onScore?.(id, pts, kind);
     }
   }
 

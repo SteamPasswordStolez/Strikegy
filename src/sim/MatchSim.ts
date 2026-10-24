@@ -243,7 +243,7 @@ export class MatchSim {
         return false;
       },
       owner: (s) => ({ id: s.id, name: s.combatant.name, team: s.team, squad: this.squadKey(s.id) }),
-      points: (id, p) => this.scores.award(id, p),
+      points: (id, p, reason) => this.scores.award(id, p, reason),
     };
     this.bots = nav && opts.bots ? this.makeBots(nav, opts.bots) : null;
     if (this.bots) this.bots.vehicleNav = vehicleNav;
@@ -826,7 +826,7 @@ export class MatchSim {
       const reviving = !s.using && this.stepRevive(s, input.interact, dt);
       const gave = reviving || s.using ? null : stepGive(s, input, this.soldiers.values(), this.time, this.giveClock);
       if (gave) {
-        this.scores.resupply(s.id);
+        this.scores.resupply(s.id, gave.mate.id);
         this.onGive(s, gave.mate, gave.kind);
       }
       // E by a vehicle (nobody to revive or hand something to): in.

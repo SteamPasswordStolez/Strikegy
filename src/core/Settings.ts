@@ -25,6 +25,8 @@ export interface Settings {
   crouchHold: boolean;
   /** A live battle behind the main menu (desktop; touch screens never run it). */
   menuScene: boolean;
+  /** Level ups and promotions near the top of the screen during a match. */
+  progressNotices: 'all' | 'levels' | 'off';
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   renderScale: 0.9,
   crouchHold: false,
   menuScene: true,
+  progressNotices: 'all',
 };
 
 /** Korean for browsers set to Korean, English for everyone else (until the player picks one). */

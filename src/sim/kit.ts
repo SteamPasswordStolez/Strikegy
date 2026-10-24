@@ -31,7 +31,7 @@ export interface KitWorld {
   inTheWay(slot: FortSlot): boolean;
   owner(s: Soldier): GadgetOwner;
   /** Score (fractions are fine). */
-  points(id: number, points: number): void;
+  points(id: number, points: number, reason: 'build' | 'refill'): void;
   /** What the local view does about it (sounds); none on the server. */
   feedback?: KitFeedback;
 }
@@ -179,13 +179,13 @@ function hammer(s: Soldier, job: FortJob, dt: number, prev: number, w: KitWorld)
   if (job.type === 'use') return;
   if (job.type === 'refill') {
     if (fort.refill(job.station, dt)) {
-      w.points(s.id, REFILL_POINTS);
+      w.points(s.id, REFILL_POINTS, 'refill');
       w.feedback?.refilled?.();
     }
     return;
   }
   const r = fort.work(job.slot, dt, s.cls, (slot) => w.inTheWay(slot));
-  w.points(s.id, r.points);
+  w.points(s.id, r.points, 'build');
   if (r.done) w.feedback?.built?.(job.slot);
 }
 
