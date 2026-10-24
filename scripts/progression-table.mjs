@@ -6,47 +6,43 @@
 import { writeFileSync } from 'node:fs';
 
 /**
- * The XP curve, MapleStory-like (owner, 2026-10-24: "the steps were too plain and it went
- * flat at 15,000"): every level costs a little more than the last, every 10th level is a
- * step up, every promotion a wall; levels 1-100 stay cheap (owner, 2026-10-19) and it never
- * goes flat, past the marshal too. Rows: [first level, jump on reaching it, growth a level,
- * extra step on every 10th level]; the band's first level takes only the jump. Each level's
- * cost is rounded to 10 XP from the unrounded running value.
+ * The XP curve, MapleStory-like (owner, 2026-10-24: "plain steps, flat at the top, every
+ * number ending in 0: use logs and exponents, messy is fine"). Three factors, floored to
+ * whole XP so the numbers come out uneven:
+ *   200 · e^(0.18 · (ln level)^1.3)   a smooth climb, steep early and gentler later but never flat
+ *   × the promotion walls so far      (`WALLS`: 하사 ×2.5 the big one)
+ *   × 1.012^tiers                     a step every 10 levels from 100 (tiers = ⌊(level − 100) / 10⌋ + 1)
+ * Levels 1-100 stay cheap (owner, 2026-10-19).
  */
-const CURVE = [
-  [1, 1, 1.04, 1], // 이병: 200, quick growth like Maple's first levels
-  [10, 1.1, 1.015, 1], // 일병
-  [30, 1.1, 1.012, 1], // 상병
-  [60, 1.1, 1.012, 1], // 병장
-  [100, 2.5, 1.002, 1.06], // 하사: the first big wall
-  [130, 1.12, 1.002, 1.06], // 중사
-  [160, 1.12, 1.002, 1.06], // 상사
-  [200, 1.15, 1.002, 1.06], // 원사
-  [210, 1.2, 1.0003, 1.015], // 소위
-  [230, 1.03, 1.0003, 1.015], // 중위
-  [250, 1.03, 1.0003, 1.015], // 대위
-  [300, 1.06, 1.0003, 1.015], // 소령
-  [350, 1.03, 1.0003, 1.015], // 중령
-  [400, 1.03, 1.0003, 1.015], // 대령
-  [500, 1.12, 1.0001, 1.008], // 준장
-  [600, 1.03, 1.0001, 1.008], // 소장
-  [700, 1.03, 1.0001, 1.008], // 중장
-  [800, 1.03, 1.0001, 1.008], // 대장
-  [1000, 1.2, 1.0001, 1.005], // 원수, then on without end
-];
-const steps = [0];
-let raw = 200;
+const WALLS = {
+  10: 1.05,
+  30: 1.05,
+  60: 1.05,
+  100: 2.5,
+  130: 1.08,
+  160: 1.08,
+  200: 1.1,
+  210: 1.12,
+  230: 1.04,
+  250: 1.04,
+  300: 1.08,
+  350: 1.04,
+  400: 1.04,
+  500: 1.1,
+  600: 1.04,
+  700: 1.04,
+  800: 1.04,
+  1000: 1.12,
+};
+const CLIMB = { base: 200, k: 0.18, p: 1.3, tier: 1.012 };
 
 /** XP from `level` to the next one. */
 export function xpToNext(level) {
-  while (steps.length <= level) {
-    const l = steps.length;
-    const [first, jump, grow, ten] = CURVE.findLast(([f]) => f <= l);
-    if (l === first) raw *= jump;
-    else raw *= grow * (l % 10 === 0 ? ten : 1);
-    steps.push(Math.round(raw / 10) * 10);
-  }
-  return steps[level];
+  let walls = 1;
+  for (const [at, x] of Object.entries(WALLS)) if (Number(at) <= level) walls *= x;
+  const tiers = level >= 100 ? Math.floor((level - 100) / 10) + 1 : 0;
+  const climb = CLIMB.base * Math.exp(CLIMB.k * Math.log(level) ** CLIMB.p);
+  return Math.floor(climb * walls * CLIMB.tier ** tiers);
 }
 
 /** Korean military ranks by first level (owner, 2026-10-19), with insignia and title. */
@@ -236,7 +232,7 @@ md.push(
   '- **다음까지**: 그 레벨에서 다음 레벨로 가는 데 필요한 XP. **누적**: 그 레벨에 처음 닿을 때까지 모은 XP.',
 );
 md.push(
-  '- 필요 XP 곡선(메이플식, 오너 2026-10-24): 레벨마다 조금씩 늘고(×1.04 → ×1.0001), 100부터는 10레벨마다 한 계단 더(×1.06 → ×1.005), 진급할 때 벽(하사 ×2.5, 소위 ×1.2, 준장 ×1.12, 원수 ×1.2, 그 밖의 진급 ×1.03-1.15). 원수 뒤에도 평평해지지 않는다. 구간별 배수는 스크립트의 `CURVE`.',
+  '- 필요 XP 식(메이플식, 오너 2026-10-24): `⌊ 200 · e^(0.18 · (ln 레벨)^1.3) × 진급 벽 × 1.012^구간 ⌋`. 진급 벽은 그때까지 거친 진급의 곱(일병·상병·병장 ×1.05, 하사 ×2.5, 중사·상사 ×1.08, 원사 ×1.1, 소위 ×1.12, 소령 ×1.08, 준장 ×1.1, 원수 ×1.12, 나머지 ×1.04), 구간은 100부터 10레벨마다 하나(⌊(레벨−100)/10⌋+1). 원수 뒤에도 평평해지지 않는다. 수치는 스크립트의 `WALLS` / `CLIMB`.',
 );
 md.push(
   `- **시간**은 추정: 멀티 한 시간 약 ${n(PER_HOUR)} XP(10분 경기 한 판 약 3,000), 봇전(보통 난이도)은 XP 절반이라 두 배. 봇전 쉬움(×0.66)은 봇전 칸의 약 1.5배, 어려움(×1.2)은 약 0.83배. 부스터 없이. 실측은 만들 때.`,
