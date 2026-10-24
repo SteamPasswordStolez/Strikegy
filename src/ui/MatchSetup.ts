@@ -59,6 +59,22 @@ export type SetupField =
   | { kind: 'choice'; id: string; label: string; note?: string; options: { value: string; label: string }[]; value: string; pick(v: string): void }
   | { kind: 'text'; id: string; label: string; value: string; secret?: boolean; placeholder?: string; set(v: string): void };
 
+/** The room's "전부 해금" (progression step 3): every weapon open whatever the level. */
+export function allUnlockedField(on: boolean, set: (on: boolean) => void): SetupField {
+  return {
+    kind: 'choice',
+    id: 'allUnlocked',
+    label: t('lobby.allUnlocked'),
+    note: t('lobby.allUnlockedDesc'),
+    options: [
+      { value: 'off', label: t('lobby.off') },
+      { value: 'on', label: t('lobby.on') },
+    ],
+    value: on ? 'on' : 'off',
+    pick: (v) => set(v === 'on'),
+  };
+}
+
 /**
  * The simplified-controls switch (owner, 2026-10-18; `MATCH.simple`): the
  * solo setup and the room's create / edit page show the same row.

@@ -15,7 +15,7 @@ public/maps/kitlab*.json
 .strikegy-tag-secret
 .strikegy-admin-key
 .strikegy-admin.json
-.strikegy-accounts.db*
+.strikegy-accounts*.db*
 .strikegy-auth-secret
 .strikegy-account-key
 .strikegy-backups/

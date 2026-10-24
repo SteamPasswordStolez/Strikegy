@@ -351,6 +351,50 @@
   opacity: 0.4;
   cursor: default;
 }
+/* Not open yet at this player's level (progression step 3). */
+.lp-item.locked {
+  cursor: default;
+}
+.lp-item.locked .lp-pic,
+.lp-item.locked .lp-bars,
+.lp-item.locked .lp-top {
+  opacity: 0.35;
+}
+.lp-item.locked:hover {
+  border-color: var(--line);
+  background: var(--surface-1);
+}
+.lp-lock {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--accent);
+}
+.lp-lock .ds-icon {
+  width: 1.1em;
+  height: 1.1em;
+}
+.lp-wlevel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.lo-wlevel {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ink-3);
+}
+.lo-row.open .lo-wlevel {
+  color: inherit;
+  opacity: 0.65;
+}
 .lp-pic {
   display: grid;
   place-items: center;

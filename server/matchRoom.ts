@@ -50,6 +50,7 @@ import type { WeaponId } from '../src/weapons/weaponData.ts';
 import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
 import { ProgressTracker } from '../src/progression/tracker.ts';
+import { weaponLocked } from '../src/progression/unlocks.ts';
 import type { MatchSummary } from '../src/progression/profile.ts';
 import { WEAPONS } from '../src/weapons/weaponData.ts';
 
@@ -178,6 +179,8 @@ export interface MatchRoomOptions {
   botShare?: boolean;
   /** Simplified controls for everyone (the room's setting). */
   simple?: boolean;
+  /** Every weapon open to everyone (the room's "전부 해금"). */
+  allUnlocked?: boolean;
   /** A signed-in player's match progress to confirm into their account (the end, leaving, a stop). */
   progress?: (uid: string, summary: MatchSummary) => void;
 }
@@ -239,7 +242,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number> }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -248,7 +251,7 @@ export class MatchRoom {
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
       seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
-      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp);
+      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons);
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -279,6 +282,7 @@ export class MatchRoom {
       size: Math.max(1, Math.floor((this.opts.size ?? 24) / 2)) * 2,
       difficulty: this.opts.difficulty ?? 'normal',
       simple: !!this.opts.simple,
+      allUnlocked: !!this.opts.allUnlocked,
     };
     conn.text({ t: 'match', match: start });
   }
@@ -363,7 +367,9 @@ export class MatchRoom {
   deploy(uid: string, key: string, rawKit: unknown): void {
     const seat = this.seats.get(uid);
     if (!seat || this.over) return;
-    const kit = cleanKit(rawKit);
+    // Signed in: weapons their level hasn't opened give way to the class's defaults (guests have no level here).
+    const tr = seat.progress;
+    const kit = cleanKit(rawKit, tr && !this.opts.allUnlocked ? (id) => weaponLocked(id, tr.liveXp) : undefined);
     const s = seat.soldier;
     const ok = /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6}|tank:[a-z]{2,12}|jet:[a-z]{2,12}|veh:\d{1,6}|ship:\d{1,6})$/.test(key);
     const at = this.sim.deploy(s.id, ok ? key : 'base', kit);
@@ -428,10 +434,11 @@ export class MatchRoom {
   }
 
   /** A signed-in player's tracker: levels reached are told to them as they happen. */
-  private tracker(seat: Seat, xp: number): ProgressTracker {
+  private tracker(seat: Seat, xp: number, weaponXp?: Record<string, number>): ProgressTracker {
     const lineup = this.opts.lineup ?? 'users';
-    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp });
+    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp, weaponXp });
     tr.onLevel = (l) => seat.events.push({ k: 'prog', level: l.level, promoted: l.promoted, xp: tr.liveXp });
+    tr.onWeaponLevel = (l) => seat.events.push({ k: 'wprog', weapon: l.weapon, level: l.level });
     return tr;
   }
 
@@ -992,11 +999,11 @@ function netVehicle(v: Vehicle): NetVehicle {
   };
 }
 
-/** A kit from a browser, made safe (unknown class: assault). */
-function cleanKit(raw: unknown): Loadout {
+/** A kit from a browser, made safe (unknown class: assault; `locked`: weapons not open to this player). */
+function cleanKit(raw: unknown, locked?: (id: string) => boolean): Loadout {
   const r = (typeof raw === 'object' && raw ? raw : {}) as Partial<Loadout>;
   const cls = CLASSES.includes(r.cls as ClassId) ? (r.cls as ClassId) : 'assault';
-  return sanitizeLoadout({ ...r, cls });
+  return sanitizeLoadout({ ...r, cls }, locked);
 }
 
 /**

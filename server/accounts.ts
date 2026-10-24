@@ -54,6 +54,8 @@ export const SOLO_DAY_CAP = 1_000_000;
 const SOLO_XP_PER_SEC = 90;
 const SOLO_BONUS = 20_000;
 const SOLO_SECONDS_MAX = 4 * 3600;
+/** A kill's weapon XP at most (125 points x 10, hard bots x1.2). */
+const SOLO_WEAPON_KILL_XP = 1500;
 /** A guest's progress moved to a new account at most up to this (중사, ~17 h of bot matches). */
 export const IMPORT_CAP = xpForLevel(130);
 
@@ -276,6 +278,14 @@ export class Accounts {
     const most = Math.ceil(s.seconds / 2);
     for (const k of ['kills', 'headshots', 'meleeKills', 'revives', 'captures', 'neutralizes', 'builds', 'resupplies'] as const) if (st[k] !== undefined) st[k] = Math.min(st[k]!, most);
     if (st.headshots !== undefined) st.headshots = Math.min(st.headshots, st.kills ?? 0);
+    // Weapon XP only comes from kills (a headshot kill on hard is the most, 1,500), and is part of the match's XP.
+    let left = xp;
+    for (const w of Object.values(s.weapons)) {
+      w.kills = Math.min(w.kills, most);
+      w.headshots = Math.min(w.headshots, w.kills);
+      w.xp = Math.min(w.xp, w.kills * SOLO_WEAPON_KILL_XP, left);
+      left -= w.xp;
+    }
     const applied = applySummary(p, s, this.now());
     applied.profile.solo = { day, xp: today + xp };
     this.save(userId, applied.profile);

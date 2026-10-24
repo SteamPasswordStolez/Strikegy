@@ -31,7 +31,7 @@ describe('names and settings', () => {
   });
 
   it('rejects room sizes over 300 and unknown values', () => {
-    const ok: RoomSettings = { name: '방', map: 'iron_gate', mode: 'zone', size: 300, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true, simple: false };
+    const ok: RoomSettings = { name: '방', map: 'iron_gate', mode: 'zone', size: 300, lineup: 'users', difficulty: 'normal', input: 'all', botShare: true, teamPick: 'random', chat: true, simple: false, allUnlocked: false };
     expect(cleanSettings(ok)).toEqual(ok);
     expect(cleanSettings({ ...ok, size: 301 })).toBeNull();
     expect(cleanSettings({ ...ok, lineup: 'x' })).toBeNull();

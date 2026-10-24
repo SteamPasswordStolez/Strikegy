@@ -1,7 +1,8 @@
 /**
  * The service record (병적부; progression plan 3-8, progression-data.md N), the
  * basic version of step 1: the rank with the XP bar and the next promotion,
- * the career numbers (all / multiplayer / bot matches), the last 20 matches,
+ * the career numbers (all / multiplayer / bot matches), every weapon's level
+ * and kills with the locked ones' levels (step 3), the last 20 matches,
  * and the profile's buttons (change name, export / import as a file: until
  * the server account, progress lives in this browser only).
  */
@@ -17,9 +18,12 @@ import {
   type Profile,
 } from '@/progression/profile';
 import { uiSound } from '@/audio/uiSounds';
+import { weaponLevelOf, weaponLocked, weaponUnlockLevel } from '@/progression/unlocks';
+import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import { icon } from './icons';
 import { accountConfig, cachedAccount, currentProfile, deleteAccount, linkProvider, signOut, signedIn } from '@/net/account';
 import { loginButtons } from './loginButtons';
-import { insigniaAt, rankLabel, rankTitle } from './rankInsignia';
+import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
 import './progress.css';
 
 type Kind = 'all' | 'multi' | 'bots';
@@ -78,6 +82,7 @@ export function renderServiceRecord(body: HTMLElement, o: ServiceRecordOptions):
     });
   }
   numbers(left, kind === 'all' ? totalStats(p) : p.stats[kind]);
+  weapons(left, p);
   const right = el('div', 'sr-section', sr);
   recent(
     right,
@@ -155,6 +160,30 @@ function numbers(parent: HTMLElement, s: CareerStats): void {
     ['rec.neutralizes', n(s.neutralizes)],
     ['rec.builds', n(s.builds)],
   ]);
+}
+
+/** Every weapon in lineup order: its level and kills, or the level that opens it. */
+function weapons(parent: HTMLElement, p: Profile): void {
+  el('div', 'ds-label sr-group', parent, t('rec.weapons'));
+  const box = el('div', 'sr-weapons', parent);
+  for (const id of Object.keys(WEAPONS) as WeaponId[]) {
+    const row = el('div', 'ds-row', box);
+    el('span', 'sr-w-name', row, WEAPONS[id].name);
+    if (weaponLocked(id, p.xp)) {
+      row.classList.add('locked');
+      const need = weaponUnlockLevel(id);
+      const lock = el('span', 'sr-w-lock', row);
+      lock.innerHTML = icon('lock');
+      lock.append(t('loadout.unlockAt').replace('{level}', String(need)).replace('{rank}', rankName(need)));
+      continue;
+    }
+    const w = p.weapons[id];
+    const at = weaponLevelOf(w?.xp ?? 0);
+    const lv = el('span', 'sr-w-level', row);
+    el('span', '', lv, `Lv ${at.level}`);
+    el('i', 'ds-progress', lv).style.setProperty('--p', at.need ? (at.into / at.need).toFixed(3) : '1');
+    el('span', 'sr-w-kills', row, t('rec.wKills').replace('{n}', n(w?.kills ?? 0)));
+  }
 }
 
 function recent(parent: HTMLElement, list: MatchRecord[]): void {

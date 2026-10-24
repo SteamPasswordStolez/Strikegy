@@ -12,6 +12,7 @@
  * points × 1/20, × 10, bot matches × 0.5, bot difficulty.
  */
 import { levelOf, rankAt, type RankId } from './levels';
+import { weaponLevelOf } from './unlocks';
 import type {
   CareerStats,
   ClassRecord,
@@ -88,6 +89,14 @@ export interface TrackerOptions {
   difficulty: Difficulty | null;
   /** The profile's XP when the match started (live levels count from it). */
   startXp: number;
+  /** Each weapon's XP when the match started (its live level counts from it). */
+  weaponXp?: Readonly<Record<string, number>>;
+}
+
+/** A weapon's level reached during the match. */
+export interface WeaponLevelUp {
+  weapon: string;
+  level: number;
 }
 
 /** A level reached during the match (the HUD's notice). */
@@ -140,6 +149,8 @@ export class ProgressTracker {
   score = 0;
   /** Levels reached as they happen. */
   onLevel: ((l: LevelUp) => void) | null = null;
+  /** Weapon levels reached as they happen. */
+  onWeaponLevel: ((l: WeaponLevelUp) => void) | null = null;
 
   constructor(readonly opts: TrackerOptions) {
     this.level = levelOf(opts.startXp).level;
@@ -166,6 +177,11 @@ export class ProgressTracker {
   /** The profile's XP as it stands live. */
   get liveXp(): number {
     return this.opts.startXp + this.xp;
+  }
+
+  /** A weapon's XP as it stands live. */
+  weaponXp(id: string): number {
+    return (this.opts.weaponXp?.[id] ?? 0) + (this.weapons[id]?.xp ?? 0);
   }
 
   private add<K extends keyof CareerStats>(k: K, n = 1): void {
@@ -236,7 +252,11 @@ export class ProgressTracker {
       const w = (this.weapons[weaponId] ??= { xp: 0, kills: 0, headshots: 0 });
       w.kills++;
       if (headshot) w.headshots++;
+      const start = this.opts.weaponXp?.[weaponId] ?? 0;
+      const before = weaponLevelOf(start + w.xp).level;
       w.xp += (100 + (headshot ? 25 : 0)) * XP.perPoint * this.mult;
+      const after = weaponLevelOf(start + w.xp).level;
+      for (let l = before + 1; l <= after; l++) this.onWeaponLevel?.({ weapon: weaponId, level: l });
     }
   }
 

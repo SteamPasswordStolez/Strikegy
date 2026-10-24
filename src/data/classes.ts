@@ -111,17 +111,21 @@ export function defaultLoadout(cls: ClassId): Loadout {
   return { cls, primary: [...DEFAULT_PRIMARY[cls]], pistol: 'pistol1', grenade: 'frag', reconGadget: 'beacon' };
 }
 
-/** Repairs a stored or edited loadout: weapons the class may use, two different primaries, known grenade. */
-export function sanitizeLoadout(l: Partial<Loadout> & { cls: ClassId }): Loadout {
+/**
+ * Repairs a stored or edited loadout: weapons the class may use, two different
+ * primaries, known grenade. `locked`: weapons not open to this player yet
+ * (progression; the defaults never are) give way to the default.
+ */
+export function sanitizeLoadout(l: Partial<Loadout> & { cls: ClassId }, locked?: (id: WeaponId) => boolean): Loadout {
   const d = defaultLoadout(l.cls);
-  const ok = primariesFor(l.cls);
+  const ok = primariesFor(l.cls).filter((id) => !locked?.(id));
   const a = l.primary?.[0] && ok.includes(l.primary[0]) ? l.primary[0] : d.primary[0];
   let b = l.primary?.[1] && ok.includes(l.primary[1]) ? l.primary[1] : d.primary[1];
   if (b === a) b = ok.find((id) => id !== a) ?? a;
   return {
     cls: l.cls,
     primary: [a, b],
-    pistol: l.pistol && PISTOLS.includes(l.pistol) ? l.pistol : d.pistol,
+    pistol: l.pistol && PISTOLS.includes(l.pistol) && !locked?.(l.pistol) ? l.pistol : d.pistol,
     grenade: l.grenade && GRENADE_TYPES.includes(l.grenade) ? l.grenade : d.grenade,
     reconGadget: l.reconGadget === 'mine' ? 'mine' : 'beacon',
   };

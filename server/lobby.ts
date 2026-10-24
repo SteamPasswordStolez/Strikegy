@@ -86,6 +86,8 @@ export interface MatchPlayer {
   team?: Side;
   /** Signed in: the account's XP (the match keeps this person's progress); none for guests. */
   xp?: number;
+  /** Signed in: each weapon's XP (its level in the match). */
+  weapons?: Record<string, number>;
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -721,7 +723,11 @@ export class LobbyCore {
 
   private player(c: Client): MatchPlayer {
     const p: MatchPlayer = { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined };
-    if (c.account && this.accounts) p.xp = this.accounts.profile(c.account).xp;
+    if (c.account && this.accounts) {
+      const prof = this.accounts.profile(c.account);
+      p.xp = prof.xp;
+      p.weapons = Object.fromEntries(Object.entries(prof.weapons).map(([id, w]) => [id, w.xp]));
+    }
     return p;
   }
 

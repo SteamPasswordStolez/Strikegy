@@ -9,6 +9,8 @@ import './dialogs.css';
 import './progress.css';
 import { levelOf, type RankId } from '@/progression/levels';
 import type { MatchSummary } from '@/progression/profile';
+import { weaponLevelOf } from '@/progression/unlocks';
+import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
 
 /** What the loading screen says about the match (Game sets it once the map is in). */
@@ -28,6 +30,8 @@ export interface ResultProgress {
   beforeXp: number;
   afterXp: number;
   promotions: RankId[];
+  /** Each weapon's XP before the match (for the weapon levels it reached). */
+  weaponXp?: Readonly<Record<string, number>>;
 }
 
 /** What the result screen shows (Game fills it when a match ends). */
@@ -398,7 +402,27 @@ export class Overlay {
         div('rs-promo-title', txt, `${t('prog.promoted')} · ${rankName(levelOf(p.afterXp).level)}`);
         div('rs-promo-text', txt, rankTitle(promo));
       }
-      if (!box.querySelector('.rs-xp-note')) div('rs-xp-note', side, t(s.result === 'left' ? 'result.savedLeft' : 'result.saved'));
+      if (!box.querySelector('.rs-xp-note')) {
+        // Weapon levels the match reached (progression step 3).
+        const ups: [string, number, number][] = [];
+        for (const [id, w] of Object.entries(s.weapons)) {
+          if (!(id in WEAPONS)) continue;
+          const from = p.weaponXp?.[id] ?? 0;
+          const a = weaponLevelOf(from).level;
+          const b = weaponLevelOf(from + w.xp).level;
+          if (b > a) ups.push([WEAPONS[id as WeaponId].name, a, b]);
+        }
+        if (ups.length) {
+          const wl = div('rs-wl', side);
+          div('ds-label', wl, t('res.weapons'));
+          for (const [name, a, b] of ups) {
+            const r = div('rs-wl-row', wl);
+            div('', r, name);
+            div('ds-num', r, `Lv ${a} → ${b}`);
+          }
+        }
+        div('rs-xp-note', side, t(s.result === 'left' ? 'result.savedLeft' : 'result.saved'));
+      }
     };
     // After the rest has come in: about 1.6 s of filling, eased out.
     const t0 = performance.now() + 900;

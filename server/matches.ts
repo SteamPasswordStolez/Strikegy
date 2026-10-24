@@ -56,6 +56,7 @@ export class Matches implements MatchHost {
       difficulty: settings.difficulty,
       botShare: settings.botShare,
       simple: settings.simple,
+      allUnlocked: settings.allUnlocked,
       log: this.opts.log,
       mapsDir: this.opts.mapsDir,
       ended: () => setTimeout(() => this.opts.ended?.(room), 0),

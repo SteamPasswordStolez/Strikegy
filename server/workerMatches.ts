@@ -89,6 +89,7 @@ export class WorkerMatches implements MatchHost {
       difficulty: settings.difficulty,
       botShare: settings.botShare,
       simple: settings.simple,
+      allUnlocked: settings.allUnlocked,
       mapsDir: this.opts.mapsDir,
     };
     const worker = new Worker(new URL('./roomWorker.js', import.meta.url), { workerData: data });

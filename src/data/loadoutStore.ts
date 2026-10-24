@@ -1,4 +1,5 @@
 import { CLASS_IDS, defaultLoadout, sanitizeLoadout, type ClassId, type Loadout } from './classes';
+import { isLocked } from '@/progression/access';
 
 const KEY = 'strikegy.loadouts.v1';
 
@@ -34,13 +35,14 @@ export class LoadoutStore {
     return this.get(this.cls);
   }
 
+  /** The class's kit; a weapon still locked for this player (`ACCESS`) gives way to the default, the choice is kept for later. */
   get(cls: ClassId): Loadout {
     let l = this.byClass.get(cls);
     if (!l) {
       l = defaultLoadout(cls);
       this.byClass.set(cls, l);
     }
-    return l;
+    return sanitizeLoadout(l, isLocked);
   }
 
   setClass(cls: ClassId): void {

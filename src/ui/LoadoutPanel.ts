@@ -16,6 +16,9 @@ import { GADGETS, classGadget } from '@/data/gadgets';
 import { MATCH } from '@/modes/matchFlags';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { uiSound } from '@/audio/uiSounds';
+import { ACCESS, isLocked } from '@/progression/access';
+import { weaponLevelOf, weaponUnlockLevel } from '@/progression/unlocks';
+import { rankName } from './rankInsignia';
 import { icon } from './icons';
 import { weaponPortrait, weaponPortraitNow } from './weaponPortraits';
 
@@ -137,7 +140,10 @@ export class LoadoutPanel {
       el('span', 'ds-label', text).textContent = label;
       el('span', 'lo-value', text).textContent = value;
       if (sub) el('span', 'lo-sub', text).textContent = sub;
-      if (gun) gunPicture(r, gun, 'lo-gun');
+      if (gun) {
+        gunPicture(r, gun, 'lo-gun');
+        el('span', 'lo-wlevel', r).textContent = `Lv ${weaponLevelOf(ACCESS.weaponXp[gun] ?? 0).level}`;
+      }
       r.insertAdjacentHTML('beforeend', icon('next', 'lo-chev'));
       r.addEventListener('pointerenter', () => uiSound('hover'));
       r.addEventListener('click', () => {
@@ -222,14 +228,28 @@ export class LoadoutPanel {
         group = w.class;
         el('div', 'ds-label lp-group', list).textContent = t(`wclass.${w.class}` as MessageKey);
       }
-      const b = el('button', `lp-item${id === current ? ' sel' : ''}${id === other ? ' taken' : ''}`, list);
-      b.disabled = id === other;
+      const locked = isLocked(id);
+      const b = el('button', `lp-item${id === current ? ' sel' : ''}${id === other ? ' taken' : ''}${locked ? ' locked' : ''}`, list);
+      b.disabled = id === other || locked;
       const pic = el('div', 'lp-pic', b);
       gunPicture(pic, id, 'lp-gun');
       const top = el('div', 'lp-top', b);
       el('span', 'lp-name', top).textContent = w.name;
       const scope = w.scope ? (l.cls === 'recon' ? `${w.scope}→${zoomedLabel(w.scope, RECON_ZOOM)}` : w.scope) : '';
       el('span', 'lp-note', top).textContent = id === other ? t('loadout.inUse') : [scope, `${t('stat.mag')} ${w.magSize}`].filter(Boolean).join(' · ');
+      if (locked) {
+        // Opens at a player level (progression step 3).
+        const need = weaponUnlockLevel(id);
+        const lock = el('div', 'lp-lock', b);
+        lock.innerHTML = icon('lock');
+        el('span', '', lock).textContent = t('loadout.unlockAt').replace('{level}', String(need)).replace('{rank}', rankName(need));
+      } else {
+        const wl = weaponLevelOf(ACCESS.weaponXp[id] ?? 0);
+        const lv = el('div', 'lp-wlevel', b);
+        el('span', '', lv).textContent = `Lv ${wl.level}`;
+        const bar = el('i', 'ds-progress', lv);
+        bar.style.setProperty('--p', wl.need ? (wl.into / wl.need).toFixed(3) : '1');
+      }
       const stats = weaponStats(w);
       const bars = el('div', 'lp-bars', b);
       for (const k of ['damage', 'rate', 'range', 'handling'] as const) {
@@ -238,7 +258,7 @@ export class LoadoutPanel {
         const bar = el('i', 'ds-stat-bar', s);
         bar.style.setProperty('--p', `${Math.round(stats[k] * 100)}%`);
       }
-      if (id !== current && id !== other)
+      if (id !== current && id !== other && !locked)
         pickable(b, () => {
           if (slot === 'pistol') this.update({ ...l, pistol: id });
           else {

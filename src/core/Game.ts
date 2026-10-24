@@ -84,6 +84,9 @@ import { Overlay, renderHint, type OverlayAction, type ResultProgress } from '@/
 import { ProgressToast } from '@/ui/ProgressToast';
 import { music } from '@/audio/music';
 import { ProgressTracker, XP } from '@/progression/tracker';
+import { ACCESS, setAccess } from '@/progression/access';
+import { weaponsOpenedAt } from '@/progression/unlocks';
+import { RANGE_ID } from '@/data/maps';
 import { beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, type MatchSummary } from '@/progression/profile';
 import { commitMatch, currentProfile, noteServerProgress, settleLeft, signedIn } from '@/net/account';
 import type { RankId } from '@/progression/levels';
@@ -292,6 +295,8 @@ export class Game {
   private mapId = '';
   /** A multiplayer match's progress as the server confirmed it (its `progress` message). */
   private netProgress: ResultProgress | null = null;
+  /** Each weapon's XP as the match began (the result's weapon levels). */
+  private weaponStart: Record<string, number> = {};
   private deployScreen: DeployScreen | null = null;
   /** Top-down picture of the map (deploy screen and minimap). */
   private mapImage: MapImage | null = null;
@@ -713,6 +718,16 @@ export class Game {
     setMatchFlags(matchFlagsFor(zoned ? pickMode(map, asked === 'auto' ? undefined : (asked as ModeKind), true) : null, !!this.options.simple));
     const ownSpawn = (s: SpawnPoint) => s.team === this.myTeam || (this.myTeam === 'blue' && s.team === 'player');
     this.spawn = (this.myTeam === 'blue' ? map.spawns.find((s) => s.team === 'player') : undefined) ?? map.spawns.find(ownSpawn) ?? map.spawns[0]!;
+    // Weapons open to this player (progression step 3): the profile's level, or all of them in a room with
+    // "전부 해금" and on the range.
+    const prof = currentProfile();
+    const netOpts = this.options.net;
+    this.weaponStart = Object.fromEntries(Object.entries(prof.weapons).map(([id, w]) => [id, w.xp]));
+    setAccess({
+      xp: prof.xp,
+      all: netOpts ? !!netOpts.start.allUnlocked : !!this.options.sandbox || this.mapId === RANGE_ID,
+      weaponXp: { ...this.weaponStart },
+    });
     const firstKit = this.loadouts.current;
     this.me = new Soldier({
       id: this.myId,
@@ -5000,6 +5015,8 @@ export class Game {
     window.setTimeout(() => {
       this.running = false;
       if (document.pointerLockElement) document.exitPointerLock();
+      // Ended while dead: the deploy screen sat over the result.
+      this.deployScreen?.hide();
       const title = t(won ? 'match.victory' : 'match.defeat');
       const line = this.resultLine();
       this.overlay.show(title, line, won ? 'win' : 'loss');
@@ -5078,9 +5095,16 @@ export class Game {
     if (this.progress || this.options.net || this.options.showcase || this.options.sandbox || this.options.tutorial || !b || b.enemies <= 0 || !zm) return;
     // A match left earlier (reloaded in the middle of it) counts as left before this one starts.
     settleLeft();
-    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: currentProfile().xp });
+    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: currentProfile().xp, weaponXp: { ...ACCESS.weaponXp } });
     tr.setClass(this.cls);
-    tr.onLevel = (l) => this.toast?.level(l.level, l.promoted, tr.liveXp);
+    tr.onLevel = (l) => {
+      this.toast?.level(l.level, l.promoted, tr.liveXp);
+      this.reachedLevel(l.level, tr.liveXp);
+    };
+    tr.onWeaponLevel = (l) => {
+      ACCESS.weaponXp[l.weapon] = tr.weaponXp(l.weapon);
+      this.toast?.weaponLevel(l.weapon as WeaponId, l.level, tr.weaponXp(l.weapon));
+    };
     this.scores.onScore = (id, pts, reason, other) => {
       if (id === this.myId) tr.points(reason, pts, this.simTime, other);
     };
@@ -5164,6 +5188,14 @@ export class Game {
   private static weaponByName: Map<string, WeaponId> | null = null;
 
   /** One's own kill for the record (and the weapon's), or a teammate's beside one's own structure. */
+  /** A level reached in the match: the weapons it opens can be picked from the next deploy. */
+  private reachedLevel(level: number, xp: number): void {
+    ACCESS.xp = Math.max(ACCESS.xp, xp);
+    if (ACCESS.all) return;
+    const opened = weaponsOpenedAt(level).filter((id): id is WeaponId => id in WEAPONS);
+    if (opened.length) this.toast?.unlock(opened, level);
+  }
+
   private progressKill(e: GameEvents['combat:kill']): void {
     const tr = this.progress;
     if (!tr || this.matchOver) return;
@@ -5199,7 +5231,7 @@ export class Game {
     // Signed in: into the account (the server checks it), else this browser's profile.
     const done = commitMatch(summary);
     endLiveMatch();
-    return { summary, ...done };
+    return { summary, ...done, weaponXp: tr.opts.weaponXp };
   }
 
   /**
@@ -5252,7 +5284,7 @@ export class Game {
     opts.link.on('progress', (m) => {
       const summary = m.summary as MatchSummary;
       noteServerProgress(m.after, summary);
-      this.netProgress = { summary, beforeXp: m.before, afterXp: m.after, promotions: m.promotions as RankId[] };
+      this.netProgress = { summary, beforeXp: m.before, afterXp: m.after, promotions: m.promotions as RankId[], weaponXp: this.weaponStart };
     });
     net.onRoster = () => this.netSquads(net);
     this.netSquads(net);
@@ -5442,6 +5474,14 @@ export class Game {
           break;
         case 'prog':
           this.toast?.level(e.level, e.promoted as RankId | null, e.xp);
+          this.reachedLevel(e.level, e.xp);
+          break;
+        case 'wprog':
+          if (e.weapon in WEAPONS) {
+            const xp = Math.max(ACCESS.weaponXp[e.weapon] ?? 0, (e.level - 1) * 10_000);
+            ACCESS.weaponXp[e.weapon] = xp;
+            this.toast?.weaponLevel(e.weapon as WeaponId, e.level, xp);
+          }
           break;
         case 'down':
           if (e.id === this.myId) me.netDown(e.cause, e.by);

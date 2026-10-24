@@ -46,6 +46,21 @@ body.overlay-up .pt {
   font-size: calc(var(--u) * 2);
   color: var(--ink);
 }
+.pt.weapon .pt-pic,
+.pt.unlock .pt-pic {
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 5);
+  height: calc(var(--u) * 2.4);
+}
+.pt-pic img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.pt.unlock .pt-title {
+  color: var(--accent);
+}
 .pt.promo .pt-pic {
   font-size: calc(var(--u) * 3);
   color: var(--accent);
@@ -114,6 +129,19 @@ body.overlay-up .pt {
 }
 .rs-xp-side {
   min-width: 0;
+}
+.rs-wl {
+  margin-top: var(--s3);
+  font-size: var(--fs-sm);
+}
+.rs-wl-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-top: 2px;
+}
+.rs-wl-row .ds-num {
+  color: var(--accent);
 }
 .rs-xp-lines {
   display: grid;
@@ -358,6 +386,50 @@ body.overlay-up .pt {
 .sr-group {
   display: block;
   margin: var(--s4) 0 var(--s2);
+}
+.sr-weapons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--u) * 17), 1fr));
+  gap: var(--line-w);
+}
+.sr-weapons .ds-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--u) * 5) auto;
+  gap: var(--s3);
+  align-items: center;
+}
+.sr-weapons .ds-row.locked {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: var(--ink-3);
+}
+.sr-w-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sr-w-level {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+.sr-w-kills,
+.sr-w-lock {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.sr-w-lock {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--accent);
+}
+.sr-w-lock .ds-icon {
+  width: 1.1em;
+  height: 1.1em;
 }
 .sr-matches .ds-row {
   display: grid;

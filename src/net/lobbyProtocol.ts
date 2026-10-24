@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -119,6 +119,8 @@ export interface RoomSettings {
   chat: boolean;
   /** Simplified controls for everyone in the room (owner, 2026-10-18; `MATCH.simple`). */
   simple: boolean;
+  /** Every weapon open to everyone, whatever their level ("전부 해금", progression step 3; off by default). */
+  allUnlocked?: boolean;
 }
 
 /**
@@ -195,6 +197,8 @@ export interface MatchStart {
   difficulty?: 'easy' | 'normal' | 'hard';
   /** The room plays with the simplified controls (`RoomSettings.simple`). */
   simple?: boolean;
+  /** Every weapon open (`RoomSettings.allUnlocked`). */
+  allUnlocked?: boolean;
 }
 
 /** A bot handed to a browser to run (see `BotManager.adopt`). */
@@ -279,7 +283,9 @@ export type MatchEvent =
   | { k: 'points'; points: number; reason: string }
   | { k: 'end'; winner: Side; winnerId?: number }
   /** This player reached a level during the match (progression: the HUD's notice); `xp` is the live total. */
-  | { k: 'prog'; level: number; promoted: string | null; xp: number };
+  | { k: 'prog'; level: number; promoted: string | null; xp: number }
+  /** This player's weapon reached a level during the match. */
+  | { k: 'wprog'; weapon: string; level: number };
 
 export type ClientMsg =
   /** `token`: the account's session (signed in with Google / Discord); rooms need one. */
@@ -510,7 +516,7 @@ export function simpleAllowed(mode: string): boolean {
 /** Checks settings from a client; returns a clean copy or null. */
 export function cleanSettings(raw: unknown): RoomSettings | null {
   if (!isObj(raw)) return null;
-  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick, chat, simple } = raw;
+  const { name, map, mode, size, lineup, difficulty, input, botShare, teamPick, chat, simple, allUnlocked } = raw;
   if (!str(name, 32) || !str(map, 32) || !str(mode, 16)) return null;
   // No control characters or text-direction overrides (they scramble the room list).
   // eslint-disable-next-line no-control-regex -- stripping them is the point
@@ -523,6 +529,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
   if (teamPick !== undefined && !PICKS.includes(teamPick as TeamPick)) return null;
   if (chat !== undefined && typeof chat !== 'boolean') return null;
   if (simple !== undefined && typeof simple !== 'boolean') return null;
+  if (allUnlocked !== undefined && typeof allUnlocked !== 'boolean') return null;
   return {
     name: title,
     map,
@@ -535,6 +542,7 @@ export function cleanSettings(raw: unknown): RoomSettings | null {
     teamPick: (teamPick as TeamPick | undefined) ?? 'random',
     chat: chat !== false,
     simple: simple === true && simpleAllowed(mode),
+    allUnlocked: allUnlocked === true,
   };
 }
 
