@@ -9,9 +9,9 @@ import { writeFileSync } from 'node:fs';
  * The XP curve, MapleStory-like (owner, 2026-10-24: "plain steps, flat at the top, every
  * number ending in 0: use logs and exponents, messy is fine"; then "Maple-style booms from 하사
  * on, milder there"; then "하사 in about 10 hours", "keep the booms, 1,900 h is fine", "halve it all so
- * bot matches take ~1,900 h"). Floored to whole XP, so the numbers come
+ * bot matches take ~1,900 h", "the numbers look too small": XP = score × 10). Floored to whole XP, so the numbers come
  * out uneven:
- *   100 · e^(0.27 · (ln min(level, 99))^1.5)   the soldiers' climb: 일병 in the first match,
+ *   1000 · e^(0.27 · (ln min(level, 99))^1.5)   the soldiers' climb: 일병 in the first match,
  *                                              하사 in ~5 h (bot matches ~10 h)
  *   × 1.0003^(level − 100)                     from 하사 on a slow creep, so no stretch is flat
  *   × the promotion walls so far               (`WALLS`)
@@ -26,7 +26,7 @@ const BOOMS = [
   { from: 500, to: 999, every: 200, x: 1.7 }, // 장성: 700, 900
   { from: 1000, to: Infinity, every: 20, x: 2 }, // 원수 뒤: 1020, 1040 … (Maple's 260-300)
 ];
-const CLIMB = { base: 100, k: 0.27, p: 1.5, creep: 1.0003 };
+const CLIMB = { base: 1000, k: 0.27, p: 1.5, creep: 1.0003 };
 
 /** XP from `level` to the next one. */
 export function xpToNext(level) {
@@ -192,7 +192,7 @@ function rewards(level) {
   return out;
 }
 
-const PER_HOUR = 18000;
+const PER_HOUR = 180000;
 const n = (x) => x.toLocaleString('en-US');
 const hours = (xp, rate) => {
   const h = xp / rate;
@@ -227,10 +227,10 @@ md.push(
   '- **다음까지**: 그 레벨에서 다음 레벨로 가는 데 필요한 XP. **누적**: 그 레벨에 처음 닿을 때까지 모은 XP.',
 );
 md.push(
-  '- 필요 XP 식(메이플식, 오너 2026-10-24): `⌊ 100 · e^(0.27 · (ln min(레벨, 99))^1.5) × 1.0003^(레벨−100) × 진급 벽 × 뻥튀기 ⌋`. 진급 벽: 일병·상병·병장 ×1.05, 하사 ×1.2, 소위 ×1.1, 준장 ×1.1, 원수 ×1.12. 뻥튀기(위로 갈수록 크고 드물게): 부사관 50레벨마다 ×1.5(150, 200), 장교 100레벨마다 ×1.6(300, 400), 장성 200레벨마다 ×1.7(700, 900), 원수 뒤 20레벨마다 ×2(1020, 1040 …). 수치는 스크립트의 `WALLS` / `BOOMS` / `CLIMB`.',
+  '- 필요 XP 식(메이플식, 오너 2026-10-24): `⌊ 1,000 · e^(0.27 · (ln min(레벨, 99))^1.5) × 1.0003^(레벨−100) × 진급 벽 × 뻥튀기 ⌋`. 진급 벽: 일병·상병·병장 ×1.05, 하사 ×1.2, 소위 ×1.1, 준장 ×1.1, 원수 ×1.12. 뻥튀기(위로 갈수록 크고 드물게): 부사관 50레벨마다 ×1.5(150, 200), 장교 100레벨마다 ×1.6(300, 400), 장성 200레벨마다 ×1.7(700, 900), 원수 뒤 20레벨마다 ×2(1020, 1040 …). 수치는 스크립트의 `WALLS` / `BOOMS` / `CLIMB`.',
 );
 md.push(
-  `- **시간**은 추정: 멀티 한 시간 약 ${n(PER_HOUR)} XP(10분 경기 한 판 약 3,000), 봇전(보통 난이도)은 XP 절반이라 두 배. 봇전 쉬움(×0.66)은 봇전 칸의 약 1.5배, 어려움(×1.2)은 약 0.83배. 부스터 없이. 실측은 만들 때.`,
+  `- **시간**은 추정: 멀티 한 시간 약 ${n(PER_HOUR)} XP(10분 경기 한 판 약 30,000; XP = 경기 점수 ×10), 봇전(보통 난이도)은 XP 절반이라 두 배. 봇전 쉬움(×0.66)은 봇전 칸의 약 1.5배, 어려움(×1.2)은 약 0.83배. 부스터 없이. 실측은 만들 때.`,
 );
 md.push(
   '- 보상: 레벨 1은 시작(보상 없음). 1-99는 매 레벨 하나 이상, 그 위로는 드물게 크게. 이름은 [제안].',
