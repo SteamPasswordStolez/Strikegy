@@ -162,6 +162,6 @@ DISCORD_CLIENT_SECRET=...
 20 4 * * * cd /home/steampasswordstolen/strikegy && /usr/bin/node scripts/backup-accounts.mjs >> /home/steampasswordstolen/strikegy-backup.log 2>&1
 ```
 
-백업이 같은 노트북 디스크에만 있으니, 가끔 다른 곳(오너 PC 등)으로 `scp`해 두면 안전합니다.
+오너 PC가 매일 05:00(꺼져 있었으면 다음에 켰을 때) 노트북의 백업을 `Documents\strikegy-backups`로 받아 와 30일치를 둡니다: `scripts/pull-backups.ps1`, Windows 작업 스케줄러의 "Strikegy backup pull"(2026-10-24 등록, 결과는 같은 폴더의 `pull.log`).
 
 **로컬 시험**: `.claude/launch.json`의 `strikegy-server-accounts`(`STRIKEGY_DEV_LOGIN=1`)는 제공자 없이 "테스트 계정으로 로그인"을 켭니다. 공개 주소가 localhost일 때만, 로컬 요청에만 됩니다.
