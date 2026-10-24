@@ -6,10 +6,10 @@
  * - APC: 4 seats (driver, autocannon gunner, 2 passengers), from a pad at
  *   each base, ceil(bots / 8) a side.
  * - Motorbike: 1 seat, a few around each zone.
- * - Jets (picked on the deploy screen, ceil(bots / 16) a side): fighter (1
+ * - Jets (picked on the deploy screen, ceil(bots / 32) a side): fighter (1
  *   seat: cannon, heat-seeking missiles), close air support (2: cannon and
  *   rockets, rear gunner). They start in the air off their side of the map.
- * - Tanks (picked on the deploy screen, ceil(bots / 16) a side, all kinds
+ * - Tanks (picked on the deploy screen, ceil(bots / 32) a side, all kinds
  *   together): medium tank, self-propelled gun, tank destroyer. Four seats:
  *   the driver also works the main gun, a roof MG, a hull MG, one inside.
  *
@@ -665,15 +665,16 @@ export const VEHICLE_GUNS: Record<VehicleGunId, VehicleGunSpec> = {
 export const PADS = { afterLeave: 10, cooldown: 60, leaveDistance: 12 };
 
 /**
- * Most of a kind one side can have out, from the number of bots in the match
- * (owner, 2026-10-02, halved the same day): APCs one per 8 bots, tanks and
- * jets one per 16, rounded up (24 bots: 3 APCs, 2 tanks, 2 jets a side).
- * Jeeps: 4 a side.
+ * Most of a kind one side can have out, from the number of soldiers in the
+ * match (owner, 2026-10-02, halved the same day): APCs one per 8, rounded up.
+ * Tanks and jets one per 16 of a side's soldiers (owner, 2026-10-24; was one
+ * per 8 of a side), i.e. one per 32 in the match, rounded up (24 in the match:
+ * 3 APCs, 1 tank, 1 jet a side; 64: 2 each). Jeeps: 4 a side.
  */
 export function vehicleLimit(kind: VehicleKind, bots: number): number {
   if (kind === 'apc') return Math.ceil(bots / 8);
   if (kind === 'jeep') return 4;
-  if (TANK_KINDS.includes(kind) || JET_KINDS.includes(kind)) return Math.ceil(bots / 16);
+  if (TANK_KINDS.includes(kind) || JET_KINDS.includes(kind)) return Math.ceil(bots / 32);
   return 0;
 }
 /** Motorbikes: per zone, seconds to bring a lost one back, and how long one can sit unused away from its zone. */

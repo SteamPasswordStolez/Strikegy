@@ -26,12 +26,14 @@ describe('vehicle pads', () => {
     expect(padReady(pad({ vehicle: 50001 }), 100, 0, 4)).toBe(false);
   });
 
-  it('scales the limits with the bots: APCs per 8, tanks and jets per 16, rounded up', () => {
+  it('scales the limits with the soldiers: APCs per 8, tanks and jets per 32 (16 a side), rounded up', () => {
     expect(vehicleLimit('apc', 24)).toBe(3);
     expect(vehicleLimit('apc', 10)).toBe(2);
-    expect(vehicleLimit('tank', 24)).toBe(2);
+    expect(vehicleLimit('tank', 24)).toBe(1);
+    expect(vehicleLimit('tank', 64)).toBe(2);
     expect(vehicleLimit('fighter', 16)).toBe(1);
-    expect(vehicleLimit('cas', 150)).toBe(10);
+    expect(vehicleLimit('cas', 150)).toBe(5);
+    expect(vehicleLimit('cas', 300)).toBe(10);
   });
 });
 
