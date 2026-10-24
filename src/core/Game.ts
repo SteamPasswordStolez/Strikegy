@@ -82,6 +82,7 @@ import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
 import { Overlay, renderHint, type OverlayAction, type ResultProgress } from '@/ui/Overlay';
 import { ProgressToast } from '@/ui/ProgressToast';
+import { music } from '@/audio/music';
 import { ProgressTracker, XP } from '@/progression/tracker';
 import { beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, type MatchSummary } from '@/progression/profile';
 import { commitMatch, currentProfile, noteServerProgress, settleLeft, signedIn } from '@/net/account';
@@ -918,6 +919,8 @@ export class Game {
   private begin(): void {
     if (!this.options.showcase) this.toast ??= new ProgressToast(this.container, this.settings.progressNotices);
     this.setupProgress();
+    // The loading screen's music ends as the match begins (none in battle).
+    if (!this.options.showcase) music.stop(2.5);
     this.startTutorial();
     this.audio.unlock();
     this.running = true;
@@ -4981,6 +4984,7 @@ export class Game {
     this.briefDirector?.end(won);
     // Confirmed at once (the result screen's "again" reloads the page).
     const progress = this.confirmProgress(won);
+    void music.play(won ? 'victory' : 'defeat');
     // Let the moment land, then stop and show the result.
     window.setTimeout(() => {
       this.running = false;

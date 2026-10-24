@@ -1161,5 +1161,7 @@
   "pause.leaveNet": "If you leave now you lose this match's progress (a room of two people or fewer).",
   "mp.err.login": "Sign in to join or create rooms.",
   "rec.res.stopped": "Ended",
-  "acct.name.test": "test account"
+  "acct.name.test": "test account",
+  "lobby.musicVolume": "Music volume",
+  "setDesc.musicVolume": "Music in the main menu, loading, the multiplayer waiting room and the result screen. There is no music in battle."
 }

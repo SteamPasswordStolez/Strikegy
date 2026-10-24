@@ -3,7 +3,8 @@ import type { Game } from '@/core/Game';
 import type { NetOptions } from '@/net/NetMatch';
 import { Lobby } from '@/ui/Lobby';
 import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
-import { loadSettings } from '@/core/Settings';
+import { isTouchDevice, loadSettings, resolveQuality } from '@/core/Settings';
+import { music } from '@/audio/music';
 import { MAPS } from '@/data/maps';
 import { watchInstall } from '@/ui/install';
 
@@ -61,49 +62,52 @@ else {
       void startGame(new URLSearchParams({ map: start.map, mode: start.mode, bots: 'none', ...(start.simple ? { simple: '1' } : {}) }), () => menu.root.remove(), { link, start });
     },
     (key) => {
+      const s = loadSettings();
+      if (key === 'musicVolume' || key === 'masterVolume') music.setVolume(s.musicVolume, s.masterVolume);
       if (key !== 'menuScene') return;
-      if (loadSettings().menuScene) startShowcase();
+      if (s.menuScene) startShowcase();
       else stopShowcase();
     },
   );
-  // The menu paints first; the film behind it starts after.
+  // The menu paints first; the scene behind it starts after.
   setTimeout(() => startShowcase(), 200);
+  const s = loadSettings();
+  music.setVolume(s.musicVolume, s.masterVolume);
+  void music.play('menu');
 }
 
 /**
- * The main menu's background (owner, 2026-10-12: the live bot match behind
- * the menu was heavy and slow to load): a short film of real bot battles on
- * every map, recorded from the game itself (`?showcase=<map>` in a dev
- * build, docs/menu-film.md), looping muted. Nothing to load but the
- * video; off in the settings (화면 → 메뉴 배경 전투).
+ * The main menu's background (owner, 2026-10-24: "a light real-time 3D scene",
+ * after the live bot match (heavy, slow to load) and the recorded film): a
+ * small diorama drawn by the game's renderer, no simulation (menu/MenuScene.ts,
+ * its own chunk, loaded after the menu paints). Desktops only (a phone keeps
+ * the still map); off in the settings (화면 → 메뉴 배경 전투).
  */
 let showcase: HTMLDivElement | null = null;
+let scene: { dispose(): void } | null = null;
 
 function startShowcase(): void {
-  if (showcase || !loadSettings().menuScene) return;
+  if (showcase || !loadSettings().menuScene || isTouchDevice()) return;
   const host = document.createElement('div');
-  host.className = 'showcase video';
-  const video = document.createElement('video');
-  video.src = `${import.meta.env.BASE_URL}menu/battle.mp4`;
-  video.muted = true;
-  video.loop = true;
-  video.playsInline = true;
-  video.autoplay = true;
-  video.preload = 'auto';
-  video.setAttribute('aria-hidden', 'true');
-  video.addEventListener('playing', () => host.classList.add('ready'), { once: true });
-  video.addEventListener('error', () => host.remove(), { once: true });
-  host.appendChild(video);
+  host.className = 'showcase scene';
   container.prepend(host);
-  void video.play().catch(() => {});
   showcase = host;
+  void import('@/menu/MenuScene')
+    .then(({ MenuScene }) => {
+      if (showcase !== host) return;
+      const s = new MenuScene(host, resolveQuality(loadSettings().quality));
+      s.onReady = () => host.classList.add('ready');
+      scene = s;
+    })
+    .catch(() => host.remove());
 }
 
 function stopShowcase(): void {
   const s = showcase;
   if (!s) return;
   showcase = null;
-  s.querySelector('video')?.pause();
+  scene?.dispose();
+  scene = null;
   s.remove();
 }
 
@@ -141,6 +145,10 @@ function startSolo(query: string, onLoadingShown?: () => void): void {
 }
 
 async function startGame(params: URLSearchParams, onLoadingShown?: () => void, net?: NetOptions): Promise<void> {
+  // The loading screen's music (the menu's goes on if there is none); the game fades it out on the field.
+  const s = loadSettings();
+  music.setVolume(s.musicVolume, s.masterVolume);
+  void music.play('loading');
   const mapId = params.get('map') ?? 'sandbox';
   const mapUrl = `${import.meta.env.BASE_URL}maps/${encodeURIComponent(mapId)}.json`;
 

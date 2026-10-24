@@ -98,6 +98,7 @@ export class SettingsPanel {
     } else {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       this.slider(rows, 'lobby.voiceVolume', 'voiceVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
+      this.slider(rows, 'lobby.musicVolume', 'musicVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       this.toggle(rows, 'lobby.subtitles', 'subtitles');
       this.choice(rows, 'lobby.language', 'locale', ['ko', 'en'] as const, (v) => (v === 'ko' ? '한국어' : 'English'));
     }
@@ -148,7 +149,7 @@ export class SettingsPanel {
     return ctl;
   }
 
-  private slider(parent: HTMLElement, label: MessageKey, key: 'sensitivity' | 'adsSensitivity' | 'fov' | 'masterVolume' | 'voiceVolume' | 'renderScale', min: number, max: number, step: number, show: (v: number) => string): void {
+  private slider(parent: HTMLElement, label: MessageKey, key: 'sensitivity' | 'adsSensitivity' | 'fov' | 'masterVolume' | 'voiceVolume' | 'musicVolume' | 'renderScale', min: number, max: number, step: number, show: (v: number) => string): void {
     const ctl = this.row(parent, label, key);
     const input = el('input', 'ds-slider sp-range', ctl);
     input.type = 'range';

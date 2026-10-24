@@ -25,6 +25,8 @@ export interface Settings {
   crouchHold: boolean;
   /** A live battle behind the main menu (desktop; touch screens never run it). */
   menuScene: boolean;
+  /** Music in the menus, loading and results (0..1, under the master volume). */
+  musicVolume: number;
   /** Level ups and promotions near the top of the screen during a match. */
   progressNotices: 'all' | 'levels' | 'off';
 }
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   crouchHold: false,
   menuScene: true,
   progressNotices: 'all',
+  musicVolume: 0.5,
 };
 
 /** Korean for browsers set to Korean, English for everyone else (until the player picks one). */
