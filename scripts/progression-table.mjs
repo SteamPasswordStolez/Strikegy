@@ -5,13 +5,48 @@
 //   node scripts/progression-table.mjs  ->  docs/design/progression-levels.md + .csv
 import { writeFileSync } from 'node:fs';
 
-/** XP from `level` to the next one (owner, 2026-10-19: levels 1-100 cheap). */
+/**
+ * The XP curve, MapleStory-like (owner, 2026-10-24: "the steps were too plain and it went
+ * flat at 15,000"): every level costs a little more than the last, every 10th level is a
+ * step up, every promotion a wall; levels 1-100 stay cheap (owner, 2026-10-19) and it never
+ * goes flat, past the marshal too. Rows: [first level, jump on reaching it, growth a level,
+ * extra step on every 10th level]; the band's first level takes only the jump. Each level's
+ * cost is rounded to 10 XP from the unrounded running value.
+ */
+const CURVE = [
+  [1, 1, 1.04, 1], // 이병: 200, quick growth like Maple's first levels
+  [10, 1.1, 1.015, 1], // 일병
+  [30, 1.1, 1.012, 1], // 상병
+  [60, 1.1, 1.012, 1], // 병장
+  [100, 2.5, 1.002, 1.06], // 하사: the first big wall
+  [130, 1.12, 1.002, 1.06], // 중사
+  [160, 1.12, 1.002, 1.06], // 상사
+  [200, 1.15, 1.002, 1.06], // 원사
+  [210, 1.2, 1.0003, 1.015], // 소위
+  [230, 1.03, 1.0003, 1.015], // 중위
+  [250, 1.03, 1.0003, 1.015], // 대위
+  [300, 1.06, 1.0003, 1.015], // 소령
+  [350, 1.03, 1.0003, 1.015], // 중령
+  [400, 1.03, 1.0003, 1.015], // 대령
+  [500, 1.12, 1.0001, 1.008], // 준장
+  [600, 1.03, 1.0001, 1.008], // 소장
+  [700, 1.03, 1.0001, 1.008], // 중장
+  [800, 1.03, 1.0001, 1.008], // 대장
+  [1000, 1.2, 1.0001, 1.005], // 원수, then on without end
+];
+const steps = [0];
+let raw = 200;
+
+/** XP from `level` to the next one. */
 export function xpToNext(level) {
-  if (level < 100) return 200 + 8 * (level - 1);
-  if (level < 200) return 3000 + 20 * (level - 100);
-  if (level < 300) return 6000 + 30 * (level - 200);
-  if (level < 500) return 10000 + 20 * (level - 300);
-  return 15000;
+  while (steps.length <= level) {
+    const l = steps.length;
+    const [first, jump, grow, ten] = CURVE.findLast(([f]) => f <= l);
+    if (l === first) raw *= jump;
+    else raw *= grow * (l % 10 === 0 ? ten : 1);
+    steps.push(Math.round(raw / 10) * 10);
+  }
+  return steps[level];
 }
 
 /** Korean military ranks by first level (owner, 2026-10-19), with insignia and title. */
@@ -39,24 +74,93 @@ const RANKS = [
 const rankOf = (level) => RANKS.filter(([l]) => l <= level).at(-1);
 
 const WEAPONS = { 4: 'MP5SD', 8: 'M1014', 14: 'M60E4', 22: 'L115A3', 32: 'APS' };
-const GADGETS = { 48: '대전차 지뢰 (돌격)', 68: '의료 가방 (의무)', 88: '수리 공구 (지원)', 108: '동작 감지기 (정찰)' };
-const CAMO_PRIVATE = ['숲', '사막', '설원', '도시 회색', '갈대', '디지털 숲', '디지털 사막', '야간 청색', '위장망'];
-const CAMO_NCO = ['정글 잎', '해병 디지털', '붉은 사막', '툰드라', '늪', '가을 숲', '화산재', '산호', '모래 폭풍', '비 내린 도시', '철모 녹색'];
-const CAMO_OFFICER = { 250: '의장 청색', 300: '의장 흑색', 350: '해군 백색', 400: '공수 적색', 450: '해병 적황' };
+const GADGETS = {
+  48: '대전차 지뢰 (돌격)',
+  68: '의료 가방 (의무)',
+  88: '수리 공구 (지원)',
+  108: '동작 감지기 (정찰)',
+};
+const CAMO_PRIVATE = [
+  '숲',
+  '사막',
+  '설원',
+  '도시 회색',
+  '갈대',
+  '디지털 숲',
+  '디지털 사막',
+  '야간 청색',
+  '위장망',
+];
+const CAMO_NCO = [
+  '정글 잎',
+  '해병 디지털',
+  '붉은 사막',
+  '툰드라',
+  '늪',
+  '가을 숲',
+  '화산재',
+  '산호',
+  '모래 폭풍',
+  '비 내린 도시',
+  '철모 녹색',
+];
+const CAMO_OFFICER = {
+  250: '의장 청색',
+  300: '의장 흑색',
+  350: '해군 백색',
+  400: '공수 적색',
+  450: '해병 적황',
+};
 const CAMO_GENERAL = { 500: '은빛 결', 600: '금빛 결', 700: '백금 결', 800: '흑금', 1000: '원수' };
 const KILL_FX = { 500: '재', 600: '은빛 별똥', 700: '금빛 월계', 800: '인식표', 1000: '별빛' };
 const GUN_SKINS = {
-  100: 'M4A1 「부사관」', 150: 'MP7 「야간 순찰」', 200: 'M249 「원사의 기관총」', 210: 'M1911 「장교 권총」', 250: 'Mk 12 SPR 「정찰 대위」',
-  300: 'AKM 「영관 각인」', 350: 'M870 「대대 경비」', 400: 'SVD 「연대 저격수」', 450: 'UMP45 「참모」', 500: 'M24 「은성」',
-  550: 'M110 「장성 경호」', 600: 'Mk 18 「금성」', 650: 'PP-19 「북풍」', 700: 'M60E4 「백금 탄띠」', 750: 'M16A4 「의장대」',
-  800: 'L115A3 「흑금」', 850: 'MP5SD 「그림자」', 900: 'M1014 「사령관」', 950: 'M590 「마지막 전선」',
+  100: 'M4A1 「부사관」',
+  150: 'MP7 「야간 순찰」',
+  200: 'M249 「원사의 기관총」',
+  210: 'M1911 「장교 권총」',
+  250: 'Mk 12 SPR 「정찰 대위」',
+  300: 'AKM 「영관 각인」',
+  350: 'M870 「대대 경비」',
+  400: 'SVD 「연대 저격수」',
+  450: 'UMP45 「참모」',
+  500: 'M24 「은성」',
+  550: 'M110 「장성 경호」',
+  600: 'Mk 18 「금성」',
+  650: 'PP-19 「북풍」',
+  700: 'M60E4 「백금 탄띠」',
+  750: 'M16A4 「의장대」',
+  800: 'L115A3 「흑금」',
+  850: 'MP5SD 「그림자」',
+  900: 'M1014 「사령관」',
+  950: 'M590 「마지막 전선」',
 };
 const VEHICLE_SKINS = {
-  250: '지프 「소대 연락」', 300: '장갑차 「영관 수송」', 350: '전차 「대대 선두」', 400: '전투기 「연대 에이스」', 450: '구축함 「호위」',
-  500: '근접지원기 「은성」', 550: '자주포 「포병 장성」', 600: '전차 「금성」', 650: '항모 「기함」', 700: '대전차 자주포 「백금」',
-  750: '전함 「의장 함대」', 800: '전투기 「흑금」', 850: '잠수함 「심해」', 900: '로켓 트럭 「사령부」', 950: '함재 전투기 「마지막 비행」',
+  250: '지프 「소대 연락」',
+  300: '장갑차 「영관 수송」',
+  350: '전차 「대대 선두」',
+  400: '전투기 「연대 에이스」',
+  450: '구축함 「호위」',
+  500: '근접지원기 「은성」',
+  550: '자주포 「포병 장성」',
+  600: '전차 「금성」',
+  650: '항모 「기함」',
+  700: '대전차 자주포 「백금」',
+  750: '전함 「의장 함대」',
+  800: '전투기 「흑금」',
+  850: '잠수함 「심해」',
+  900: '로켓 트럭 「사령부」',
+  950: '함재 전투기 「마지막 비행」',
 };
-const FRAMES = { 100: '부사관 휘장', 210: '장교 청동', 300: '영관 은', 500: '금 · 별 1', 600: '금 · 별 2', 700: '금 · 별 3', 800: '금 · 별 4', 1000: '금 · 별 5' };
+const FRAMES = {
+  100: '부사관 휘장',
+  210: '장교 청동',
+  300: '영관 은',
+  500: '금 · 별 1',
+  600: '금 · 별 2',
+  700: '금 · 별 3',
+  800: '금 · 별 4',
+  1000: '금 · 별 5',
+};
 
 let card = 0;
 let emblem = 0;
@@ -81,10 +185,12 @@ function rewards(level) {
     else if (level > 1 && !out.length) out.push(`엠블럼 ${++emblem}`);
   } else if (level < 210) {
     if (level % 10 === 0) out.push(`위장: ${CAMO_NCO[(level - 100) / 10]}`);
-    else if (level % 10 === 5) out.push(ncoAlt++ % 2 === 0 ? `카드 ${++card}` : `엠블럼 ${++emblem}`);
+    else if (level % 10 === 5)
+      out.push(ncoAlt++ % 2 === 0 ? `카드 ${++card}` : `엠블럼 ${++emblem}`);
   } else if (level < 500) {
     if (CAMO_OFFICER[level]) out.push(`위장: ${CAMO_OFFICER[level]}`);
-    if (level % 10 === 0) out.push(`카드 ${++card} (${level < 300 ? '위관 청동' : '영관 은'} 테두리)`);
+    if (level % 10 === 0)
+      out.push(`카드 ${++card} (${level < 300 ? '위관 청동' : '영관 은'} 테두리)`);
   } else if (level < 1000) {
     if (CAMO_GENERAL[level]) out.push(`위장: ${CAMO_GENERAL[level]}`);
     if (level % 25 === 0) out.push(`카드 ${++card} (별 ${rankOf(level)[2].slice(-1)})`);
@@ -96,29 +202,48 @@ function rewards(level) {
 }
 
 const PER_HOUR = 18000;
+const n = (x) => x.toLocaleString('en-US');
 const hours = (xp, rate) => {
   const h = xp / rate;
-  return h < 1 ? `${Math.round(h * 60)}분` : `${h < 10 ? h.toFixed(1) : Math.round(h)}시간`;
+  return h < 1 ? `${Math.round(h * 60)}분` : `${h < 10 ? h.toFixed(1) : n(Math.round(h))}시간`;
 };
 
 const rows = [];
 let cum = 0;
 for (let level = 1; level <= 1100; level++) {
   const [, rank, insignia] = rankOf(level);
-  rows.push({ level, rank, insignia, next: xpToNext(level), cum, multi: hours(cum, PER_HOUR), solo: hours(cum, PER_HOUR / 2), rewards: rewards(level) });
+  rows.push({
+    level,
+    rank,
+    insignia,
+    next: xpToNext(level),
+    cum,
+    multi: hours(cum, PER_HOUR),
+    solo: hours(cum, PER_HOUR / 2),
+    rewards: rewards(level),
+  });
   cum += xpToNext(level);
 }
 
-const n = (x) => x.toLocaleString('en-US');
 const md = [];
 md.push('# 경험치표 (레벨 1-1,100)');
 md.push('');
-md.push('`node scripts/progression-table.mjs`로 만든 표(손으로 고치지 말고 스크립트를 고친다). 기획: `progression.md` 3-1(레벨과 계급), 3-10(레벨 보상), `progression-data.md`.');
+md.push(
+  '`node scripts/progression-table.mjs`로 만든 표(손으로 고치지 말고 스크립트를 고친다). 기획: `progression.md` 3-1(레벨과 계급), 3-10(레벨 보상), `progression-data.md`.',
+);
 md.push('');
-md.push('- **다음까지**: 그 레벨에서 다음 레벨로 가는 데 필요한 XP. **누적**: 그 레벨에 처음 닿을 때까지 모은 XP.');
-md.push('- 필요 XP 식: 1-99 `200 + 8×(레벨−1)`, 100-199 `3,000 + 20×(레벨−100)`, 200-299 `6,000 + 30×(레벨−200)`, 300-499 `10,000 + 20×(레벨−300)`, 500부터 15,000.');
-md.push(`- **시간**은 추정: 멀티 한 시간 약 ${n(PER_HOUR)} XP(10분 경기 한 판 약 3,000), 봇전(보통 난이도)은 XP 절반이라 두 배. 봇전 쉬움(×0.66)은 봇전 칸의 약 1.5배, 어려움(×1.2)은 약 0.83배. 부스터 없이. 실측은 만들 때.`);
-md.push('- 보상: 레벨 1은 시작(보상 없음). 1-99는 매 레벨 하나 이상, 그 위로는 드물게 크게. 이름은 [제안].');
+md.push(
+  '- **다음까지**: 그 레벨에서 다음 레벨로 가는 데 필요한 XP. **누적**: 그 레벨에 처음 닿을 때까지 모은 XP.',
+);
+md.push(
+  '- 필요 XP 곡선(메이플식, 오너 2026-10-24): 레벨마다 조금씩 늘고(×1.04 → ×1.0001), 100부터는 10레벨마다 한 계단 더(×1.06 → ×1.005), 진급할 때 벽(하사 ×2.5, 소위 ×1.2, 준장 ×1.12, 원수 ×1.2, 그 밖의 진급 ×1.03-1.15). 원수 뒤에도 평평해지지 않는다. 구간별 배수는 스크립트의 `CURVE`.',
+);
+md.push(
+  `- **시간**은 추정: 멀티 한 시간 약 ${n(PER_HOUR)} XP(10분 경기 한 판 약 3,000), 봇전(보통 난이도)은 XP 절반이라 두 배. 봇전 쉬움(×0.66)은 봇전 칸의 약 1.5배, 어려움(×1.2)은 약 0.83배. 부스터 없이. 실측은 만들 때.`,
+);
+md.push(
+  '- 보상: 레벨 1은 시작(보상 없음). 1-99는 매 레벨 하나 이상, 그 위로는 드물게 크게. 이름은 [제안].',
+);
 md.push('');
 md.push('## 계급 한눈에');
 md.push('');
@@ -133,14 +258,31 @@ md.push('## 전체 표');
 md.push('');
 md.push('| 레벨 | 계급 | 다음까지 | 누적 XP | 멀티 | 봇전 | 보상 |');
 md.push('|---|---|---|---|---|---|---|');
-for (const r of rows) md.push(`| ${r.level} | ${r.rank} | ${n(r.next)} | ${n(r.cum)} | ${r.multi} | ${r.solo} | ${r.rewards.join(' · ') || '–'} |`);
+for (const r of rows)
+  md.push(
+    `| ${r.level} | ${r.rank} | ${n(r.next)} | ${n(r.cum)} | ${r.multi} | ${r.solo} | ${r.rewards.join(' · ') || '–'} |`,
+  );
 md.push('');
 writeFileSync(new URL('../docs/design/progression-levels.md', import.meta.url), md.join('\n'));
 
 const csv = ['level,rank,insignia,xp_to_next,cumulative_xp,hours_multi,hours_bots,rewards'];
 for (const r of rows) {
   const cell = (s) => `"${String(s).replace(/"/g, '""').replace(/\*\*/g, '')}"`;
-  csv.push([r.level, r.rank, r.insignia, r.next, r.cum, (r.cum / PER_HOUR).toFixed(2), (r.cum / (PER_HOUR / 2)).toFixed(2), cell(r.rewards.join(' / '))].join(','));
+  csv.push(
+    [
+      r.level,
+      r.rank,
+      r.insignia,
+      r.next,
+      r.cum,
+      (r.cum / PER_HOUR).toFixed(2),
+      (r.cum / (PER_HOUR / 2)).toFixed(2),
+      cell(r.rewards.join(' / ')),
+    ].join(','),
+  );
 }
-writeFileSync(new URL('../docs/design/progression-levels.csv', import.meta.url), '﻿' + csv.join('\n') + '\n');
+writeFileSync(
+  new URL('../docs/design/progression-levels.csv', import.meta.url),
+  '﻿' + csv.join('\n') + '\n',
+);
 console.log(`progression table: ${rows.length} levels, marshal at ${n(rows[999].cum)} XP`);
