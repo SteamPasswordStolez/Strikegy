@@ -79,8 +79,61 @@ const zones = map.zones ?? [];
 const every = Math.round(0.5 / SIM_DT);
 const steps = Math.round(seconds / SIM_DT);
 const t0 = performance.now();
+// PATHCHECK=<zone>: from spots round that zone (where its spawns land), is there a path to every other zone?
+if (process.env.PATHCHECK) {
+  const THREE = await import('three');
+  const nav = (bots as unknown as Any).nav;
+  const z0 = zones.find((z) => z.id === process.env.PATHCHECK)!;
+  console.log(`pathcheck ${z0.id} nav ${!!nav} at ${z0.pos}`);
+  for (const r of [0, 10, 20, 40, 60]) for (const a of [0, 1.57, 3.14, 4.71]) {
+    const q = new THREE.Vector3(z0.pos[0] + Math.cos(a) * r, z0.pos[1], z0.pos[2] + Math.sin(a) * r);
+    const cl = nav.closest(q);
+    const cf = nav.closestFar(q);
+    console.log(`  r ${r} a ${a}: closest ${cl ? `${Math.round(cl.x)},${cl.y.toFixed(1)},${Math.round(cl.z)}` : '-'} far ${cf ? `${Math.round(cf.x)},${cf.y.toFixed(1)},${Math.round(cf.z)}` : '-'}`);
+    if (r === 0) break;
+  }
+  const c = new THREE.Vector3(z0.pos[0], z0.pos[1], z0.pos[2]);
+  const out: InstanceType<typeof THREE.Vector3>[] = [];
+  for (let k = 0; k < 12; k++) {
+    const p = k === 0 ? nav.closestFar(c) : nav.randomAround(c, z0.radius * 0.6);
+    if (!p) continue;
+    const res = zones.filter((z) => z.id !== z0.id).map((z) => {
+      const ok = nav.path(p, new THREE.Vector3(z.pos[0], z.pos[1], z.pos[2]), out);
+      const end = out[out.length - 1];
+      const miss = end ? Math.hypot(end.x - z.pos[0], end.z - z.pos[2]) : -1;
+      return `${z.id}:${ok ? Math.round(miss) : 'x'}`;
+    });
+    console.log(`from (${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}): ${res.join(' ')}`);
+  }
+}
+const clusterEvery = Math.round(30 / SIM_DT);
 for (let i = 0; i < steps; i++) {
   sim.step(() => null);
+  // CLUSTER=1: every 30 s each side's densest 20 m cell (where crowds pile up instead of fighting).
+  if (process.env.CLUSTER && i % clusterEvery === 0 && i > 0) {
+    const line: string[] = [`t=${Math.round(sim.time)}s`];
+    for (const team of ['blue', 'red'] as const) {
+      const cells = new Map<string, { n: number; x: number; y: number; z: number; acts: Map<string, number>; riding: number }>();
+      let alive = 0;
+      for (const b of bots.bots) {
+        if (b.team !== team || !b.alive || b.benched) continue;
+        alive++;
+        const k = `${Math.floor(b.feet.x / 20)},${Math.floor(b.feet.z / 20)}`;
+        const c = cells.get(k) ?? { n: 0, x: 0, y: 0, z: 0, acts: new Map(), riding: 0 };
+        c.n++;
+        c.x += b.feet.x;
+        c.y += b.feet.y;
+        c.z += b.feet.z;
+        if (b.riding) c.riding++;
+        count(c.acts, String((b as unknown as Any).action));
+        cells.set(k, c);
+      }
+      const top = [...cells.values()].sort((a, b) => b.n - a.n)[0];
+      if (top) line.push(`${team}: ${top.n}/${alive} at (${Math.round(top.x / top.n)}, ${Math.round(top.y / top.n)}, ${Math.round(top.z / top.n)}) riding ${top.riding} [${[...top.acts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([a, n]) => `${a} ${n}`).join(', ')}]`);
+    }
+    const zs = sim.zoneMode?.zones?.map((z: Any) => `${z.id}:${(z.owner ?? '-')[0]}${z.locked ? '!' : ''}`).join(' ');
+    console.log(line.join(' | '), '|', zs);
+  }
   if (i % every) continue;
   const now = sim.time;
   for (const b of bots.bots) {

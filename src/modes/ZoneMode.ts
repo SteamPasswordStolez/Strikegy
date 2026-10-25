@@ -733,5 +733,8 @@ function groundAround(nav: NavWorld, at: THREE.Vector3, r: number): THREE.Vector
     const p = nav.closest(new THREE.Vector3(at.x + Math.cos(a) * d, at.y, at.z + Math.sin(a) * d));
     if (p && Math.abs(p.y - at.y) < 4) return p;
   }
-  return null;
+  // Still nothing near the zone's height (Ashfall's G sits in a cutting the navmesh doesn't reach): the
+  // nearest walkable ground at any height, never the bare middle (bots spawned there could go nowhere and
+  // piled up by the dozen, 2026-10-25).
+  return nav.closestFar(at);
 }
