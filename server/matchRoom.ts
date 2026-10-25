@@ -52,6 +52,7 @@ import { parseMap } from '../src/world/validateMap.ts';
 import { ProgressTracker } from '../src/progression/tracker.ts';
 import { weaponLevelOf, weaponLocked } from '../src/progression/unlocks.ts';
 import { LifeKills, MagKills, killFacts, standing } from '../src/progression/killFacts.ts';
+import { cleanWorn, kfxFor, type Worn } from '../src/progression/worn.ts';
 import { attachLevel } from '../src/weapons/attachments.ts';
 import type { MatchSummary } from '../src/progression/profile.ts';
 import { WEAPONS } from '../src/weapons/weaponData.ts';
@@ -108,6 +109,8 @@ interface Seat {
   events: MatchEvent[];
   /** The kit of the current life. */
   kit: Loadout | null;
+  /** What they wear that others see (their account's; nothing for guests). */
+  cos?: Worn;
   /** Server tick when the player was ready, and inputs stepped since (the input budget). */
   readyTick: number;
   stepped: number;
@@ -244,7 +247,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>> }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -254,6 +257,7 @@ export class MatchRoom {
       const soldier = this.sim.addSoldier(id, team, name);
       seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
       if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons, player.boost);
+      seat.cos = cleanWorn(player.cos);
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -796,7 +800,7 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}) }));
+    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}), ...(s.cos ? { cos: s.cos } : {}) }));
     for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0, bot: true });
     return out;
   }
@@ -854,6 +858,10 @@ export class MatchRoom {
         victimTeam: e.victimTeam ?? null,
         attackerId: e.attackerId,
         victimId: e.victimId,
+        ...(() => {
+          const fx = e.attackerId === undefined ? undefined : kfxFor(this.byId.get(e.attackerId)?.cos, e.weapon);
+          return fx ? { fx } : {};
+        })(),
       });
     });
     bus.on('combat:hit', (e) => {

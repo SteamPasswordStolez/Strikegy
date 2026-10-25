@@ -55,7 +55,8 @@ import {
 } from '../src/net/lobbyProtocol.ts';
 import type { AdminAccount } from '../src/net/lobbyProtocol.ts';
 import type { Applied, MatchSummary, Profile } from '../src/progression/profile.ts';
-import { boostsLeft } from '../src/progression/economy.ts';
+import { boostsLeft, econOf } from '../src/progression/economy.ts';
+import { wornOf, type Worn } from '../src/progression/worn.ts';
 import { xpForLevel } from '../src/progression/levels.ts';
 
 /** Messages a connection may send: a bucket of this many, refilled per second. */
@@ -92,6 +93,8 @@ export interface MatchPlayer {
   weapons?: Record<string, number>;
   /** Signed in: boosters running (seconds of match time left). */
   boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>;
+  /** Signed in: what they wear that others see (skins, charms, kill effects, vehicle skins). */
+  cos?: Worn;
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -733,6 +736,7 @@ export class LobbyCore {
       p.xp = prof.xp;
       p.weapons = Object.fromEntries(Object.entries(prof.weapons).map(([id, w]) => [id, w.xp]));
       p.boost = boostsLeft(prof);
+      p.cos = wornOf(econOf(prof).equip);
     }
     return p;
   }

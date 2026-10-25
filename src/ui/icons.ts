@@ -49,6 +49,9 @@ const PATHS = {
   grenade: '<circle cx="12" cy="14.5" r="6"/><path d="M10 8.5V5.5h4v3M14 6l4-2.5"/>',
   tank: '<path d="M2 15h20l-2 4.5H4Z"/><path d="M6.5 15v-4h8v4M14.5 12.5H22"/>',
   jet: '<path d="M12 2.5 13.8 9l8.2 4v2l-8.2-2-.5 5.5 2.7 2h-8l2.7-2-.5-5.5-8.2 2v-2L10.2 9Z"/>',
+  car: '<path d="M3 16v-4l2.5-5h13L21 12v4Z"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M3 12h18"/>',
+  ship: '<path d="M2 15h20l-3 5H5Z"/><path d="M6 15v-4h9v4M10 11V6h3v5M15 12h4"/>',
+  wheel: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M12 3v7M4.5 16.5 10.3 13M19.5 16.5 13.7 13"/>',
   beacon: '<path d="M12 21v-9"/><circle cx="12" cy="9" r="2"/><path d="M8 5a5.6 5.6 0 0 0 0 8M16 5a5.6 5.6 0 0 1 0 8M5 2.5a9.5 9.5 0 0 0 0 13M19 2.5a9.5 9.5 0 0 1 0 13"/>',
   star: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8Z"/>',
   // The kit on the HUD (throwables and class gadgets).

@@ -92,11 +92,142 @@
   margin-top: var(--s5);
 }
 
-/* The last setup, one press away. */
-.mm-continue {
+/* The tutorial, controls, settings and credits: icons with their names under the entries. */
+.mm-menu .ds-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.mm-entry-icon {
+  width: 0.9em;
+  height: 0.9em;
+  opacity: 0.75;
+}
+.mm-util {
+  display: flex;
+  gap: var(--s2);
+  margin: var(--s6) 0 0 var(--s5);
+  animation: mm-in var(--t-slow) var(--ease) both;
+  animation-delay: 360ms;
+}
+.mm-util-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  width: calc(var(--u) * 4.6);
+  padding: var(--s2) 0;
+  border: var(--line-w) solid transparent;
+  background: transparent;
+  color: var(--ink-2);
+  font: 600 var(--fs-xs) / 1.1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+.mm-util-btn .ds-icon {
+  width: calc(var(--u) * 1.5);
+  height: calc(var(--u) * 1.5);
+}
+.mm-util-btn:hover,
+.mm-util-btn:focus-visible {
+  color: var(--ink);
+  background: var(--surface-1);
+  border-color: var(--line);
+  outline: none;
+}
+.mm-mail {
+  position: relative;
+  width: calc(var(--u) * 2.75);
+  padding: 0;
+  justify-content: center;
+}
+.mm-mail-n {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font: 700 11px/18px var(--font-ui);
+  text-align: center;
+}
+/* Right column: today's missions over the continue card. */
+.mm-side {
   grid-column: 2;
   grid-row: 2;
   align-self: end;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  width: calc(var(--u) * 24);
+}
+.mm-missions {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  aspect-ratio: auto;
+  gap: var(--s2);
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  animation: mm-in var(--t-slow) var(--ease) both;
+  animation-delay: 200ms;
+}
+.mm-missions:hover,
+.mm-missions:focus-visible {
+  border-color: var(--sel-bg);
+  outline: none;
+}
+.mm-missions-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.mm-missions-time,
+.mm-missions-week {
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+.mm-mrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--s2);
+  font-size: var(--fs-sm);
+}
+.mm-mrow-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-mrow-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.mm-mrow-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  background: var(--surface-3);
+}
+.mm-mrow-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.mm-mrow.done {
+  opacity: 0.55;
+}
+.mm-mrow.done .mm-mrow-bar i {
+  background: var(--squad);
+}
+
+/* The last setup, one press away. */
+.mm-continue {
   justify-content: space-between;
   width: calc(var(--u) * 24);
   font: inherit;
@@ -167,8 +298,11 @@
     --u: 11px;
     padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   }
-  .mm-continue {
+  .mm-side {
     width: calc(var(--u) * 21);
+  }
+  .mm-util {
+    margin-top: var(--s3);
   }
 }
 /* Narrow portrait screens: one column, the card under the entries. */
@@ -181,7 +315,7 @@
   .mm-top {
     flex-wrap: wrap;
   }
-  .mm-continue {
+  .mm-side {
     grid-column: 1;
     grid-row: 3;
     width: 100%;

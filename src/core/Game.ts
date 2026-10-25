@@ -55,7 +55,7 @@ import { GadgetWorld, type GadgetOwner, type MineWalker } from '@/modes/gadgetWo
 import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
-import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
+import type { DriveInput, Mount, Vehicle } from '@/vehicles/Vehicle';
 import { contacts, deckSpawn, fleetShip, fleetState, layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
 import { CARRIER_PLANES, DECK, PLANE_COST, isCarrierPlane, launchBlock, planeCap } from '@/vehicles/carrierPlanes';
 import { SoldierModel } from '@/ai/SoldierModel';
@@ -96,7 +96,11 @@ import { beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, type M
 import { commitMatch, currentProfile, noteServerProgress, settleLeft, shopAction, signedIn } from '@/net/account';
 import { CONTRACT_REROLL, contractOffer } from '@/progression/contracts';
 import { RIBBONS } from '@/progression/ribbons';
-import { ECON, type MatchEcon } from '@/progression/economy';
+import { kfxFor, vehicleClassOf, wornOf } from '@/progression/worn';
+import { item } from '@/progression/catalog';
+import { KillEffects } from '@/render/killEffects';
+import { applyVehicleSkin } from '@/vehicles/vehicleLooks';
+import { ECON, type Econ, type MatchEcon } from '@/progression/economy';
 import { dayKey } from '@/progression/calendar';
 import { ContractPanel } from '@/ui/ContractPanel';
 import type { RankId } from '@/progression/levels';
@@ -111,12 +115,13 @@ import { armForLevel, armLoot, gunGameKit } from '@/modes/gunGame';
 import { FleetRules, LastStandRules, ConquestRules, ESCORT, EscortRules, FortressRules, FrontlineRules, GUN_GAME_STEPS, GunGameRules, HardpointRules, KillConfirmRules, PointsRules, RushRules, SND, SearchDestroyRules, SoloRules, type Charge, type ModeEvent, type ModeKind } from '@/modes/matchRules';
 import { EscortWorld } from '@/modes/escortWorld';
 import { VehicleView, type VehicleViewKind, type VehicleViewState } from '@/ui/VehicleView';
+import { VehicleHud, type VehicleHudAlert, type VehicleHudGauge, type VehicleHudGun, type VehicleHudSeat, type VehicleHudState } from '@/ui/VehicleHud';
 import { LastStandVisuals } from '@/modes/lastStandVisuals';
 import { ChargeVisuals } from '@/modes/chargeVisuals';
 import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
-import type { Side, SquadHud, ZoneHud } from '@/ui/HUD';
+import type { HudFrame, Side, SquadHud, ZoneHud } from '@/ui/HUD';
 import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeployScreen';
 import { paintMap, paintMapCard, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
@@ -540,6 +545,7 @@ export class Game {
     this.renderer.setRenderScale(this.settings.renderScale);
     this.hud = new HUD(container);
     this.vehicleView = new VehicleView(this.hud.root);
+    this.vehicleHud = new VehicleHud(this.hud.root, (i) => (this.seatTap = i));
     this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
     this.renderer.instrument(this.perf.section);
     this.overlay = new Overlay(container);
@@ -1436,6 +1442,8 @@ export class Game {
       this.net.render(dt);
     }
     this.drawLasers();
+    this.killFx?.update(dt, this.renderer.camera);
+    this.updateVehicleSkins();
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.tagVisuals && this.zoneMode?.match instanceof KillConfirmRules) this.tagVisuals.update(this.zoneMode.match.tags, this.myTeam, this.elapsed);
     if (this.chargeVisuals && this.zoneMode?.charges) this.chargeVisuals.update(this.zoneMode.charges.charges, this.elapsed);
@@ -2293,7 +2301,9 @@ export class Game {
     }
     if (input.viewToggle) this.rideThird = !this.rideThird;
     const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === this.myId);
-    const want = input.weaponSlot;
+    // A seat picked on the panel (a click or a tap) counts like its number key.
+    const want = this.seatTap >= 0 ? this.seatTap : input.weaponSlot;
+    this.seatTap = -1;
     // A warship's stations are walked up to (the number keys pick a plane at flight control instead).
     if (v.ship) {
       if (v.spec.seats[r.seat]!.station?.kind === 'flight') this.flightStation(v, input);
@@ -2480,45 +2490,186 @@ export class Game {
     this.hud.notify(t('flight.launched').replace('{plane}', t(`vehicle.${kind}` as MessageKey)), 'ally');
   }
 
-  /** The ride line's carrier plane part: on the deck / the landing aid / rearming, the rounds left. */
-  private planeLine(v: Vehicle, seat: number): string[] {
-    const out: string[] = [];
-    if (v.parked && v.parkedFor < DECK.rearm && (v.health < v.spec.health || v.mounts.some((m) => m && m.ammo < (m.gun.ammo ?? Infinity)))) out.push(t('plane.landed').replace('{s}', String(Math.ceil(DECK.rearm - v.parkedFor))));
-    else if (v.deck && seat === 0) out.push(t('plane.deck'));
-    else if (v.approach) out.push(t('plane.approach'));
-    const ammo = [v.mounts[seat], v.altMounts[seat]].filter((m) => m && Number.isFinite(m.ammo)).map((m) => `${t(`vehicleGun.${m!.id}` as MessageKey)} ${m!.ammo}`);
-    if (ammo.length) out.push(t('plane.ammo').replace('{list}', ammo.join(' · ')));
-    if (seat === 0 && v.mounts[0] && v.mounts[0].ammo <= 0 && !v.deck) out.push(t('plane.noAmmo'));
-    return out;
+  /** Kill effects round downed soldiers (made on the first one). */
+  private killFx: KillEffects | null = null;
+
+  /** A kill effect at the victim, as the setting allows (everyone's / one's own / none). */
+  private playKillFx(fxId: string, attackerId: number, victimId: number): void {
+    const mode = this.settings.killFx;
+    if (mode === 'off' || (mode === 'mine' && attackerId !== this.myId)) return;
+    const look = item(fxId)?.kfx;
+    if (!look) return;
+    const at = victimId === this.myId ? this.player.feet : (this.bots?.bots.find((b) => b.id === victimId)?.feet ?? this.net?.remote(victimId)?.feet);
+    if (!at) return;
+    if (!this.killFx) {
+      this.killFx = new KillEffects();
+      this.renderer.scene.add(this.killFx.group);
+    }
+    this.killFx.play(look, at);
   }
 
-  /** The ride line's warship part: telegraph and speed, depth and air, fires, flooding, stations out. */
-  private shipLine(v: Vehicle, seat: number): string[] {
-    const s = v.ship!;
-    const kind = v.spec.seats[seat]!.station?.kind;
-    const out: string[] = [];
-    if (kind === 'helm') out.push(`${t(`ship.tel${s.telegraph}` as MessageKey)} · ${Math.round(v.forwardSpeed() * 1.944)} kn`);
-    if (v.spec.ship?.sub && (kind === 'helm' || kind === 'periscope' || kind === 'sonar')) out.push(t('ship.depth').replace('{d}', String(Math.round(s.depth))).replace('{o}', String(Math.round(s.oxygen))));
-    if (s.fires.length) out.push(t('ship.fires').replace('{n}', String(s.fires.length)));
-    if (s.flooding > 0.01) out.push(t('ship.flood').replace('{p}', String(Math.round(s.flooding * 100))));
-    if (s.broken.size) out.push(t('ship.broken').replace('{n}', String(s.broken.size)));
-    if (s.broken.has(seat)) out.push(t('ship.out'));
-    if (s.sinking >= 0) out.push(t('ship.sinking'));
-    if (kind === 'sonar' || kind === 'periscope' || kind === 'asw') {
-      const list = contacts(v, kind, this.vehicles?.vehicles ?? []).slice(0, 3);
-      out.push(list.length ? t('ship.contacts').replace('{list}', list.map((c) => `${t(`vehicle.${c.kind}` as MessageKey)} ${Math.round(c.bearing)}° ${(c.range / 1000).toFixed(1)} km`).join(', ')) : t('ship.noContacts'));
+  /** Vehicle skins: each vehicle wears its driver's skin for its family (the player's own, a room's people's from the roster). */
+  private updateVehicleSkins(): void {
+    for (const v of this.vehicles?.vehicles ?? []) {
+      const cls = vehicleClassOf(v.kind);
+      if (!cls) continue;
+      const d = v.seats[0];
+      const id = d ? (d.id === this.myId ? this.worn.vskin[cls] : this.net?.roster.get(d.id)?.cos?.vskin?.[cls]) : undefined;
+      const root = v.model.root;
+      if (root.userData.vskin === id) continue;
+      root.userData.vskin = id;
+      const it = id ? item(id) : undefined;
+      applyVehicleSkin(root, it?.kind === 'vskin' && it.vclass === cls ? (it.vskin ?? null) : null);
     }
-    if (s.dived && kind === 'helm') out.push(t('ship.dived'));
-    if (!this.touch && kind === 'helm') out.push(t(v.spec.ship?.sub ? 'ship.controlsSub' : 'ship.controls'));
-    if (kind === 'flight' && this.vehicles) {
-      const k = CARRIER_PLANES[this.flightPick]!;
-      const sq = this.playerSquad;
-      const rp = sq ? this.squadRpOf(sq) : 0;
-      const line = t('flight.pick').replace('{plane}', t(`vehicle.${k}` as MessageKey)).replace('{cost}', String(PLANE_COST[k])).replace('{rp}', String(Math.floor(rp)));
-      out.push(line.replace('{n}', String(this.vehicles.planesUp(this.myTeam))).replace('{cap}', String(planeCap(this.sideCount(this.myTeam)))));
+  }
+
+  /** A seat picked on the vehicle panel, taken on the next step. */
+  private seatTap = -1;
+  private vehicleHud!: VehicleHud;
+
+  /**
+   * The vehicle panel: name, seat, health, the seat's guns, gauges, every
+   * seat with who is in it, warnings and the keys that work here.
+   */
+  private vehicleHudState(): VehicleHudState {
+    const { v, seat } = this.ride!;
+    const spec = v.spec.seats[seat]!;
+    const station = spec.station;
+    const time = this.simTime;
+    const touch = !!this.touch;
+    const key = (a: Action): string => (touch ? '' : actionKey(a));
+    const f = v.flight;
+    const ship = v.ship;
+    const guns: VehicleHudGun[] = [];
+    const gunOf = (m: Mount | null | undefined, alt: boolean): void => {
+      if (!m) return;
+      const shell = !!m.gun.shell;
+      guns.push({
+        name: t(`vehicleGun.${m.id}` as MessageKey),
+        key: key(alt ? 'ads' : 'fire'),
+        heat: shell ? null : m.heat,
+        overheated: m.overheated,
+        reload: shell ? Math.max(0, Math.min(1, v.reloadLeft(seat, time, alt))) : null,
+        ammo: Number.isFinite(m.ammo) ? String(m.ammo) : null,
+      });
+    };
+    gunOf(v.mounts[seat], false);
+    gunOf(v.altMounts[seat], true);
+
+    const gauges: VehicleHudGauge[] = [];
+    const alerts: VehicleHudAlert[] = [];
+    const info: string[] = [];
+    const keys: { key: string; label: string }[] = [];
+    const health = Math.max(0, v.health / v.spec.health);
+    if (health < 0.25) alerts.push({ text: t('vh.critical'), tone: 'bad' });
+
+    if (f) {
+      const below = this.physics.raycast(v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
+      gauges.push({ label: t('vh.g.alt'), value: String(Math.round(below ? below.distance : v.pos.y)), unit: 'm', warn: !!below && below.distance < 40 && !v.deck });
+      gauges.push({ label: t('vh.g.speed'), value: String(Math.round(f.speed * 3.6)), unit: 'km/h' });
+      gauges.push({ label: t('vh.g.thr'), value: String(Math.round(f.throttle * 100)), unit: '%' });
+      if (v.altMounts[seat]?.gun.homing && this.lockTarget(v, this.myTeam)) alerts.push({ text: t('jet.locked'), tone: 'ok' });
+      if (f.turningBack) alerts.push({ text: t('jet.airspace'), tone: 'warn' });
+    } else if (!ship && !v.spec.fixed) gauges.push({ label: t('vh.g.speed'), value: String(Math.round(Math.abs(v.forwardSpeed()) * 3.6)), unit: 'km/h' });
+    if (v.spec.plane) {
+      if (v.parked && v.parkedFor < DECK.rearm && (v.health < v.spec.health || v.mounts.some((m) => m && m.ammo < (m.gun.ammo ?? Infinity)))) alerts.push({ text: t('plane.landed').replace('{s}', String(Math.ceil(DECK.rearm - v.parkedFor))), tone: 'info' });
+      else if (v.deck && seat === 0) alerts.push({ text: t('plane.deck'), tone: 'info' });
+      else if (v.approach) alerts.push({ text: t('plane.approach'), tone: 'ok' });
+      if (seat === 0 && v.mounts[0] && v.mounts[0].ammo <= 0 && !v.deck) alerts.push({ text: t('plane.noAmmo'), tone: 'warn' });
     }
-    if (kind === 'engine') out.push(s.time < s.overdriveUntil ? t('ship.overdriveOn') : s.time < s.overdriveReady ? t('ship.overdriveWait') : t('ship.overdriveReady'));
-    return out;
+    if (ship) {
+      const kind = station?.kind;
+      if (kind === 'helm') {
+        gauges.push({ label: t('vh.g.tel'), value: t(`ship.tel${ship.telegraph}` as MessageKey) });
+        gauges.push({ label: t('vh.g.speed'), value: String(Math.round(v.forwardSpeed() * 1.944)), unit: 'kn' });
+      }
+      if (v.spec.ship?.sub && (kind === 'helm' || kind === 'periscope' || kind === 'sonar')) {
+        gauges.push({ label: t('vh.g.depth'), value: String(Math.round(ship.depth)), unit: 'm' });
+        gauges.push({ label: t('vh.g.air'), value: String(Math.round(ship.oxygen)), unit: t('vh.sec'), warn: ship.oxygen < 30 });
+      }
+      if (ship.sinking >= 0) alerts.push({ text: t('ship.sinking'), tone: 'bad' });
+      if (ship.fires.length) alerts.push({ text: t('ship.fires').replace('{n}', String(ship.fires.length)), tone: 'bad' });
+      if (ship.flooding > 0.01) alerts.push({ text: t('ship.flood').replace('{p}', String(Math.round(ship.flooding * 100))), tone: 'warn' });
+      if (ship.broken.has(seat)) alerts.push({ text: t('ship.out'), tone: 'bad' });
+      else if (ship.broken.size) alerts.push({ text: t('ship.broken').replace('{n}', String(ship.broken.size)), tone: 'warn' });
+      if (ship.dived && kind === 'helm') alerts.push({ text: t('ship.dived'), tone: 'info' });
+      if (kind === 'sonar' || kind === 'periscope' || kind === 'asw') {
+        const list = contacts(v, kind, this.vehicles?.vehicles ?? []).slice(0, 4);
+        if (!list.length) info.push(t('ship.noContacts'));
+        for (const c of list) info.push(`${t(`vehicle.${c.kind}` as MessageKey)} · ${Math.round(c.bearing)}° · ${(c.range / 1000).toFixed(1)} km`);
+      }
+      if (kind === 'engine') info.push(ship.time < ship.overdriveUntil ? t('ship.overdriveOn') : ship.time < ship.overdriveReady ? t('ship.overdriveWait') : t('vh.overdriveReady'));
+      if (kind === 'flight' && this.vehicles) {
+        const k = CARRIER_PLANES[this.flightPick]!;
+        const sq = this.playerSquad;
+        gauges.push({ label: t('vh.g.planes'), value: `${this.vehicles.planesUp(this.myTeam)}/${planeCap(this.sideCount(this.myTeam))}` });
+        gauges.push({ label: t('vh.g.rp'), value: String(Math.floor(sq ? this.squadRpOf(sq) : 0)) });
+        info.push(`${t(`vehicle.${k}` as MessageKey)} · ${PLANE_COST[k]} RP`);
+      }
+    }
+
+    // Seats: who sits where (warships: a crew count instead of sixteen slots).
+    let seats: VehicleHudSeat[] | null = null;
+    let crew: string | null = null;
+    if (ship) {
+      const aboard = v.seats.filter((o) => o).length;
+      crew = t('vh.crew').replace('{n}', String(aboard)).replace('{m}', String(v.seats.length));
+    } else if (v.seats.length > 1) {
+      seats = v.spec.seats.map((sp, i) => {
+        const o = v.seats[i];
+        return {
+          label: t(`seat.${sp.role}` as MessageKey),
+          who: o ? (o.id === this.myId ? t('vh.you') : (this.scores.get(o.id)?.name ?? '?')) : null,
+          me: i === seat,
+          key: touch || i > 8 ? '' : actionKey(`slot${i + 1}` as Action),
+          role: sp.role,
+          locked: !o && i === 0 && v.driverOnly !== null && v.driverOnly !== this.myId,
+        };
+      });
+    }
+
+    if (!touch) {
+      keys.push({ key: actionKey('interact'), label: t(f && !v.deck && !v.parked ? 'vh.k.bail' : 'vh.k.exit') });
+      if (seats) keys.push({ key: `${actionKey('slot1')}–${actionKey(`slot${Math.min(9, v.seats.length)}` as Action)}`, label: t('vh.k.seat') });
+      keys.push({ key: actionKey('view'), label: t(this.rideThird ? 'vh.k.first' : 'vh.k.third') });
+      if (spec.role === 'driver' && !ship && !v.spec.fixed) {
+        if (f) {
+          keys.push({ key: `${actionKey('forward')} ${actionKey('back')}`, label: t('vh.k.throttle') });
+          keys.push({ key: t('vh.mouse'), label: t('vh.k.fly') });
+        } else {
+          keys.push({ key: `${actionKey('forward')} ${actionKey('back')}`, label: t('vh.k.drive') });
+          keys.push({ key: `${actionKey('left')} ${actionKey('right')}`, label: t('vh.k.steer') });
+          keys.push({ key: actionKey('jump'), label: t('vh.k.brake') });
+        }
+      }
+      if (station?.kind === 'helm') {
+        keys.push({ key: `${actionKey('forward')} ${actionKey('back')}`, label: t('vh.k.telegraph') });
+        keys.push({ key: `${actionKey('left')} ${actionKey('right')}`, label: t('vh.k.rudder') });
+        if (v.spec.ship?.sub) keys.push({ key: actionKey('jump'), label: t('vh.k.depth') });
+        keys.push({ key: actionKey('fire'), label: t(v.spec.ship?.sub ? 'vh.k.torpedo' : 'vh.k.salvo') });
+      }
+      if (station?.kind === 'flight') {
+        keys.push({ key: '1–6', label: t('vh.k.pick') });
+        keys.push({ key: actionKey('fire'), label: t('vh.k.launch') });
+      }
+      if (station?.kind === 'engine') keys.push({ key: actionKey('fire'), label: t('vh.k.overdrive') });
+    }
+    const role = station ? t(`station.${station.kind}` as MessageKey) : t(`seat.${spec.role}` as MessageKey);
+    return {
+      name: t(`vehicle.${v.kind}` as MessageKey),
+      icon: f ? 'jet' : ship || v.spec.boat ? 'ship' : v.spec.turnRate || v.spec.fixed ? 'tank' : 'car',
+      seat: role,
+      health,
+      hp: v.health,
+      third: this.rideThird,
+      seats,
+      crew,
+      guns,
+      gauges,
+      alerts,
+      info,
+      keys,
+    };
   }
 
   /**
@@ -3868,7 +4019,7 @@ export class Game {
       : null;
     const act = onField ? this.interact : null;
     const key = (hold: boolean) => (this.touch ? '' : `${t(hold ? 'act.holdE' : 'act.pressE')} · `);
-    let prompt: { text: string; progress: number | null } | null = null;
+    let prompt: HudFrame['prompt'] = null;
     let touchLabel: string | null = null;
     if (act?.kind === 'revive') {
       prompt = { text: `${key(true)}${t('act.revive')} ${act.bot.name}`, progress: this.reviveProgress > 0 ? this.reviveProgress / CLASSES[this.cls].reviveTime : null };
@@ -3894,29 +4045,8 @@ export class Game {
       touchLabel = label;
     }
     if (onField && this.ride) {
-      const { v, seat } = this.ride;
-      const role = v.spec.seats[seat]!.role;
-      const n = v.seats.length;
-      const station = v.spec.seats[seat]!.station;
-      const parts = [`${t(`vehicle.${v.kind}`)} · ${station ? t(`station.${station.kind}`) : t(`seat.${role}`)}`];
-      if (v.ship) parts.push(...this.shipLine(v, seat));
-      if (v.spec.plane) parts.push(...this.planeLine(v, seat));
-      const mount = v.mounts[seat];
-      if (mount?.overheated) parts.push(t('vehicle.overheat'));
-      if (v.reloadLeft(seat, this.simTime) > 0) parts.push(t('vehicle.reloading'));
-      parts.push(this.touch ? t('vehicle.exitTouch') : t('vehicle.exit'));
-      if (n > 1 && !this.touch && !v.ship) parts.push(t('vehicle.seats').replace('{keys}', `${actionKey('slot1')}–${actionKey(`slot${Math.min(9, n)}` as Action)}`));
-      if (!this.touch) parts.push(t('vehicle.view'));
-      const f = v.flight;
-      // In the cockpit the instruments say it; from outside the line does.
-      if (f && this.rideThird) {
-        const below = this.physics.raycast(v.pos, new THREE.Vector3(0, -1, 0), 2000, Layer.WORLD);
-        parts.splice(1, 0, t('jet.hud').replace('{alt}', String(Math.round(below ? below.distance : v.pos.y))).replace('{spd}', String(Math.round(f.speed * 3.6))).replace('{thr}', String(Math.round(f.throttle * 100))));
-        if (v.altMounts[seat]?.gun.homing && this.lockTarget(v, this.myTeam)) parts.splice(2, 0, t('jet.locked'));
-        if (f.turningBack) parts.splice(2, 0, t('jet.airspace'));
-      }
-      if (f && !this.touch) parts.push(t('jet.controls'));
-      prompt = { text: parts.join(' — '), progress: Math.max(0, v.health / v.spec.health) };
+      // Aboard: the vehicle panel says it all (VehicleHud); no line in the middle.
+      prompt = null;
       touchLabel = t('touch.exitVehicle');
     } else if (onField && !prompt && !this.buildMode) {
       const near = this.vehicles?.enterAt(this.player.feet, (v, i) => i > 0 || v.driverOnly === null || v.driverOnly === this.myId, this.botYields);
@@ -3931,24 +4061,42 @@ export class Game {
       }
     }
     const nearSpot = onField && !this.ride && !!this.fort?.anyNear(this.player.feet, 12);
+    // Modes with keys of their own: what is in hand on the line, the keys as caps under it.
+    const hk = (a: Action): string => (this.touch ? '' : actionKey(a));
     if (onField && this.buildMode) {
       const tgt = this.buildTarget;
-      const exit = t(this.touch ? 'build.exitTouch' : 'build.exit');
+      const hints = [
+        { key: hk('fire'), label: t(tgt ? (this.touch ? 'hint.buildTouch' : 'hint.build') : 'build.aim') },
+        { key: hk('build'), label: t(this.touch ? 'build.exitTouch' : 'hint.leave') },
+      ];
       prompt = tgt
-        ? { text: `${t('build.mode')} · ${t(`fort.${tgt.kind}` as MessageKey)} — ${t(this.touch ? 'build.holdTouch' : 'build.hold')} · ${exit}`, progress: tgt.work > 0 ? tgt.work / FORT[tgt.kind].build : null }
-        : { text: `${t('build.mode')} — ${t('build.aim')} · ${exit}`, progress: null };
+        ? { text: `${t('build.mode')} · ${t(`fort.${tgt.kind}` as MessageKey)}`, progress: tgt.work > 0 ? tgt.work / FORT[tgt.kind].build : null, hints }
+        : { text: t('build.mode'), progress: null, hints };
     } else if (onField && this.gadgetOut && this.gadget) {
       const g = this.gadget;
       prompt =
         g === 'panzerfaust' && this.gadgetBusy > 0 && this.gadgetCount > 0
           ? { text: `${t(`gadgetName.${g}`)} — ${t('gadget.reloading')}`, progress: 1 - this.gadgetBusy / GADGETS[g].cycle }
           : {
-              text: `${t(`gadgetName.${g}`)} — ${t(this.touch ? 'gadget.fireTouch' : 'gadget.fire')}: ${t(`gadgetUse.${g}`)} · ${t(this.touch ? 'gadget.exitTouch' : 'gadget.exit')}`,
+              text: t(`gadgetName.${g}`),
               progress: null,
+              hints: [
+                { key: hk('fire'), label: this.touch ? `${t('gadget.fireTouch')}: ${t(`gadgetUse.${g}`)}` : t(`gadgetUse.${g}`) },
+                { key: hk('slot4'), label: t(this.touch ? 'gadget.exitTouch' : 'hint.putAway') },
+              ],
             };
     } else if (onField && this.supportAim) {
       const ok = !!this.supportPoint;
-      prompt = { text: `${t(`support.${this.supportAim}`)} — ${ok ? t(this.touch ? 'support.aimTouch' : 'support.aim') : t('support.noTarget')}`, progress: null };
+      prompt = {
+        text: t(`support.${this.supportAim}`),
+        progress: null,
+        hints: ok
+          ? [
+              { key: hk('fire'), label: t(this.touch ? 'hint.callTouch' : 'hint.call') },
+              { key: hk('support'), label: t(this.touch ? 'hint.cancelTouch' : 'hint.cancel') },
+            ]
+          : [{ key: '', label: t('support.noTarget') }],
+      };
     } else if (!prompt && nearSpot && !this.touch && this.fort!.anyNear(this.player.feet, 6)) {
       prompt = { text: t('build.enter'), progress: null };
     }
@@ -3970,6 +4118,7 @@ export class Game {
     // First person in a vehicle: its sight or cockpit over the view, and no infantry crosshair under it.
     const rideView = this.rideViewState();
     this.vehicleView.update(rideView);
+    this.vehicleHud.update(onField && this.ride ? this.vehicleHudState() : null);
     this.hud.root.classList.toggle('in-sight', !!rideView);
     this.hud.root.classList.toggle('in-vehicle', !!this.ride && this.player.alive);
     this.hud.update(
@@ -4300,6 +4449,13 @@ export class Game {
       }
     });
     this.bus.on('player:respawned', () => (this.squadWiped = false));
+    // Kill effects: the player's own (bots wear none); a room's come with its kill events (onNetEvents).
+    this.bus.on('combat:kill', (e) => {
+      if (e.attackerId === this.myId && e.victimId !== undefined) {
+        const fx = kfxFor(wornOf(this.worn), e.weapon);
+        if (fx) this.playKillFx(fx, e.attackerId, e.victimId);
+      }
+    });
 
     this.deployFlow = true;
     this.deployed = false;
@@ -5276,19 +5432,25 @@ export class Game {
   private static weaponByName: Map<string, WeaponId> | null = null;
 
   /** One's own kill for the record (and the weapon's), or a teammate's beside one's own structure. */
-  /** The camos the player wears (read once a match; the armory changes them between matches). */
-  private camos: Record<string, string> | null = null;
+  /** What the player wears (read once a match; the armory changes it between matches). */
+  private wornCache: Econ['equip'] | null = null;
+  private get worn(): Econ['equip'] {
+    return (this.wornCache ??= structuredClone(econOf(currentProfile()).equip));
+  }
   private readonly viewDefs = new Map<string, WeaponDef>();
 
-  /** The gun in first person with the player's camo on it (same object for the same gun, so the model isn't rebuilt). */
+  /** The gun in first person with the player's camo, skin and charm (same object for the same gun, so the model isn't rebuilt). */
   private viewDef(def: WeaponDef): WeaponDef {
-    this.camos ??= { ...econOf(currentProfile()).equip.camo };
-    const camo = this.options.showcase ? undefined : this.camos[def.id];
-    if (!camo) return def;
-    const k = `${gunKey(def)}#${camo}`;
+    if (this.options.showcase) return def;
+    const w = this.worn;
+    const camo = w.camo[def.id];
+    const skin = w.skin[def.id];
+    const charm = w.charm[def.id];
+    if (!camo && !skin && !charm) return def;
+    const k = `${gunKey(def)}#${camo}#${skin}#${charm}`;
     let d = this.viewDefs.get(k);
     if (!d) {
-      d = { ...def, camo };
+      d = { ...def, ...(camo ? { camo } : {}), ...(skin ? { skin } : {}), ...(charm ? { charm } : {}) };
       this.viewDefs.set(k, d);
     }
     return d;
@@ -5640,6 +5802,7 @@ export class Game {
     for (const e of list) {
       switch (e.k) {
         case 'kill':
+          if (e.fx && e.victimId !== undefined) this.playKillFx(e.fx, e.attackerId ?? -1, e.victimId);
           this.hud.addKill({
             attacker: you(e.attackerId, e.attacker),
             victim: you(e.victimId, e.victim),

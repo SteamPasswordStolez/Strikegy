@@ -54,8 +54,8 @@ export interface HudFrame {
   medkit: { text: string; ready: boolean } | null;
   /** Down and waiting for a revive. */
   down: { left: number; giveUp: number; reviver: string | null; revive: number } | null;
-  /** What E would do here, with progress while holding it. */
-  prompt: { text: string; progress: number | null } | null;
+  /** What E would do here, with progress while holding it; `hints`: other keys that work now, as key caps. */
+  prompt: { text: string; progress: number | null; hints?: { key: string; label: string }[] } | null;
   fps: number | null;
   debug: string | null;
   /**
@@ -180,6 +180,7 @@ export class HUD {
   private promptEl: HTMLDivElement;
   private promptText: HTMLDivElement;
   private promptFill: HTMLDivElement;
+  private promptHints: HTMLDivElement;
   private noticeItems: { el: HTMLDivElement; life: number }[] = [];
   private arcs: DamageArc[] = [];
   private feedItems: { el: HTMLDivElement; life: number }[] = [];
@@ -250,6 +251,7 @@ export class HUD {
     this.promptEl = el('div', 'hud-prompt', this.root);
     this.promptText = el('div', 'hud-prompt-text', this.promptEl);
     this.promptFill = el('div', 'hud-prompt-fill', el('div', 'hud-prompt-track', this.promptEl));
+    this.promptHints = el('div', 'hud-prompt-hints', this.promptEl);
     this.blackEl = el('div', 'hud-black', this.root);
     this.flashEl = el('div', 'hud-flash', this.root);
   }
@@ -473,7 +475,7 @@ export class HUD {
       this.medkit.classList.toggle('ready', f.medkit.ready);
     });
     const pr = f.prompt;
-    const prKey = pr ? `${pr.text}|${pr.progress === null ? '' : Math.round(pr.progress * 50)}` : '';
+    const prKey = pr ? `${pr.text}|${pr.progress === null ? '' : Math.round(pr.progress * 50)}|${(pr.hints ?? []).map((h) => h.key + h.label).join(',')}` : '';
     this.set('prompt', prKey, () => {
       this.promptEl.classList.toggle('on', !!pr);
       if (!pr) return;
@@ -484,6 +486,12 @@ export class HUD {
       el('span', 'prompt-what', this.promptText).textContent = keyed ? pr.text.slice(keyed.length + 3) : pr.text;
       this.promptEl.classList.toggle('holding', pr.progress !== null);
       this.promptFill.style.width = `${Math.round((pr.progress ?? 0) * 100)}%`;
+      this.promptHints.replaceChildren();
+      for (const h of pr.hints ?? []) {
+        const row = el('span', 'hud-hint', this.promptHints);
+        if (h.key) el('span', 'ds-kbd', row).textContent = h.key;
+        el('span', '', row).textContent = h.label;
+      }
     });
     this.updateZone(f.zone, dead);
     this.updateSquad(f.squad);

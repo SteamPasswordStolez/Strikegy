@@ -3,6 +3,8 @@ import type { WeaponDef } from './weaponData';
 import { opticFor, type Optic, type Reticle, type ScopeShape } from './optics';
 import { applyCamo } from './camoMaterial';
 import { camoLookOf } from '@/progression/camo';
+import { item } from '@/progression/catalog';
+import { addCharm, applySkin } from './gunSkins';
 import { DISCARD, PartBuilder, block, furniture, gunMaterials, lathe, loop, rail, railUnder, roundRect, slab, tube, vcyl, xcyl, type P } from './gunKit';
 
 /** A built first-person gun plus the anchors the view model animates and aims with. */
@@ -1062,9 +1064,16 @@ export function fittedExtras(def: WeaponDef, at: { muzzleU: number; muzzleV: num
  */
 export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): GunBuild {
   const g = buildGunBody(def, opts);
-  // The player's camo on the painted parts (first person and pictures; soldiers' guns stay plain).
-  const camo = def.camo && opts.detail !== 'low' ? camoLookOf(def.camo) : undefined;
-  if (camo) applyCamo(g.group, camo);
+  // A skin is the whole finish (everyone sees it, soldiers' guns too); without one, the player's camo on
+  // the painted parts (first person and pictures). A charm only up close.
+  const skin = def.skin ? item(def.skin) : undefined;
+  if (skin?.skin && skin.weapon === def.id) applySkin(g.group, skin.skin, skin.id);
+  else {
+    const camo = def.camo && opts.detail !== 'low' ? camoLookOf(def.camo) : undefined;
+    if (camo) applyCamo(g.group, camo);
+  }
+  const charm = def.charm && opts.detail !== 'low' ? item(def.charm)?.charm : undefined;
+  if (charm) addCharm(g.group, charm);
   return g;
 }
 

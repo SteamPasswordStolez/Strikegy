@@ -991,7 +991,8 @@
 .hud.in-vehicle .hud-weapon,
 .hud.in-vehicle .hud-ammo,
 .hud.in-vehicle .hud-magbar,
-.hud.in-vehicle .hud-kit {
+.hud.in-vehicle .hud-kit,
+.hud.in-vehicle .hud-rp {
   display: none;
 }
 
@@ -1251,4 +1252,305 @@
 }
 .is-touch .tut-body {
   font-size: var(--fs-sm);
+}
+
+/* ---------- Aboard a vehicle (ui/VehicleHud.ts): bottom right, in place of the gun ---------- */
+.vh {
+  position: absolute;
+  right: max(var(--edge-x), env(safe-area-inset-right));
+  bottom: max(var(--edge-y), env(safe-area-inset-bottom));
+  width: calc(var(--u) * 21);
+  display: none;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: linear-gradient(180deg, rgb(12 12 11 / 0.32), rgb(12 12 11 / 0.58));
+  border-top: var(--bar-w) solid var(--accent);
+  pointer-events: auto;
+}
+.vh.on {
+  display: flex;
+}
+.vh-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.vh-icon {
+  width: calc(var(--u) * 2);
+  height: calc(var(--u) * 2);
+  color: var(--accent);
+}
+.vh-title {
+  flex: 1;
+  min-width: 0;
+}
+.vh-name {
+  font: 600 var(--fs-lg) / 1.05 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.vh-seat {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.vh-view {
+  text-shadow: none;
+}
+.vh-hp {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.vh-hp-track {
+  flex: 1;
+  height: calc(var(--bar-w) * 2);
+  background: var(--track);
+  overflow: hidden;
+}
+.vh-hp-fill {
+  height: 100%;
+  background: var(--ink);
+  transition: width var(--t-fast) linear;
+}
+.vh.hurt .vh-hp-fill {
+  background: var(--danger);
+}
+.vh-hp-num {
+  min-width: 3ch;
+  font: 600 var(--fs-md) / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.vh-guns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.vh-guns:empty,
+.vh-gauges:empty,
+.vh-info:empty,
+.vh-keys:empty {
+  display: none;
+}
+.vh-gun {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px var(--s2);
+}
+.vh-gun > .ds-kbd {
+  grid-row: span 2;
+}
+.vh-gun-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vh-gun-ammo {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.vh-gun-track {
+  grid-column: 2 / 4;
+  height: var(--bar-w);
+  background: var(--track);
+  overflow: hidden;
+}
+.vh-gun-fill {
+  height: 100%;
+  background: var(--squad);
+}
+.vh-gun.heat .vh-gun-fill {
+  background: var(--warn);
+}
+.vh-gun.hot .vh-gun-fill,
+.vh-gun.empty .vh-gun-fill {
+  background: var(--danger);
+}
+.vh-gun.hot .vh-gun-ammo,
+.vh-gun.empty .vh-gun-ammo {
+  color: var(--danger);
+}
+.vh-gun.loading .vh-gun-fill {
+  background: var(--ink-2);
+}
+.vh-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--u) * 5), 1fr));
+  gap: var(--s1);
+}
+.vh-gauge {
+  display: flex;
+  flex-direction: column;
+  padding: var(--s1) var(--s2);
+  background: rgb(0 0 0 / 0.28);
+}
+.vh-gauge-label {
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+.vh-gauge-value {
+  font: 600 var(--fs-lg) / 1 var(--font-display);
+}
+.vh-gauge-value small {
+  margin-left: 2px;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+.vh-gauge.warn .vh-gauge-value {
+  color: var(--warn);
+}
+.vh-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+.vh-seats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+.vh-slot {
+  flex: 1 1 calc(var(--u) * 4.5);
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-items: start;
+  gap: 0 var(--s1);
+  padding: var(--s1) var(--s2);
+  border: var(--line-w) solid rgb(239 235 226 / 0.22);
+  background: rgb(0 0 0 / 0.28);
+  color: var(--ink);
+  font: inherit;
+  text-shadow: none;
+  cursor: pointer;
+}
+.vh-slot-key {
+  grid-row: span 2;
+  font: 700 var(--fs-sm) / 1 var(--font-display);
+  color: var(--ink-2);
+}
+.vh-slot-icon {
+  width: 1.1em;
+  height: 1.1em;
+}
+.vh-slot-who {
+  grid-column: 2;
+  max-width: calc(var(--u) * 5.5);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+}
+.vh-slot.me {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.vh-slot.me .vh-slot-who {
+  color: var(--ink);
+  font-weight: 700;
+}
+.vh-slot.taken,
+.vh-slot.locked {
+  cursor: default;
+  opacity: 0.7;
+}
+.vh-slot.taken .vh-slot-who {
+  color: var(--ally-text);
+}
+.vh-crew {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.vh-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  padding-top: var(--s2);
+  border-top: var(--line-w) solid rgb(239 235 226 / 0.16);
+  font-size: var(--fs-sm);
+}
+.vh-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  white-space: nowrap;
+}
+.vh-key .ds-kbd {
+  min-width: calc(var(--u) * 1.4);
+  height: calc(var(--u) * 1.4);
+  font-size: var(--fs-xs);
+}
+/* Warnings: chips over the middle of the screen's lower half. */
+.vh-alerts {
+  position: absolute;
+  left: 50%;
+  top: 70%;
+  transform: translateX(-50%);
+  display: none;
+  gap: var(--s2);
+}
+.vh-alerts.on {
+  display: flex;
+}
+.vh-alert {
+  padding: var(--s1) var(--s3);
+  font-weight: 700;
+  background: rgb(12 12 11 / 0.55);
+  border-left: var(--bar-w) solid var(--ink-2);
+  text-shadow: none;
+}
+.vh-alert.bad {
+  border-color: var(--danger);
+  color: var(--danger);
+  animation: hud-blink 0.6s ease-in-out infinite alternate;
+}
+.vh-alert.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.vh-alert.ok {
+  border-color: var(--squad);
+  color: var(--squad);
+}
+/* Touch: top right like the gun's numbers, smaller, no keys. */
+.is-touch .vh {
+  top: max(var(--s3), env(safe-area-inset-top));
+  bottom: auto;
+  width: calc(var(--u) * 15);
+  padding: var(--s2);
+  gap: var(--s1);
+}
+.is-touch .vh-keys,
+.is-touch .vh-info,
+.is-touch .vh-view {
+  display: none;
+}
+.is-touch .vh-alerts {
+  top: 22%;
+}
+.hud:has(.hud-death.on) .vh,
+.hud:has(.hud-death.on) .vh-alerts {
+  display: none;
+}
+/* Keys that work in the mode in hand (build, gadget, call-in aim), under the prompt. */
+.hud-prompt-hints {
+  display: flex;
+  gap: var(--s4);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.hud-prompt-hints:empty {
+  display: none;
+}
+.hud-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
 }

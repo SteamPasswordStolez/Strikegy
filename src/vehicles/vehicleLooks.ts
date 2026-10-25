@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SurfaceLibrary } from '@/render/textures';
 import type { KitBuilder, KitMaterial } from '@/world/modelKits';
 import type { Team } from '@/world/mapTypes';
+import type { VehicleSkinLook } from '@/progression/catalog';
 
 /**
  * Looks for the vehicle models: painted steel with a camouflage pattern per
@@ -45,7 +46,7 @@ const CAMO: Record<Livery, Record<'blue' | 'red' | 'none', [number, number, numb
 const CAMO_GLSL = /* glsl */ `
 varying vec3 vCamoPos;
 uniform vec3 uCamoA, uCamoB, uCamoC;
-uniform float uCamoScale, uDust;
+uniform float uCamoScale, uDust, uPattern, uBand;
 float camoHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float camoNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -55,10 +56,21 @@ float camoNoise(vec3 x) {
 float camoFbm(vec3 p) { return 0.65 * camoNoise(p) + 0.35 * camoNoise(p * 2.3 + 11.0); }
 `;
 
-/** Painted steel in the side's camouflage: blotches in object space (they stay put on the hull), dust toward the bottom. */
-function camoPaint(team: Team | null, livery: Livery): THREE.Material {
-  return cached(`camo-${livery}-${team}`, () => {
-    const [a, b, c] = CAMO[livery][team ?? 'none'];
+/** Vehicle skin patterns (progression step 6) as the shader's numbers; 0 is the default blotches. */
+const VPATTERN: Record<VehicleSkinLook['pattern'], number> = { blotch: 0, bands: 1, stripes: 2, digital: 3, clouds: 4, tiger: 5, dazzle: 6, splinter: 7 };
+
+/**
+ * Painted steel in the side's camouflage: blotches in object space (they stay
+ * put on the hull), dust toward the bottom. A vehicle skin changes the
+ * pattern and the tones of the side's own three colours (never the colours'
+ * family: friend or foe still reads at a distance), and can add a dark band.
+ */
+function camoPaint(team: Team | null, livery: Livery, skin?: VehicleSkinLook): THREE.Material {
+  const skey = skin ? `${skin.pattern}:${skin.scale}:${skin.tones.join(',')}:${skin.band ? 1 : 0}` : '';
+  return cached(`camo-${livery}-${team}-${skey}`, () => {
+    const pal = CAMO[livery][team ?? 'none'];
+    const tone = (c: number, k: number) => new THREE.Color(c).multiplyScalar(k).getHex();
+    const [a, b, c] = skin && team ? [tone(pal[0], skin.tones[0]), tone(pal[1], skin.tones[1]), tone(pal[2], skin.tones[2])] : pal;
     const base = lib ? lib.get('paint').clone() : new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.2 });
     // The paint texture's colour (chips, rust) reads as measles at a vehicle's
     // scale; its roughness / normal maps keep the worn finish.
@@ -69,8 +81,10 @@ function camoPaint(team: Team | null, livery: Livery): THREE.Material {
       uCamoA: { value: new THREE.Color(a) },
       uCamoB: { value: new THREE.Color(b) },
       uCamoC: { value: new THREE.Color(c) },
-      uCamoScale: { value: team ? (livery === 'air' ? 0.22 : 0.55) : 0 },
+      uCamoScale: { value: team ? (livery === 'air' ? 0.22 : 0.55) * (skin?.scale ?? 1) : 0 },
       uDust: { value: livery === 'air' ? 0 : 0.35 },
+      uPattern: { value: skin ? VPATTERN[skin.pattern] : 0 },
+      uBand: { value: skin?.band ? 1 : 0 },
     };
     base.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
@@ -82,18 +96,64 @@ function camoPaint(team: Team | null, livery: Livery): THREE.Material {
         `#include <color_fragment>
         vec3 camo = uCamoA;
         if (uCamoScale > 0.0) {
-          float n1 = camoFbm(vCamoPos * uCamoScale);
-          float n2 = camoFbm(vCamoPos * uCamoScale * 1.3 + 37.0);
-          camo = mix(camo, uCamoB, smoothstep(0.54, 0.57, n1));
-          camo = mix(camo, uCamoC, smoothstep(0.6, 0.63, n2));
+          vec3 q = vCamoPos * uCamoScale;
+          int pat = int(uPattern + 0.5);
+          if (pat == 1) {
+            float n = camoFbm(vec3(q.x * 0.5, q.y * 2.0, q.z * 0.5));
+            camo = n < 0.42 ? uCamoB : n > 0.6 ? uCamoC : uCamoA;
+          } else if (pat == 2) {
+            float s = sin(q.z * 3.0 + q.y * 1.5 + camoFbm(q) * 3.0);
+            camo = s > 0.4 ? uCamoB : s < -0.55 ? uCamoC : uCamoA;
+          } else if (pat == 3) {
+            vec3 g = floor(q * 4.0) / 4.0;
+            float n1 = camoFbm(g), n2 = camoFbm(g * 1.3 + 37.0);
+            camo = mix(mix(uCamoA, uCamoB, step(0.55, n1)), uCamoC, step(0.62, n2));
+          } else if (pat == 4) {
+            float n = camoFbm(q * 0.6);
+            camo = mix(mix(uCamoA, uCamoB, smoothstep(0.45, 0.6, n)), uCamoC, smoothstep(0.62, 0.72, camoFbm(q * 0.9 + 11.0)));
+          } else if (pat == 5) {
+            float s = sin(q.z * 2.4 + camoFbm(q * 1.2) * 6.0) + (camoNoise(q * 2.5) - 0.5);
+            camo = s > 0.75 ? uCamoC : s < -0.85 ? uCamoB : uCamoA;
+          } else if (pat == 6) {
+            // Dazzle: big hard-edged angular blocks.
+            float d = sin(q.z * 0.9 + q.y * 1.7) * sin(q.z * -1.3 + q.y * 0.6 + 2.0) + (camoNoise(floor(q * 0.8)) - 0.5) * 0.6;
+            camo = d > 0.15 ? uCamoA : d < -0.2 ? uCamoC : uCamoB;
+          } else if (pat == 7) {
+            float a = sin(q.z * 1.6 + q.y * 2.1) + sin(q.z * -2.7 + q.y * 1.3 + 1.7) + (camoNoise(floor(q * 1.6)) - 0.5) * 1.3;
+            camo = a > 0.55 ? uCamoB : a < -0.7 ? uCamoC : uCamoA;
+          } else {
+            float n1 = camoFbm(q);
+            float n2 = camoFbm(q * 1.3 + 37.0);
+            camo = mix(camo, uCamoB, smoothstep(0.54, 0.57, n1));
+            camo = mix(camo, uCamoC, smoothstep(0.6, 0.63, n2));
+          }
+          // A band round the middle of the hull.
+          if (uBand > 0.5) camo = mix(camo, uCamoC * 0.55, step(abs(vCamoPos.z - 0.4), 0.22));
         }
         // Dust and dried mud up the lower hull and running gear.
         float dust = (1.0 - smoothstep(-1.0, 0.3, vCamoPos.y)) * uDust * (0.7 + 0.3 * camoNoise(vCamoPos * 4.0));
         diffuseColor.rgb *= mix(camo, vec3(0.42, 0.37, 0.29), dust);`,
       );
     };
-    base.customProgramCacheKey = () => `camo-${livery}-${team}`;
+    // One program for every look (pattern and colours are uniforms).
+    base.customProgramCacheKey = () => 'vcamo';
+    base.userData.vcamo = { team, livery };
     return base;
+  });
+}
+
+/**
+ * A vehicle skin on a built vehicle (its painted camouflage parts, near and
+ * far looks), or back to the side's default with null.
+ */
+export function applyVehicleSkin(root: THREE.Object3D, skin: VehicleSkinLook | null): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const m = mesh.material as THREE.Material;
+    const tag = m && !Array.isArray(m) ? (m.userData.vcamo as { team: Team | null; livery: Livery } | undefined) : undefined;
+    if (!tag) return;
+    mesh.material = camoPaint(tag.team, tag.livery, skin ?? undefined);
   });
 }
 

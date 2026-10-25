@@ -27,6 +27,10 @@ const PATTERN: Record<CamoLook['pattern'], number> = {
   scales: 9,
   waves: 10,
   flow: 11,
+  wrap: 12,
+  carbon: 13,
+  hex: 14,
+  splinter: 15,
 };
 
 /** Flowing camos run on one clock (`tickCamo`). */
@@ -90,6 +94,34 @@ vec4 camoColor() {
     return vec4(mix(mix(camoB, camoA, shine), camoC, edge * 0.7), 0.85);
   }
   if (kind == 10) { float s = sin(p.z * 2.0 + sin(p.y * 3.0 + t * 2.0) * 1.5 + cFbm(p) * 3.0); return vec4(mix(camoB, s > 0.0 ? camoA : camoC, abs(s)), 0.2); }
+  if (kind == 12) {
+    // Cloth / tape wrapped round the gun: diagonal turns with gaps, the cloth mottled.
+    float turn = fract((p.z + p.y * 0.55) * 1.6);
+    float gap = smoothstep(0.0, 0.06, turn) * smoothstep(1.0, 0.92, turn);
+    vec3 cloth = mix(camoA, camoC, cFbm(p * 2.5));
+    return vec4(mix(camoB, cloth, gap), 0.0);
+  }
+  if (kind == 13) {
+    // Carbon fibre: a twill weave catching the light.
+    vec2 q = vec2(p.z + p.x, p.y) * 1.0;
+    float w = step(0.5, fract(q.x + floor(q.y) * 0.5)) ;
+    float sheen = 0.5 + 0.5 * sin((q.x + q.y) * 6.2832);
+    return vec4(mix(camoB, mix(camoA, camoC, sheen * w), 0.8), 0.15);
+  }
+  if (kind == 14) {
+    // Hexagon cells.
+    vec2 q = vec2(p.z, p.y * 1.1547);
+    vec2 r = vec2(1.0, 1.732);
+    vec2 a = mod(q, r) - r * 0.5; vec2 b = mod(q - r * 0.5, r) - r * 0.5;
+    vec2 g = dot(a, a) < dot(b, b) ? a : b;
+    float edge = smoothstep(0.38, 0.45, max(abs(g.x) * 0.866 + abs(g.y) * 0.5, abs(g.y)));
+    return vec4(mix(mix(camoB, camoA, cNoise(floor(q * 1.3) + 3.0)), camoC, edge), 0.0);
+  }
+  if (kind == 15) {
+    // Splinter: hard-edged angular shards.
+    float a = sin(p.z * 1.7 + p.y * 2.3) + sin(p.z * -2.9 + p.y * 1.1 + 1.7) + (cNoise(floor(p * 2.0)) - 0.5) * 1.4;
+    return vec4(a > 0.6 ? camoB : a < -0.7 ? camoC : camoA, 0.0);
+  }
   float n = cFbm(p + vec3(t * 0.6, -t * 0.4, t * 0.3));
   return vec4(mix(mix(camoB, camoA, smoothstep(0.3, 0.6, n)), camoC, smoothstep(0.62, 0.8, n)), 0.6);
 }

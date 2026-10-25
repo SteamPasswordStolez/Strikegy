@@ -30,6 +30,7 @@ import { LAYER_FX } from '@/render/layers';
 import type { Soldier } from '@/sim/Soldier';
 import { WEAPONS, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
 import { gunKey, withAttachments } from '@/weapons/attachments';
+import { gunWorn } from '@/progression/worn';
 import { botWeapon } from '@/ai/personality';
 import type { Vehicle } from '@/vehicles/Vehicle';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
@@ -700,7 +701,10 @@ export class NetMatch {
   private remoteDef(id: number, weapon: WeaponId): WeaponDef {
     const info = this.roster.get(id);
     if (info?.bot) return botWeapon(weapon);
-    return withAttachments(WEAPONS[weapon], info?.att?.[weapon]);
+    const def = withAttachments(WEAPONS[weapon], info?.att?.[weapon]);
+    // A person's gun skin shows on their soldier too (charms are too small to see from outside).
+    const skin = gunWorn(info?.cos, weapon).skin;
+    return skin ? { ...def, skin } : def;
   }
 
   private setRoster(list: readonly MatchSoldierInfo[]): void {

@@ -25,7 +25,11 @@ import {
   weeklyOffer,
   depotOffer,
   buy,
+  dailyDeal,
+  WEEK_SLOTS,
 } from '@/progression/economy';
+import { cleanWorn, kfxFor, vehicleClassOf, wornOf } from '@/progression/worn';
+import { ITEMS, weeklyPool } from '@/progression/catalog';
 import { DAILY, MISSION, drawMissions } from '@/progression/missions';
 import { applySummary, cleanProfile, newProfile, type Profile } from '@/progression/profile';
 import { levelOf, rankAt, xpForLevel } from '@/progression/levels';
@@ -284,7 +288,7 @@ describe('supply boxes', () => {
 describe('shop', () => {
   it('offers eight a week (a bundle first), the depot the rest at 120 %', () => {
     const w = weeklyOffer(MON);
-    expect(w).toHaveLength(8);
+    expect(w).toHaveLength(1 + WEEK_SLOTS.length);
     expect(w[0]!.bundle).toBeDefined();
     expect(weeklyOffer(MON + 3 * DAY)).toEqual(w);
     const d = depotOffer(MON);
@@ -309,10 +313,76 @@ describe('shop', () => {
   it('checks requests from outside', () => {
     expect(parseShopOp({ op: 'box', count: 11 })).toBeNull();
     expect(parseShopOp({ op: 'buy', key: '<script>' })).toBeNull();
-    expect(parseShopOp({ op: 'equip', slot: 'skin' })).toBeNull();
+    expect(parseShopOp({ op: 'equip', slot: 'hat' })).toBeNull();
     expect(parseShopOp({ op: 'contract' })).toEqual({ op: 'contract' });
     const p = rich(40);
     expect(runShopOp(p, { op: 'contract' }, Math.random, MON).error).toBe('funds');
     expect(runShopOp(p, { op: 'open' }, Math.random, MON).error).toBe('gone');
   });
 });
+
+describe('step 6: skins, charms, vehicle skins, kill effects', () => {
+  it('has a big week pool and rotates a mix every week', () => {
+    expect(weeklyPool().length).toBeGreaterThan(500);
+    const ids = new Set(ITEMS.map((i) => i.id));
+    expect(ids.size).toBe(ITEMS.length);
+    const kinds = new Set(weeklyOffer(MON).flatMap((o) => o.items.map((id) => item(id)!.kind)));
+    for (const k of ['skin', 'charm', 'vskin', 'kfx']) expect(kinds.has(k as never)).toBe(true);
+    // Several weeks in a row share few pieces.
+    const a = new Set(weeklyOffer(MON).flatMap((o) => o.items));
+    const b = weeklyOffer(MON + 7 * DAY).flatMap((o) => o.items);
+    expect(b.filter((id) => a.has(id)).length).toBeLessThan(4);
+  });
+
+  it('sells today\'s deal at 70 %, a new one each day', () => {
+    const d = dailyDeal(MON);
+    expect(d.price).toBe(Math.round(PRICE_OF(d.items[0]!) * 0.7));
+    expect(dailyDeal(MON + DAY).items[0]).not.toBe(d.items[0]);
+    const p = rich(100_000);
+    expect(buy(p, d.key, MON)).toBeNull();
+    expect(econOf(p).items[d.items[0]!]).toBeDefined();
+  });
+
+  it('wears a skin only on its own gun, a vehicle skin only on its family, a kill effect on one gun or all', () => {
+    const p = fresh();
+    const e = econOf(p);
+    e.items['skin.night.ar1'] = { at: MON, from: 'weekly' };
+    e.items['vskin.dazzle.ship'] = { at: MON, from: 'weekly' };
+    e.items['kfx.sparks'] = { at: MON, from: 'weekly' };
+    expect(equip(p, 'skin', 'skin.night.ar1', 'ar2')).toBe('bad');
+    expect(equip(p, 'skin', 'skin.night.ar2', 'ar2')).toBe('owned');
+    expect(equip(p, 'skin', 'skin.night.ar1', 'ar1')).toBeNull();
+    expect(equip(p, 'vskin', 'vskin.dazzle.ship', 'armor')).toBe('bad');
+    expect(equip(p, 'vskin', 'vskin.dazzle.ship', 'ship')).toBeNull();
+    expect(equip(p, 'kfx', 'kfx.sparks', '*')).toBeNull();
+    const w = wornOf(e.equip)!;
+    expect(kfxFor(w, 'ar3')).toBe('kfx.sparks');
+    expect(kfxFor(w, 'M4A1')).toBe('kfx.sparks');
+    // A set from outside keeps only real items of the right kind on the right thing.
+    expect(cleanWorn({ skin: { ar2: 'skin.night.ar1', ar1: 'skin.night.ar1' }, kfx: { '*': 'camo.lv10' } })).toEqual({ skin: { ar1: 'skin.night.ar1' } });
+    expect(vehicleClassOf('tank')).toBe('armor');
+    expect(vehicleClassOf('cvfighter')).toBe('air');
+    expect(vehicleClassOf('cv')).toBe('ship');
+    expect(vehicleClassOf('hmg')).toBeNull();
+  });
+
+  it('gives a legendary skin\'s own kill effect with it', () => {
+    const p = fresh();
+    econOf(p).parts = 100_000;
+    expect(craft(p, 'skin.pac.coral', MON)).toBeNull();
+    expect(econOf(p).items['kfx.pac.splash']).toBeDefined();
+  });
+
+  it('keeps worn step-6 items through a save', () => {
+    const p = fresh();
+    const e = econOf(p);
+    e.items['charm.skull'] = { at: MON, from: 'weekly' };
+    expect(equip(p, 'charm', 'charm.skull', 'smg1')).toBeNull();
+    const back = cleanProfile(JSON.parse(JSON.stringify(p)))!;
+    expect(econOf(back).equip.charm.smg1).toBe('charm.skull');
+  });
+});
+
+function PRICE_OF(id: string): number {
+  return { common: 400, uncommon: 800, rare: 1500, epic: 3000, legendary: 6000 }[item(id)!.rarity];
+}

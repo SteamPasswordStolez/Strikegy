@@ -36,6 +36,8 @@ export interface Settings {
   marshalMusic: boolean;
   /** Level ups and promotions near the top of the screen during a match. */
   progressNotices: 'all' | 'levels' | 'off';
+  /** Kill effects (progression step 6): everyone's, one's own only, or none (an ordinary fall). */
+  killFx: 'all' | 'mine' | 'off';
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -55,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   crouchHold: false,
   menuScene: true,
   progressNotices: 'all',
+  killFx: 'all',
   musicVolume: 0.5,
   marshalMusic: true,
   inputMode: 'auto',

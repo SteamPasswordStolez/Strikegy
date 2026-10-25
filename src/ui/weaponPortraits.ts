@@ -23,10 +23,10 @@ const done = new Map<string, string>();
 const waiting = new Map<string, ((url: string | null) => void)[]>();
 const queue: { key: string; def: WeaponDef }[] = [];
 
-/** One picture a weapon and set of attachments. */
-function keyOf(id: WeaponId, set?: AttachSet, camo?: string): string {
+/** One picture a weapon, set of attachments and finish (camo, skin, charm). */
+function keyOf(id: WeaponId, set?: AttachSet, camo?: string, skin?: string, charm?: string): string {
   const parts = ATTACH_SLOTS.map((s) => set?.[s] ?? '').join(',');
-  return (parts.replace(/,/g, '') ? `${id}|${parts}` : id) + (camo ? `#${camo}` : '');
+  return (parts.replace(/,/g, '') ? `${id}|${parts}` : id) + (camo ? `#${camo}` : '') + (skin ? `#s:${skin}` : '') + (charm ? `#c:${charm}` : '');
 }
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
@@ -36,8 +36,8 @@ let idleTimer = 0;
 let failed = false;
 
 /** The picture of a weapon, with `set` fitted (null where WebGL can't draw it). */
-export function weaponPortrait(id: WeaponId, set?: AttachSet, camo?: string): Promise<string | null> {
-  const key = keyOf(id, set, camo);
+export function weaponPortrait(id: WeaponId, set?: AttachSet, camo?: string, skin?: string, charm?: string): Promise<string | null> {
+  const key = keyOf(id, set, camo, skin, charm);
   const have = done.get(key);
   if (have) return Promise.resolve(have);
   if (failed) return Promise.resolve(null);
@@ -46,15 +46,15 @@ export function weaponPortrait(id: WeaponId, set?: AttachSet, camo?: string): Pr
     if (list) list.push(resolve);
     else {
       waiting.set(key, [resolve]);
-      queue.push({ key, def: { ...withAttachments(WEAPONS[id], set), ...(camo ? { camo } : {}) } });
+      queue.push({ key, def: { ...withAttachments(WEAPONS[id], set), ...(camo ? { camo } : {}), ...(skin ? { skin } : {}), ...(charm ? { charm } : {}) } });
     }
     pump();
   });
 }
 
 /** A picture already made, if any (no waiting). */
-export function weaponPortraitNow(id: WeaponId, set?: AttachSet, camo?: string): string | null {
-  return done.get(keyOf(id, set, camo)) ?? null;
+export function weaponPortraitNow(id: WeaponId, set?: AttachSet, camo?: string, skin?: string, charm?: string): string | null {
+  return done.get(keyOf(id, set, camo, skin, charm)) ?? null;
 }
 
 function setup(): boolean {

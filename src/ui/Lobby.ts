@@ -24,18 +24,29 @@ import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
 import { onAccountChange, refreshAccount, settleLeft, settledProfile, signedIn } from '@/net/account';
 import { econOf } from '@/progression/economy';
-import { renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
+import { missionsCard, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
 import { renderServiceRecord } from './ServiceRecord';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
 
-/** The main menu's entries, top to bottom: play the biggest, then two more, then the small ones. */
-const ALL_ENTRIES = ['play', 'multi', 'range', 'armory', 'ranks', 'shop', 'tutorial', 'controls', 'settings', 'record', 'credits'] as const;
-type Entry = (typeof ALL_ENTRIES)[number];
+/**
+ * The main menu's entries, top to bottom: play the biggest, then two more, then the locker, the
+ * promotions and the shop (owner, 2026-10-25: the list was too full); the tutorial, controls, settings
+ * and credits sit as icons under it, the service record opens from the player card, mail top right.
+ */
+const ALL_ENTRIES = ['play', 'multi', 'range', 'armory', 'ranks', 'shop'] as const;
+const UTIL_ENTRIES = [
+  ['tutorial', 'tutorial'],
+  ['controls', 'keyboard'],
+  ['settings', 'settings'],
+  ['credits', 'info'],
+] as const;
+type Entry = (typeof ALL_ENTRIES)[number] | (typeof UTIL_ENTRIES)[number][0] | 'record';
 const ENTRIES: readonly Entry[] = ALL_ENTRIES;
 const BIG_ENTRIES: readonly Entry[] = ['multi', 'range'];
+const ENTRY_ICON: Partial<Record<Entry, Parameters<typeof icon>[0]>> = { armory: 'target', ranks: 'star', shop: 'trophy' };
 type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits' | 'record' | 'armory' | 'ranks' | 'shop';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
@@ -477,11 +488,21 @@ export class Lobby {
     if (!signedIn()) el('span', 'mm-card-guest ds-dim', line).textContent = t('acct.guest');
     const bar = el('span', 'mm-card-bar', prof);
     el('i', '', bar).style.setProperty('--p', (at.into / at.need).toFixed(4));
-    // Supply tickets and mail waiting (step 5).
+    // Supply tickets (step 5).
     const ec = econOf(prof0);
     const wal = el('span', 'mm-card-wallet', prof);
     wal.innerHTML = `${icon('star')}<b>${ec.tickets.toLocaleString()}</b>`;
-    if (ec.mail.length) el('span', 'ds-badge accent', wal).textContent = t('pp.mailN').replace('{n}', String(ec.mail.length));
+    // The mailbox: salary, attendance, gifts, with how many wait.
+    const mail = el('button', 'ds-btn ghost mm-lang mm-mail', corner);
+    corner.insertBefore(mail, prof);
+    mail.innerHTML = icon('chat');
+    mail.title = t('pp.mail');
+    if (ec.mail.length) el('span', 'mm-mail-n', mail).textContent = String(ec.mail.length);
+    mail.addEventListener('pointerenter', () => uiSound('hover'));
+    mail.addEventListener('click', () => {
+      uiSound('open');
+      openMail(this.root, () => this.render());
+    });
     prof.addEventListener('click', () => {
       uiSound('open');
       this.go('record');
@@ -493,7 +514,9 @@ export class Lobby {
       const size = id === 'play' ? ' hero' : BIG_ENTRIES.includes(id) ? '' : ' small';
       const b = el('button', `ds-menu-item${size}${i === this.entry ? ' sel' : ''}`, menu);
       b.style.setProperty('--i', String(i));
-      b.textContent = t(`menu.${id}`);
+      const ic = ENTRY_ICON[id];
+      if (ic) b.innerHTML = icon(ic, 'mm-entry-icon');
+      el('span', '', b).textContent = t(`menu.${id}` as MessageKey);
       b.addEventListener('pointerenter', () => {
         if (this.touch) return;
         if (i !== this.entry) uiSound('hover');
@@ -503,9 +526,21 @@ export class Lobby {
       this.picks.push(b);
     });
 
-    // The last setup, one press away.
+    // The rest as icons with their names under the list.
+    const util = el('div', 'mm-util', menu);
+    for (const [id, ic] of UTIL_ENTRIES) {
+      const b = el('button', 'mm-util-btn', util);
+      b.innerHTML = icon(ic);
+      el('span', '', b).textContent = t(`menu.${id}` as MessageKey);
+      b.addEventListener('pointerenter', () => uiSound('hover'));
+      b.addEventListener('click', () => this.activate(id));
+    }
+
+    // Right: today's missions, then the last setup one press away.
+    const side = el('div', 'mm-side', body);
+    missionsCard(side, () => this.go('ranks'));
     const p = this.pick;
-    const card = el('button', 'ds-card mm-continue', body);
+    const card = el('button', 'ds-card mm-continue', side);
     this.continuePic = el('div', 'mm-continue-pic', card);
     const head = el('div', 'mm-continue-head', card);
     el('span', 'ds-badge accent', head).textContent = t('menu.continue');

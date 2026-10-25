@@ -4,7 +4,9 @@
  * as SVG, name plate colours, and a flat swatch of a camo for the shop and
  * the armory (the gun itself wears it through the shader, camoMaterial.ts).
  */
-import type { CamoLook, CardLook, EmblemLook, Item } from '@/progression/catalog';
+import type { CamoLook, CardLook, CharmLook, EmblemLook, Item, KillFxLook, VehicleClass, VehicleSkinLook } from '@/progression/catalog';
+import type { WeaponId } from '@/weapons/weaponData';
+import { weaponPortrait, weaponPortraitNow } from './weaponPortraits';
 import { getLocale } from '@/i18n';
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
@@ -329,6 +331,28 @@ export function camoSwatch(look: CamoLook, size = 64): string {
           pick = v > 0.45 ? 1 : v < -0.6 ? 2 : 0;
           break;
         }
+        case 'wrap': {
+          const turn = (((px + py * 0.55) * 1.6) % 1 + 1) % 1;
+          pick = turn < 0.06 || turn > 0.94 ? 1 : fbm(px * 2.5, py * 2.5) > 0.55 ? 2 : 0;
+          break;
+        }
+        case 'carbon': {
+          const w = (Math.floor(px * 0.25) + Math.floor(py * 0.25)) % 2;
+          mix = 0;
+          pick = w ? 0 : 1;
+          break;
+        }
+        case 'hex': {
+          const q = Math.floor(px * 0.9) + (Math.floor(py * 0.9) % 2) * 0.5;
+          const edge = Math.abs(((px * 0.9) % 1) - 0.5) > 0.44 || Math.abs(((py * 0.9) % 1) - 0.5) > 0.44;
+          pick = edge ? 2 : vnoise(q * 3, Math.floor(py * 0.9) * 3) > 0.5 ? 0 : 1;
+          break;
+        }
+        case 'splinter': {
+          const a = Math.sin(px * 1.7 + py * 2.3) + Math.sin(px * -2.9 + py * 1.1 + 1.7) + (vnoise(Math.floor(px * 2), Math.floor(py * 2)) - 0.5) * 1.4;
+          pick = a > 0.6 ? 1 : a < -0.7 ? 2 : 0;
+          break;
+        }
         case 'net': {
           const gx = Math.abs(((px * 1.2) % 1) - 0.5);
           const gy = Math.abs(((py * 1.2) % 1) - 0.5);
@@ -358,8 +382,115 @@ export function camoSwatch(look: CamoLook, size = 64): string {
   return url;
 }
 
-/** Any cosmetic's picture into `parent` (card, emblem, plate swatch or camo swatch). */
+// ---------------------------------------------------------------------------
+// Step 6: charms, vehicle skins, kill effects (gun skins are the gun's own picture).
+
+const CHARM_PATH: Record<CharmLook['shape'], string> = {
+  tag: '<rect x="8" y="3" width="8" height="15" rx="3"/><circle cx="12" cy="6" r="1.2" fill="var(--a)"/>',
+  die: '<rect x="5" y="6" width="13" height="13" rx="2"/><circle cx="9" cy="10" r="1.3" fill="var(--a)"/><circle cx="14" cy="15" r="1.3" fill="var(--a)"/><circle cx="11.5" cy="12.5" r="1.3" fill="var(--a)"/>',
+  cube: '<path d="M12 4 19 8v8l-7 4-7-4V8Z"/><path d="M12 12v8M12 12l7-4M12 12 5 8" stroke="var(--a)" stroke-width="1" fill="none"/>',
+  bullet: '<path d="M10 9h4v10h-4Z"/><path d="M10 9c0-3 1-5 2-6 1 1 2 3 2 6Z" fill="var(--a)"/>',
+  coin: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="var(--a)" stroke-width="1.2"/>',
+  ring: '<circle cx="12" cy="13" r="6" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M10 5h4l-2 3Z" fill="var(--a)"/>',
+  leaf: '<path d="M12 4c5 4 5 10 0 16-5-6-5-12 0-16Z"/><path d="M12 6v14" stroke="var(--a)" stroke-width="1"/>',
+  star: '<path d="m12 3 2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6-4.5-4.2 6.1-.7Z"/>',
+  skull: '<path d="M6 11a6 6 0 1 1 12 0c0 2-1 3-2 3.5V18H8v-3.5C7 14 6 13 6 11Z"/><circle cx="9.5" cy="11" r="1.6" fill="var(--a)"/><circle cx="14.5" cy="11" r="1.6" fill="var(--a)"/>',
+  heart: '<path d="M12 19 5 12a4 4 0 0 1 7-5 4 4 0 0 1 7 5Z"/>',
+  bolt: '<path d="M14 3 6 13h5l-2 8 8-11h-5Z"/>',
+  ball: '<circle cx="12" cy="12" r="7"/><path d="M7 7c3 2 3 8 0 10M17 7c-3 2-3 8 0 10" stroke="var(--a)" stroke-width="1.2" fill="none"/>',
+  fish: '<path d="M4 12c3-4 8-5 12-2l4-3v10l-4-3c-4 3-9 2-12-2Z"/><circle cx="8" cy="11" r="1" fill="var(--a)"/>',
+  bear: '<circle cx="12" cy="14" r="5"/><circle cx="12" cy="8" r="3.5"/><circle cx="9" cy="5" r="1.4"/><circle cx="15" cy="5" r="1.4"/>',
+  grenade: '<ellipse cx="12" cy="14" rx="5" ry="6"/><rect x="10" y="4" width="4" height="4" fill="var(--a)"/>',
+};
+
+/** A charm as an SVG. */
+export function charmSvg(look: CharmLook, size = 48): string {
+  const glow = look.glow ? ` style="filter: drop-shadow(0 0 4px ${hex(look.color)})"` : '';
+  return `<svg class="cos-charm" viewBox="0 0 24 24" width="${size}" height="${size}" style="color:${hex(look.color)};--a:${hex(look.accent)}" fill="currentColor"${glow}><path d="M12 0v3" stroke="#555" stroke-width="0.8"/>${CHARM_PATH[look.shape]}</svg>`;
+}
+
+/** Vehicle silhouettes per skin family (the picture of a vehicle skin). */
+const SILHOUETTE: Record<VehicleClass, string> = {
+  armor: 'M4 40h56l-5 9H9Z M14 40v-9h26v9 M40 34h20v3H40Z M8 30h40v2H8Z',
+  car: 'M6 40v-8l6-10h28l10 10h8v8Z M14 44a5 5 0 1 0 0.1 0Z M48 44a5 5 0 1 0 0.1 0Z',
+  air: 'M32 6l4 18 24 10v4l-24-4-2 14 7 5H23l7-5-2-14-24 4v-4l24-10Z',
+  ship: 'M2 38h60l-8 10H10Z M14 38v-8h22v8 M22 30v-8h6v8 M38 34h14v4H38Z',
+};
+const VPAL: Record<VehicleClass, [number, number, number]> = {
+  armor: [0x3c4a2e, 0x4c3d2a, 0x1e201a],
+  car: [0x3c4a2e, 0x4c3d2a, 0x1e201a],
+  air: [0x4f5861, 0x434b53, 0x3a4148],
+  ship: [0x4f5861, 0x434b53, 0x3a4148],
+};
+const VPAT: Record<VehicleSkinLook['pattern'], CamoLook['pattern']> = { blotch: 'blotch', bands: 'bands', stripes: 'stripes', digital: 'digital', clouds: 'blotch', tiger: 'tiger', dazzle: 'splinter', splinter: 'splinter' };
+
+/** A vehicle skin on its family's silhouette (blue's colours), as an SVG. */
+export function vehicleSkinSvg(cls: VehicleClass, look: VehicleSkinLook, size = 64): string {
+  const pal = VPAL[cls].map((c, i) => {
+    const k = look.tones[i]!;
+    const r = Math.min(255, ((c >> 16) & 255) * k);
+    const g = Math.min(255, ((c >> 8) & 255) * k);
+    const b = Math.min(255, (c & 255) * k);
+    return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
+  }) as [number, number, number];
+  // Lift the dark army colours so the pattern reads on the small picture.
+  const lift = pal.map((c) => {
+    const r = Math.min(255, ((c >> 16) & 255) * 1.7 + 12);
+    const g = Math.min(255, ((c >> 8) & 255) * 1.7 + 12);
+    const b = Math.min(255, (c & 255) * 1.7 + 12);
+    return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
+  }) as [number, number, number];
+  const swatch = camoSwatch({ pattern: VPAT[look.pattern], colors: lift, scale: (look.pattern === 'clouds' ? 4 : look.pattern === 'dazzle' ? 3 : 7) * look.scale }, 64);
+  const id = `vs${Math.random().toString(36).slice(2, 8)}`;
+  const band = look.band ? `<rect x="26" y="0" width="8" height="64" fill="${hex(lift[2])}" opacity="0.85" clip-path="url(#${id})"/>` : '';
+  return `<svg class="cos-vskin" viewBox="0 0 64 56" width="${size}" height="${Math.round(size * 0.875)}"><defs><clipPath id="${id}"><path d="${SILHOUETTE[cls]}"/></clipPath></defs><image href="${swatch}" x="0" y="0" width="64" height="64" clip-path="url(#${id})" preserveAspectRatio="none"/>${band}<path d="${SILHOUETTE[cls]}" fill="none" stroke="rgb(255 255 255 / 0.25)" stroke-width="0.8"/></svg>`;
+}
+
+const KFX_SHAPE: Record<KillFxLook['shape'], string> = {
+  shard: 'M0 -4 3 2 -2 4Z',
+  spark: 'M0 -3 0.8 -0.8 3 0 0.8 0.8 0 3 -0.8 0.8 -3 0 -0.8 -0.8Z',
+  petal: 'M0 -4C3 -2 3 2 0 4 -3 2 -3 -2 0 -4Z',
+  star: 'M0 -4 1.2 -1.2 4 -1 1.8 1 2.4 4 0 2.4 -2.4 4 -1.8 1 -4 -1 -1.2 -1.2Z',
+  flake: 'M0 -4V4M-3.5 -2 3.5 2M-3.5 2 3.5 -2',
+  scale: 'M-4 0A4 4 0 0 1 4 0Z',
+  tag: 'M-2 -3.5h4v7h-4Z',
+  leaf: 'M0 -4Q3 0 0 4Q-3 0 0 -4Z',
+};
+
+/** A kill effect's picture: its pieces scattered round a body's outline, drifting (CSS). */
+export function killFxSvg(look: KillFxLook, size = 56): string {
+  const pieces: string[] = [];
+  const n = Math.min(14, Math.max(5, Math.round(look.count / 3)));
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + i;
+    const r = 8 + ((i * 37) % 13);
+    const x = 32 + Math.cos(a) * r;
+    const y = 30 + Math.sin(a) * r * (look.motion === 'ring' ? 0.35 : 1) - (look.motion === 'rise' ? 6 : look.motion === 'fall' ? -6 : 0);
+    const c = hex(i % 2 ? look.colors[1] : look.colors[0]);
+    const stroke = look.shape === 'flake' ? ` stroke="${c}" stroke-width="1" fill="none"` : ` fill="${c}"`;
+    pieces.push(`<path d="${KFX_SHAPE[look.shape]}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${(i * 47) % 360}) scale(${(0.8 + (i % 3) * 0.25).toFixed(2)})"${stroke} style="--d:${(i % 5) * 0.12}s"/>`);
+  }
+  return `<svg class="cos-kfx ${look.motion}" viewBox="0 0 64 64" width="${size}" height="${size}"><path d="M28 54v-14l-4-10 3-8h10l3 8-4 10v14Z" fill="rgb(255 255 255 / 0.12)"/><circle cx="32" cy="16" r="5" fill="rgb(255 255 255 / 0.12)"/>${pieces.join('')}</svg>`;
+}
+
+/** Any cosmetic's picture into `parent` (card, emblem, plate, camo, gun skin, charm, vehicle skin, kill effect). */
 export function itemPicture(parent: HTMLElement, it: Item, size = 56): void {
+  if (it.skin && it.weapon) {
+    const img = document.createElement('img');
+    img.className = 'cos-skin';
+    img.alt = '';
+    img.width = Math.round(size * 2.4);
+    img.height = Math.round(size * 1.0);
+    const w = it.weapon as WeaponId;
+    const now = weaponPortraitNow(w, undefined, undefined, it.id);
+    if (now) img.src = now;
+    else void weaponPortrait(w, undefined, undefined, it.id).then((u) => u && (img.src = u));
+    parent.appendChild(img);
+    return;
+  }
+  if (it.charm) return parent.insertAdjacentHTML('beforeend', charmSvg(it.charm, size));
+  if (it.vskin && it.vclass) return parent.insertAdjacentHTML('beforeend', vehicleSkinSvg(it.vclass, it.vskin, size * 1.3));
+  if (it.kfx) return parent.insertAdjacentHTML('beforeend', killFxSvg(it.kfx, size));
   if (it.card) parent.appendChild(cardCanvas(it.card, size * 3, size * 0.75));
   else if (it.emblem) parent.insertAdjacentHTML('beforeend', emblemSvg(it.emblem, size));
   else if (it.camo) {

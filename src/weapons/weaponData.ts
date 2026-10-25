@@ -62,6 +62,10 @@ export interface WeaponDef {
   bipod?: boolean;
   /** The camo the player's own gun wears (first person and pictures only; progression step 5). */
   camo?: string;
+  /** A gun skin (catalog id; step 6): the finish, seen by everyone. */
+  skin?: string;
+  /** A charm (catalog id; step 6): first person and pictures. */
+  charm?: string;
 }
 
 /** One attachment id a slot (or none); see `attachments.ts`. */

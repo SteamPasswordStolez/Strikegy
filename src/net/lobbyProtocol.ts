@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -178,6 +178,8 @@ export interface MatchSoldierInfo {
   tag?: string;
   /** A person's attachments on the guns they carry (weapon id -> slot -> attachment id): others draw and hear them. */
   att?: Record<string, Partial<Record<'optic' | 'muzzle' | 'under' | 'mag' | 'laser', string>>>;
+  /** What a signed-in person wears that others see (from their account): gun skins / charms / kill effects by weapon, vehicle skins by family. */
+  cos?: { skin?: Record<string, string>; charm?: Record<string, string>; kfx?: Record<string, string>; vskin?: Record<string, string> };
 }
 
 /** Sent when a match starts, or when joining (or coming back to) one under way. */
@@ -242,6 +244,8 @@ export type MatchEvent =
       victimTeam: Side | null;
       attackerId?: number;
       victimId?: number;
+      /** The killer's kill effect (a catalog id; from their account on the server). */
+      fx?: string;
     }
   /** To the shooter: a hit marker. */
   | { k: 'hit'; head: boolean; killed: boolean; dmg?: number }

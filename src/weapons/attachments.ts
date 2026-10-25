@@ -320,7 +320,7 @@ export function shotHeard(def: WeaponDef): number {
 /** A key for a gun as fitted (model caches: the same gun with other attachments is another model). */
 export function gunKey(def: WeaponDef): string {
   const a = def.attach;
-  const camo = def.camo ? `#${def.camo}` : '';
+  const camo = (def.camo ? `#${def.camo}` : '') + (def.skin ? `#s:${def.skin}` : '') + (def.charm ? `#c:${def.charm}` : '');
   if (!a) return def.id + camo;
   return `${def.id}|${ATTACH_SLOTS.map((s) => a[s] ?? '').join(',')}${camo}`;
 }

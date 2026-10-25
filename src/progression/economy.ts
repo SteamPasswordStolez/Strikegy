@@ -12,7 +12,7 @@
  * playing. Numbers are the data doc's [제안].
  */
 import { DAILY, MISSION, WEEKLY, drawMissions, missionDef, type MissionKey, type MissionState } from './missions';
-import { CRAFT_PARTS, DEPOT_MARKUP, DUP_PARTS, PRICE, RARITIES, BUNDLES, bundlePrice, item, levelRewards, seriesItems, weeklyPool, type Item, type Rarity } from './catalog';
+import { CRAFT_PARTS, DEPOT_MARKUP, DUP_PARTS, PRICE, RARITIES, BUNDLES, VEHICLE_CLASSES, bundlePrice, item, levelRewards, seriesItems, weeklyPool, type Item, type Rarity } from './catalog';
 import { advanceCamo, type CamoCounts, type CamoState } from './camo';
 import { dayKey, dayNumber, hashText, monthKey, seeded, weekKey } from './calendar';
 import { levelOf, rankAt, RANKS, type RankId } from './levels';
@@ -73,7 +73,11 @@ export interface Econ {
   boxes: number;
   /** Owned cosmetics (catalog ids): when and where from, seen in the armory yet. */
   items: Record<string, { at: number; from: string; seen?: boolean }>;
-  equip: { camo: Record<string, string>; card?: string; emblem?: string; plate?: string };
+  /**
+   * What is worn: camo / skin / charm / kill effect per weapon (kill effect '*' for every gun without one of
+   * its own), a vehicle skin per family, the card, emblem and name plate.
+   */
+  equip: { camo: Record<string, string>; skin: Record<string, string>; charm: Record<string, string>; kfx: Record<string, string>; vskin: Record<string, string>; card?: string; emblem?: string; plate?: string };
   /** Each weapon's camo challenges. */
   camo: Record<string, CamoState>;
   /** Level rewards given up to here. */
@@ -93,7 +97,7 @@ export function emptyEcon(): Econ {
     parts: 0,
     boxes: 0,
     items: {},
-    equip: { camo: {} },
+    equip: { camo: {}, skin: {}, charm: {}, kfx: {}, vskin: {} },
     camo: {},
     rewardedLevel: 1,
     day: { key: '', matches: 0, wins: 0, passes: 0, rerolls: 0 },
@@ -126,6 +130,7 @@ export function cleanEcon(raw: unknown): Econ {
   }
   const eq = o0(o.equip);
   for (const [w, c] of Object.entries(o0(eq.camo))) if (id0(w) && id0(c)) e.equip.camo[w] = c;
+  for (const slot of ['skin', 'charm', 'kfx', 'vskin'] as const) for (const [w, c] of Object.entries(o0(eq[slot]))) if ((id0(w) || w === '*') && id0(c) && item(c)) e.equip[slot][w] = c;
   for (const k of ['card', 'emblem', 'plate'] as const) if (id0(eq[k])) e.equip[k] = eq[k] as string;
   for (const [w, c] of Object.entries(o0(o.camo))) {
     if (!id0(w)) continue;
@@ -276,8 +281,11 @@ export function grantLevels(p: Profile, now: number): string[] {
 }
 
 function giveItem(e: Econ, id: string, now: number, from: string): boolean {
-  if (e.items[id] || !item(id)) return false;
+  const it = item(id);
+  if (e.items[id] || !it) return false;
   e.items[id] = { at: now, from };
+  // A legendary skin's own kill effect comes with it.
+  for (const g of it.grants ?? []) if (!e.items[g] && item(g)) e.items[g] = { at: now, from };
   return true;
 }
 
@@ -457,6 +465,7 @@ function camoClassRewards(e: Econ, out: MatchEcon, now: number): number {
   }
   if (dragonOpen(e) && !e.items['dragon']) {
     e.items['dragon'] = { at: now, from: 'challenge' };
+    giveItem(e, 'kfx.dragonscale', now, 'challenge');
     n += ECON.camo.dragon;
     out.items.push('dragon');
   }
@@ -509,21 +518,59 @@ export interface Offer {
   items: string[];
   price: number;
   bundle?: string;
+  /** Shown large at the top of the week's shop. */
+  featured?: boolean;
+  /** Today's deal. */
+  deal?: boolean;
 }
 
-/** The week's eight: one bundle in turn, then seven picks from the week pool (seeded by the week). */
+/**
+ * What the week's shop holds, in order: a bundle, two featured pieces (an epic or legendary gun skin,
+ * an epic or better kill effect / vehicle skin / charm), then three gun skins, a charm, a vehicle skin,
+ * a kill effect and three of the rest (camo, card, emblem, plate). Seeded by the week (owner,
+ * 2026-10-25: a random rotation through a big pool).
+ */
+export const WEEK_SLOTS: { kinds: Item['kind'][]; rarities?: Rarity[]; featured?: boolean }[] = [
+  { kinds: ['skin'], rarities: ['epic', 'legendary'], featured: true },
+  { kinds: ['kfx', 'vskin', 'charm'], rarities: ['epic', 'legendary'], featured: true },
+  { kinds: ['skin'], rarities: ['rare', 'epic'] },
+  { kinds: ['skin'], rarities: ['rare', 'epic'] },
+  { kinds: ['skin'] },
+  { kinds: ['charm'] },
+  { kinds: ['vskin'] },
+  { kinds: ['kfx'] },
+  { kinds: ['camo'] },
+  { kinds: ['card', 'emblem'] },
+  { kinds: ['camo', 'plate', 'emblem', 'card'] },
+];
+
 export function weeklyOffer(now: number): Offer[] {
   const week = weekKey(now);
   const rand = seeded(hashText(`shop:${week}`));
   const b = BUNDLES[hashText(week) % BUNDLES.length]!;
   const out: Offer[] = [{ key: `bundle.${b.id}`, items: b.items, price: bundlePrice(b), bundle: b.id }];
-  const pool = weeklyPool().filter((i) => !b.items.includes(i.id));
-  while (out.length < 8 && pool.length) {
-    const i = Math.floor(rand() * pool.length);
-    const it = pool.splice(i, 1)[0]!;
-    out.push({ key: it.id, items: [it.id], price: PRICE[it.rarity] });
+  const taken = new Set(b.items);
+  const pool = weeklyPool();
+  for (const slot of WEEK_SLOTS) {
+    const fits = pool.filter((i) => !taken.has(i.id) && slot.kinds.includes(i.kind) && (!slot.rarities || slot.rarities.includes(i.rarity)));
+    // Skins: one per gun a week, so the slots don't all land on one rifle.
+    const skinGuns = new Set(out.flatMap((o) => o.items.map((id) => item(id)?.weapon).filter(Boolean)));
+    const list = fits.filter((i) => i.kind !== 'skin' || !skinGuns.has(i.weapon)).length ? fits.filter((i) => i.kind !== 'skin' || !skinGuns.has(i.weapon)) : fits;
+    if (!list.length) continue;
+    const it = list[Math.floor(rand() * list.length)]!;
+    taken.add(it.id);
+    out.push({ key: it.id, items: [it.id], price: PRICE[it.rarity], ...(slot.featured ? { featured: true } : {}) });
   }
   return out;
+}
+
+/** Today's deal: one piece from the pool, not in this week's shop, at 70 % (the day turns at 05:00 KST). */
+export const DEAL_SHARE = 0.7;
+export function dailyDeal(now: number): Offer {
+  const week = new Set(weeklyOffer(now).flatMap((o) => o.items));
+  const pool = weeklyPool().filter((i) => !week.has(i.id) && i.rarity !== 'common');
+  const it = pool[hashText(`deal:${dayKey(now)}`) % pool.length]!;
+  return { key: `deal.${it.id}`, items: [it.id], price: Math.round(PRICE[it.rarity] * DEAL_SHARE), deal: true };
 }
 
 /** The depot: the week pool's other items, any time, at 120 %. */
@@ -537,7 +584,7 @@ export function depotOffer(now: number): Offer[] {
 /** Buys an offer from the week's shop or the depot. */
 export function buy(p: Profile, key: string, now: number): ShopError | null {
   const e = econOf(p);
-  const offer = [...weeklyOffer(now), ...depotOffer(now)].find((o) => o.key === key);
+  const offer = [...weeklyOffer(now), dailyDeal(now), ...depotOffer(now)].find((o) => o.key === key);
   if (!offer) return 'gone';
   const missing = offer.items.filter((id) => !e.items[id]);
   if (!missing.length) return 'owned';
@@ -545,7 +592,7 @@ export function buy(p: Profile, key: string, now: number): ShopError | null {
   const price = offer.bundle ? Math.round(offer.price * (missing.length / offer.items.length)) : offer.price;
   if (e.tickets < price) return 'funds';
   e.tickets -= price;
-  for (const id of missing) giveItem(e, id, now, offer.bundle ? 'bundle' : weeklyOffer(now).some((o) => o.key === key) ? 'weekly' : 'depot');
+  for (const id of missing) giveItem(e, id, now, offer.bundle ? 'bundle' : offer.deal ? 'weekly' : weeklyOffer(now).some((o) => o.key === key) ? 'weekly' : 'depot');
   return null;
 }
 
@@ -666,9 +713,29 @@ export function buyPass(p: Profile, now: number): ShopError | null {
   return null;
 }
 
-/** Wears a camo on a weapon, or a card / emblem / plate (only what is owned; undefined: back to the default). */
-export function equip(p: Profile, slot: 'camo' | 'card' | 'emblem' | 'plate', value: string | undefined, weapon?: string): ShopError | null {
+export type EquipSlot = 'camo' | 'card' | 'emblem' | 'plate' | 'skin' | 'charm' | 'kfx' | 'vskin';
+
+/**
+ * Wears something (only what is owned; undefined: back to the default): a camo, skin, charm or kill effect
+ * on a weapon (`weapon`; kill effect '*' for every gun), a vehicle skin on a family (`weapon` = the family),
+ * or a card / emblem / plate.
+ */
+export function equip(p: Profile, slot: EquipSlot, value: string | undefined, weapon?: string): ShopError | null {
   const e = econOf(p);
+  if (slot === 'skin' || slot === 'charm' || slot === 'kfx' || slot === 'vskin') {
+    const ok = slot === 'vskin' ? (VEHICLE_CLASSES as readonly string[]).includes(weapon ?? '') : weapon === '*' ? slot === 'kfx' : !!weapon && !!WEAPON_CLASSES[weapon];
+    if (!ok) return 'bad';
+    if (!value) {
+      delete e.equip[slot][weapon!];
+      return null;
+    }
+    const it = item(value);
+    if (!e.items[value] || it?.kind !== slot) return 'owned';
+    if (slot === 'skin' && it.weapon !== weapon) return 'bad';
+    if (slot === 'vskin' && it.vclass !== weapon) return 'bad';
+    e.equip[slot][weapon!] = value;
+    return null;
+  }
   if (slot === 'camo') {
     if (!weapon || !WEAPON_CLASSES[weapon]) return 'bad';
     if (!value) delete e.equip.camo[weapon];
@@ -719,7 +786,7 @@ export type ShopOp =
   | { op: 'pass' }
   | { op: 'contract' }
   | { op: 'claim'; id?: string }
-  | { op: 'equip'; slot: 'camo' | 'card' | 'emblem' | 'plate'; value?: string; weapon?: string }
+  | { op: 'equip'; slot: EquipSlot; value?: string; weapon?: string }
   | { op: 'seen'; items: string[] };
 
 /** A shop action from outside, checked; null when it isn't one. */
@@ -746,10 +813,10 @@ export function parseShopOp(raw: unknown): ShopOp | null {
     case 'claim':
       return o.id === undefined || str(o.id) ? { op: 'claim', id: o.id as string | undefined } : null;
     case 'equip':
-      if (!['camo', 'card', 'emblem', 'plate'].includes(o.slot as string)) return null;
+      if (!['camo', 'card', 'emblem', 'plate', 'skin', 'charm', 'kfx', 'vskin'].includes(o.slot as string)) return null;
       if (o.value !== undefined && !str(o.value)) return null;
-      if (o.weapon !== undefined && !str(o.weapon, 16)) return null;
-      return { op: 'equip', slot: o.slot as 'camo', value: o.value as string | undefined, weapon: o.weapon as string | undefined };
+      if (o.weapon !== undefined && o.weapon !== '*' && !str(o.weapon, 16)) return null;
+      return { op: 'equip', slot: o.slot as EquipSlot, value: o.value as string | undefined, weapon: o.weapon as string | undefined };
     case 'seen':
       return Array.isArray(o.items) ? { op: 'seen', items: (o.items as unknown[]).filter((v): v is string => str(v)).slice(0, 200) } : null;
   }
