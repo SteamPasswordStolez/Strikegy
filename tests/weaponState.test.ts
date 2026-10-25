@@ -24,6 +24,18 @@ describe('WeaponState', () => {
     expect(w.ammo).toBe(0);
   });
 
+  it('holding the trigger through a reload does not dump the new magazine at once', () => {
+    const w = new WeaponState(WEAPONS.ar1);
+    expect(run(w, 5)).toBe(30);
+    // Still holding: reload, and hold on through it and past its end.
+    w.step(DT, { trigger: true, reload: true });
+    const perStep: number[] = [];
+    for (let t = 0; t < w.def.reloadTime + 1; t += DT) perStep.push(w.step(DT, { trigger: true, reload: false }).shots);
+    expect(Math.max(...perStep)).toBe(1);
+    // After the reload, normal rate: ~13 rounds a second, not 30 in a step.
+    expect(perStep.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(14);
+  });
+
   it('semi auto fires once per trigger press', () => {
     const w = new WeaponState(WEAPONS.dmr1);
     expect(run(w, 1)).toBe(1);

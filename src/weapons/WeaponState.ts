@@ -76,7 +76,10 @@ export class WeaponState {
 
     // Negative cooldown (time credit) only carries over during continuous fire;
     // otherwise the first shot after idling would get a free step of credit.
-    if (wasHeld || this.burstLeft > 0) this.cooldown -= dt;
+    // Not while reloading or empty: holding the trigger through a reload piled
+    // up seconds of credit and the new magazine went out in one step.
+    const firing = (wasHeld || this.burstLeft > 0) && !this.reloading && this.ammo > 0;
+    if (firing) this.cooldown -= dt;
     else this.cooldown = Math.max(this.cooldown - dt, 0);
 
     if (this.reloading) {
