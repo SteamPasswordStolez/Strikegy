@@ -137,6 +137,8 @@ const SOUND_SPEED = 343;
 const DELAY_FROM_M = 40;
 /** Beyond this distance remote gunfire uses the "far" recordings. */
 const FAR_GUNFIRE_M = 45;
+/** A suppressed shot is not heard past this (m). */
+const QUIET_SHOT_M = 60;
 /**
  * Voice limits for world sounds. Every spatial sound costs a panner on the
  * audio thread; big bot fights (10v15) fire well over 100 sounds a second and
@@ -839,8 +841,9 @@ export class AudioSystem {
   }
 
   /** Someone else's gunfire at a world position (bots, M3). */
-  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number, source?: number | string, weaponId = ''): void {
-    if (!this.ready) return;
+  /** `quiet`: suppressed (heard to 60 m, far softer). */
+  remoteGunshot(cls: WeaponClass, pos: THREE.Vector3, distance: number, source?: number | string, weaponId = '', quiet = false): void {
+    if (!this.ready || (quiet && distance > QUIET_SHOT_M)) return;
     const t = this.ctx!.currentTime;
     this.excite(0.5 / Math.max(5, distance));
     // One voice per shooter (by id, else by spot): its bursts share it. Far
@@ -858,9 +861,10 @@ export class AudioSystem {
     const id = own ?? (distance > FAR_GUNFIRE_M ? `gunfar_${cls}` : `gun_${cls}`);
     const out = this.out(pos, 0.6, 1, (this.length(id) || 1.4) + 0.1, undefined, key, distance < NEAR_M ? PRIO.near : PRIO.normal);
     if (!out) return;
-    if (!this.sample(id, out, t, 0.9, rand(0.97, 1.03) * (gv?.rate ?? 1))) {
+    const g = quiet ? 0.3 : 1;
+    if (!this.sample(id, out, t, 0.9 * g, rand(0.97, 1.03) * (gv?.rate ?? 1) * (quiet ? 1.15 : 1))) {
       const v = VOICES[cls];
-      this.noiseBurst(out, t, v.decay * 1.5, v.gain, { type: 'lowpass', freq: Math.max(800, v.cutoff - distance * 20), endFreq: 200 });
+      this.noiseBurst(out, t, v.decay * 1.5, v.gain * g, { type: 'lowpass', freq: Math.max(800, v.cutoff - distance * 20), endFreq: 200 });
     }
   }
 

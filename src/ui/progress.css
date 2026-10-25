@@ -47,6 +47,7 @@ body.overlay-up .pt {
   color: var(--ink);
 }
 .pt.weapon .pt-pic,
+.pt.attach .pt-pic,
 .pt.unlock .pt-pic {
   display: grid;
   place-items: center;
@@ -58,7 +59,8 @@ body.overlay-up .pt {
   max-height: 100%;
   object-fit: contain;
 }
-.pt.unlock .pt-title {
+.pt.unlock .pt-title,
+.pt.attach .pt-title {
   color: var(--accent);
 }
 .pt.promo .pt-pic {

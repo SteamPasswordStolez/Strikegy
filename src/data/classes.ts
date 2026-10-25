@@ -1,4 +1,5 @@
-import { WEAPONS, type WeaponClass, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { WEAPONS, type AttachSet, type WeaponClass, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { cleanSet, withAttachments } from '@/weapons/attachments';
 import type { GrenadeType } from '@/combat/explosions';
 
 /**
@@ -88,7 +89,12 @@ export interface Loadout {
   grenade: GrenadeType;
   /** Recon's pick (the other classes have one fixed gadget). */
   reconGadget: ReconGadget;
+  /** Attachments fitted to the carried weapons (progression step 4). */
+  attach?: Partial<Record<WeaponId, AttachSet>>;
 }
+
+/** May this player fit `attach` on `weapon` (its weapon level; true where everything is open)? */
+export type AttachOk = (weapon: WeaponId, attach: string) => boolean;
 
 const ALL = Object.keys(WEAPONS) as WeaponId[];
 
@@ -116,7 +122,7 @@ export function defaultLoadout(cls: ClassId): Loadout {
  * primaries, known grenade. `locked`: weapons not open to this player yet
  * (progression; the defaults never are) give way to the default.
  */
-export function sanitizeLoadout(l: Partial<Loadout> & { cls: ClassId }, locked?: (id: WeaponId) => boolean): Loadout {
+export function sanitizeLoadout(l: Partial<Loadout> & { cls: ClassId }, locked?: (id: WeaponId) => boolean, attachOk?: AttachOk): Loadout {
   const d = defaultLoadout(l.cls);
   const ok = primariesFor(l.cls).filter((id) => !locked?.(id));
   const a = l.primary?.[0] && ok.includes(l.primary[0]) ? l.primary[0] : d.primary[0];
@@ -128,7 +134,24 @@ export function sanitizeLoadout(l: Partial<Loadout> & { cls: ClassId }, locked?:
     pistol: l.pistol && PISTOLS.includes(l.pistol) && !locked?.(l.pistol) ? l.pistol : d.pistol,
     grenade: l.grenade && GRENADE_TYPES.includes(l.grenade) ? l.grenade : d.grenade,
     reconGadget: l.reconGadget === 'mine' ? 'mine' : 'beacon',
+    ...cleanAttach(l.attach, [a, b, l.pistol && PISTOLS.includes(l.pistol) && !locked?.(l.pistol) ? l.pistol : d.pistol], attachOk),
   };
+}
+
+/** The carried weapons' attachments only, each set cleaned (nothing at all: no field). */
+function cleanAttach(raw: unknown, carried: WeaponId[], ok?: AttachOk): Pick<Loadout, 'attach'> {
+  if (typeof raw !== 'object' || !raw) return {};
+  const out: Partial<Record<WeaponId, AttachSet>> = {};
+  for (const id of carried) {
+    const set = cleanSet(WEAPONS[id], (raw as Record<string, unknown>)[id], ok && ((a) => ok(id, a)));
+    if (Object.keys(set).length) out[id] = set;
+  }
+  return Object.keys(out).length ? { attach: out } : {};
+}
+
+/** The carried weapons as fitted, in slot order (keys 1, 2, 3). */
+export function kitDefs(l: Loadout): WeaponDef[] {
+  return loadoutWeapons(l).map((id) => withAttachments(WEAPONS[id], l.attach?.[id]));
 }
 
 /** The weapons carried, in slot order (keys 1, 2, 3). */

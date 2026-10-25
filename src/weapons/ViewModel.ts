@@ -4,7 +4,8 @@ import type { ModelLibrary } from '@/render/models';
 import type { ShotKick, WeaponDef } from './weaponData';
 import { Spring } from './spring';
 import { gunMaterials, type P } from './gunKit';
-import { buildGun, buildOptic } from './gunModels';
+import { buildGun, buildOptic, fittedExtras } from './gunModels';
+import { gunKey } from './attachments';
 import type { GadgetId } from '@/data/gadgets';
 import {
   INSPECT_HAND,
@@ -156,9 +157,16 @@ export class ViewModel {
     this.flash.visible = false;
   }
 
+  /** Drawn this frame (not behind a scope, not swapped for a tool). */
+  get visible(): boolean {
+    return this.root.visible;
+  }
+
   setWeapon(def: WeaponDef): void {
-    if (def.id === this.currentId) return;
-    this.currentId = def.id;
+    // The same gun with other attachments is another model.
+    const key = gunKey(def);
+    if (key === this.currentId) return;
+    this.currentId = key;
     // Procedural geometry is per weapon; scanned models share geometry with the library.
     this.gun.traverse((o) => {
       if (o instanceof THREE.Mesh && o !== this.flash && o.userData.owned) o.geometry.dispose();
@@ -174,7 +182,7 @@ export class ViewModel {
     if (def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) {
       this.buildScannedRifle(def);
     } else if (def.class === 'pistol' && this.models?.has(SCANNED_PISTOL)) {
-      this.buildScannedPistol();
+      this.buildScannedPistol(def);
     } else {
       const g = buildGun(def);
       g.group.traverse((o) => {
@@ -285,7 +293,23 @@ export class ViewModel {
     this.sightHeight = optic.sightHeight;
     this.adsZ = -ADS_EYE.scanned;
     this.buildArms(false, [0.4, -0.07]);
-    this.placeMuzzle(new THREE.Vector3(0, -0.025, -0.9));
+    // Fitted attachments (muzzle device, bipod, shell holder) on the scanned body.
+    const extras = fittedExtras(def, { muzzleU: 0.912, muzzleV: -0.009, underU: 0.62, underV: -0.044, gripBottom: 0, frameBottom: 0 });
+    this.own(extras.group);
+    this.placeMuzzle(new THREE.Vector3(0, -0.025, def.attach?.muzzle ? -extras.muzzleU - 0.01 : -0.9));
+  }
+
+  /** Geometry built for this gun only (disposed when the gun changes). */
+  private own(group: THREE.Object3D, into: THREE.Object3D = this.gun): void {
+    group.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.userData.owned = true;
+    });
+    // Built in gun space: into the gun first, then (keeping where it is) onto the moving part.
+    this.gun.add(group);
+    if (into !== this.gun) {
+      this.gun.updateMatrixWorld(true);
+      into.attach(group);
+    }
   }
 
   /**
@@ -293,7 +317,7 @@ export class ViewModel {
    * top of the slide (sights) sits at the same height as the procedural pistol and
    * the magazine (grip) under the trigger hand.
    */
-  private buildScannedPistol(): void {
+  private buildScannedPistol(def: WeaponDef): void {
     const src = this.models!.instantiate(SCANNED_PISTOL)!;
     const keep = new Set(PISTOL_PARTS.keep);
     const pistol = new THREE.Group();
@@ -311,7 +335,8 @@ export class ViewModel {
       pistol.updateMatrixWorld(true);
     }
     const slideBox = slide ? new THREE.Box3().setFromObject(slide) : new THREE.Box3().setFromObject(pistol);
-    const gripZ = mag ? new THREE.Box3().setFromObject(mag).getCenter(new THREE.Vector3()).z : slideBox.max.z;
+    const magBox = mag ? new THREE.Box3().setFromObject(mag) : null;
+    const gripZ = magBox ? magBox.getCenter(new THREE.Vector3()).z : slideBox.max.z;
     // Grip center 3 cm behind the trigger origin, slide top at 3 cm.
     pistol.position.set(0, 0.03 - slideBox.max.y, 0.035 - gripZ);
     this.gun.add(pistol);
@@ -322,7 +347,17 @@ export class ViewModel {
     this.slideDir.set(-1, 0, 0);
     this.buildArms(true, [0, -0.1]);
     const muzzleY = 0.03 - (slideBox.max.y - slideBox.min.y) * 0.45;
-    this.placeMuzzle(new THREE.Vector3(0, muzzleY, pistol.position.z + slideBox.min.z - 0.01));
+    // Fitted attachments: muzzle device, laser, longer magazine; a red dot rides on the slide.
+    const frontU = -(pistol.position.z + slideBox.min.z);
+    const gripBottom = magBox ? magBox.min.y + pistol.position.y : -0.12;
+    const extras = fittedExtras(def, { muzzleU: frontU - 0.004, muzzleV: muzzleY, underU: frontU, underV: muzzleY, gripBottom, frameBottom: muzzleY - 0.012 });
+    this.own(extras.group);
+    if (def.attach?.optic) {
+      const dot = buildOptic(def, 0.03, 0.06, false);
+      this.own(dot.group, slide ?? this.gun);
+      this.sightHeight = dot.sightHeight;
+    }
+    this.placeMuzzle(new THREE.Vector3(0, muzzleY, -extras.muzzleU - 0.01));
   }
 
   /**
@@ -454,7 +489,7 @@ export class ViewModel {
    * A shot: each gun kicks its own way (gunplay audit, 2026-10-18). Down the
    * sights the gun stays nearer the eye, so less of it shows.
    */
-  onFire(ads: boolean, k: ShotKick): void {
+  onFire(ads: boolean, k: ShotKick, flash?: 'none' | 'small'): void {
     const back = k.back * (ads ? 0.6 : 1);
     this.kick = Math.min(this.kick + back, back * 2.4);
     this.kickSettle = k.settle * 1.15;
@@ -463,7 +498,8 @@ export class ViewModel {
     const side = Math.random() < 0.5 ? -1 : 1;
     this.roll.kick(side * k.roll * (0.6 + Math.random() * 0.4) * (ads ? 0.5 : 1));
     this.turn.kick((Math.random() - 0.5) * k.roll * 0.5 * (ads ? 0.4 : 1));
-    this.flashTimer = 0.04;
+    this.flashTimer = flash === 'none' ? 0 : 0.04;
+    this.flash.scale.setScalar(flash === 'small' ? 0.45 : 1);
     this.slideT = 0;
     this.flash.rotation.z = Math.random() * Math.PI;
   }

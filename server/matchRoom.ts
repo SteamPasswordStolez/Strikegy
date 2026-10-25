@@ -13,7 +13,7 @@ import { gunzipSync } from 'node:zlib';
 import * as THREE from 'three';
 import type { Bot } from '../src/ai/Bot.ts';
 import { setNavFiles } from '../src/ai/navCache.ts';
-import { sanitizeLoadout, type ClassId, type Loadout } from '../src/data/classes.ts';
+import { sanitizeLoadout, type AttachOk, type ClassId, type Loadout } from '../src/data/classes.ts';
 import { STATION } from '../src/modes/fortify.ts';
 import { createInputState, type InputState } from '../src/input/InputState.ts';
 import type { AdoptBot, Lineup, MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
@@ -50,7 +50,8 @@ import type { WeaponId } from '../src/weapons/weaponData.ts';
 import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
 import { ProgressTracker } from '../src/progression/tracker.ts';
-import { weaponLocked } from '../src/progression/unlocks.ts';
+import { weaponLevelOf, weaponLocked } from '../src/progression/unlocks.ts';
+import { attachLevel } from '../src/weapons/attachments.ts';
 import type { MatchSummary } from '../src/progression/profile.ts';
 import { WEAPONS } from '../src/weapons/weaponData.ts';
 
@@ -367,14 +368,23 @@ export class MatchRoom {
   deploy(uid: string, key: string, rawKit: unknown): void {
     const seat = this.seats.get(uid);
     if (!seat || this.over) return;
-    // Signed in: weapons their level hasn't opened give way to the class's defaults (guests have no level here).
+    // Signed in: weapons their level hasn't opened give way to the class's defaults, attachments their
+    // weapon's level hasn't opened come off (guests have no level here).
     const tr = seat.progress;
-    const kit = cleanKit(rawKit, tr && !this.opts.allUnlocked ? (id) => weaponLocked(id, tr.liveXp) : undefined);
+    const check = tr && !this.opts.allUnlocked;
+    const kit = cleanKit(
+      rawKit,
+      check ? (id) => weaponLocked(id, tr.liveXp) : undefined,
+      check ? (w, a) => weaponLevelOf(tr.weaponXp(w)).level >= attachLevel(WEAPONS[w], a) : undefined,
+    );
     const s = seat.soldier;
     const ok = /^(base|zone:[\w-]{1,8}|beacon:\d{1,6}|mate:\d{1,6}|tank:[a-z]{2,12}|jet:[a-z]{2,12}|veh:\d{1,6}|ship:\d{1,6})$/.test(key);
     const at = this.sim.deploy(s.id, ok ? key : 'base', kit);
     if (!at) return;
+    // Others draw and hear the attachments: a new build goes out with the roster.
+    const newBuild = JSON.stringify(kit.attach ?? {}) !== JSON.stringify(seat.kit?.attach ?? {});
     seat.kit = kit;
+    if (newBuild) this.sendRoster();
     seat.progress?.setClass(kit.cls);
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
     // Into a vehicle after the spawn (its browser takes the seat after the new life).
@@ -781,7 +791,7 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0 }));
+    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}) }));
     for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0, bot: true });
     return out;
   }
@@ -999,11 +1009,11 @@ function netVehicle(v: Vehicle): NetVehicle {
   };
 }
 
-/** A kit from a browser, made safe (unknown class: assault; `locked`: weapons not open to this player). */
-function cleanKit(raw: unknown, locked?: (id: string) => boolean): Loadout {
+/** A kit from a browser, made safe (unknown class: assault; `locked`: weapons not open to this player, `attachOk`: attachments). */
+function cleanKit(raw: unknown, locked?: (id: string) => boolean, attachOk?: AttachOk): Loadout {
   const r = (typeof raw === 'object' && raw ? raw : {}) as Partial<Loadout>;
   const cls = CLASSES.includes(r.cls as ClassId) ? (r.cls as ClassId) : 'assault';
-  return sanitizeLoadout({ ...r, cls }, locked);
+  return sanitizeLoadout({ ...r, cls }, locked, attachOk);
 }
 
 /**

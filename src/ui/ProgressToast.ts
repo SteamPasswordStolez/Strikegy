@@ -18,7 +18,7 @@ import './progress.css';
 export type NoticeSetting = 'all' | 'levels' | 'off';
 
 interface Notice {
-  kind: 'level' | 'promo' | 'bonus' | 'weapon' | 'unlock';
+  kind: 'level' | 'promo' | 'bonus' | 'weapon' | 'unlock' | 'attach';
   /** weapon / unlock: the gun (unlock: the first of those opened). */
   weapon?: WeaponId;
   level: number;
@@ -79,6 +79,12 @@ export class ProgressToast {
   unlock(ids: WeaponId[], level: number): void {
     if (this.setting === 'off' || !ids.length) return;
     this.queue.push({ kind: 'unlock', level, count: ids.length, weapon: ids[0], text: ids.map((id) => WEAPONS[id].name).join(', '), xp: 0 });
+  }
+
+  /** Attachments a weapon level opened (`names`: already in the player's language). */
+  attach(id: WeaponId, names: string[], level: number): void {
+    if (this.setting === 'off' || !names.length) return;
+    this.queue.push({ kind: 'attach', level, count: names.length, weapon: id, text: names.join(', '), xp: 0 });
   }
 
   /** A weapon's level reached (`xp`: that weapon's live XP). */
@@ -152,6 +158,9 @@ export class ProgressToast {
     } else if (n.kind === 'unlock') {
       title.textContent = t('prog.unlocked');
       text.textContent = `${n.text} · Lv ${n.level}`;
+    } else if (n.kind === 'attach') {
+      title.textContent = t('prog.attachUnlocked');
+      text.textContent = `${WEAPONS[n.weapon!].name} · ${n.text}`;
     } else if (n.kind === 'weapon') {
       title.textContent = n.count > 1 ? t('prog.weaponLevelN').replace('{n}', String(n.count)) : t('prog.weaponLevel');
       text.textContent = `${WEAPONS[n.weapon!].name} · Lv ${n.level}`;
@@ -165,7 +174,7 @@ export class ProgressToast {
     if (n.kind === 'weapon') {
       const at = weaponLevelOf(n.xp);
       fill.style.setProperty('--p', at.need ? (at.into / at.need).toFixed(3) : '1');
-    } else if (n.kind === 'unlock') fill.style.setProperty('--p', '1');
+    } else if (n.kind === 'unlock' || n.kind === 'attach') fill.style.setProperty('--p', '1');
     else {
       const at = levelOf(n.xp);
       fill.style.setProperty('--p', (at.into / at.need).toFixed(3));

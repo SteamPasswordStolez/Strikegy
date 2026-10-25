@@ -16,7 +16,9 @@ import { GADGETS, classGadget } from '@/data/gadgets';
 import { MATCH } from '@/modes/matchFlags';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { uiSound } from '@/audio/uiSounds';
-import { ACCESS, isLocked } from '@/progression/access';
+import { ACCESS, attachOpen, isLocked } from '@/progression/access';
+import { ATTACH_SLOTS, attachLevel, attachmentsFor, withAttachments, type AttachSet } from '@/weapons/attachments';
+import { effectLines } from './attachText';
 import { weaponLevelOf, weaponUnlockLevel } from '@/progression/unlocks';
 import { rankName } from './rankInsignia';
 import { icon } from './icons';
@@ -39,18 +41,18 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
   return e;
 }
 
-/** A gun's picture in an <img>, filled in once it has been drawn (weaponPortraits). */
-function gunPicture(parent: HTMLElement, id: WeaponId, cls: string): void {
+/** A gun's picture in an <img> (with `set` fitted), filled in once it has been drawn (weaponPortraits). */
+function gunPicture(parent: HTMLElement, id: WeaponId, cls: string, set?: AttachSet): void {
   const img = el('img', cls, parent);
   img.alt = '';
   img.decoding = 'async';
-  const now = weaponPortraitNow(id);
+  const now = weaponPortraitNow(id, set);
   if (now) {
     img.src = now;
     return;
   }
   img.classList.add('loading');
-  void weaponPortrait(id).then((url) => {
+  void weaponPortrait(id, set).then((url) => {
     if (!url) img.remove();
     else {
       img.src = url;
@@ -59,7 +61,8 @@ function gunPicture(parent: HTMLElement, id: WeaponId, cls: string): void {
   });
 }
 
-type Slot = 'primary0' | 'primary1' | 'pistol' | 'grenade' | 'gadget';
+/** `att0`..`att2`: the attachments of the weapon in slot 1, 2, 3. */
+type Slot = 'primary0' | 'primary1' | 'pistol' | 'grenade' | 'gadget' | 'att0' | 'att1' | 'att2';
 
 /**
  * BFV-style class and kit picker on the deploy screen, on the design system
@@ -141,7 +144,7 @@ export class LoadoutPanel {
       el('span', 'lo-value', text).textContent = value;
       if (sub) el('span', 'lo-sub', text).textContent = sub;
       if (gun) {
-        gunPicture(r, gun, 'lo-gun');
+        gunPicture(r, gun, 'lo-gun', l.attach?.[gun]);
         el('span', 'lo-wlevel', r).textContent = `Lv ${weaponLevelOf(ACCESS.weaponXp[gun] ?? 0).level}`;
       }
       r.insertAdjacentHTML('beforeend', icon('next', 'lo-chev'));
@@ -152,9 +155,25 @@ export class LoadoutPanel {
         this.render();
       });
     };
+    // Each gun with its attachments under it (progression step 4).
+    const attRow = (slot: Slot, gun: WeaponId) => {
+      const r = el('button', `lo-att${this.open === slot ? ' open' : ''}`, rows);
+      r.innerHTML = icon('settings');
+      const names = ATTACH_SLOTS.map((s) => l.attach?.[gun]?.[s]).filter((a): a is string => !!a);
+      el('span', 'lo-att-text', r).textContent = names.length ? names.map((a) => t(`attach.${a}` as MessageKey)).join(' · ') : t('loadout.noAttach');
+      r.addEventListener('pointerenter', () => uiSound('hover'));
+      r.addEventListener('click', () => {
+        this.open = this.open === slot ? null : slot;
+        uiSound(this.open ? 'open' : 'back');
+        this.render();
+      });
+    };
     row('primary0', t('loadout.primary1'), WEAPONS[l.primary[0]].name, l.primary[0]);
+    attRow('att0', l.primary[0]);
     row('primary1', t('loadout.primary2'), WEAPONS[l.primary[1]].name, l.primary[1]);
+    attRow('att1', l.primary[1]);
     row('pistol', t('loadout.pistol'), WEAPONS[l.pistol].name, l.pistol);
+    attRow('att2', l.pistol);
     row('grenade', t('loadout.grenade'), `${t(`grenade.${l.grenade}` as MessageKey)} ×${GRENADE_COUNT[l.grenade]}`, null);
     // Simplified matches carry no class gadget.
     if (!MATCH.simple) {
@@ -173,8 +192,18 @@ export class LoadoutPanel {
     if (!slot) return;
     const l = this.current;
     const head = el('div', 'lp-head', p);
-    el('span', 'lp-title', head).textContent =
-      slot === 'primary0' ? t('loadout.primary1') : slot === 'primary1' ? t('loadout.primary2') : slot === 'pistol' ? t('loadout.pistol') : slot === 'grenade' ? t('loadout.grenade') : t('loadout.gadget');
+    const attGun = slot === 'att0' ? l.primary[0] : slot === 'att1' ? l.primary[1] : slot === 'att2' ? l.pistol : null;
+    el('span', 'lp-title', head).textContent = attGun
+      ? `${WEAPONS[attGun].name} · ${t('loadout.attach')}`
+      : slot === 'primary0'
+        ? t('loadout.primary1')
+        : slot === 'primary1'
+          ? t('loadout.primary2')
+          : slot === 'pistol'
+            ? t('loadout.pistol')
+            : slot === 'grenade'
+              ? t('loadout.grenade')
+              : t('loadout.gadget');
     const close = el('button', 'ds-btn ghost lp-close', head);
     close.innerHTML = icon('close');
     el('span', '', close).textContent = t('loadout.close');
@@ -192,6 +221,10 @@ export class LoadoutPanel {
       });
     };
 
+    if (attGun) {
+      this.renderAttach(list, attGun, pickable);
+      return;
+    }
     if (slot === 'grenade') {
       for (const g of GRENADE_TYPES) {
         const b = el('button', `lp-item simple${g === l.grenade ? ' sel' : ''}`, list);
@@ -270,5 +303,67 @@ export class LoadoutPanel {
     }
     // Keep the chosen weapon in view.
     list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /**
+   * The gunsmith (Modern Warfare style): the gun as fitted with its stat bars,
+   * then each slot's attachments - what each does, good and bad, and the
+   * weapon level a locked one needs. A pick applies from the next deploy.
+   */
+  private renderAttach(list: HTMLElement, gun: WeaponId, pickable: (b: HTMLElement, pick: () => void) => void): void {
+    list.classList.add('att');
+    const build = this.store.build(gun);
+    const fitted = withAttachments(WEAPONS[gun], this.current.attach?.[gun]);
+    const top = el('div', 'lp-att-top', list);
+    const pic = el('div', 'lp-pic', top);
+    gunPicture(pic, gun, 'lp-gun', fitted.attach);
+    const bars = el('div', 'lp-bars', top);
+    const stats = weaponStats(fitted);
+    const base = weaponStats(WEAPONS[gun]);
+    for (const k of ['damage', 'rate', 'range', 'handling'] as const) {
+      const s = el('div', 'lp-stat', bars);
+      el('span', '', s).textContent = t(`stat.${k}`);
+      const bar = el('i', `ds-stat-bar${stats[k] > base[k] + 0.005 ? ' up' : stats[k] < base[k] - 0.005 ? ' down' : ''}`, s);
+      bar.style.setProperty('--p', `${Math.round(stats[k] * 100)}%`);
+    }
+    const facts = el('div', 'lp-att-facts', top);
+    const fact = (label: string, value: string) => {
+      el('span', '', facts).textContent = `${label} ${value}`;
+    };
+    fact(t('stat.mag'), String(fitted.magSize));
+    fact(t('attachFx.ads'), `${Math.round(fitted.adsTime * 1000)} ms`);
+    fact(t('attachFx.reload'), `${fitted.reloadTime.toFixed(2)} s`);
+    const level = weaponLevelOf(ACCESS.weaponXp[gun] ?? 0).level;
+    const options = attachmentsFor(WEAPONS[gun]);
+    for (const slot of ATTACH_SLOTS) {
+      const here = options.filter((a) => a.slot === slot);
+      if (!here.length) continue;
+      el('div', 'ds-label lp-group', list).textContent = t(`attachSlot.${slot}` as MessageKey);
+      const chosen = build[slot];
+      const set = (id: string | undefined) => {
+        const next: AttachSet = { ...build };
+        if (id) next[slot] = id;
+        else delete next[slot];
+        this.store.setBuild(gun, next);
+        this.changed();
+      };
+      const none = el('button', `lp-item simple lp-att${!chosen ? ' sel' : ''}`, list);
+      el('span', 'lp-name', none).textContent = t('loadout.attachNone');
+      el('span', 'lp-note', none).textContent = t('loadout.attachNoneNote');
+      if (chosen) pickable(none, () => set(undefined));
+      for (const a of here) {
+        const open = attachOpen(gun, a.id);
+        const b = el('button', `lp-item simple lp-att${a.id === chosen ? ' sel' : ''}${open ? '' : ' locked'}`, list);
+        b.disabled = !open;
+        el('span', 'lp-name', b).textContent = t(`attach.${a.id}` as MessageKey);
+        const fx = el('span', 'lp-fx', b);
+        for (const line of effectLines(a)) el('span', line.tone, fx).textContent = line.text;
+        if (!open) {
+          const lock = el('div', 'lp-lock', b);
+          lock.innerHTML = icon('lock');
+          el('span', '', lock).textContent = t('loadout.attachAt').replace('{level}', String(attachLevel(WEAPONS[gun], a.id))).replace('{now}', String(level));
+        } else if (a.id !== chosen) pickable(b, () => set(a.id));
+      }
+    }
   }
 }

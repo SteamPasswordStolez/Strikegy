@@ -18,13 +18,23 @@ export interface GunBuild {
   slide: THREE.Object3D | null;
 }
 
-/** Per-weapon look: furniture color and accessories (the sight is in `optics.ts`). Unlisted ids use their class default. */
+/**
+ * Per-weapon look: furniture color and accessories (the sight is in `optics.ts`).
+ * Unlisted ids use their class default. What `LOOKS` gives a gun is its default
+ * kit; fitted attachments (`WeaponDef.attach`) replace it slot by slot (`lookFor`).
+ */
 interface Look {
   color?: number;
-  grip?: 'vertical' | 'angled';
+  grip?: 'vertical' | 'angled' | 'stubby';
   /** Weapon light on the right of the handguard. */
   light?: boolean;
-  muzzle?: 'flash' | 'brake' | 'suppressor';
+  muzzle?: MuzzleKind;
+  /** A laser box on the right of the handguard (attachments: `hip` red, `tac` green). */
+  laser?: 'hip' | 'tac';
+  /** Magazine fitted: longer, a drum, or a fast one with a pull tab and a coupled spare. */
+  magMod?: 'ext' | 'drum' | 'fast';
+  /** A shell carrier on the receiver (shotguns without one, bolt rifles). */
+  shells?: boolean;
   /** Folded bipod under the handguard (precision rifles). */
   bipod?: boolean;
   /** Rifle frame: where the handguard and barrel end (m forward of the receiver). */
@@ -298,10 +308,14 @@ function addScope(b: PartBuilder, f: PartBuilder, s: ScopeShape, railTop: number
  * The sight for a weapon, built on its own (the scanned bolt-action rifle gets
  * each sniper rifle's scope this way). Returns the parts and the sight-line height.
  */
-export function buildOptic(def: WeaponDef, railTop: number, uc: number): { group: THREE.Group; sightHeight: number } {
+export function buildOptic(def: WeaponDef, railTop: number, uc: number, withRail = true): { group: THREE.Group; sightHeight: number } {
   const b = new PartBuilder();
-  const [railGeos, top] = rail(uc - 0.075, uc + 0.075, railTop);
-  b.add(gunMaterials().alloy, railGeos);
+  let top = railTop;
+  if (withRail) {
+    const [railGeos, t] = rail(uc - 0.075, uc + 0.075, railTop);
+    b.add(gunMaterials().alloy, railGeos);
+    top = t;
+  }
   const sightHeight = addOptic(b, opticFor(def), top, uc);
   return { group: b.build('optic'), sightHeight };
 }
@@ -393,7 +407,43 @@ function magazine(kind: 'curved' | 'straight' | 'smg', fine: boolean): THREE.Gro
   return b.build('mag');
 }
 
-type MuzzleKind = 'flash' | 'brake' | 'suppressor';
+type MuzzleKind = 'flash' | 'brake' | 'suppressor' | 'comp' | 'choke';
+
+/** The gun's default kit with the fitted attachments in their slots. */
+function lookFor(def: WeaponDef): Look {
+  const look: Look = { ...(LOOKS[def.id] ?? {}) };
+  const a = def.attach;
+  if (!a) return look;
+  switch (a.under) {
+    case 'vgrip':
+      look.grip = 'vertical';
+      look.bipod = false;
+      break;
+    case 'agrip':
+      look.grip = 'angled';
+      look.bipod = false;
+      break;
+    case 'sgrip':
+      look.grip = 'stubby';
+      look.bipod = false;
+      break;
+    case 'bipod':
+      look.grip = undefined;
+      look.bipod = true;
+      break;
+  }
+  if (a.muzzle === 'suppressor' || a.muzzle === 'brake' || a.muzzle === 'comp' || a.muzzle === 'choke') look.muzzle = a.muzzle;
+  if (a.muzzle === 'flashhider') look.muzzle = 'flash';
+  if (a.laser) {
+    look.laser = a.laser === 'laser' ? 'hip' : 'tac';
+    look.light = false;
+  }
+  if (a.mag === 'extmag') look.magMod = 'ext';
+  if (a.mag === 'drum') look.magMod = 'drum';
+  if (a.mag === 'fastmag') look.magMod = 'fast';
+  if (a.mag === 'shellholder') look.shells = true;
+  return look;
+}
 
 /** Muzzle device at the barrel end; returns the u of its front face. */
 function muzzleDevice(b: PartBuilder, f: PartBuilder, kind: MuzzleKind, u0: number, v: number, r = 0.0105): number {
@@ -406,6 +456,19 @@ function muzzleDevice(b: PartBuilder, f: PartBuilder, kind: MuzzleKind, u0: numb
     }
     for (let i = 0; i < 2; i++) f.add(m.dark, xcyl(0.0018, 0.0015, u0 + 0.02 + i * 0.016, v + r * 1.24, 0, 8).rotateZ(0));
     return u0 + 0.06;
+  }
+  if (kind === 'comp') {
+    // Compensator: a short can with its ports cut on top (the gas pushes the muzzle down).
+    b.add(m.steel, lathe([[r * 0.85, 0], [r * 1.25, 0.004], [r * 1.3, 0.008], [r * 1.3, 0.044], [r * 1.15, 0.048], [0.004, 0.048]], u0, v, 0, 16));
+    for (let i = 0; i < 3; i++) b.add(m.dark, block(u0 + 0.012 + i * 0.011, u0 + 0.018 + i * 0.011, v + r * 0.4, v + r * 1.32, r * 1.1));
+    for (const x of [-1, 1]) f.add(m.dark, block(u0 + 0.03, u0 + 0.04, v - r * 0.5, v + r * 0.5, 0.002, x * r * 1.31));
+    return u0 + 0.048;
+  }
+  if (kind === 'choke') {
+    // Extended choke tube: a knurled band past the barrel end.
+    b.add(m.steel, lathe([[r * 1.0, 0], [r * 1.12, 0.002], [r * 1.12, 0.028], [r * 0.95, 0.032], [r * 0.7, 0.032]], u0, v, 0, 16));
+    for (let u = u0 + 0.006; u < u0 + 0.024; u += 0.005) f.add(m.dark, lathe([[r * 1.14, 0], [r * 1.14, 0.0015]], u, v, 0, 16));
+    return u0 + 0.032;
   }
   if (kind === 'suppressor') {
     // Can on a mount: knurled rear section, main body, front cap.
@@ -426,14 +489,20 @@ function muzzleDevice(b: PartBuilder, f: PartBuilder, kind: MuzzleKind, u0: numb
   return u0 + 0.05;
 }
 
-type Foregrip = 'vertical' | 'angled';
+type Foregrip = 'vertical' | 'angled' | 'stubby';
 
 /** Foregrip hanging under a handguard whose bottom is at vBottom, centered at u. */
 function foregrip(b: PartBuilder, f: PartBuilder, kind: Foregrip, u: number, vBottom: number, mat: THREE.Material): void {
   const m = gunMaterials();
   const [rails, low] = railUnder(u - 0.04, u + 0.04, vBottom);
   b.add(m.alloy, rails);
-  if (kind === 'vertical') {
+  if (kind === 'stubby') {
+    // Stubby grip: a short ribbed stem with a flared foot.
+    b.add(mat, vcyl(0.0118, 0.013, u, low, low - 0.045, 0, 14));
+    b.add(m.rubber, vcyl(0.0145, 0.0145, u, low - 0.045, low - 0.052, 0, 14));
+    for (let v = low - 0.012; v > low - 0.04; v -= 0.01) f.add(m.dark, vcyl(0.0124, 0.0124, u, v, v - 0.002, 0, 14));
+    b.add(m.alloy, block(u - 0.016, u + 0.016, low - 0.008, low, 0.02));
+  } else if (kind === 'vertical') {
     b.add(mat, vcyl(0.0115, 0.0125, u, low, low - 0.085, 0, 14));
     b.add(m.rubber, vcyl(0.0128, 0.0128, u, low - 0.085, low - 0.092, 0, 14));
     for (let v = low - 0.02; v > low - 0.08; v -= 0.012) f.add(m.dark, vcyl(0.0122, 0.0122, u, v, v - 0.002, 0, 14));
@@ -455,6 +524,57 @@ function weaponLight(b: PartBuilder, f: PartBuilder, u1: number, v: number, x: n
   b.add(m.lightLens, new THREE.CircleGeometry(0.0115, 18).translate(x, v, -(u1 + 0.0021)));
   f.add(m.rubber, lathe([[0.009, -0.008], [0.0105, -0.006], [0.0105, 0.0], [0, 0]], u0, v, x, 14));
   for (let u = u0 + 0.01; u < u0 + 0.03; u += 0.004) f.add(m.dark, lathe([[0.0108, 0], [0.0108, 0.0015]], u, v, x, 14));
+}
+
+/** Laser box clamped to the right of the handguard (axis at height v, offset x); red for the aiming laser, green for the tactical one. */
+function laserUnit(b: PartBuilder, f: PartBuilder, u1: number, v: number, x: number, kind: 'hip' | 'tac'): void {
+  const m = gunMaterials();
+  const u0 = u1 - 0.07;
+  b.add(m.alloy, block(u0 + 0.015, u0 + 0.05, v - 0.007, v + 0.007, x - 0.012, (x - 0.012) / 2 + 0.006));
+  b.add(m.polymer, slab(roundRect(u0, v - 0.013, u1, v + 0.011, 0.004), 0.022, x, 0.002));
+  b.add(reticleMat(kind === 'hip' ? 0xff2a1a : 0x49ff62), new THREE.CircleGeometry(0.0032, 12).translate(x - 0.004, v + 0.004, -(u1 + 0.0015)));
+  f.add(m.glass, new THREE.CircleGeometry(0.0045, 12).translate(x + 0.005, v - 0.004, -(u1 + 0.0015)));
+  f.add(m.dark, block(u0 + 0.01, u0 + 0.022, v + 0.011, v + 0.014, 0.008, x));
+}
+
+/**
+ * A magazine with its fitted change: `ext` longer (stretched down from the
+ * magwell at `top`), `fast` with a pull tab and a spare coupled on the left.
+ */
+function fittedMag(mag: THREE.Group, mod: Look['magMod'], top: number, fine: boolean): THREE.Group {
+  if (mod === 'ext') {
+    const s = new THREE.Matrix4().makeTranslation(0, top, 0).multiply(new THREE.Matrix4().makeScale(1, 1.4, 1)).multiply(new THREE.Matrix4().makeTranslation(0, -top, 0));
+    mag.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry = o.geometry.clone().applyMatrix4(s);
+    });
+  } else if (mod === 'fast') {
+    const box = new THREE.Box3().setFromObject(mag);
+    const m = gunMaterials();
+    const add = (g: THREE.BufferGeometry, mat: THREE.Material) => mag.add(new THREE.Mesh(g, mat));
+    add(block(box.min.z * -1 - 0.03, box.min.z * -1 - 0.01, box.min.y - 0.012, box.min.y, 0.012), m.rubber);
+    if (fine) {
+      // The spare: the same magazine beside it, clamped.
+      const spare = new THREE.Group();
+      for (const c of mag.children) if (c instanceof THREE.Mesh) spare.add(new THREE.Mesh(c.geometry, c.material));
+      spare.position.set(-0.028, -0.004, 0);
+      mag.add(spare);
+      add(block(-box.max.z + 0.01, -box.min.z - 0.01, (box.min.y + top) / 2 - 0.008, (box.min.y + top) / 2 + 0.008, 0.054, -0.014), m.polymer);
+    }
+  }
+  return mag;
+}
+
+/** A drum magazine under the magwell (rifles, machine guns, the semi-auto shotgun). */
+function drumMag(u: number, top: number, r: number, width: number, fine: boolean): THREE.Group {
+  const m = gunMaterials();
+  const b = new PartBuilder();
+  const f = fine ? b : DISCARD;
+  b.add(m.polymer, block(u - 0.022, u + 0.022, top - 0.04, top, 0.022));
+  const drum = new THREE.CylinderGeometry(r, r, width, 24).rotateZ(Math.PI / 2).translate(0, top - 0.04 - r * 0.8, -u);
+  b.add(m.polymer, drum);
+  for (const x of [-1, 1]) f.add(m.dark, new THREE.CylinderGeometry(r * 0.55, r * 0.55, 0.003, 18).rotateZ(Math.PI / 2).translate((x * width) / 2, top - 0.04 - r * 0.8, -u));
+  f.add(m.steel, new THREE.CylinderGeometry(0.008, 0.008, width + 0.01, 10).rotateZ(Math.PI / 2).translate(0, top - 0.04 - r * 0.8, -u));
+  return b.build('mag');
 }
 
 /** Folding backup iron sights lying flat on the rail (rear at uRear, front at uFront). */
@@ -563,9 +683,10 @@ function rifle(o: RifleOpts): GunBuild {
   b.add(m.alloy, railGeos);
   if (o.optic.model !== 'scope' && o.optic.model !== 'irons') foldedIrons(f, -0.074, o.handguardEnd - 0.04, railTop);
 
-  // Accessories: foregrip, light, bipod (precision).
-  if (o.look.grip) foregrip(b, f, o.look.grip, o.handguardEnd - 0.075, -0.015, o.look.grip === 'vertical' ? m.polymer : furn);
+  // Accessories: foregrip, light or laser, bipod (precision).
+  if (o.look.grip) foregrip(b, f, o.look.grip, o.handguardEnd - 0.075, -0.015, o.look.grip === 'angled' ? furn : m.polymer);
   if (o.look.light && o.fine) weaponLight(b, f, o.handguardEnd - 0.012, 0.006, 0.034);
+  if (o.look.laser) laserUnit(b, f, o.handguardEnd - 0.012, 0.006, 0.033, o.look.laser);
   if (o.look.bipod) {
     for (const x of [-0.009, 0.009]) b.add(m.steel, tube(0.0038, o.handguardEnd - 0.2, o.handguardEnd - 0.03, -0.026, x, 8));
     b.add(m.alloy, block(o.handguardEnd - 0.035, o.handguardEnd - 0.01, -0.03, -0.014, 0.03));
@@ -582,7 +703,7 @@ function rifle(o: RifleOpts): GunBuild {
 
   const sightHeight = addOptic(b, o.optic, railTop, 0.02, f);
   const group = b.build('rifle');
-  const mag = magazine(o.mag, o.fine);
+  const mag = o.look.magMod === 'drum' ? drumMag(0.092, -0.06, 0.052, 0.05, o.fine) : fittedMag(magazine(o.mag, o.fine), o.look.magMod, -0.02, o.fine);
   group.add(mag);
   return {
     group,
@@ -632,6 +753,9 @@ function smg(color: number, optic: Optic, look: Look, fine: boolean): GunBuild {
   let muzzleU = 0.3;
   if (look.muzzle === 'suppressor') {
     muzzleU = muzzleDevice(b, f, 'suppressor', 0.27, 0.004, 0.0085);
+  } else if (look.muzzle) {
+    // A fitted device on a short barrel extension.
+    muzzleU = muzzleDevice(b, f, look.muzzle, 0.28, 0.004, 0.0085);
   } else {
     b.add(m.steel, lathe([[0.0085, 0], [0.0095, 0.002], [0.0095, 0.02], [0.007, 0.022]], 0.28, 0.004, 0, 14));
     for (let i = 0; i < 3; i++) {
@@ -656,8 +780,9 @@ function smg(color: number, optic: Optic, look: Look, fine: boolean): GunBuild {
   const [railGeos, railTop] = rail(-0.06, 0.09, 0.032);
   b.add(m.alloy, railGeos);
   const sightHeight = addOptic(b, optic, railTop, 0.01, f);
-  if (look.grip) foregrip(b, f, look.grip, 0.195, -0.045, look.grip === 'vertical' ? m.polymer : furn);
+  if (look.grip) foregrip(b, f, look.grip, 0.195, -0.045, look.grip === 'angled' ? furn : m.polymer);
   if (look.light && fine) weaponLight(b, f, 0.25, -0.016, 0.04);
+  if (look.laser) laserUnit(b, f, 0.25, -0.016, 0.039, look.laser);
 
   const group = b.build('smg');
   // Cocking handle on the left rides with the bolt.
@@ -666,12 +791,12 @@ function smg(color: number, optic: Optic, look: Look, fine: boolean): GunBuild {
   (fine ? slideB : DISCARD).add(m.dark, lathe([[0.004, 0], [0.005, 0.002], [0.005, 0.006], [0, 0.008]], 0.206, 0.016, -0.033, 8).rotateZ(0));
   const slide = slideB.build('slide');
   group.add(slide);
-  const mag = magazine('smg', fine);
+  const mag = fittedMag(magazine('smg', fine), look.magMod, -0.03, fine);
   group.add(mag);
   return { group, sightHeight, muzzle: new THREE.Vector3(0, 0.004, -muzzleU - 0.01), support: [0.19, -0.05], mag, pump: null, slide };
 }
 
-function lmg(color: number, fine: boolean): GunBuild {
+function lmg(color: number, fine: boolean, look: Look = {}, optic: Optic | null = null): GunBuild {
   const m = gunMaterials();
   const furn = furniture(color);
   const b = new PartBuilder();
@@ -731,10 +856,17 @@ function lmg(color: number, fine: boolean): GunBuild {
   }
   b.add(m.steel, block(0.49, 0.51, -0.042, -0.024, 0.03));
   f.add(m.steel, xcyl(0.004, 0.038, 0.5, -0.033, 0, 10));
-  const muzzleU = muzzleDevice(b, f, 'flash', 0.53, 0.008, 0.013);
-  // Iron sights on the feed cover and at the gas block.
-  const vc = rearAperture(b, -0.03, 0.046);
+  const muzzleU = muzzleDevice(b, f, look.muzzle ?? 'flash', 0.53, 0.008, 0.013);
+  // Iron sights on the feed cover and at the gas block; a fitted optic on a rail over the cover.
+  let vc = rearAperture(b, -0.03, 0.046);
   frontPost(b, 0.36, 0.02, vc);
+  if (optic) {
+    const [railGeos, top] = rail(-0.05, 0.09, 0.046);
+    b.add(m.alloy, railGeos);
+    vc = addOptic(b, optic, top, 0.03, f);
+  }
+  if (look.grip) foregrip(b, f, look.grip, 0.25, -0.06, look.grip === 'angled' ? furn : m.polymer);
+  if (look.laser) laserUnit(b, f, 0.3, -0.03, 0.034, look.laser);
 
   const group = b.build('lmg');
   // Ammo box under the left side, with a belt of rounds feeding in (drops on reload).
@@ -752,12 +884,12 @@ function lmg(color: number, fine: boolean): GunBuild {
     fb.add(m.copper, new THREE.ConeGeometry(0.0042, 0.012, 8).rotateZ(-Math.PI / 2).translate(-0.036 + i * 0.0022 + 0.031, -0.024 + i * 0.01, -(0.043 + i * 0.004)));
     fb.add(m.dark, block(0.038 + i * 0.004, 0.05 + i * 0.004, -0.028 + i * 0.01, -0.02 + i * 0.01, 0.036, -0.036 + i * 0.0022));
   }
-  const mag = box.build('mag');
+  const mag = look.magMod === 'drum' ? drumMag(0.05, -0.035, 0.06, 0.07, fine) : box.build('mag');
   group.add(mag);
   return { group, sightHeight: vc, muzzle: new THREE.Vector3(0, 0.008, -muzzleU - 0.01), support: [0.22, -0.06], mag, pump: null, slide: null };
 }
 
-function shotgun(color: number | null, tactical: boolean, fine: boolean): GunBuild {
+function shotgun(color: number | null, tactical: boolean, fine: boolean, look: Look = {}, optic: Optic | null = null): GunBuild {
   const m = gunMaterials();
   const stockMat = color === null ? m.wood : furniture(color);
   const b = new PartBuilder();
@@ -799,7 +931,23 @@ function shotgun(color: number | null, tactical: boolean, fine: boolean): GunBui
       f.add(m.brass, vcyl(0.0098, 0.0098, u, -0.03, -0.018, -0.029, 12));
     }
     b.add(m.polymer, block(-0.046, 0.064, -0.006, 0.006, 0.006, -0.022));
+  } else if (look.shells) {
+    // A fitted shell holder on the left of the receiver.
+    b.add(m.polymer, slab(roundRect(-0.045, -0.026, 0.062, 0.018, 0.004), 0.004, -0.017, 0.001));
+    for (let i = 0; i < 4; i++) {
+      const u = -0.032 + i * 0.024;
+      b.add(m.shellHull, vcyl(0.0095, 0.0095, u, -0.02, 0.034, -0.029, 12));
+      f.add(m.brass, vcyl(0.0098, 0.0098, u, -0.03, -0.018, -0.029, 12));
+    }
   }
+  if (optic) {
+    const [railGeos, top] = rail(-0.03, 0.09, 0.026);
+    b.add(m.alloy, railGeos);
+    sightHeight = addOptic(b, optic, top, 0.03, f);
+  }
+  let muzzleU = 0.53;
+  if (look.muzzle === 'choke') muzzleU = muzzleDevice(b, f, 'choke', 0.515, 0.013, 0.0105) + 0.01;
+  if (look.laser) laserUnit(b, f, 0.44, -0.012, 0.02, look.laser);
   // Stock and pistol grip in one piece, sling swivel, checkering on the wrist.
   b.add(
     stockMat,
@@ -827,28 +975,82 @@ function shotgun(color: number | null, tactical: boolean, fine: boolean): GunBui
   for (let u = 0.185; u < 0.31; u += 0.014) for (const x of [-0.0232, 0.0232]) fb.add(m.dark, block(u, u + 0.005, -0.026, -0.002, 0.0015, x));
   for (const x of [-0.011, 0.011]) fb.add(m.steel, block(0.08, 0.17, -0.02, -0.014, 0.003, x)); // action bars
   (fine ? fb : DISCARD).add(m.steel, lathe([[0.0125, 0], [0.0135, 0.002], [0.0135, 0.008], [0.0125, 0.01]], 0.16, -0.012, 0, 14));
+  if (look.grip) foregrip(fb, fine ? fb : DISCARD, look.grip, 0.27, -0.033, look.grip === 'angled' ? stockMat : m.polymer);
   const pump = fb.build('pump');
   group.add(pump);
-  return { group, sightHeight, muzzle: new THREE.Vector3(0, 0.013, -0.53), support: [0.245, -0.045], mag: null, pump, slide: null };
+  const mag = look.magMod === 'drum' ? drumMag(0.03, -0.03, 0.05, 0.05, fine) : null;
+  if (mag) group.add(mag);
+  return { group, sightHeight, muzzle: new THREE.Vector3(0, 0.013, -muzzleU), support: [0.245, -0.045], mag, pump, slide: null };
 }
 
-/** Simple procedural pistol, used when the scanned one is not available. */
-function pistol(): GunBuild {
+/** Simple procedural pistol, used when the scanned one is not available (and for bots). */
+function pistol(look: Look = {}, optic: Optic | null = null, fine = true): GunBuild {
   const m = gunMaterials();
   const b = new PartBuilder();
   b.add(m.polymer, slab([[-0.045, -0.012], [0.12, -0.012], [0.12, -0.022], [0.05, -0.03], [-0.01, -0.03], [-0.045, -0.02]], 0.026, 0, 0.002));
   b.add(m.polymer, slab([[-0.005, -0.028], [-0.012, -0.07], [-0.028, -0.125], [-0.058, -0.12], [-0.045, -0.028]], 0.028, 0, 0.004));
   b.add(m.polymer, block(-0.012, 0.045, -0.05, -0.045, 0.01));
   b.add(m.dark, slab([[0.012, -0.03], [0.017, -0.03], [0.016, -0.04], [0.01, -0.046]], 0.005, 0, 0.001));
+  const f = fine ? b : DISCARD;
+  pistolExtras(b, f, look, 0.125, 0.006, -0.03, -0.122);
   const group = b.build('pistol');
   const sb = new PartBuilder();
   sb.add(m.steel, slab(roundRect(-0.05, -0.012, 0.125, 0.022, 0.004), 0.028, 0, 0.002));
   for (let u = -0.045; u < -0.02; u += 0.005) for (const x of [-0.0142, 0.0142]) sb.add(m.dark, block(u, u + 0.002, -0.004, 0.018, 0.001, x));
   sb.add(m.dark, block(0.113, 0.119, 0.022, 0.03, 0.003));
   for (const x of [-0.0045, 0.0045]) sb.add(m.dark, block(-0.045, -0.038, 0.022, 0.03, 0.004, x));
+  const sightHeight = optic ? addOptic(sb, optic, 0.022, 0.02, fine ? sb : DISCARD) : 0.029;
   const slide = sb.build('slide');
   group.add(slide);
-  return { group, sightHeight: 0.029, muzzle: new THREE.Vector3(0, 0.006, -0.135), support: [0, -0.1], mag: null, pump: null, slide };
+  const muzzleU = look.muzzle === 'suppressor' ? 0.125 + 0.186 * 0.75 : look.muzzle === 'comp' ? 0.125 + 0.048 * 0.75 : 0.135;
+  return { group, sightHeight, muzzle: new THREE.Vector3(0, 0.006, -muzzleU), support: [0, -0.1], mag: null, pump: null, slide };
+}
+
+/**
+ * A pistol's fitted parts in its own frame: a muzzle device at `muzzleU`
+ * (axis `muzzleV`), a laser under the frame, a longer magazine base under the
+ * grip (bottom at `gripBottom`). Shared by the procedural pistol and the
+ * scanned one in first person.
+ */
+function pistolExtras(b: PartBuilder, f: PartBuilder, look: Look, muzzleU: number, muzzleV: number, frameBottom: number, gripBottom: number): void {
+  const m = gunMaterials();
+  if (look.muzzle === 'suppressor' || look.muzzle === 'comp') muzzleDevice(b, f, look.muzzle, muzzleU, muzzleV, 0.0075);
+  if (look.laser) laserUnit(b, f, muzzleU - 0.01, frameBottom - 0.012, 0, look.laser);
+  if (look.magMod === 'ext') {
+    b.add(m.polymer, slab(roundRect(-0.062, gripBottom - 0.035, -0.022, gripBottom + 0.004, 0.006), 0.026, 0, 0.002));
+    b.add(m.dark, block(-0.064, -0.02, gripBottom - 0.04, gripBottom - 0.034, 0.028));
+  }
+}
+
+/**
+ * The fitted parts for a gun whose body isn't built here (the scanned bolt
+ * rifle and pistol in first person), placed at the given points of the gun's
+ * frame (u forward, v up). Returns them as one group (and where the muzzle
+ * ends up).
+ */
+export function fittedExtras(def: WeaponDef, at: { muzzleU: number; muzzleV: number; underU: number; underV: number; gripBottom: number; frameBottom: number }): { group: THREE.Group; muzzleU: number } {
+  const look = lookFor(def);
+  const b = new PartBuilder();
+  const m = gunMaterials();
+  let muzzleU = at.muzzleU;
+  if (def.class === 'pistol') {
+    pistolExtras(b, b, look, at.muzzleU, at.muzzleV, at.frameBottom, at.gripBottom);
+    if (look.muzzle === 'suppressor') muzzleU += 0.186 * 0.75;
+    if (look.muzzle === 'comp') muzzleU += 0.048 * 0.75;
+  } else {
+    // A fitted muzzle device only (the scanned rifle has its own crown).
+    if (def.attach?.muzzle && look.muzzle) muzzleU = muzzleDevice(b, b, look.muzzle, at.muzzleU, at.muzzleV, 0.0095);
+    if (look.bipod && def.attach?.under === 'bipod') {
+      for (const x of [-0.01, 0.01]) b.add(m.steel, tube(0.004, at.underU - 0.18, at.underU, at.underV, x, 8));
+      b.add(m.alloy, block(at.underU - 0.01, at.underU + 0.015, at.underV - 0.006, at.underV + 0.01, 0.032));
+      for (const x of [-0.01, 0.01]) b.add(m.rubber, block(at.underU - 0.195, at.underU - 0.18, at.underV - 0.006, at.underV + 0.005, 0.01, x));
+    }
+    if (look.shells) {
+      for (let i = 0; i < 5; i++) b.add(m.brass, vcyl(0.0055, 0.0055, at.underU - 0.3 + i * 0.016, at.underV + 0.01, at.underV + 0.05, -0.024, 8));
+      b.add(m.polymer, block(at.underU - 0.31, at.underU - 0.22, at.underV + 0.015, at.underV + 0.04, 0.004, -0.02));
+    }
+  }
+  return { group: b.build('extras'), muzzleU };
 }
 
 /**
@@ -857,7 +1059,8 @@ function pistol(): GunBuild {
  * geometry): bots carry these baked into their soldier models.
  */
 export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): GunBuild {
-  const look = LOOKS[def.id] ?? {};
+  const look = lookFor(def);
+  const fitted = def.attach?.optic ? opticFor(def) : null;
   const fine = opts.detail !== 'low';
   if (look.frame === 'rifle' || def.class === 'ar') {
     return rifle({
@@ -887,12 +1090,12 @@ export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): Gun
     case 'smg':
       return smg(look.color ?? 0x1c1d1f, opticFor(def), look, fine);
     case 'lmg':
-      return lmg(look.color ?? 0x4a4f3a, fine);
+      return lmg(look.color ?? 0x4a4f3a, fine, look, fitted);
     case 'sg':
       // SG-2 / SG-3: the tactical build (heat shield, ghost ring, side saddle).
-      return shotgun(look.color ?? null, def.id !== 'sg1', fine);
+      return shotgun(look.color ?? null, def.id !== 'sg1', fine, look, fitted);
     case 'pistol':
-      return pistol();
+      return pistol(look, fitted, fine);
   }
   throw new Error(`no gun model for ${def.id}`);
 }

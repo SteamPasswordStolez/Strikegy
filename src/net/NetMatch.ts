@@ -28,7 +28,9 @@ import type { Effects } from '@/render/Effects';
 import { gadgetModel } from '@/modes/gadgetWorld';
 import { LAYER_FX } from '@/render/layers';
 import type { Soldier } from '@/sim/Soldier';
-import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import { WEAPONS, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { gunKey, withAttachments } from '@/weapons/attachments';
+import { botWeapon } from '@/ai/personality';
 import type { Vehicle } from '@/vehicles/Vehicle';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Team } from '@/world/mapTypes';
@@ -156,6 +158,12 @@ class Remote {
   private mark: THREE.Sprite | null = null;
   model: SoldierModel | null = null;
   private weapon: WeaponId | null = null;
+  private gun = '';
+  private pitch = 0;
+  private drawnFlags = 0;
+  private readonly laserDir = new THREE.Vector3();
+  /** The weapon as this soldier carries it (bots' builds, people's attachments from the roster). */
+  defOf: (weapon: WeaponId) => WeaponDef = (w) => WEAPONS[w];
   readonly boxes: CharacterHitboxes;
   private readonly target: Damageable;
   private readonly pos = new THREE.Vector3();
@@ -309,7 +317,9 @@ class Remote {
     }
     this.yaw = yaw;
     const pitch = a.pitch + (b.pitch - a.pitch) * f;
+    this.pitch = pitch;
     const flags = f < 0.5 ? a.flags : b.flags;
+    this.drawnFlags = flags;
     const deployed = (flags & SF.deployed) !== 0;
     const downed = (flags & SF.downed) !== 0;
     this.alive = deployed && (flags & SF.alive) !== 0 && !downed;
@@ -354,10 +364,12 @@ class Remote {
       this.dropMarks();
       return;
     }
-    if (!this.model || weapon !== this.weapon) {
+    const def = this.defOf(weapon);
+    if (!this.model || weapon !== this.weapon || gunKey(def) !== this.gun) {
       this.model?.dispose();
-      this.model = new SoldierModel(lookTeam(this.team), WEAPONS[weapon]);
+      this.model = new SoldierModel(lookTeam(this.team), def);
       this.weapon = weapon;
+      this.gun = gunKey(def);
       this.view.scene.add(this.model.root);
     } else if (!this.model.root.parent) this.view.scene.add(this.model.root);
     const dead = !this.alive;
@@ -382,8 +394,18 @@ class Remote {
     }
   }
 
+  /** This soldier's laser, if one shows (attachments): the aiming laser always, the tactical one while not aiming. */
+  laser(eye: THREE.Vector3, range: number, emit: (from: THREE.Vector3, dir: THREE.Vector3, kind: 'hip' | 'tac') => void): void {
+    if (!this.model?.root.parent || !this.alive || this.riding || this.weapon === null || this.pos.distanceToSquared(eye) > range * range) return;
+    const def = this.defOf(this.weapon);
+    if (!def.laser || (def.laser === 'tac' && (this.drawnFlags & SF.ads) !== 0)) return;
+    this.model.muzzleWorld(this.muzzle);
+    this.euler.set(this.pitch, this.yaw, 0);
+    emit(this.muzzle, this.laserDir.set(0, 0, -1).applyEuler(this.euler), def.laser);
+  }
+
   private fired(n: number, weapon: WeaponId, yaw: number, pitch: number): void {
-    const def = WEAPONS[weapon];
+    const def = this.defOf(weapon);
     const v = this.view;
     this.model!.muzzleWorld(this.muzzle);
     this.euler.set(pitch, yaw, 0);
@@ -395,8 +417,8 @@ class Remote {
       const to = hit ? new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z) : eye.clone().addScaledVector(this.fwd, def.range);
       v.effects.spawnShots([{ from: eye.clone(), to }], this.muzzle);
     }
-    v.effects.muzzleFlash(this.muzzle, this.fwd);
-    v.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(v.camera.position), this.id, def.id);
+    v.effects.muzzleFlash(this.muzzle, this.fwd, def.flash);
+    v.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(v.camera.position), this.id, def.id, !!def.suppressed);
   }
 
   private dropMarks(): void {
@@ -674,6 +696,13 @@ export class NetMatch {
 
   // ---------------------------------------------------------------------------
 
+  /** A soldier's gun as fitted: a bot's build, or a person's attachments as the roster has them. */
+  private remoteDef(id: number, weapon: WeaponId): WeaponDef {
+    const info = this.roster.get(id);
+    if (info?.bot) return botWeapon(weapon);
+    return withAttachments(WEAPONS[weapon], info?.att?.[weapon]);
+  }
+
   private setRoster(list: readonly MatchSoldierInfo[]): void {
     this.roster.clear();
     for (const s of list) this.roster.set(s.id, s);
@@ -709,6 +738,8 @@ export class NetMatch {
       if (!r) {
         const info = this.roster.get(s.id);
         r = new Remote(s.id, info?.team ?? 'red', info?.name ?? '?', this.view);
+        const id = s.id;
+        r.defOf = (w) => this.remoteDef(id, w);
         r.human = !!info && !info.bot;
         r.ally = !MATCH.ffa && r.team === this.myTeam;
         this.remotes.set(s.id, r);
@@ -944,6 +975,11 @@ export class NetMatch {
   private readonly tmpV2 = new THREE.Vector3();
 
   /** Draws everyone else, grenades in the air and explosions due, for this frame. */
+  /** Other soldiers' lasers within `range` of `eye` (attachments). */
+  lasers(eye: THREE.Vector3, range: number, emit: (from: THREE.Vector3, dir: THREE.Vector3, kind: 'hip' | 'tac') => void): void {
+    for (const r of this.remotes.values()) r.laser(eye, range, emit);
+  }
+
   render(dt: number): void {
     const tick = this.viewTick();
     for (const r of this.remotes.values()) r.render(tick, dt);

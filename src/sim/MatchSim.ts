@@ -35,7 +35,8 @@ import { MOVE } from '@/player/movement';
 import type { Effects, SmokeVolume } from '@/render/Effects';
 import type { ShotCaster } from '@/weapons/WeaponController';
 import { Throwables } from '@/weapons/Throwables';
-import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import type { WeaponId } from '@/weapons/weaponData';
+import { shotHeard } from '@/weapons/attachments';
 import { FortModels } from '@/world/fortModels';
 import type { MapDef, Team } from '@/world/mapTypes';
 import { kitToggles, needsStation, restockAmmo, stepFort, stepGadget, stepGive, type GiveClock, type KitWorld } from './kit';
@@ -848,7 +849,7 @@ export class MatchSim {
       const busy = s.throwBlock > 0 || s.medkitUse > 0 || reviving || s.working >= 0 || s.buildMode || s.gadgetOut || s.using;
       const shots = s.weapons.shots;
       s.stepOnFoot(dt, input, busy, this.fort?.slowAt(s.player.feet) ?? 1);
-      if (s.weapons.shots !== shots) this.bots?.alert(s.player.feet, WEAPONS[s.weapons.def.id as WeaponId].suppressed ? 22 : 70, s.combatant);
+      if (s.weapons.shots !== shots) this.bots?.alert(s.player.feet, shotHeard(s.weapons.def), s.combatant);
       // The eye follows crouching as the browser's view does (shots start there).
       s.player.eyePosition(1, dt, this.eyeTmp);
     } else {

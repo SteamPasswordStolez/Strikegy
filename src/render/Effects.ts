@@ -284,9 +284,10 @@ export class Effects {
     return p.distanceToSquared(this.viewer) < meters * meters;
   }
 
-  muzzleFlash(muzzle: THREE.Vector3, forward: THREE.Vector3): void {
+  /** `flash`: a suppressor shows none, a flash hider a small one (attachments). */
+  muzzleFlash(muzzle: THREE.Vector3, forward: THREE.Vector3, flash?: 'none' | 'small'): void {
     // Distant bots must not steal the (single) flash light from nearby shots.
-    if (this.within(muzzle, MUZZLE_LIGHT_M)) this.flashLight(muzzle, 5, 0.05, 0xffc27a, 9);
+    if (flash !== 'none' && this.within(muzzle, MUZZLE_LIGHT_M)) this.flashLight(muzzle, flash === 'small' ? 2 : 5, 0.05, 0xffc27a, 9);
     if (!this.within(muzzle, MUZZLE_SMOKE_M)) return;
     // A faint wisp of gun smoke drifting off the muzzle.
     this.soft.spawn({

@@ -44,8 +44,10 @@ export function gunPattern(id: string): number {
 export interface RecoilModifiers {
   adsBlend: number;
   crouched: boolean;
+  /** A bipod fitted, crouched and still (attachments): x0.8 more. */
+  braced?: boolean;
 }
 
 export function recoilScale(m: RecoilModifiers): number {
-  return (1 - 0.3 * m.adsBlend) * (m.crouched ? 0.8 : 1);
+  return (1 - 0.3 * m.adsBlend) * (m.crouched ? 0.8 : 1) * (m.braced ? 0.8 : 1);
 }

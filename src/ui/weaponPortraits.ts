@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildGun } from '@/weapons/gunModels';
-import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
+import { WEAPONS, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { ATTACH_SLOTS, withAttachments, type AttachSet } from '@/weapons/attachments';
 
 /**
  * Pictures of the guns for the deploy screen's kit (design system,
@@ -18,9 +19,15 @@ const W = 480;
 const H = 168;
 const IDLE_MS = 4000;
 
-const done = new Map<WeaponId, string>();
-const waiting = new Map<WeaponId, ((url: string | null) => void)[]>();
-const queue: WeaponId[] = [];
+const done = new Map<string, string>();
+const waiting = new Map<string, ((url: string | null) => void)[]>();
+const queue: { key: string; def: WeaponDef }[] = [];
+
+/** One picture a weapon and set of attachments. */
+function keyOf(id: WeaponId, set?: AttachSet): string {
+  const parts = ATTACH_SLOTS.map((s) => set?.[s] ?? '').join(',');
+  return parts.replace(/,/g, '') ? `${id}|${parts}` : id;
+}
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
 let envTarget: THREE.WebGLRenderTarget | null = null;
@@ -28,25 +35,26 @@ let pumping = false;
 let idleTimer = 0;
 let failed = false;
 
-/** The picture of a weapon (null where WebGL can't draw it). */
-export function weaponPortrait(id: WeaponId): Promise<string | null> {
-  const have = done.get(id);
+/** The picture of a weapon, with `set` fitted (null where WebGL can't draw it). */
+export function weaponPortrait(id: WeaponId, set?: AttachSet): Promise<string | null> {
+  const key = keyOf(id, set);
+  const have = done.get(key);
   if (have) return Promise.resolve(have);
   if (failed) return Promise.resolve(null);
   return new Promise((resolve) => {
-    const list = waiting.get(id);
+    const list = waiting.get(key);
     if (list) list.push(resolve);
     else {
-      waiting.set(id, [resolve]);
-      queue.push(id);
+      waiting.set(key, [resolve]);
+      queue.push({ key, def: withAttachments(WEAPONS[id], set) });
     }
     pump();
   });
 }
 
 /** A picture already made, if any (no waiting). */
-export function weaponPortraitNow(id: WeaponId): string | null {
-  return done.get(id) ?? null;
+export function weaponPortraitNow(id: WeaponId, set?: AttachSet): string | null {
+  return done.get(keyOf(id, set)) ?? null;
 }
 
 function setup(): boolean {
@@ -97,8 +105,8 @@ function pump(): void {
 }
 
 function step(): void {
-  const id = queue.shift();
-  if (!id) {
+  const job = queue.shift();
+  if (!job) {
     pumping = false;
     idleTimer = window.setTimeout(teardown, IDLE_MS);
     return;
@@ -106,22 +114,22 @@ function step(): void {
   let url: string | null = null;
   if (setup()) {
     try {
-      url = draw(id);
-      done.set(id, url);
+      url = draw(job.def);
+      done.set(job.key, url);
     } catch (err) {
-      console.warn('weapon picture failed', id, err);
+      console.warn('weapon picture failed', job.key, err);
     }
   }
-  for (const resolve of waiting.get(id) ?? []) resolve(url);
-  waiting.delete(id);
+  for (const resolve of waiting.get(job.key) ?? []) resolve(url);
+  waiting.delete(job.key);
   window.setTimeout(step, 16);
 }
 
 /** Draws one gun side-on, fitted to the picture with a little margin. */
-function draw(id: WeaponId): string {
+function draw(def: WeaponDef): string {
   const r = renderer!;
   const s = scene!;
-  const gun = buildGun(WEAPONS[id]);
+  const gun = buildGun(def);
   const g = gun.group;
   s.add(g);
   g.updateMatrixWorld(true);

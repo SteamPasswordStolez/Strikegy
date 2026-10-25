@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -176,6 +176,8 @@ export interface MatchSoldierInfo {
   bot?: boolean;
   /** A person's tag (see `TAG_ALPHABET`). */
   tag?: string;
+  /** A person's attachments on the guns they carry (weapon id -> slot -> attachment id): others draw and hear them. */
+  att?: Record<string, Partial<Record<'optic' | 'muzzle' | 'under' | 'mag' | 'laser', string>>>;
 }
 
 /** Sent when a match starts, or when joining (or coming back to) one under way. */

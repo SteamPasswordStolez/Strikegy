@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import type { Team } from '@/world/mapTypes';
 import { WEAPONS, type WeaponDef } from '@/weapons/weaponData';
 import { buildGun } from '@/weapons/gunModels';
+import { gunKey } from '@/weapons/attachments';
 import { weld, withIndex } from '@/render/geometryIndex';
 
 /**
@@ -254,7 +255,7 @@ export class SoldierModel {
   private deathKind = 0;
 
   constructor(team: Team, def: WeaponDef) {
-    const key = `${team}:${def.id}`;
+    const key = `${team}:${gunKey(def)}`;
     let cached = geometryCache.get(key);
     if (!cached) {
       const gun = gunParts(def);
@@ -294,7 +295,7 @@ export class SoldierModel {
   static prewarm(teams: readonly Team[], defs: readonly WeaponDef[]): void {
     for (const team of teams)
       for (const def of defs) {
-        const key = `${team}:${def.id}`;
+        const key = `${team}:${gunKey(def)}`;
         if (SoldierModel.warmed.has(key)) continue;
         new SoldierModel(team, def).dispose();
         SoldierModel.warmed.add(key);

@@ -4,7 +4,7 @@ import type { Combatant } from '@/ai/types';
 import { CharacterHitboxes } from '@/combat/CharacterHitboxes';
 import type { DamageSource, Damageable, HitboxRegistry } from '@/combat/Hitboxes';
 import type { DamageCause, GameBus } from '@/core/events';
-import { ASSAULT_WADE_EASE, DOWN, MEDKIT, loadoutWeapons, moveBonus, type ClassId, type Loadout } from '@/data/classes';
+import { ASSAULT_WADE_EASE, DOWN, MEDKIT, kitDefs, loadoutWeapons, moveBonus, type ClassId, type Loadout } from '@/data/classes';
 import type { InputState } from '@/input/InputState';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
@@ -111,6 +111,12 @@ export class Soldier {
   /** Combat clock of the last hit taken and until when it counts as firing. */
   hurtAt = -Infinity;
   firingUntil = -1;
+
+  /** The gun's laser shows: always the aiming laser, the tactical one while not aiming (attachments). */
+  get lasing(): boolean {
+    const d = this.weapons.def;
+    return !this.ride && this.player.alive && !this.downed && (d.laser === 'hip' || (d.laser === 'tac' && this.weapons.adsBlend < 0.5));
+  }
   /** Who downed this soldier (another soldier's name; null for self-inflicted or none). */
   killedBy: string | null = null;
   /** Medkits carried (medics: endless on a cooldown until `medkitReadyAt`). */
@@ -175,6 +181,9 @@ export class Soldier {
       },
       inCombat(now: number) {
         return s.firingUntil > now - COMBAT_WINDOW || now - s.hurtAt < COMBAT_WINDOW;
+      },
+      get lasing() {
+        return s.lasing;
       },
       get velocity() {
         return s.player.velocity;
@@ -244,7 +253,8 @@ export class Soldier {
     }
     const shots = w.shots;
     w.step(dt, input, p, busy);
-    if (w.shots !== shots) this.firingUntil = this.combatClock() + FIRING_GLOW;
+    // Gunfire shows on the enemy's minimap; a suppressed gun doesn't.
+    if (w.shots !== shots && !w.def.suppressed) this.firingUntil = this.combatClock() + FIRING_GLOW;
     p.step(dt, input, w.adsBlend > 0.5, firing && w.sinceShot < 0.2);
   }
 
@@ -431,7 +441,7 @@ export class Soldier {
     this.cls = kit.cls;
     if (weapons) this.weapons.resetAmmo();
     // Support's passive, and everyone in a simplified match (no stations, no ammo boxes): endless reserve.
-    else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support' || MATCH.simple);
+    else this.weapons.setLoadout(loadoutWeapons(kit), kit.cls === 'support' || MATCH.simple, kitDefs(kit));
     this.grenades.reset(kit.grenade);
     this.downed = false;
     this.downTime = 0;

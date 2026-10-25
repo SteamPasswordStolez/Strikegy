@@ -143,6 +143,9 @@ export class WeaponController {
    */
   viewKeep = 0;
 
+  /** The carried weapons as fitted with attachments (`withAttachments`); missing ones are as in the lineup. */
+  private fitted = new Map<WeaponId, WeaponDef>();
+
   constructor(
     loadout: WeaponId[],
     private readonly physics: PhysicsWorld,
@@ -155,23 +158,29 @@ export class WeaponController {
   }
 
   get def(): WeaponDef {
-    return WEAPONS[this.loadout[this.index]!];
+    return this.defOf(this.loadout[this.index]!);
+  }
+
+  /** A carried weapon as fitted. */
+  defOf(id: WeaponId): WeaponDef {
+    return this.fitted.get(id) ?? WEAPONS[id];
   }
 
   get state(): WeaponState {
     const id = this.loadout[this.index]!;
     let s = this.states.get(id);
     if (!s) {
-      s = new WeaponState(WEAPONS[id]);
+      s = new WeaponState(this.defOf(id));
       if (this.endlessReserve) s.reserve = Infinity;
       this.states.set(id, s);
     }
     return s;
   }
 
-  /** New weapons (respawn with another loadout): first slot in hand, everything full. */
-  setLoadout(ids: WeaponId[], endlessReserve: boolean): void {
+  /** New weapons (respawn with another loadout): first slot in hand, everything full. `defs`: as fitted, in the same order. */
+  setLoadout(ids: WeaponId[], endlessReserve: boolean, defs?: readonly WeaponDef[]): void {
     this.loadout = ids;
+    this.fitted = new Map(defs ? ids.map((id, i) => [id, defs[i] ?? WEAPONS[id]]) : []);
     this.endlessReserve = endlessReserve;
     this.index = 0;
     this.resetAmmo();
@@ -181,13 +190,13 @@ export class WeaponController {
   get needsAmmo(): boolean {
     return this.loadout.some((id) => {
       const s = this.states.get(id);
-      return !!s && s.reserve < WEAPONS[id].reserve;
+      return !!s && s.reserve < this.defOf(id).reserve;
     });
   }
 
   /** Ammo box / station: every carried gun's reserve back to full (magazines stay as they are). */
   refillReserve(): void {
-    for (const [id, s] of this.states) s.reserve = this.endlessReserve ? Infinity : Math.max(s.reserve, WEAPONS[id].reserve);
+    for (const [id, s] of this.states) s.reserve = this.endlessReserve ? Infinity : Math.max(s.reserve, this.defOf(id).reserve);
   }
 
   /** Refills every weapon (respawn). */
@@ -451,7 +460,9 @@ export class WeaponController {
 
     this.bloom = Math.min(BLOOM_MAX, this.bloom + d.bloomPerShot);
     const kick = recoilKick(d.recoil, this.shotIndex, this.spraySeed, gunPattern(d.id));
-    const scale = recoilScale({ adsBlend: this.adsBlend, crouched: player.crouching && player.grounded });
+    const crouched = player.crouching && player.grounded;
+    const still = player.velocity.x ** 2 + player.velocity.z ** 2 < 0.25;
+    const scale = recoilScale({ adsBlend: this.adsBlend, crouched, braced: !!d.bipod && crouched && still });
     this.recoil.pitch = Math.min(MAX_RECOIL_PITCH, this.recoil.pitch + kick.pitch * DEG * scale);
     this.recoil.yaw += kick.yaw * DEG * scale;
     this.shotIndex++;

@@ -11,12 +11,13 @@ import { LAYER_FX } from '@/render/layers';
 import type { Flora, SpawnPoint, Team } from '@/world/mapTypes';
 import { BOT_ADS_SPREAD, WEAPONS, damageAtDistance, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
 import { WeaponState } from '@/weapons/WeaponState';
+import { shotHeard } from '@/weapons/attachments';
 import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel, buildFarSoldierPose } from './SoldierModel';
-import { BOT_WEAPONS, botClass, rollPersonality, weaponFor, type Personality } from './personality';
+import { botClass, botGuns, botWeapon, rollPersonality, weaponFor, type Personality } from './personality';
 import { botName } from './names';
 import { lobVelocity } from './ballistics';
 import type { Throwables } from '@/weapons/Throwables';
@@ -75,7 +76,6 @@ const RESPAWN_SEC = 5;
 /** Bots' bullets do a bit less than the player's at lower difficulties. */
 const DAMAGE_SCALE: Record<Difficulty, number> = { easy: 0.55, normal: 0.75, hard: 0.95 };
 /** How far gunfire and footsteps carry for bots (meters). */
-const HEAR_SHOT = 70;
 /** Footsteps are heard this far (m): walking, running. Crouch-walking makes none. */
 export const HEAR_STEP = 8;
 export const HEAR_STEP_SPRINT = 14;
@@ -419,7 +419,7 @@ interface BotEntry {
 
 /** A weapon of the bot's class that suits its fighting style (re-rolled every life). */
 function loadout(bot: Bot): WeaponDef {
-  return WEAPONS[weaponFor(bot.cls, bot.personality)];
+  return botWeapon(weaponFor(bot.cls, bot.personality));
 }
 
 /**
@@ -554,7 +554,7 @@ export class BotManager implements BotServices {
     };
     this.teams = { blue: teamState('blue'), red: teamState('red') };
     // Build every soldier + weapon mesh now rather than hitching on first respawn.
-    SoldierModel.prewarm(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]));
+    SoldierModel.prewarm(['blue', 'red'], botGuns());
 
     const mine = opts.side ?? PLAYER_TEAM;
     const add = (team: Team, n: number) => {
@@ -562,7 +562,7 @@ export class BotManager implements BotServices {
         // The player's own squad has them in the first slot: allies are counted from 1.
         const cls = botClass(team === mine ? i + 1 : i);
         const style = rollPersonality(Math.random, cls);
-        const bot = new Bot(botName(team, i), team, WEAPONS[weaponFor(cls, style)], physics, registry, cls, style);
+        const bot = new Bot(botName(team, i), team, botWeapon(weaponFor(cls, style)), physics, registry, cls, style);
         this.respawn(bot);
         const model = new SoldierModel(lookTeam(team), bot.def);
         scene.add(model.root);
@@ -3247,8 +3247,8 @@ export class BotManager implements BotServices {
    */
   adopt(o: AdoptSpec): Bot {
     setNextBotId(o.id);
-    const bot = new Bot(o.name, o.team, WEAPONS[o.weapon], this.physics, this.registry, o.cls, o.personality);
-    bot.spawn(new THREE.Vector3(...o.pos), o.yaw, WEAPONS[o.weapon]);
+    const bot = new Bot(o.name, o.team, botWeapon(o.weapon), this.physics, this.registry, o.cls, o.personality);
+    bot.spawn(new THREE.Vector3(...o.pos), o.yaw, botWeapon(o.weapon));
     bot.health.value = o.health;
     bot.medkits = o.medkits;
     bot.grenadeCounts = o.grenades;
@@ -3364,10 +3364,10 @@ export class BotManager implements BotServices {
       }
       if (pellets === 1 || i < 3) this.effects.spawnShots([{ from: eye, to }], this.muzzle);
     }
-    this.effects.muzzleFlash(this.muzzle, dir);
-    this.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(this.listener), bot.id, def.id);
-    // Gunfire alerts everyone in earshot (both teams).
-    this.alert(eye, HEAR_SHOT, bot);
+    this.effects.muzzleFlash(this.muzzle, dir, def.flash);
+    this.audio.remoteGunshot(def.class, this.muzzle, this.muzzle.distanceTo(this.listener), bot.id, def.id, !!def.suppressed);
+    // Gunfire alerts everyone in earshot (both teams); suppressed only close by, a muzzle brake farther.
+    this.alert(eye, shotHeard(def), bot);
   }
 
   footstep(bot: Bot, sprinting: boolean): void {
@@ -3562,6 +3562,18 @@ export class BotManager implements BotServices {
    * (no draw, no bone update); far ones are drawn as their side's instanced
    * far model; only near, on-screen bots get the skinned, animated one.
    */
+  /** Bots' lasers within `range` of `eye` that show on screen (attachments; bots don't aim down sights). */
+  lasers(eye: THREE.Vector3, range: number, emit: (from: THREE.Vector3, dir: THREE.Vector3, kind: 'hip' | 'tac') => void): void {
+    for (const e of this.entries) {
+      const b = e.bot;
+      if (!b.lasing || !e.model.root.parent || b.feet.distanceToSquared(eye) > range * range) continue;
+      e.model.muzzleWorld(this.laserFrom);
+      emit(this.laserFrom, b.aimDir(this.laserDir), b.def.laser!);
+    }
+  }
+  private readonly laserFrom = new THREE.Vector3();
+  private readonly laserDir = new THREE.Vector3();
+
   render(alpha: number, dt: number, camera: THREE.Camera): void {
     this.listener.copy(camera.position);
     this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);

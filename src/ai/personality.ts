@@ -1,4 +1,5 @@
-import type { WeaponId } from '@/weapons/weaponData';
+import { WEAPONS, type WeaponClass, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { attachmentsFor, withAttachments, type AttachSet } from '@/weapons/attachments';
 import type { ClassId } from '@/data/classes';
 
 /**
@@ -153,4 +154,65 @@ export function weaponFor(cls: ClassId, p: Personality, rand: () => number = Mat
   const byStyle = CLASS_WEAPONS[cls];
   const list = byStyle[p.archetype] ?? Object.values(byStyle)[0]!;
   return pick(list, rand);
+}
+
+/** The style a weapon is fitted for when a bot carries it (one build a weapon: one soldier model each). */
+const BUILD_STYLE: Record<WeaponClass, Archetype> = { ar: 'rifleman', smg: 'rusher', sg: 'rusher', lmg: 'anchor', dmr: 'marksman', sr: 'marksman', pistol: 'rusher' };
+
+/**
+ * A bot's attachments for a gun (progression step 4), from everything the gun
+ * takes (bots have no weapon levels), in the style that kind of gun is used:
+ * marksman rifles the strongest scope and a bipod; SMGs and shotguns a 1x
+ * sight, a stubby or angled grip, a laser, a suppressor and a bigger magazine;
+ * rifles a prism, a vertical grip and a muzzle brake; machine guns a bipod and
+ * the biggest magazine. One build a weapon, so the game server and a browser
+ * running the bot agree and every bot gun stays one soldier model.
+ */
+export function botBuild(id: WeaponId): AttachSet {
+  const all = attachmentsFor(WEAPONS[id]);
+  const has = (a: string) => all.some((x) => x.id === a);
+  const first = (...ids: string[]) => ids.find(has);
+  const sight = all.find((a) => a.slot === 'optic' && a.effect.zoom === 1)?.id;
+  const set: AttachSet = {};
+  const put = (slot: keyof AttachSet, a: string | undefined) => {
+    if (a) set[slot] = a;
+  };
+  switch (BUILD_STYLE[WEAPONS[id].class]) {
+    case 'marksman':
+      put('optic', first('scope12', 'scope8', 'scope4', 'prism25'));
+      put('under', first('bipod', 'vgrip'));
+      put('mag', first('fastmag', 'shellholder'));
+      break;
+    case 'rusher':
+      put('optic', sight);
+      put('under', first('sgrip', 'agrip'));
+      put('muzzle', first('suppressor', 'choke'));
+      put('mag', first('extmag', 'fastmag'));
+      put('laser', first('laser'));
+      break;
+    case 'rifleman':
+      put('optic', first('prism25') ?? sight);
+      put('under', first('vgrip'));
+      put('muzzle', first('brake', 'comp'));
+      put('mag', first('fastmag'));
+      break;
+    case 'anchor':
+      put('optic', first('prism25') ?? sight);
+      put('under', first('bipod', 'vgrip'));
+      put('muzzle', first('flashhider', 'comp'));
+      put('mag', first('drum', 'extmag'));
+      put('laser', first('taclaser'));
+      break;
+  }
+  return set;
+}
+
+/** The gun a bot carries, fitted (`botBuild`). */
+export function botWeapon(id: WeaponId): WeaponDef {
+  return withAttachments(WEAPONS[id], botBuild(id));
+}
+
+/** Every gun as bots carry it: the soldier models made ahead. */
+export function botGuns(): WeaponDef[] {
+  return BOT_WEAPONS.map(botWeapon);
 }

@@ -250,6 +250,11 @@ export class Bot implements Damageable, Combatant {
   crouchBlend = 0;
   grounded = false;
   firingUntil = -1;
+
+  /** The gun's laser shows (bots don't aim down sights: both kinds of laser). */
+  get lasing(): boolean {
+    return !!this.def.laser && this.alive && !this.riding;
+  }
   /** Seconds since dying for good (respawn timer). */
   deadTime = 0;
   /** Down: health gone, lying there until revived or bled out. */
@@ -864,7 +869,7 @@ export class Bot implements Damageable, Combatant {
         const hidden = 1 + cover * (firing ? 2 : 5);
         // Someone crouched and still is harder to pick out; running draws the eye.
         const moving = Math.hypot(e.velocity.x, e.velocity.z);
-        const posture = firing ? 1 : (e.eyeHeight < 1.3 ? 1.35 : 1) * (moving > 4.5 ? 0.85 : moving < 0.5 ? 1.15 : 1);
+        const posture = (firing ? 1 : (e.eyeHeight < 1.3 ? 1.35 : 1) * (moving > 4.5 ? 0.85 : moving < 0.5 ? 1.15 : 1)) * (e.lasing ? 0.8 : 1);
         progress = Math.min(1.5, progress + dt / (noticeTime(skill.reaction * this.personality.reaction, dist, off, skill.fov / 2, firing) * hidden * posture));
         if (progress >= 1) {
           this.lastSeen.pos.copy(e.feet);
@@ -1892,7 +1897,8 @@ export class Bot implements Damageable, Combatant {
     this.triggerHeld = trigger;
     const res = w.step(dt, { trigger, reload: false });
     for (let i = 0; i < res.shots; i++) {
-      this.firingUntil = s.time + 0.6;
+      // Gunfire shows on the enemy's minimap; a suppressed gun doesn't.
+      if (!this.def.suppressed) this.firingUntil = s.time + 0.6;
       s.fire(this, this.aimDir(this.tmp2));
       if (--this.burstLeft <= 0 && (this.def.fireMode === 'auto' || this.def.fireMode === 'burst')) {
         const [lo, hi] = s.skill.burstPause;

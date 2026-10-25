@@ -1,7 +1,11 @@
-import { CLASS_IDS, defaultLoadout, sanitizeLoadout, type ClassId, type Loadout } from './classes';
-import { isLocked } from '@/progression/access';
+import { CLASS_IDS, defaultLoadout, loadoutWeapons, sanitizeLoadout, type ClassId, type Loadout } from './classes';
+import { attachOpen, isLocked } from '@/progression/access';
+import { cleanSet, type AttachSet } from '@/weapons/attachments';
+import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 
 const KEY = 'strikegy.loadouts.v1';
+/** Each weapon's attachments (a gun's build is the same in every class, Modern Warfare style). */
+const BUILDS_KEY = 'strikegy.builds.v1';
 
 interface Stored {
   cls: ClassId;
@@ -16,8 +20,19 @@ interface Stored {
 export class LoadoutStore {
   private cls: ClassId = 'assault';
   private readonly byClass = new Map<ClassId, Loadout>();
+  private readonly builds = new Map<WeaponId, AttachSet>();
 
   constructor() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(BUILDS_KEY) ?? '{}') as Record<string, unknown>;
+      for (const [id, set] of Object.entries(raw)) {
+        if (!(id in WEAPONS)) continue;
+        const clean = cleanSet(WEAPONS[id as WeaponId], set);
+        if (Object.keys(clean).length) this.builds.set(id as WeaponId, clean);
+      }
+    } catch {
+      // No storage: nothing fitted.
+    }
     try {
       const raw = localStorage.getItem(KEY);
       const s = raw ? (JSON.parse(raw) as Stored) : null;
@@ -35,14 +50,39 @@ export class LoadoutStore {
     return this.get(this.cls);
   }
 
-  /** The class's kit; a weapon still locked for this player (`ACCESS`) gives way to the default, the choice is kept for later. */
+  /**
+   * The class's kit with its weapons' attachments; a weapon or attachment
+   * still locked for this player (`ACCESS`) gives way to the default, the
+   * choice is kept for later.
+   */
   get(cls: ClassId): Loadout {
     let l = this.byClass.get(cls);
     if (!l) {
       l = defaultLoadout(cls);
       this.byClass.set(cls, l);
     }
-    return sanitizeLoadout(l, isLocked);
+    const attach: Partial<Record<WeaponId, AttachSet>> = {};
+    for (const id of loadoutWeapons(l)) {
+      const b = this.builds.get(id);
+      if (b) attach[id] = b;
+    }
+    return sanitizeLoadout({ ...l, attach }, isLocked, attachOpen);
+  }
+
+  /** A weapon's attachments as chosen (locked ones included; `get` leaves those out). */
+  build(id: WeaponId): AttachSet {
+    return this.builds.get(id) ?? {};
+  }
+
+  setBuild(id: WeaponId, set: AttachSet): void {
+    const clean = cleanSet(WEAPONS[id], set);
+    if (Object.keys(clean).length) this.builds.set(id, clean);
+    else this.builds.delete(id);
+    try {
+      localStorage.setItem(BUILDS_KEY, JSON.stringify(Object.fromEntries(this.builds)));
+    } catch {
+      // Not saved; this session still has it.
+    }
   }
 
   setClass(cls: ClassId): void {
@@ -51,7 +91,10 @@ export class LoadoutStore {
   }
 
   update(l: Loadout): void {
-    this.byClass.set(l.cls, sanitizeLoadout(l));
+    // Attachments live per weapon (`setBuild`), not in the class's kit.
+    const kit = sanitizeLoadout(l);
+    delete kit.attach;
+    this.byClass.set(l.cls, kit);
     this.save();
   }
 

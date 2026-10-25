@@ -44,12 +44,27 @@ export interface WeaponDef {
   sprintOut: number;
   /** Taking the gun out (s). */
   drawTime: number;
-  scope?: '3x' | '4x' | '6x' | '8x';
+  scope?: '3x' | '4x' | '6x' | '8x' | '12x';
   /** Damage steps by distance (overrides the class's `FALLOFF`). */
   falloff?: readonly DamageStep[];
-  /** Integrally suppressed: heard over a much shorter distance. */
+  /** Integrally suppressed (or a suppressor fitted): heard over a much shorter distance, off the minimap. */
   suppressed?: boolean;
+  // What fitted attachments add (`attachments.ts` `withAttachments`); never set in the lineup below.
+  /** The attachments fitted, for the models and the kit picker. */
+  attach?: Readonly<AttachSet>;
+  /** Heard this many times as far (a muzzle brake: 1.3). */
+  hearMult?: number;
+  /** Muzzle flash: none (suppressor) or small (flash hider). */
+  flash?: 'none' | 'small';
+  /** A laser others see: always (`hip`) or when not aiming (`tac`). */
+  laser?: 'hip' | 'tac';
+  /** Bipod: recoil x0.8 crouched and still. */
+  bipod?: boolean;
 }
+
+/** One attachment id a slot (or none); see `attachments.ts`. */
+export type AttachSlot = 'optic' | 'muzzle' | 'under' | 'mag' | 'laser';
+export type AttachSet = Partial<Record<AttachSlot, string>>;
 
 /**
  * The visible recoil of one shot (gunplay audit, 2026-10-18: every gun used to

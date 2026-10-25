@@ -59,7 +59,7 @@ import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { contacts, deckSpawn, fleetShip, fleetState, layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
 import { CARRIER_PLANES, DECK, PLANE_COST, isCarrierPlane, launchBlock, planeCap } from '@/vehicles/carrierPlanes';
 import { SoldierModel } from '@/ai/SoldierModel';
-import { BOT_WEAPONS } from '@/ai/personality';
+import { botGuns } from '@/ai/personality';
 import { loadTactics } from '@/ai/tacticsLoad';
 import { wishDirection } from '@/player/movement';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
@@ -69,6 +69,8 @@ import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/d
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
 import { WeaponController } from '@/weapons/WeaponController';
 import { WEAPONS, type ShotKick, type WeaponId } from '@/weapons/weaponData';
+import { attachOpenedAt, shotHeard } from '@/weapons/attachments';
+import { LASER_SEEN_M, LaserBeams } from '@/render/laserBeams';
 import { Spring } from '@/weapons/spring';
 import { ViewModel } from '@/weapons/ViewModel';
 import { opticFor } from '@/weapons/optics';
@@ -782,7 +784,7 @@ export class Game {
       if (this.nav) {
         // Every soldier + weapon model, built in pieces so the loading screen keeps drawing.
         await this.loadStep(0.72, 'load.soldiers');
-        await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
+        await SoldierModel.prewarmSteps(['blue', 'red'], botGuns(), () => this.loadStep(0.72, 'load.soldiers'));
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, { ...botOpts, side: this.myTeam });
         this.bots.grenades = this.throwables;
         this.bots.landing = map.world.landing ?? null;
@@ -982,8 +984,9 @@ export class Game {
     // Compile first (off the page where the browser can), then draw: the draws find the shaders ready.
     await r.precompile();
     for (const id of this.weapons.loadout) {
-      this.viewModel.setWeapon(WEAPONS[id]);
-      this.viewModel.onFire(false, WEAPONS[id].kick);
+      const def = this.weapons.defOf(id);
+      this.viewModel.setWeapon(def);
+      this.viewModel.onFire(false, def.kick);
       this.viewModel.update({
         dt: 0.016,
         adsBlend: 0,
@@ -1014,17 +1017,17 @@ export class Game {
     const bus = this.bus;
     const cls = (id: string) => WEAPONS[id as WeaponId].class;
     bus.on('weapon:fired', (e) => {
-      const quiet = !!WEAPONS[e.weaponId as WeaponId].suppressed;
-      // A suppressed gun is only heard close by.
-      this.bots?.alert(this.player.feet, quiet ? 22 : 70, this.playerCombatant);
+      // The gun in hand as fitted (attachments: suppressor, brake, flash hider, kick).
+      const def = this.weapons.def;
+      const quiet = !!def.suppressed;
+      // A suppressed gun is only heard close by, a muzzle brake farther.
+      this.bots?.alert(this.player.feet, shotHeard(def), this.playerCombatant);
       this.audio.gunshot(cls(e.weaponId), e.ads, quiet, e.weaponId);
       // The last rounds sound different (Modern Warfare's low-ammo rattle).
       const ws = this.weapons.state;
-      const def = WEAPONS[e.weaponId as WeaponId];
       if (def.magSize >= 8 && ws.ammo > 0 && ws.ammo <= Math.max(2, Math.round(def.magSize * 0.17))) this.audio.lowAmmo(def.class);
-      const kick = WEAPONS[e.weaponId as WeaponId].kick;
-      this.viewModel.onFire(e.ads, kick);
-      this.punchCamera(kick, e.ads);
+      this.viewModel.onFire(e.ads, def.kick, def.flash);
+      this.punchCamera(def.kick, e.ads);
       this.muzzleEffects(e.weaponId, true);
     });
     bus.on('weapon:cycle', (e) => {
@@ -1093,13 +1096,13 @@ export class Game {
   }
 
   private muzzleEffects(weaponId: string, shot: boolean): void {
-    const def = WEAPONS[weaponId as WeaponId];
+    const def = this.weapons.def.id === weaponId ? this.weapons.def : WEAPONS[weaponId as WeaponId];
     const manual = def.fireMode === 'pump' || def.fireMode === 'bolt';
     const cam = this.renderer.camera;
     this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     if (shot) {
       this.viewModel.muzzleWorld(cam, this.tmpMuzzle);
-      this.effects.muzzleFlash(this.tmpMuzzle, this.tmpFwd);
+      this.effects.muzzleFlash(this.tmpMuzzle, this.tmpFwd, def.flash);
     }
     if (shot === manual) return;
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
@@ -1424,6 +1427,7 @@ export class Game {
       this.net.flush();
       this.net.render(dt);
     }
+    this.drawLasers();
     this.zoneVisuals?.update(this.elapsed, this.renderer.camera.position);
     if (this.tagVisuals && this.zoneMode?.match instanceof KillConfirmRules) this.tagVisuals.update(this.zoneMode.match.tags, this.myTeam, this.elapsed);
     if (this.chargeVisuals && this.zoneMode?.charges) this.chargeVisuals.update(this.zoneMode.charges.charges, this.elapsed);
@@ -5104,6 +5108,7 @@ export class Game {
     tr.onWeaponLevel = (l) => {
       ACCESS.weaponXp[l.weapon] = tr.weaponXp(l.weapon);
       this.toast?.weaponLevel(l.weapon as WeaponId, l.level, tr.weaponXp(l.weapon));
+      this.attachNotice(l.weapon as WeaponId, l.level);
     };
     this.scores.onScore = (id, pts, reason, other) => {
       if (id === this.myId) tr.points(reason, pts, this.simTime, other);
@@ -5188,6 +5193,35 @@ export class Game {
   private static weaponByName: Map<string, WeaponId> | null = null;
 
   /** One's own kill for the record (and the weapon's), or a teammate's beside one's own structure. */
+  /** Laser beams: the player's own (from the gun in first person), bots', other players' (attachments). */
+  private lasers: LaserBeams | null = null;
+  private readonly laserTmp = new THREE.Vector3();
+  private drawLasers(): void {
+    if (this.options.showcase) return;
+    if (!this.lasers) {
+      this.lasers = new LaserBeams((from, dir, reach) => this.physics.raycast(from, dir, reach, Layer.WORLD | Layer.HITBOX)?.distance ?? null);
+      this.renderer.scene.add(this.lasers.group);
+    }
+    const L = this.lasers;
+    const cam = this.renderer.camera;
+    const emit = (from: THREE.Vector3, dir: THREE.Vector3, kind: 'hip' | 'tac') => L.add({ from, dir, kind });
+    L.begin();
+    if (this.deployed && !this.ride && this.me.lasing && this.viewModel.visible) {
+      this.viewModel.muzzleWorld(cam, this.laserTmp);
+      emit(this.laserTmp, this.tmpFwd.set(0, 0, -1).applyQuaternion(cam.quaternion), this.weapons.def.laser!);
+    }
+    this.bots?.lasers(cam.position, LASER_SEEN_M, emit);
+    this.net?.lasers(cam.position, LASER_SEEN_M, emit);
+    L.end();
+  }
+
+  /** Attachments a weapon level opens (fitted from the next deploy). */
+  private attachNotice(weapon: WeaponId, level: number): void {
+    if (ACCESS.all || !(weapon in WEAPONS)) return;
+    const ids = attachOpenedAt(WEAPONS[weapon], level);
+    this.toast?.attach(weapon, ids.map((a) => t(`attach.${a}` as MessageKey)), level);
+  }
+
   /** A level reached in the match: the weapons it opens can be picked from the next deploy. */
   private reachedLevel(level: number, xp: number): void {
     ACCESS.xp = Math.max(ACCESS.xp, xp);
@@ -5275,7 +5309,7 @@ export class Game {
   private async setupNet(map: MapDef, terrain: Terrain, built: { windows: Parameters<BotManager['setTactical']>[0]; footprints: Parameters<BotManager['setTactical']>[1] }, water: WaterMap | null): Promise<void> {
     const opts = this.options.net!;
     await this.loadStep(0.72, 'load.soldiers');
-    await SoldierModel.prewarmSteps(['blue', 'red'], BOT_WEAPONS.map((id) => WEAPONS[id]), () => this.loadStep(0.72, 'load.soldiers'));
+    await SoldierModel.prewarmSteps(['blue', 'red'], botGuns(), () => this.loadStep(0.72, 'load.soldiers'));
     const r = this.renderer;
     const net = new NetMatch(opts.link, opts.start, this.me, { scene: r.scene, physics: this.physics, registry: this.registry, audio: this.audio, effects: this.effects, camera: r.camera });
     this.net = net;
@@ -5481,6 +5515,7 @@ export class Game {
             const xp = Math.max(ACCESS.weaponXp[e.weapon] ?? 0, (e.level - 1) * 10_000);
             ACCESS.weaponXp[e.weapon] = xp;
             this.toast?.weaponLevel(e.weapon as WeaponId, e.level, xp);
+            this.attachNotice(e.weapon as WeaponId, e.level);
           }
           break;
         case 'down':

@@ -108,8 +108,40 @@ const DEFAULT_SCOPE: Optic = {
   scope: { tube: 0.0125, objective: 0.02, eyepiece: 0.019, length: 0.22, shade: 0, turrets: 'capped', finish: 'black' },
 };
 
-/** The sight a weapon carries. `scope` (from the weapon data) always gets a magnified optic. */
-export function opticFor(def: { id: string; class: string; scope?: string }): Optic {
+/** Sights fitted as attachments (`attachments.ts` optic ids). */
+const ATTACHED: Record<string, Optic> = {
+  reddot: { model: 'reddot', reticle: 'dot', color: RED },
+  reflex: { model: 'reflex', reticle: 'dot', color: GREEN },
+  holo: { model: 'holo', reticle: 'circleDot', color: RED },
+  kobra: { model: 'kobra', reticle: 'kobra', color: RED },
+  pdot: { model: 'reflex', reticle: 'dot', color: RED },
+  prism25: { model: 'prism', reticle: 'chevron', color: AMBER },
+  cqscope: { model: 'prism', reticle: 'chevron', color: RED },
+  // Mid-power combat scope: low turrets, holdover marks.
+  scope4: {
+    model: 'scope',
+    reticle: 'bdc',
+    color: RED,
+    scope: { tube: 0.0135, objective: 0.018, eyepiece: 0.019, length: 0.21, shade: 0, turrets: 'low', finish: 'black', illum: true },
+  },
+  scope8: {
+    model: 'scope',
+    reticle: 'mildot',
+    color: RED,
+    scope: { tube: 0.015, objective: 0.025, eyepiece: 0.02, length: 0.3, shade: 0.03, turrets: 'tall', finish: 'black' },
+  },
+  scope12: {
+    model: 'scope',
+    reticle: 'tree',
+    color: RED,
+    scope: { tube: 0.017, objective: 0.031, eyepiece: 0.021, length: 0.34, shade: 0.08, turrets: 'tall', finish: 'olive', illum: true },
+  },
+};
+
+/** The sight a weapon carries: a fitted one, else its own. `scope` (from the weapon data) always gets a magnified optic. */
+export function opticFor(def: { id: string; class: string; scope?: string; attach?: { optic?: string } }): Optic {
+  const fitted = def.attach?.optic ? ATTACHED[def.attach.optic] : undefined;
+  if (fitted) return fitted;
   const o = OPTICS[def.id];
   if (def.scope) return o?.scope ? o : DEFAULT_SCOPE;
   if (o) return o;
