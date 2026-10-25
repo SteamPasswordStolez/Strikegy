@@ -60,6 +60,8 @@ export interface WeaponDef {
   laser?: 'hip' | 'tac';
   /** Bipod: recoil x0.8 crouched and still. */
   bipod?: boolean;
+  /** The camo the player's own gun wears (first person and pictures only; progression step 5). */
+  camo?: string;
 }
 
 /** One attachment id a slot (or none); see `attachments.ts`. */

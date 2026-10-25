@@ -9,6 +9,7 @@
 import { loadJSON, saveJSON } from '@/core/storage';
 import { serverUrls } from './servers';
 import { applySummary, cleanProfile, loadProfile, newProfile, saveProfile, settleAbandoned, type MatchSummary, type Profile } from '@/progression/profile';
+import { runShopOp, settleCalendar, type MatchEcon, type ShopOp } from '@/progression/economy';
 import type { RankId } from '@/progression/levels';
 
 export type Provider = 'google' | 'discord';
@@ -30,6 +31,7 @@ export interface Committed {
   beforeXp: number;
   afterXp: number;
   promotions: RankId[];
+  econ?: MatchEcon;
 }
 
 const TOKEN_KEY = 'strikegy.auth.v1';
@@ -225,7 +227,7 @@ export function commitMatch(s: MatchSummary): Committed {
     const before = loadProfile();
     const applied = applySummary(before, s);
     saveProfile(applied.profile);
-    return { beforeXp: before.xp, afterXp: applied.profile.xp, promotions: applied.promotions };
+    return { beforeXp: before.xp, afterXp: applied.profile.xp, promotions: applied.promotions, econ: applied.econ };
   }
   const acc = cachedAccount();
   const before = acc?.profile ?? newProfile();
@@ -238,7 +240,7 @@ export function commitMatch(s: MatchSummary): Committed {
       changed();
     }
   });
-  return { beforeXp: before.xp, afterXp: applied.profile.xp, promotions: applied.promotions };
+  return { beforeXp: before.xp, afterXp: applied.profile.xp, promotions: applied.promotions, econ: applied.econ };
 }
 
 /** The account's XP moved by a multiplayer match the server confirmed (its `progress` message). */
@@ -290,4 +292,42 @@ export async function linkProvider(provider: Provider): Promise<boolean> {
   });
   await refreshAccount();
   return ok;
+}
+
+/**
+ * The profile with the day / week turned over (new dailies, mail, level
+ * rewards owed): a guest's is settled and saved here; an account's comes
+ * settled from the server (`refreshAccount`).
+ */
+export function settledProfile(now = Date.now()): Profile {
+  if (signedIn()) return currentProfile();
+  const p = loadProfile();
+  const before = JSON.stringify(p.econ);
+  settleCalendar(p, now);
+  if (JSON.stringify(p.econ) !== before) saveProfile(p);
+  return p;
+}
+
+/**
+ * A shop / armory action (step 5): signed in, the server does it (its own
+ * random numbers for boxes) and the cache takes its answer; a guest's is done
+ * here and saved before anything is shown. Returns the error code or the result.
+ */
+export async function shopAction(op: ShopOp): Promise<{ error?: string; result?: unknown; profile: Profile }> {
+  if (!signedIn()) {
+    const p = loadProfile();
+    const out = runShopOp(p, op, Math.random, Date.now());
+    if (!out.error) saveProfile(p);
+    changed();
+    return { ...out, profile: p };
+  }
+  const { status, data } = await call<{ profile?: Profile; error?: string; result?: unknown }>('/api/shop', op);
+  const acc = cachedAccount();
+  const profile = data?.profile ? cleanProfile(data.profile) : null;
+  if (profile && acc) {
+    saveJSON(CACHE_KEY, { ...acc, profile });
+    changed();
+  }
+  if (!data || status === 0) return { error: 'offline', profile: acc?.profile ?? newProfile() };
+  return { error: data.error, result: data.result, profile: profile ?? acc?.profile ?? newProfile() };
 }

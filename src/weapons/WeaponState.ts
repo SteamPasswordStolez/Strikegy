@@ -29,6 +29,8 @@ export class WeaponState {
   private cooldown = 0;
   private reloadTimer = 0;
   reloading = false;
+  /** Reloads started (a new magazine each). */
+  reloads = 0;
   private burstLeft = 0;
   private triggerWasHeld = false;
 
@@ -57,6 +59,8 @@ export class WeaponState {
   startReload(): boolean {
     if (!this.canReload()) return false;
     this.reloading = true;
+    // Magazines started (camo challenges count kills in one magazine).
+    this.reloads++;
     this.burstLeft = 0;
     this.reloadTimer =
       this.def.reloadStyle === 'perShell' ? (this.def.insertMs ?? 500) / 1000 : this.def.reloadTime;

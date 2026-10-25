@@ -642,6 +642,7 @@ export class MatchSim {
     if (point.distanceTo(s.player.feet) > CALL_RANGE + 5) return false;
     const owner: GadgetOwner = { id, name: s.combatant.name, team: s.team, squad: `${q.team}:${q.name}` };
     if (!this.support.request(kind as SupportId, point, owner, this.squadRp(q), false)) return false;
+    this.bus.emit('support:called', { ownerId: id, kind });
     this.onCallIn(kind as SupportId, point, owner);
     return true;
   }

@@ -9,6 +9,7 @@
  *   POST /api/import   a guest's local progress, once (capped)
  *   POST /api/logout   this session signed out
  *   POST /api/delete   the account and its progress, for good
+ *   POST /api/shop       buying, boxes, the exchange, missions, mail, boosters, what is worn (step 5)
  *   POST /api/dev-login  local testing only (`STRIKEGY_DEV_LOGIN`, local requests)
  *   GET  /api/link, /api/linked   the popup that joins a second provider to a signed-in account
  *
@@ -106,6 +107,12 @@ export function accountApi(accounts: Accounts, log: (line: string) => void): (re
       if (!userId) return json(res, 401, { error: 'login' });
       if (path === '/api/me' && req.method === 'GET') return json(res, 200, accounts.view(userId));
       if (req.method !== 'POST') return json(res, 404, { error: 'none' });
+      if (path === '/api/shop') {
+        // The shop and the armory (step 5): one action a request.
+        const out = accounts.shop(userId, await readBody(req));
+        if (!out) return json(res, 400, { error: 'bad' });
+        return json(res, out.error ? 409 : 200, out);
+      }
       if (path === '/api/solo') {
         const body = (await readBody(req)) as { summary?: unknown } | null;
         const applied = accounts.solo(userId, body?.summary);

@@ -146,6 +146,8 @@ export function furniture(color: number): THREE.MeshStandardMaterial {
       normalMap: tex.normalMap,
       normalScale: new THREE.Vector2(0.2, 0.2),
     });
+    // Painted parts take a camo (camoMaterial.ts).
+    m.userData.paint = true;
     coloredPolymer.set(color, m);
   }
   return m;

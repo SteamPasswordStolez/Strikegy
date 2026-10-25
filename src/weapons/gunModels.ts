@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { WeaponDef } from './weaponData';
 import { opticFor, type Optic, type Reticle, type ScopeShape } from './optics';
+import { applyCamo } from './camoMaterial';
+import { camoLookOf } from '@/progression/camo';
 import { DISCARD, PartBuilder, block, furniture, gunMaterials, lathe, loop, rail, railUnder, roundRect, slab, tube, vcyl, xcyl, type P } from './gunKit';
 
 /** A built first-person gun plus the anchors the view model animates and aims with. */
@@ -1059,6 +1061,14 @@ export function fittedExtras(def: WeaponDef, at: { muzzleU: number; muzzleV: num
  * geometry): bots carry these baked into their soldier models.
  */
 export function buildGun(def: WeaponDef, opts: { detail?: GunDetail } = {}): GunBuild {
+  const g = buildGunBody(def, opts);
+  // The player's camo on the painted parts (first person and pictures; soldiers' guns stay plain).
+  const camo = def.camo && opts.detail !== 'low' ? camoLookOf(def.camo) : undefined;
+  if (camo) applyCamo(g.group, camo);
+  return g;
+}
+
+function buildGunBody(def: WeaponDef, opts: { detail?: GunDetail }): GunBuild {
   const look = lookFor(def);
   const fitted = def.attach?.optic ? opticFor(def) : null;
   const fine = opts.detail !== 'low';

@@ -18,7 +18,7 @@
  * page posts the session token to the site (a trusted origin), which sends it
  * as `Authorization: Bearer` (`bearer`) and in the WebSocket's hello.
  */
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomInt } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import Database from 'better-sqlite3';
@@ -28,6 +28,7 @@ import { getMigrations } from 'better-auth/db/migration';
 import { toNodeHandler } from 'better-auth/node';
 import { levelOf, xpForLevel } from '../src/progression/levels.ts';
 import { applySummary, cleanProfile, cleanSummary, newProfile, type Applied, type MatchSummary, type Profile } from '../src/progression/profile.ts';
+import { parseShopOp, runShopOp, settleCalendar } from '../src/progression/economy.ts';
 
 export interface AccountsOptions {
   /** The database file (':memory:' in tests). */
@@ -241,7 +242,26 @@ export class Accounts {
 
   view(userId: string): AccountView {
     const created = (this.db.prepare('select createdAt from user where id = ?').get(userId) as { createdAt?: number | string } | undefined)?.createdAt;
-    return { id: userId, providers: this.providersOf(userId), created: created === undefined ? 0 : new Date(created).getTime(), profile: this.profile(userId) };
+    // The day / week turned since: new dailies, the salary in the mail, level rewards owed.
+    const p = this.profile(userId);
+    const before = JSON.stringify(p.econ);
+    settleCalendar(p, this.now());
+    if (JSON.stringify(p.econ) !== before) this.save(userId, p);
+    return { id: userId, providers: this.providersOf(userId), created: created === undefined ? 0 : new Date(created).getTime(), profile: p };
+  }
+
+  /**
+   * A shop / armory action (step 5): buying, boxes (the server's own random
+   * numbers; the result is saved before it is sent), the exchange, missions,
+   * mail, boosters, what is worn. Returns the profile after it.
+   */
+  shop(userId: string, raw: unknown): { profile: Profile; error?: string; result?: unknown } | null {
+    const op = parseShopOp(raw);
+    if (!op) return null;
+    const p = this.profile(userId);
+    const out = runShopOp(p, op, () => randomInt(0, 2 ** 32) / 2 ** 32, this.now());
+    if (!out.error) this.save(userId, p);
+    return { profile: p, ...out };
   }
 
   /** A match the server watched (multiplayer): added as it is. */
@@ -276,6 +296,16 @@ export class Accounts {
     s.xp = xp;
     const st = s.stats;
     const most = Math.ceil(s.seconds / 2);
+    // Step 5: tickets within what the match's XP, ribbons, standing and bounties allow; counts within its length.
+    s.tickets = Math.min(s.tickets ?? 0, Math.floor(xp * 1.5 / 200) + 1500);
+    for (const [k, v] of Object.entries(s.counts ?? {})) (s.counts as Record<string, number>)[k] = Math.min(v ?? 0, k === 'seaDamage' ? s.seconds * 3000 : most);
+    for (const [id, c] of Object.entries(s.camo ?? {})) {
+      const kills = Math.min(s.weapons[id]?.kills ?? 0, most);
+      c.kills = Math.min(c.kills, kills);
+      c.headshots = Math.min(c.headshots, kills);
+      c.triples = Math.min(c.triples, Math.floor(kills / 3));
+      c.special = Math.min(c.special, kills);
+    }
     for (const k of ['kills', 'headshots', 'meleeKills', 'revives', 'captures', 'neutralizes', 'builds', 'resupplies'] as const) if (st[k] !== undefined) st[k] = Math.min(st[k]!, most);
     if (st.headshots !== undefined) st.headshots = Math.min(st.headshots, st.kills ?? 0);
     // Weapon XP only comes from kills (a headshot kill on hard is the most, 1,500), and is part of the match's XP.

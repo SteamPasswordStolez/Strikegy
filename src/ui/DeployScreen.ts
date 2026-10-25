@@ -103,6 +103,8 @@ export class DeployScreen {
   private readonly note: HTMLDivElement;
   /** Left column: the loadout panel goes in here. */
   readonly sideTop: HTMLDivElement;
+  /** Right column's top: the field contract (progression step 5). */
+  readonly contractSlot: HTMLDivElement;
   readonly mapBox: HTMLDivElement;
   private state: DeployState | null = null;
   private listKey = '';
@@ -149,6 +151,7 @@ export class DeployScreen {
 
     const side = el('div', 'deploy-side', body);
     const scroll = el('div', 'deploy-scroll', side);
+    this.contractSlot = el('div', 'deploy-contract', scroll);
     this.squadEl = el('div', 'deploy-squad', scroll);
     el('div', 'ds-label deploy-section', scroll).textContent = t('deploy.spawns');
     this.list = el('div', 'deploy-list', scroll);

@@ -11,6 +11,7 @@ import {
 } from '@/progression/profile';
 import { ProgressTracker, XP, type TrackerOptions } from '@/progression/tracker';
 import { ScoreTracker } from '@/modes/scoreTracker';
+import { RIBBON } from '@/progression/ribbons';
 
 const bots = (o: Partial<TrackerOptions> = {}): ProgressTracker =>
   new ProgressTracker({
@@ -83,7 +84,8 @@ describe('progress in a match', () => {
   it('counts sea damage at 1/20 before the x10', () => {
     const t = multi();
     t.points('sea', 20000, 0);
-    expect(t.xp).toBe(10000);
+    // Plus two naval ribbons (10,000 damage each).
+    expect(t.xp).toBe(10000 + 2 * RIBBON.xp);
   });
 
   it('gives no XP for building points; a finished structure, its use and a cap instead', () => {
@@ -98,9 +100,10 @@ describe('progress in a match', () => {
     expect(t.xp).toBe(550 + 2000);
     // The match cap.
     for (let i = 3; i < 200; i++) t.builtAt(i, 'nest', 0);
-    expect(t.xp).toBe(XP.buildCap);
+    // The match cap (and three engineer ribbons, outside it).
+    expect(t.xp).toBe(XP.buildCap + 3 * RIBBON.xp);
     for (let i = 0; i < 20; i++) t.refilled();
-    expect(t.xp).toBe(XP.buildCap + XP.refillCap);
+    expect(t.xp).toBe(XP.buildCap + XP.refillCap + 3 * RIBBON.xp);
   });
 
   it('gives nothing for building one again within 3 minutes of losing it, and half in the build phase', () => {
@@ -111,9 +114,10 @@ describe('progress in a match', () => {
     expect(t.xp).toBe(200);
     t.lostAt(1, 120);
     t.builtAt(1, 'sandbag', 400);
-    expect(t.xp).toBe(400);
+    // The third structure is an engineer ribbon.
+    expect(t.xp).toBe(400 + RIBBON.xp);
     t.builtAt(9, 'sandbag', 0, true);
-    expect(t.xp).toBe(500);
+    expect(t.xp).toBe(500 + RIBBON.xp);
   });
 
   it('pays a resupply to the same person once in 30 s', () => {
@@ -140,11 +144,12 @@ describe('progress in a match', () => {
     for (let i = 0; i < 600; i++) t.tick(1, true);
     const s = t.finish(true);
     expect(s.result).toBe('win');
-    expect(s.xp).toBe(XP.complete + XP.win);
-    expect(s.lines.map((l) => l.key)).toEqual(['complete', 'win']);
+    // Never down the whole match: the survivor ribbon too.
+    expect(s.xp).toBe(XP.complete + XP.win + RIBBON.xp);
+    expect(s.lines.map((l) => l.key)).toEqual(['complete', 'win', 'ribbon']);
     const long = multi();
     for (let i = 0; i < 3600; i++) long.tick(1, true);
-    expect(long.finish(false).xp).toBe(XP.completeMax);
+    expect(long.finish(false).xp).toBe(XP.completeMax + RIBBON.xp);
   });
 
   it('confirms nothing for a match spent idle', () => {
@@ -204,7 +209,8 @@ describe('profile', () => {
     for (let i = 0; i < 600; i++) t.tick(1, true);
     const a = applySummary(p, t.finish(true));
     p = a.profile;
-    expect(p.xp).toBe(625 + 2500 + 2500);
+    // Score, completion, win and the survivor ribbon (bot match: half).
+    expect(p.xp).toBe(625 + 2500 + 2500 + RIBBON.xp / 2);
     expect(a.promotions).toEqual([]);
     expect(p.stats.bots).toMatchObject({ matches: 1, wins: 1, kills: 1, headshots: 1, score: 125 });
     expect(p.weapons.ar1).toEqual({ xp: 625, kills: 1, headshots: 1 });

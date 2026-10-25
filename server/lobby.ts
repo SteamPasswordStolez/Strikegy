@@ -55,6 +55,8 @@ import {
 } from '../src/net/lobbyProtocol.ts';
 import type { AdminAccount } from '../src/net/lobbyProtocol.ts';
 import type { Applied, MatchSummary, Profile } from '../src/progression/profile.ts';
+import { boostsLeft } from '../src/progression/economy.ts';
+import { xpForLevel } from '../src/progression/levels.ts';
 
 /** Messages a connection may send: a bucket of this many, refilled per second. */
 const RATE = { burst: 120, perSecond: 60 } as const;
@@ -88,6 +90,8 @@ export interface MatchPlayer {
   xp?: number;
   /** Signed in: each weapon's XP (its level in the match). */
   weapons?: Record<string, number>;
+  /** Signed in: boosters running (seconds of match time left). */
+  boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>;
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -333,7 +337,8 @@ export class LobbyCore {
       return;
     }
     const after = applied.profile.xp;
-    const msg: ServerMsg = { t: 'progress', summary, before: after - Math.floor(summary.xp), after, promotions: applied.promotions };
+    const before = xpForLevel(applied.before.level) + applied.before.into;
+    const msg: ServerMsg = { t: 'progress', summary, before, after, promotions: applied.promotions, econ: applied.econ };
     for (const c of this.clients.values()) if (c.uid === uid && c.awayUntil === null) this.send(c, msg);
   }
 
@@ -727,6 +732,7 @@ export class LobbyCore {
       const prof = this.accounts.profile(c.account);
       p.xp = prof.xp;
       p.weapons = Object.fromEntries(Object.entries(prof.weapons).map(([id, w]) => [id, w.xp]));
+      p.boost = boostsLeft(prof);
     }
     return p;
   }

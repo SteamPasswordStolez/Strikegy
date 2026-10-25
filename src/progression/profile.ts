@@ -7,6 +7,9 @@
  * Kept free of the game's heavy modules (the main menu reads it).
  */
 import { levelOf, rankAt, type LevelInfo, type RankId } from './levels';
+import { afterMatch, cleanEcon, emptyEcon, settleCalendar, type BoostKind, type Econ, type MatchEcon } from './economy';
+import type { CamoCounts } from './camo';
+import type { MatchCounts } from './ribbons';
 
 /** The service record's numbers (progression-data.md N), one set per kind of match. */
 export interface CareerStats {
@@ -81,6 +84,8 @@ export interface Profile {
   /** Bot-match XP taken on the server today (its daily cap; UTC day). */
   solo?: { day: string; xp: number };
   created: number;
+  /** Supply tickets, cosmetics, camo challenges, missions, mail, boosters (progression step 5). */
+  econ?: Econ;
 }
 
 /** What one match adds (built by `ProgressTracker`; the server's matches will build the same). */
@@ -101,8 +106,20 @@ export interface MatchSummary {
   stats: Partial<CareerStats>;
   weapons: Record<string, WeaponRecord>;
   classes: Record<string, ClassRecord>;
+  /** Feats counted (missions; step 5). */
+  counts?: MatchCounts;
+  /** Ribbons earned, by id. */
+  ribbons?: Record<string, number>;
+  /** Each weapon's camo challenge counts. */
+  camo?: Record<string, CamoCounts>;
+  /** The match's supply tickets (base, ribbons, places, bounties, the contract; boosted). */
+  tickets?: number;
+  /** The ticket lines for the result screen. */
+  ticketLines?: { key: string; n: number }[];
+  /** Booster seconds used in the match. */
+  boosted?: Partial<Record<BoostKind, number>>;
 }
-export type XpLineKey = 'score' | 'sea' | 'build' | 'refill' | 'complete' | 'win' | 'tutorial';
+export type XpLineKey = 'score' | 'sea' | 'build' | 'refill' | 'complete' | 'win' | 'tutorial' | 'ribbon' | 'booster';
 export type MultKey = 'bots' | 'easy' | 'hard';
 
 const KEY = 'strikegy.profile.v1';
@@ -148,6 +165,7 @@ export function newProfile(now = Date.now()): Profile {
     history: [],
     flags: {},
     created: now,
+    econ: emptyEcon(),
   };
 }
 
@@ -221,6 +239,9 @@ export function cleanProfile(raw: unknown): Profile | null {
   if (obj(o.flags).imported === true) p.flags.imported = true;
   const solo = obj(o.solo);
   if (typeof solo.day === 'string') p.solo = { day: solo.day.slice(0, 10), xp: num(solo.xp) };
+  p.econ = cleanEcon(o.econ);
+  // A profile from before step 5: its levels so far give their rewards on the next settle.
+  if (o.econ === undefined) p.econ.rewardedLevel = 1;
   return p;
 }
 
@@ -271,6 +292,8 @@ export interface Applied {
   after: LevelInfo;
   /** Ranks reached on the way, lowest first. */
   promotions: RankId[];
+  /** Tickets, items, missions, camo tiers the match brought (step 5). */
+  econ?: MatchEcon;
 }
 
 /** Ranks first reached going from `fromXp` to `toXp`. */
@@ -290,10 +313,11 @@ export function promotionsBetween(fromXp: number, toXp: number): RankId[] {
 /** Adds a match to the profile (a new profile; the old one is left as it was). */
 export function applySummary(prev: Profile, s: MatchSummary, now = Date.now()): Applied {
   const p: Profile = structuredClone(prev);
+  // The day / week turn before anything counts toward them (and level rewards owed are given).
+  settleCalendar(p, now);
+  const prevWeaponXp = Object.fromEntries(Object.entries(p.weapons).map(([id, w]) => [id, w.xp]));
   const before = levelOf(p.xp);
   p.xp += Math.max(0, Math.floor(s.xp));
-  const after = levelOf(p.xp);
-  const promotions = promotionsBetween(prev.xp, p.xp);
   const st = p.stats[s.kind];
   const finished = s.result === 'win' || s.result === 'loss' || s.result === 'stopped';
   st.matches++;
@@ -346,9 +370,14 @@ export function applySummary(prev: Profile, s: MatchSummary, now = Date.now()): 
     deaths: s.stats.deaths ?? 0,
     xp: Math.floor(s.xp),
   };
+  // Tickets, camo, missions (their XP too), level rewards.
+  const econ = afterMatch(p, s, prevWeaponXp, now);
+  const after = levelOf(p.xp);
+  const promotions = promotionsBetween(prev.xp, p.xp);
   if (promotions.length) rec.promoted = promotions[promotions.length - 1];
+  rec.xp = p.xp - prev.xp;
   p.history = [rec, ...p.history].slice(0, HISTORY);
-  return { profile: p, before, after, promotions };
+  return { profile: p, before, after, promotions, econ };
 }
 
 /** XP given outside a match (the tutorial's one-off bonus). */
@@ -392,7 +421,7 @@ export function cleanSummary(raw: unknown): MatchSummary | null {
   const o = obj(raw);
   const results: readonly MatchResult[] = ['win', 'loss', 'left', 'idle', 'stopped'];
   if (!results.includes(o.result as MatchResult)) return null;
-  const lineKeys: readonly XpLineKey[] = ['score', 'sea', 'build', 'refill', 'complete', 'win', 'tutorial'];
+  const lineKeys: readonly XpLineKey[] = ['score', 'sea', 'build', 'refill', 'complete', 'win', 'tutorial', 'ribbon', 'booster'];
   const multKeys: readonly MultKey[] = ['bots', 'easy', 'hard'];
   const list = (v: unknown) => (Array.isArray(v) ? v.slice(0, 16).map(obj) : []);
   const stats: Partial<CareerStats> = {};
@@ -415,6 +444,12 @@ export function cleanSummary(raw: unknown): MatchSummary | null {
     stats,
     weapons: cleanTable<{ xp: number; kills: number; headshots: number }>(o.weapons, ['xp', 'kills', 'headshots']),
     classes: cleanTable<{ xp: number; seconds: number; kills: number }>(o.classes, ['xp', 'seconds', 'kills']),
+    counts: Object.fromEntries(Object.entries(obj(o.counts)).filter(([k]) => /^[\w.]{1,24}$/.test(k)).slice(0, 40).map(([k, v]) => [k, Math.floor(num(v))])) as MatchCounts,
+    ribbons: Object.fromEntries(Object.entries(obj(o.ribbons)).filter(([k]) => /^\w{1,16}$/.test(k)).slice(0, 20).map(([k, v]) => [k, Math.min(3, Math.floor(num(v)))])),
+    camo: cleanTable<CamoCounts & Record<string, number>>(o.camo, ['kills', 'headshots', 'triples', 'special']),
+    tickets: Math.floor(num(o.tickets)),
+    ticketLines: list(o.ticketLines).map((l) => ({ key: String(l.key ?? '').slice(0, 16), n: Math.floor(num(l.n)) })),
+    boosted: Object.fromEntries(Object.entries(obj(o.boosted)).filter(([k]) => k === 'xp' || k === 'weapon' || k === 'tickets').map(([k, v]) => [k, num(v)])),
   };
 }
 

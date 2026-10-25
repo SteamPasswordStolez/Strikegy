@@ -83,6 +83,10 @@ export interface GameEvents {
   'mode:event': ModeEvent;
   /** `winnerId`: free-for-all, the soldier who won (`winner` is their nominal side). */
   'match:ended': { winner: Team; winnerId?: number };
+  /** A vehicle wrecked: whose it was, who did it (progression: ribbons, missions). */
+  'vehicle:destroyed': { home: Team | null; byId?: number; byTeam?: Team | null; air: boolean; armor: boolean };
+  /** A squad call-in went out (progression: missions). */
+  'support:called': { ownerId: number; kind: string };
 }
 
 export type GameBus = EventBus<GameEvents>;

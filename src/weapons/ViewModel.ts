@@ -6,6 +6,8 @@ import { Spring } from './spring';
 import { gunMaterials, type P } from './gunKit';
 import { buildGun, buildOptic, fittedExtras } from './gunModels';
 import { gunKey } from './attachments';
+import { camoMaterial } from './camoMaterial';
+import { camoLookOf } from '@/progression/camo';
 import type { GadgetId } from '@/data/gadgets';
 import {
   INSPECT_HAND,
@@ -197,6 +199,16 @@ export class ViewModel {
     }
     this.buildShell(def);
     this.measureAnchors(def);
+    // The scanned bodies wear the camo over their own textures (the procedural guns got it in `buildGun`).
+    const camo = def.camo ? camoLookOf(def.camo) : undefined;
+    if (camo && ((def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) || (def.class === 'pistol' && this.models?.has(SCANNED_PISTOL)))) {
+      this.gun.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (!mesh.isMesh || mesh.userData.owned || mesh === this.flash || !(mat instanceof THREE.MeshStandardMaterial) || mat.transparent) return;
+        mesh.material = camoMaterial(camo, mat);
+      });
+    }
   }
 
   /** A shotgun shell or rifle cartridge held in the support hand's fingers. */

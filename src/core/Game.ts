@@ -7,7 +7,7 @@ import { EventBus } from './EventBus';
 import type { DamageCause, GameEvents, GrenadeOwner, HitPart } from './events';
 import { FixedStepLoop } from './FixedStepLoop';
 import { QUALITY_ORDER, gpuName, isTouchDevice, loadSettings, resolveQuality, saveSettings, type Settings } from './Settings';
-import { setLocale, t, type MessageKey } from '@/i18n';
+import { getLocale, setLocale, t, type MessageKey } from '@/i18n';
 import { playerName } from '@/net/identity';
 import { Renderer } from '@/render/Renderer';
 import { Atmosphere, loadPhotoSky } from '@/render/visualProfiles';
@@ -68,9 +68,12 @@ import { Vehicle as VehicleClass } from '@/vehicles/Vehicle';
 import { CALL_RANGE, SUPPORT, SUPPORT_ORDER, squadRp, type SupportId } from '@/data/support';
 import { SupportMenu, type SupportMenuState } from '@/ui/SupportMenu';
 import { WeaponController } from '@/weapons/WeaponController';
-import { WEAPONS, type ShotKick, type WeaponId } from '@/weapons/weaponData';
-import { attachOpenedAt, shotHeard } from '@/weapons/attachments';
+import { WEAPONS, type ShotKick, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
+import { attachOpenedAt, gunKey, shotHeard } from '@/weapons/attachments';
+import { tickCamo } from '@/weapons/camoMaterial';
+import { boostsLeft, econOf } from '@/progression/economy';
 import { LASER_SEEN_M, LaserBeams } from '@/render/laserBeams';
+import { LifeKills, MagKills, killFacts, standing } from '@/progression/killFacts';
 import { Spring } from '@/weapons/spring';
 import { ViewModel } from '@/weapons/ViewModel';
 import { opticFor } from '@/weapons/optics';
@@ -90,7 +93,12 @@ import { ACCESS, setAccess } from '@/progression/access';
 import { weaponsOpenedAt } from '@/progression/unlocks';
 import { RANGE_ID } from '@/data/maps';
 import { beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, type MatchSummary } from '@/progression/profile';
-import { commitMatch, currentProfile, noteServerProgress, settleLeft, signedIn } from '@/net/account';
+import { commitMatch, currentProfile, noteServerProgress, settleLeft, shopAction, signedIn } from '@/net/account';
+import { CONTRACT_REROLL, contractOffer } from '@/progression/contracts';
+import { RIBBONS } from '@/progression/ribbons';
+import { ECON, type MatchEcon } from '@/progression/economy';
+import { dayKey } from '@/progression/calendar';
+import { ContractPanel } from '@/ui/ContractPanel';
 import type { RankId } from '@/progression/levels';
 import { Briefing } from '@/audio/briefing/Briefing';
 import { voiceLangFor } from '@/audio/briefing/cues';
@@ -985,7 +993,7 @@ export class Game {
     await r.precompile();
     for (const id of this.weapons.loadout) {
       const def = this.weapons.defOf(id);
-      this.viewModel.setWeapon(def);
+      this.viewModel.setWeapon(this.viewDef(def));
       this.viewModel.onFire(false, def.kick);
       this.viewModel.update({
         dt: 0.016,
@@ -1438,6 +1446,7 @@ export class Game {
       if (this.deployScreen.visible && this.deployRefresh <= 0) {
         this.deployRefresh = 0.2;
         this.deployScreen.update(this.deployState());
+        this.drawContract();
       }
     }
     if (this.throwables.castersChanged || this.targets.some((tg) => tg.moved)) this.renderer.requestShadowUpdate();
@@ -2687,6 +2696,7 @@ export class Game {
 
   /** A vehicle blew up: everyone aboard dies outright (no going down). */
   private vehicleDestroyed(v: Vehicle, by: DamageSource | null): void {
+    this.bus.emit('vehicle:destroyed', { home: v.home ?? null, byId: by?.id, byTeam: by?.team ?? null, air: !!v.flight, armor: TANK_KINDS.includes(v.kind) || v.kind === 'apc' || v.kind === 'rocket' });
     const at = v.pos.clone();
     this.effects.explosion(at);
     this.effects.explosion(at.clone().setY(at.y + 1));
@@ -2810,6 +2820,7 @@ export class Game {
       const sq = this.playerSquad!;
       const owner: GadgetOwner = { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam, squad: `${sq.team}:${sq.name}` };
       if (this.support.request(this.supportAim, this.supportPoint, owner, state.rp, true)) {
+        this.bus.emit('support:called', { ownerId: this.myId, kind: this.supportAim });
         this.hud.notify(t('support.called').replace('{name}', t(`support.${this.supportAim}`)), 'ally');
         this.audio.click();
       }
@@ -3700,7 +3711,8 @@ export class Game {
     const ty = THREE.MathUtils.clamp(-lookPitch * rate * 0.06, -0.28, 0.28) + Math.abs(Math.cos(this.elapsed * 7.5)) * walk * 0.014 + Math.cos(this.elapsed * 0.7) * 0.02;
     this.scopeShift.x += (tx - this.scopeShift.x) * k;
     this.scopeShift.y += (ty - this.scopeShift.y) * k;
-    this.viewModel.setWeapon(w.def);
+    this.viewModel.setWeapon(this.viewDef(w.def));
+    tickCamo(this.elapsed);
     this.viewModel.update({
       dt,
       adsBlend: w.adsBlend,
@@ -4302,9 +4314,61 @@ export class Game {
     if (!this.options.sandbox) this.loadoutPanel = new LoadoutPanel(this.deployScreen.sideTop, this.deployScreen.mapBox, this.loadouts, () => {});
   }
 
+  /** A ribbon earned (progression step 5): a notice with its count this match. */
+  private ribbonNotice(id: string, n: number, xp: number): void {
+    const r = RIBBONS.find((x) => x.id === id);
+    if (!r) return;
+    const name = r.name[getLocale() === 'en' ? 1 : 0];
+    this.toast?.bonus(t('prog.ribbon'), t('prog.ribbonText').replace('{name}', name).replace('{n}', String(n)), xp);
+  }
+
+  /** The field contract (progression step 5): offered on the deploy screen until the first deploy. */
+  private readonly contract = { seed: '', roll: 0, pick: '', locked: false };
+  private contractPanel: ContractPanel | null = null;
+
+  /** The contract panel, where the match pays progress (a solo bot match, a room while signed in). */
+  private drawContract(): void {
+    const ds = this.deployScreen;
+    if (!ds || !(this.progress || (this.net && signedIn()))) return;
+    const c = this.contract;
+    if (!this.contractPanel) {
+      c.seed = `${currentProfile().created}:${this.mapId}:${Date.now()}`;
+      c.pick = contractOffer(c.seed)[0]!.id;
+      this.contractPanel = new ContractPanel(
+        ds.contractSlot,
+        (id) => {
+          c.pick = id;
+          this.drawContract();
+        },
+        () => void this.rerollContract(),
+      );
+    }
+    const prof = currentProfile();
+    this.contractPanel.update({
+      offers: contractOffer(c.seed, c.roll),
+      pick: c.pick,
+      locked: c.locked,
+      met: this.progress?.contractMet() ?? false,
+      rolls: CONTRACT_REROLL.max - c.roll,
+      tickets: econOf(prof).tickets,
+      boosts: this.progress?.boosts ?? boostsLeft(prof),
+    });
+  }
+
+  private async rerollContract(): Promise<void> {
+    const c = this.contract;
+    if (c.locked || c.roll >= CONTRACT_REROLL.max) return;
+    const r = await shopAction({ op: 'contract' });
+    if (r.error || c.locked) return;
+    c.roll++;
+    c.pick = contractOffer(c.seed, c.roll)[0]!.id;
+    this.drawContract();
+  }
+
   private openDeploy(): void {
     const ds = this.deployScreen!;
     ds.update(this.deployState());
+    this.drawContract();
     ds.show();
     this.touch?.setVisible(false);
     if (document.pointerLockElement) document.exitPointerLock();
@@ -4352,7 +4416,9 @@ export class Game {
       if (this.netDeploying) return;
       this.netDeploying = true;
       this.loadoutPanel?.close();
-      this.net.deploy(choice.key, this.loadouts.current);
+      const contract = this.contractPanel && !this.contract.locked ? this.contract.pick : undefined;
+      this.contract.locked ||= !!this.contractPanel;
+      this.net.deploy(choice.key, contract ? { ...this.loadouts.current, contract } : this.loadouts.current);
       this.deployScreen!.hide();
       // No answer (the server said no: still waiting to respawn): the deploy screen again.
       window.setTimeout(() => (this.netDeploying = false), 3000);
@@ -4364,6 +4430,10 @@ export class Game {
     }
     this.deployed = true;
     this.loadoutPanel?.close();
+    if (this.contractPanel && !this.contract.locked) {
+      this.progress?.setContract(this.contract.pick);
+      this.contract.locked = true;
+    }
     this.respawn(choice.key);
     this.deployScreen!.hide();
     if (this.touch) {
@@ -5099,12 +5169,14 @@ export class Game {
     if (this.progress || this.options.net || this.options.showcase || this.options.sandbox || this.options.tutorial || !b || b.enemies <= 0 || !zm) return;
     // A match left earlier (reloaded in the middle of it) counts as left before this one starts.
     settleLeft();
-    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: currentProfile().xp, weaponXp: { ...ACCESS.weaponXp } });
+    const prof = currentProfile();
+    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: prof.xp, weaponXp: { ...ACCESS.weaponXp }, boost: boostsLeft(prof) });
     tr.setClass(this.cls);
     tr.onLevel = (l) => {
       this.toast?.level(l.level, l.promoted, tr.liveXp);
       this.reachedLevel(l.level, tr.liveXp);
     };
+    tr.onRibbon = (r) => this.ribbonNotice(r.id, r.count, tr.liveXp);
     tr.onWeaponLevel = (l) => {
       ACCESS.weaponXp[l.weapon] = tr.weaponXp(l.weapon);
       this.toast?.weaponLevel(l.weapon as WeaponId, l.level, tr.weaponXp(l.weapon));
@@ -5116,6 +5188,17 @@ export class Game {
     this.bus.on('combat:kill', (e) => this.progressKill(e));
     this.bus.on('combatant:died', (e) => {
       if (e.id === this.myId) tr.death();
+    });
+    this.bus.on('vehicle:destroyed', (e) => {
+      if (e.byId !== this.myId || (e.home && !foes({ id: -2, team: e.home }, this.meSide))) return;
+      if (e.air) tr.count('airKills');
+      else if (e.armor) tr.count('armorKills');
+    });
+    this.bus.on('support:called', (e) => {
+      if (e.ownerId === this.myId) tr.count('callins');
+    });
+    this.bus.on('mode:event', (e) => {
+      if (e.type === 'charge' && e.by === this.myId && (e.state === 'armed' || e.state === 'defused')) tr.count('objectives');
     });
     this.bus.on('weapon:fired', () => tr.shot());
     this.bus.on('combat:hit', (e) => {
@@ -5193,6 +5276,24 @@ export class Game {
   private static weaponByName: Map<string, WeaponId> | null = null;
 
   /** One's own kill for the record (and the weapon's), or a teammate's beside one's own structure. */
+  /** The camos the player wears (read once a match; the armory changes them between matches). */
+  private camos: Record<string, string> | null = null;
+  private readonly viewDefs = new Map<string, WeaponDef>();
+
+  /** The gun in first person with the player's camo on it (same object for the same gun, so the model isn't rebuilt). */
+  private viewDef(def: WeaponDef): WeaponDef {
+    this.camos ??= { ...econOf(currentProfile()).equip.camo };
+    const camo = this.options.showcase ? undefined : this.camos[def.id];
+    if (!camo) return def;
+    const k = `${gunKey(def)}#${camo}`;
+    let d = this.viewDefs.get(k);
+    if (!d) {
+      d = { ...def, camo };
+      this.viewDefs.set(k, d);
+    }
+    return d;
+  }
+
   /** Laser beams: the player's own (from the gun in first person), bots', other players' (attachments). */
   private lasers: LaserBeams | null = null;
   private readonly laserTmp = new THREE.Vector3();
@@ -5230,6 +5331,10 @@ export class Game {
     if (opened.length) this.toast?.unlock(opened, level);
   }
 
+  /** Kills in each soldier's life and in one magazine (progression's bounties and camo). */
+  private readonly lifeKills = new LifeKills();
+  private readonly magKills = new MagKills();
+
   private progressKill(e: GameEvents['combat:kill']): void {
     const tr = this.progress;
     if (!tr || this.matchOver) return;
@@ -5238,10 +5343,33 @@ export class Game {
       return undefined;
     };
     const victim = find(e.victimId);
+    const victimStreak = e.victimId !== undefined ? this.lifeKills.of(e.victimId) : 0;
+    if (e.attackerId !== undefined) this.lifeKills.kill(e.attackerId);
+    if (e.victimId !== undefined) this.lifeKills.died(e.victimId);
     if (e.attackerId === this.myId) {
       if (!victim || victim.id === this.myId || friends(victim, this.meSide)) return;
       Game.weaponByName ??= new Map(Object.values(WEAPONS).map((w) => [w.name, w.id as WeaponId]));
-      tr.kill(Game.weaponByName.get(e.weapon) ?? null, e.headshot, !!e.melee);
+      const weaponId = Game.weaponByName.get(e.weapon) ?? null;
+      const enemies = this.scores.table(null).filter((r) => r.team !== this.myTeam || MATCH.ffa);
+      const top = enemies.filter((r) => r.id !== this.myId).sort((a, b) => b.score - a.score)[0];
+      const sq = this.squads.find((s) => s.has(this.myId));
+      tr.kill(
+        killFacts({
+          weaponId,
+          weaponName: e.weapon,
+          headshot: e.headshot,
+          melee: !!e.melee,
+          killer: this.player.feet,
+          victim: victim.feet,
+          ads: this.weapons.adsBlend,
+          riding: !!this.ride,
+          magKills: weaponId ? this.magKills.kill(this.myId, weaponId, this.weapons.state.reloads) : 0,
+          held: (this.zoneMode?.zones ?? []).filter((z) => z.owner === this.myTeam && !MATCH.ffa).map((z) => ({ x: z.x, z: z.z, r: z.radius })),
+          mates: sq ? sq.mates(this.myId).filter((m) => m.alive).map((m) => m.feet) : [],
+          victimTop: !!top && top.id === victim.id && top.score > 0,
+          victimStreak,
+        }),
+      );
       return;
     }
     // Cover: a teammate's kill from within 2 m of a structure one built.
@@ -5261,7 +5389,7 @@ export class Game {
     if (!tr) return undefined;
     this.progress = null;
     tr.score = this.scores.get(this.myId)?.score ?? 0;
-    const summary = tr.finish(won);
+    const summary = tr.finish(won, standing(this.scores.table(null), this.myId, this.myTeam));
     // Signed in: into the account (the server checks it), else this browser's profile.
     const done = commitMatch(summary);
     endLiveMatch();
@@ -5290,10 +5418,35 @@ export class Game {
     const levels = cost.levels > 0 ? t('pause.leaveLevels').replace('{n}', String(cost.levels)) : '';
     const line = cost.xp > 0 ? t('pause.leaveLose').replace('{xp}', cost.xp.toLocaleString()).replace('{levels}', levels) : t('pause.leaveNothing');
     this.overlay.show(t('pause.leaveTitle'), line, 'info');
-    this.overlay.setActions([
+    const actions: OverlayAction[] = [
       { label: t('pause.leaveGo'), primary: true, onClick: () => this.quit() },
       { label: t('pause.leaveStay'), onClick: () => this.pause() },
-    ]);
+    ];
+    // A leave pass (외출증, progression step 5): what rose is kept, for supply tickets, two a day.
+    const e = econOf(currentProfile());
+    const passes = ECON.pass.perDay - (e.day.key === dayKey(Date.now()) ? e.day.passes : 0);
+    if (cost.undone && cost.xp > 0 && passes > 0 && e.tickets >= ECON.pass.price)
+      actions.push({
+        label: t('pause.leavePass').replace('{p}', String(ECON.pass.price)).replace('{n}', String(passes)),
+        onClick: () => void this.leaveWithPass(),
+      });
+    this.overlay.setActions(actions);
+  }
+
+  private async leaveWithPass(): Promise<void> {
+    const tr = this.progress;
+    if (!tr) return this.quit();
+    const r = await shopAction({ op: 'pass' });
+    if (r.error) {
+      this.overlay.show(t('pause.leaveTitle'), t(`pp.err.${r.error}` as MessageKey), 'info');
+      this.overlay.setActions([{ label: t('pause.leaveStay'), primary: true, onClick: () => this.pause() }]);
+      return;
+    }
+    this.progress = null;
+    tr.score = this.scores.get(this.myId)?.score ?? 0;
+    commitMatch(tr.leave(1, false, true));
+    endLiveMatch();
+    this.quit();
   }
 
   /** Out of the match to the main menu (the room is left first, so the seat isn't kept). */
@@ -5318,7 +5471,7 @@ export class Game {
     opts.link.on('progress', (m) => {
       const summary = m.summary as MatchSummary;
       noteServerProgress(m.after, summary);
-      this.netProgress = { summary, beforeXp: m.before, afterXp: m.after, promotions: m.promotions as RankId[], weaponXp: this.weaponStart };
+      this.netProgress = { summary, beforeXp: m.before, afterXp: m.after, promotions: m.promotions as RankId[], weaponXp: this.weaponStart, econ: m.econ as MatchEcon | undefined };
     });
     net.onRoster = () => this.netSquads(net);
     this.netSquads(net);
@@ -5509,6 +5662,9 @@ export class Game {
         case 'prog':
           this.toast?.level(e.level, e.promoted as RankId | null, e.xp);
           this.reachedLevel(e.level, e.xp);
+          break;
+        case 'ribbon':
+          this.ribbonNotice(e.id, e.n, e.xp);
           break;
         case 'wprog':
           if (e.weapon in WEAPONS) {

@@ -22,7 +22,9 @@ import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
-import { currentProfile, onAccountChange, refreshAccount, settleLeft, signedIn } from '@/net/account';
+import { onAccountChange, refreshAccount, settleLeft, settledProfile, signedIn } from '@/net/account';
+import { econOf } from '@/progression/economy';
+import { renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
 import { renderServiceRecord } from './ServiceRecord';
 
@@ -30,11 +32,11 @@ const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
 
 /** The main menu's entries, top to bottom: play the biggest, then two more, then the small ones. */
-const ALL_ENTRIES = ['play', 'multi', 'range', 'tutorial', 'controls', 'settings', 'record', 'credits'] as const;
+const ALL_ENTRIES = ['play', 'multi', 'range', 'armory', 'ranks', 'shop', 'tutorial', 'controls', 'settings', 'record', 'credits'] as const;
 type Entry = (typeof ALL_ENTRIES)[number];
 const ENTRIES: readonly Entry[] = ALL_ENTRIES;
 const BIG_ENTRIES: readonly Entry[] = ['multi', 'range'];
-type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits' | 'record';
+type Screen = 'main' | 'play' | 'multi' | 'controls' | 'settings' | 'credits' | 'record' | 'armory' | 'ranks' | 'shop';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -141,7 +143,7 @@ export class Lobby {
     // Signed in: the account's progress fresh from the server; redrawn when it (or the sign-in) changes.
     void refreshAccount();
     onAccountChange(() => {
-      if (this.screen === 'main' || this.screen === 'record') this.render();
+      if (this.screen === 'main' || this.screen === 'record' || this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') this.render();
     });
     // First visit: a name before anything else.
     if (!this.playerName) this.editName(true);
@@ -252,6 +254,11 @@ export class Lobby {
     }
     if (key === 'Escape' || key === 'Backspace') return this.back();
     if (this.screen === 'settings' && this.settingsPanel && (key === 'KeyQ' || key === 'KeyE')) return this.settingsPanel.stepCategory(key === 'KeyQ' ? -1 : 1);
+    if ((this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') && (key === 'KeyQ' || key === 'KeyE')) {
+      uiSound('move');
+      stepTab(this.screen, key === 'KeyQ' ? -1 : 1);
+      return this.render();
+    }
     if (this.screen === 'multi' && this.multi?.key(key)) return;
     if (this.screen !== 'play') return;
     // The setup page: Q / E mode group, ↑ ↓ mode, ← → map, Enter start.
@@ -314,7 +321,19 @@ export class Lobby {
     this.frame.dataset.dsTheme = 'bfv';
     if (!main)
       this.renderPageHead(
-        this.screen === 'play' ? 'lobby.setupTitle' : this.screen === 'multi' ? this.multi!.title : this.screen === 'controls' ? 'menu.controls' : this.screen === 'credits' ? 'menu.credits' : this.screen === 'record' ? 'menu.record' : 'menu.settings',
+        this.screen === 'play'
+          ? 'lobby.setupTitle'
+          : this.screen === 'multi'
+            ? this.multi!.title
+            : this.screen === 'controls'
+              ? 'menu.controls'
+              : this.screen === 'credits'
+                ? 'menu.credits'
+                : this.screen === 'record'
+                  ? 'menu.record'
+                  : this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop'
+                    ? (`menu.${this.screen}` as MessageKey)
+                    : 'menu.settings',
       );
     const body = el('div', 'lb-body', this.frame);
     if (this.screen === 'main') this.renderMain(body);
@@ -326,6 +345,11 @@ export class Lobby {
       renderHint(keys, t(this.touch ? 'start.hintTouch' : 'start.hint'));
     } else if (this.screen === 'record') {
       renderServiceRecord(body, { rename: () => this.editName(false), redraw: () => this.render(), root: this.root });
+    } else if (this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') {
+      const o = { redraw: () => this.render(), root: this.root };
+      if (this.screen === 'armory') renderArmory(body, o);
+      else if (this.screen === 'ranks') renderRanks(body, o);
+      else renderShop(body, o);
     } else if (this.screen === 'credits') {
       body.classList.add('lb-credits');
       el('p', 'lb-credit-note', body).textContent = t('credits.note');
@@ -381,7 +405,7 @@ export class Lobby {
       hint(['↑', '↓'], t('lobby.mode'));
       hint(['←', '→'], t('lobby.map'));
       hint(['ENTER'], t(this.screen === 'play' ? 'lobby.start' : this.multi!.setupStart));
-    } else if (this.screen === 'settings') hint(['Q', 'E'], t('lobby.category'));
+    } else if (this.screen === 'settings' || this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') hint(['Q', 'E'], t('lobby.category'));
     else if (this.screen === 'multi') for (const [keys, what] of this.multi!.hints) hint(keys, what);
     hint(['ESC'], t('lobby.hint.back'));
   }
@@ -442,7 +466,8 @@ export class Lobby {
       this.toggleLocale();
     });
     // The player's card: rank, level and the XP bar; it opens the service record.
-    const at = levelOf(currentProfile().xp);
+    const prof0 = settledProfile();
+    const at = levelOf(prof0.xp);
     const prof = el('button', 'mm-profile mm-card', corner);
     prof.title = t('menu.recordDesc');
     el('span', 'mm-card-pic', prof).innerHTML = insigniaAt(at.level);
@@ -452,6 +477,11 @@ export class Lobby {
     if (!signedIn()) el('span', 'mm-card-guest ds-dim', line).textContent = t('acct.guest');
     const bar = el('span', 'mm-card-bar', prof);
     el('i', '', bar).style.setProperty('--p', (at.into / at.need).toFixed(4));
+    // Supply tickets and mail waiting (step 5).
+    const ec = econOf(prof0);
+    const wal = el('span', 'mm-card-wallet', prof);
+    wal.innerHTML = `${icon('star')}<b>${ec.tickets.toLocaleString()}</b>`;
+    if (ec.mail.length) el('span', 'ds-badge accent', wal).textContent = t('pp.mailN').replace('{n}', String(ec.mail.length));
     prof.addEventListener('click', () => {
       uiSound('open');
       this.go('record');

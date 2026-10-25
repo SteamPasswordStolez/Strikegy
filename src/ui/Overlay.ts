@@ -9,6 +9,12 @@ import './dialogs.css';
 import './progress.css';
 import { levelOf, type RankId } from '@/progression/levels';
 import type { MatchSummary } from '@/progression/profile';
+import type { MatchEcon } from '@/progression/economy';
+import { RIBBONS } from '@/progression/ribbons';
+import { missionDef } from '@/progression/missions';
+import { tierCamo, camoNameOf } from '@/progression/camo';
+import { item } from '@/progression/catalog';
+import { nameOf } from './cosmetics';
 import { weaponLevelOf } from '@/progression/unlocks';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
@@ -32,6 +38,8 @@ export interface ResultProgress {
   promotions: RankId[];
   /** Each weapon's XP before the match (for the weapon levels it reached). */
   weaponXp?: Readonly<Record<string, number>>;
+  /** Tickets, missions, camo tiers, items the match brought (progression step 5). */
+  econ?: MatchEcon;
 }
 
 /** What the result screen shows (Game fills it when a match ends). */
@@ -363,8 +371,14 @@ export class Overlay {
       div('x', lines, t(`mult.${m.key}` as MessageKey));
       div('ds-num x', lines, `×${m.x}`);
     }
+    // Missions finished by this match pay their XP on top (progression step 5).
+    const missionXp = p.econ?.lines.find((l) => l.key === 'missionXp')?.n ?? 0;
+    if (missionXp > 0) {
+      div('', lines, t('tk.missionXp'));
+      div('ds-num', lines, n(missionXp));
+    }
     div('sum', lines, t('result.xpTotal'));
-    div('sum ds-num', lines, `+${n(s.xp)}`);
+    div('sum ds-num', lines, `+${n(s.xp + missionXp)}`);
 
     const side = div('rs-xp-side', box);
     const lv = div('rs-lv', side);
@@ -421,6 +435,7 @@ export class Overlay {
             div('ds-num', r, `Lv ${a} → ${b}`);
           }
         }
+        this.resultEcon(side, p);
         div('rs-xp-note', side, t(s.result === 'left' ? 'result.savedLeft' : 'result.saved'));
       }
     };
@@ -437,6 +452,55 @@ export class Overlay {
     box.addEventListener('click', finish);
   }
   private xpAnim = 0;
+
+  /** Supply tickets by line, ribbons, missions done, camo tiers, new items and boxes (progression step 5). */
+  private resultEcon(parent: HTMLElement, p: ResultProgress): void {
+    const div = (cls: string, at: HTMLElement, text?: string): HTMLDivElement => {
+      const e = document.createElement('div');
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      at.appendChild(e);
+      return e;
+    };
+    const e = p.econ;
+    const s = p.summary;
+    const n = (v: number) => Math.round(v).toLocaleString();
+    const block = (label: string) => {
+      const b = div('rs-wl', parent);
+      div('ds-label', b, label);
+      return b;
+    };
+    const row = (b: HTMLElement, a: string, v: string) => {
+      const r = div('rs-wl-row', b);
+      div('', r, a);
+      div('ds-num', r, v);
+    };
+    // The match's own lines come from the summary, the rest (first match, missions, levels...) from the profile.
+    const lines = [...(s.ticketLines ?? []).map((l) => ({ key: l.key, n: l.n })), ...(e?.lines ?? []).filter((l) => l.key !== 'match' && l.key !== 'missionXp')];
+    const total = e ? e.tickets : (s.tickets ?? 0);
+    if (total > 0) {
+      const b = block(`${t('res.tickets')} +${n(total)}`);
+      for (const l of lines) if (l.n > 0) row(b, t(`tk.${l.key}` as MessageKey), `+${n(l.n)}`);
+    }
+    const ribbons = Object.entries(s.ribbons ?? {}).filter(([, c]) => c > 0);
+    if (ribbons.length) {
+      const b = block(t('res.ribbons'));
+      for (const [id, c] of ribbons) row(b, nameOf(RIBBONS.find((r) => r.id === id)?.name), `×${c}`);
+    }
+    if (e?.missions.length) {
+      const b = block(t('res.missions'));
+      for (const m of e.missions) row(b, nameOf(missionDef(m.daily, m.id)?.name), t('pp.done'));
+    }
+    if (e?.camo.length) {
+      const b = block(t('res.camo'));
+      for (const c of e.camo) row(b, WEAPONS[c.weapon as WeaponId]?.name ?? c.weapon, nameOf(camoNameOf(tierCamo(c.tier))));
+    }
+    if (e && (e.items.length || e.boxes)) {
+      const b = block(t('res.items'));
+      for (const id of e.items) row(b, nameOf(item(id)?.name), t(`pp.kind.${item(id)?.kind ?? 'camo'}` as MessageKey));
+      if (e.boxes) row(b, t('pp.boxes'), `+${e.boxes}`);
+    }
+  }
 
   private stopXpAnim(): void {
     cancelAnimationFrame(this.xpAnim);

@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -287,7 +287,9 @@ export type MatchEvent =
   /** This player reached a level during the match (progression: the HUD's notice); `xp` is the live total. */
   | { k: 'prog'; level: number; promoted: string | null; xp: number }
   /** This player's weapon reached a level during the match. */
-  | { k: 'wprog'; weapon: string; level: number };
+  | { k: 'wprog'; weapon: string; level: number }
+  /** This player earned a ribbon (its count this match); `xp` is the live total. */
+  | { k: 'ribbon'; id: string; n: number; xp: number };
 
 export type ClientMsg =
   /** `token`: the account's session (signed in with Google / Discord); rooms need one. */
@@ -349,7 +351,7 @@ export type ServerMsg =
    * the summary (progression `MatchSummary`), the account's XP before and
    * after, the ranks reached.
    */
-  | { t: 'progress'; summary: unknown; before: number; after: number; promotions: string[] }
+  | { t: 'progress'; summary: unknown; before: number; after: number; promotions: string[]; econ?: unknown }
   | { t: 'chat'; line: ChatLine }
   /** The room's recent chat, on joining it. */
   | { t: 'chatLog'; lines: ChatLine[] }

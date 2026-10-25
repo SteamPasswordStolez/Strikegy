@@ -728,3 +728,71 @@
 .lp-item.lp-att.locked .lp-fx {
   opacity: 0.4;
 }
+
+/* The field contract (ContractPanel, progression step 5). */
+.deploy-contract {
+  display: flex;
+  flex-direction: column;
+  gap: var(--line-w);
+  margin-bottom: var(--s3);
+}
+.deploy-contract:empty {
+  display: none;
+}
+.deploy-contract-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+.deploy-contract-note {
+  font-size: var(--fs-xs);
+}
+.deploy-contract-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-left: var(--bar-w) solid transparent;
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.deploy-contract-row:disabled {
+  cursor: default;
+}
+.deploy-contract-row.sel {
+  border-left-color: var(--accent);
+  background: var(--surface-2);
+}
+.deploy-contract-row.met .deploy-contract-pay {
+  color: var(--squad);
+}
+.deploy-contract-pay {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--accent);
+  font-weight: 700;
+}
+.deploy-contract-pay .ds-icon,
+.deploy-contract-boost .ds-icon {
+  width: 1em;
+  height: 1em;
+}
+.deploy-contract-roll {
+  align-self: flex-start;
+  margin-top: var(--s1);
+}
+.deploy-contract-boost {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin-top: var(--s1);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}

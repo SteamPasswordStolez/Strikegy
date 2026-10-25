@@ -631,6 +631,7 @@ export class MatchVehicles {
 
   /** A vehicle blew up: everyone aboard dies outright (no going down). */
   private destroyed(v: Vehicle, by: DamageSource | null): void {
+    this.sim.bus.emit('vehicle:destroyed', { home: v.home ?? null, byId: by?.id, byTeam: by?.team ?? null, air: !!v.flight, armor: TANK_KINDS.includes(v.kind) || v.kind === 'apc' || v.kind === 'rocket' });
     this.onBoom('wreck', v.pos.clone());
     const owner: Shooter = { id: by?.id ?? -1, name: by?.name ?? '', team: by?.team ?? (v.home === 'blue' ? 'red' : 'blue') };
     const weapon = by?.weapon ?? t(`vehicle.${v.kind}`);

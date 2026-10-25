@@ -40,7 +40,9 @@ describe('accounts on the game server', () => {
     const { userId } = await a.devAccount();
     // 10 minutes can't be worth 500,000.
     const cut = a.solo(userId, bots(500_000, 600, 900))!;
-    expect(cut.profile.xp).toBe(600 * 90 + 20_000);
+    // Missions the match finished pay their own XP on top (step 5).
+    const missionXp = (x: { econ?: { lines: { key: string; n: number }[] } }) => x.econ?.lines.find((l) => l.key === 'missionXp')?.n ?? 0;
+    expect(cut.profile.xp - missionXp(cut)).toBe(600 * 90 + 20_000);
     expect(cut.profile.weapons.ar1!.xp).toBeLessThan(500_000);
     expect(cut.profile.stats.bots.kills).toBe(300);
     expect(cut.profile.stats.bots.headshots).toBeLessThanOrEqual(300);
@@ -48,7 +50,9 @@ describe('accounts on the game server', () => {
     for (let i = 0; i < 30; i++) a.solo(userId, bots(60_000, 3600));
     expect(a.profile(userId).solo).toEqual({ day: '2026-10-24', xp: SOLO_DAY_CAP });
     now += 24 * 3600_000;
-    expect(a.solo(userId, bots(1000, 600))!.profile.xp).toBe(SOLO_DAY_CAP + 1000);
+    const before = a.profile(userId).xp;
+    const next = a.solo(userId, bots(1000, 600))!;
+    expect(next.profile.xp - before - missionXp(next)).toBe(1000);
     expect(a.solo(userId, { nope: 1 })).toBeNull();
   });
 

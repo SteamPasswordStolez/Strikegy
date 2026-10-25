@@ -19,6 +19,11 @@ export function setLocale(locale: Locale): void {
   document.documentElement.lang = locale;
 }
 
+/** The language the page shows. */
+export function getLocale(): Locale {
+  return current;
+}
+
 export function t(key: MessageKey): string {
   const s = tables[current][key] ?? tables.ko[key] ?? key;
   return s.includes('{k:') ? s.replace(/\{k:(\w+)\}/g, (_, a: string) => keyNameOf(a)) : s;

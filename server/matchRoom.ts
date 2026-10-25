@@ -51,6 +51,7 @@ import type { MapDef, Team } from '../src/world/mapTypes.ts';
 import { parseMap } from '../src/world/validateMap.ts';
 import { ProgressTracker } from '../src/progression/tracker.ts';
 import { weaponLevelOf, weaponLocked } from '../src/progression/unlocks.ts';
+import { LifeKills, MagKills, killFacts, standing } from '../src/progression/killFacts.ts';
 import { attachLevel } from '../src/weapons/attachments.ts';
 import type { MatchSummary } from '../src/progression/profile.ts';
 import { WEAPONS } from '../src/weapons/weaponData.ts';
@@ -243,7 +244,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number> }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>> }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -252,7 +253,7 @@ export class MatchRoom {
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
       seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
-      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons);
+      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons, player.boost);
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -385,6 +386,9 @@ export class MatchRoom {
     const newBuild = JSON.stringify(kit.attach ?? {}) !== JSON.stringify(seat.kit?.attach ?? {});
     seat.kit = kit;
     if (newBuild) this.sendRoster();
+    // The field contract picked on the deploy screen (step 5), fixed once set.
+    const contract = (rawKit as { contract?: unknown } | null)?.contract;
+    if (typeof contract === 'string') seat.progress?.setContract(contract);
     seat.progress?.setClass(kit.cls);
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
     // Into a vehicle after the spawn (its browser takes the seat after the new life).
@@ -444,11 +448,12 @@ export class MatchRoom {
   }
 
   /** A signed-in player's tracker: levels reached are told to them as they happen. */
-  private tracker(seat: Seat, xp: number, weaponXp?: Record<string, number>): ProgressTracker {
+  private tracker(seat: Seat, xp: number, weaponXp?: Record<string, number>, boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>): ProgressTracker {
     const lineup = this.opts.lineup ?? 'users';
-    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp, weaponXp });
+    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp, weaponXp, boost });
     tr.onLevel = (l) => seat.events.push({ k: 'prog', level: l.level, promoted: l.promoted, xp: tr.liveXp });
     tr.onWeaponLevel = (l) => seat.events.push({ k: 'wprog', weapon: l.weapon, level: l.level });
+    tr.onRibbon = (r) => seat.events.push({ k: 'ribbon', id: r.id, n: r.count, xp: tr.liveXp });
     return tr;
   }
 
@@ -894,7 +899,7 @@ export class MatchRoom {
         const s = seat.soldier;
         const won = e.winnerId !== undefined ? e.winnerId === s.id : e.winner === s.team;
         tr.score = this.sim.scores.get(s.id)?.score ?? 0;
-        this.opts.progress?.(seat.uid, tr.finish(won));
+        this.opts.progress?.(seat.uid, tr.finish(won, standing(this.sim.scores.table(null), s.id, s.team)));
       }
       this.broadcastEvents.push({ k: 'end', winner: e.winner, winnerId: e.winnerId });
       this.opts.log?.(`match in room ${this.opts.room} ended: ${e.winner}`);
@@ -905,13 +910,58 @@ export class MatchRoom {
     const now = () => this.sim.tick * SIM_DT;
     this.sim.scores.onScore = (id, points, reason, other) => this.byId.get(id)?.progress?.points(reason, points, now(), other);
     const weaponIds = new Map(Object.values(WEAPONS).map((w) => [w.name, w.id]));
+    const lifeKills = new LifeKills();
+    const magKills = new MagKills();
+    const feetOf = (id: number | undefined) => {
+      if (id === undefined) return null;
+      const s = this.byId.get(id)?.soldier;
+      if (s) return s.player.feet;
+      return this.sim.bots?.bots.find((b) => b.id === id)?.feet ?? null;
+    };
     bus.on('combat:kill', (e) => {
-      const tr = e.attackerId === undefined ? undefined : this.byId.get(e.attackerId)?.progress;
-      if (!tr || e.victimId === e.attackerId) return;
+      const victimStreak = e.victimId !== undefined ? lifeKills.of(e.victimId) : 0;
+      if (e.attackerId !== undefined) lifeKills.kill(e.attackerId);
+      if (e.victimId !== undefined) lifeKills.died(e.victimId);
+      const seat = e.attackerId === undefined ? undefined : this.byId.get(e.attackerId);
+      const tr = seat?.progress;
+      if (!seat || !tr || e.victimId === e.attackerId) return;
       if (!MATCH.ffa && e.victimTeam && e.victimTeam === e.attackerTeam) return;
-      tr.kill(weaponIds.get(e.weapon) ?? null, e.headshot, !!e.melee);
+      // What the kill was (camo challenges, ribbons, missions, bounties): the same facts solo games count.
+      const s = seat.soldier;
+      const weaponId = weaponIds.get(e.weapon) ?? null;
+      const top = this.sim.scores
+        .table(null)
+        .filter((r) => r.id !== s.id && (MATCH.ffa || r.team !== s.team))
+        .sort((a, b) => b.score - a.score)[0];
+      tr.kill(
+        killFacts({
+          weaponId,
+          weaponName: e.weapon,
+          headshot: e.headshot,
+          melee: !!e.melee,
+          killer: s.player.feet,
+          victim: feetOf(e.victimId),
+          ads: s.weapons.adsBlend,
+          riding: !!s.ride,
+          magKills: weaponId ? magKills.kill(s.id, weaponId, s.weapons.state.reloads) : 0,
+          held: MATCH.ffa ? [] : (this.sim.zoneMode?.zones ?? []).filter((z) => z.owner === s.team).map((z) => ({ x: z.x, z: z.z, r: z.radius })),
+          mates: (this.sim.squadOf(s.id)?.mates(s.id) ?? []).filter((m) => m.alive).map((m) => m.feet),
+          victimTop: !!top && top.id === e.victimId && top.score > 0,
+          victimStreak,
+        }),
+      );
     });
     bus.on('combatant:died', (e) => this.byId.get(e.id)?.progress?.death());
+    bus.on('vehicle:destroyed', (e) => {
+      const seat = e.byId === undefined ? undefined : this.byId.get(e.byId);
+      if (!seat?.progress || (e.home && e.home === seat.soldier.team && !MATCH.ffa)) return;
+      if (e.air) seat.progress.count('airKills');
+      else if (e.armor) seat.progress.count('armorKills');
+    });
+    bus.on('support:called', (e) => this.byId.get(e.ownerId)?.progress?.count('callins'));
+    bus.on('mode:event', (e) => {
+      if (e.type === 'charge' && (e.state === 'armed' || e.state === 'defused')) this.byId.get(e.by)?.progress?.count('objectives');
+    });
     this.sim.onBuilt = (id, slot) => this.byId.get(id)?.progress?.builtAt(slot.id, slot.kind, now(), MATCH.truce);
     this.sim.onRefilled = (id) => this.byId.get(id)?.progress?.refilled();
     if (this.sim.fort) {
