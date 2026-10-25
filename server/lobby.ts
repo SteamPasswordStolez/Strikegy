@@ -54,7 +54,7 @@ import {
   type ServerMsg,
   type Side,
 } from '../src/net/lobbyProtocol.ts';
-import type { AdminAccount, AdminReport, Badge, PublicCard } from '../src/net/lobbyProtocol.ts';
+import { EVENT_MULT, liveEvents, type AdminAccount, type AdminReport, type Badge, type EventKind, type PublicCard, type ServerEvents } from '../src/net/lobbyProtocol.ts';
 import type { Applied, MatchSummary, Profile } from '../src/progression/profile.ts';
 import { boostsLeft, econOf } from '../src/progression/economy.ts';
 import { wornOf, type Worn } from '../src/progression/worn.ts';
@@ -100,6 +100,8 @@ export interface MatchPlayer {
   sex?: 'f';
   /** Their level, card, emblem and plate (the account's). */
   badge?: Badge;
+  /** The double events on when they started (multipliers by kind). */
+  event?: Partial<Record<EventKind, number>>;
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -146,6 +148,11 @@ export interface AccountHost {
   setName(userId: string, name: string): void;
   /** The account's game name, if one is set. */
   nameOf(userId: string): string | null;
+  /** The server's staff (the admin page marks them). */
+  isStaff(userId: string): boolean;
+  setStaff(userId: string, on: boolean): void;
+  /** Supply tickets into an account; its tickets after, or null. */
+  giveTickets(userId: string, n: number): number | null;
   find(query: string): AdminAccount[];
   reset(userId: string): void;
   revoke(userId: string): void;
@@ -177,6 +184,8 @@ export interface AdminData {
   words: string[];
   /** Players' reports, newest first (owner, 2026-10-25). */
   reports?: AdminReport[];
+  /** The double events (see `ServerEvents`). */
+  events?: ServerEvents;
 }
 
 /** Reports kept, and how many one person may send (and per person reported). */
@@ -187,9 +196,10 @@ const CARDS = { perWindow: 20, windowMs: 10_000 } as const;
 const BADGE_MS = 10_000;
 
 /** What a profile shows beside its owner's name (`private`: no level). */
-export function badgeOf(prof: Profile): Badge | undefined {
+export function badgeOf(prof: Profile, staff = false): Badge | undefined {
   const eq = econOf(prof).equip;
   const b: Badge = {};
+  if (staff) b.staff = true;
   if (prof.flags.privacy !== 'private') b.lv = levelOf(prof.xp).level;
   if (eq.card) b.card = eq.card;
   if (eq.emblem) b.emblem = eq.emblem;
@@ -353,7 +363,7 @@ export class LobbyCore {
     this.log = opts.log ?? (() => {});
     this.tagSecret = opts.tagSecret ?? randomBytes(32).toString('hex');
     const saved = opts.store?.load();
-    this.staff = { bans: saved?.bans ?? [], mutes: saved?.mutes ?? [], words: saved?.words ?? [], reports: saved?.reports ?? [] };
+    this.staff = { bans: saved?.bans ?? [], mutes: saved?.mutes ?? [], words: saved?.words ?? [], reports: saved?.reports ?? [], events: saved?.events ?? {} };
     this.serverMax = opts.serverMax ?? SERVER_MAX;
     this.matches = opts.matches ?? null;
     this.now = opts.now ?? Date.now;
@@ -571,12 +581,17 @@ export class LobbyCore {
     return m;
   }
 
+  /** The double events as set (on and recently ended alike; `liveEvents` says which are on). */
+  get events(): ServerEvents {
+    return { ...this.staff.events };
+  }
+
   /** A signed-in client's badge (read again from the account every few seconds). */
   private badge(c: Client): Badge | undefined {
     if (!c.account || !this.accounts) return undefined;
     const now = this.now();
     if (c.badgeAt === undefined || now - c.badgeAt > BADGE_MS) {
-      c.badge = badgeOf(this.accounts.profile(c.account));
+      c.badge = badgeOf(this.accounts.profile(c.account), this.accounts.isStaff(c.account));
       c.badgeAt = now;
     }
     return c.badge;
@@ -606,7 +621,7 @@ export class LobbyCore {
     if (!target.account || !this.accounts) return card;
     const prof = this.accounts.profile(target.account);
     card.privacy = prof.flags.privacy ?? 'public';
-    const badge = badgeOf(prof);
+    const badge = badgeOf(prof, this.accounts.isStaff(target.account));
     if (badge) card.badge = badge;
     target.badge = badge;
     target.badgeAt = this.now();
@@ -829,6 +844,9 @@ export class LobbyCore {
     c.badgeAt = undefined;
     const badge = this.badge(c);
     if (badge) p.badge = badge;
+    // The double events on as the match starts (or as they join it).
+    const ev = liveEvents(this.events, this.now());
+    if (ev.length) p.event = Object.fromEntries(ev.map((k) => [k, EVENT_MULT]));
     if (c.account && this.accounts) {
       const prof = this.accounts.profile(c.account);
       p.xp = prof.xp;
@@ -895,6 +913,7 @@ export class LobbyCore {
         else this.accounts?.setName(account, name);
       }
       this.send(c, { t: 'welcome', id: c.id, name: c.name ?? name, tag: c.tag, account: !!account });
+      this.send(c, { t: 'events', events: this.events });
       if (c.uid) this.rejoin(c);
       return;
     }
@@ -1198,6 +1217,7 @@ export class LobbyCore {
       mutes: this.staff.mutes.map((m) => this.mark(m)),
       words: this.staff.words,
       reports: this.staff.reports!.slice(0, 150),
+      events: this.events,
       ...(this.accounts ? { accountCount: this.accounts.count, accounts: this.accounts.find(admin.adminQuery) } : {}),
     };
   }
@@ -1310,6 +1330,26 @@ export class LobbyCore {
         for (const m of this.clients.values()) if (m.account === op.id && !m.admin) m.conn.close();
         this.log(`admin: account ${op.id.slice(0, 8)} signed out everywhere`);
         break;
+      case 'acctTickets':
+        if (!this.accounts) break;
+        this.accounts.giveTickets(op.id, op.n);
+        this.log(`admin: account ${op.id.slice(0, 8)} ${op.n > 0 ? '+' : ''}${op.n} tickets`);
+        break;
+      case 'acctStaff':
+        if (!this.accounts) break;
+        this.accounts.setStaff(op.id, op.on);
+        for (const m of this.clients.values()) if (m.account === op.id) m.badgeAt = undefined;
+        this.log(`admin: account ${op.id.slice(0, 8)} staff ${op.on ? 'on' : 'off'}`);
+        break;
+      case 'event': {
+        const now = this.now();
+        // On: until then (0 for as long as it is on); off: ended now (a bot match under way still counts it a while).
+        this.staff.events![op.kind] = op.on ? (op.minutes ? now + op.minutes * 60_000 : 0) : now;
+        this.saveStaff();
+        for (const m of this.clients.values()) if (m.name && !m.admin) this.send(m, { t: 'events', events: this.events });
+        this.log(`admin: ${op.kind} x${EVENT_MULT} ${op.on ? `on${op.minutes ? ` for ${op.minutes} min` : ''}` : 'off'}`);
+        break;
+      }
     }
     this.pushList();
     this.send(c, { t: 'admState', state: this.adminState(c) });

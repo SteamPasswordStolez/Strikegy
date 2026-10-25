@@ -6,6 +6,8 @@
  * signed in, to the server (bot matches checked there); a guest, to the local
  * profile as before. Light (the main menu uses it): no game modules.
  */
+import { setServerEvents } from './events';
+import type { ServerEvents } from './lobbyProtocol';
 import { loadIdentity, saveName } from './identity';
 import { loadJSON, saveJSON } from '@/core/storage';
 import { serverUrls } from './servers';
@@ -22,6 +24,8 @@ export interface AccountView {
   profile: Profile;
   /** The account's game name (the same on every device); empty until first set. */
   name?: string;
+  /** Marked as the server's staff (adds its own supply tickets in the shop). */
+  staff?: boolean;
 }
 
 export interface AccountConfig {
@@ -67,6 +71,8 @@ export async function apiBase(): Promise<string | null> {
       if (!res.ok) continue;
       const c = (await res.json()) as Partial<AccountConfig>;
       config = { providers: (c.providers ?? []).filter((p): p is Provider => p === 'google' || p === 'discord'), devLogin: c.devLogin === true };
+      // The server's double events (the menu's banner).
+      setServerEvents((c as { events?: ServerEvents }).events);
       base = http;
       return base;
     } catch {
@@ -143,6 +149,19 @@ export async function refreshAccount(): Promise<AccountView | null> {
   else if (loadIdentity().name) void setAccountName(loadIdentity().name!);
   changed();
   return cachedAccount();
+}
+
+/** The staff's own supply tickets (an account the admin page marked as staff): its tickets after, or null. */
+export async function staffTickets(n: number): Promise<number | null> {
+  if (!signedIn()) return null;
+  const { data } = await call<{ tickets?: number; profile?: Profile }>('/api/staffTickets', { n });
+  const profile = data?.profile ? cleanProfile(data.profile) : null;
+  const acc = cachedAccount();
+  if (profile && acc) {
+    saveJSON(CACHE_KEY, { ...acc, profile });
+    changed();
+  }
+  return typeof data?.tickets === 'number' ? data.tickets : null;
 }
 
 /** Who sees the account card in rooms (signed in): whether the server took it. */

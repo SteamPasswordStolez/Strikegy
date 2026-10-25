@@ -1,3 +1,4 @@
+import { t } from '@/i18n';
 import { item } from '@/progression/catalog';
 import type { Badge } from '@/net/lobbyProtocol';
 import { emblemSvg } from './cosmetics';
@@ -22,7 +23,8 @@ export function plateColour(b: Badge | undefined): string | null {
 export function badgeHtml(b: Badge | undefined, size = 16): string {
   if (!b) return '';
   const emb = b.emblem ? item(b.emblem)?.emblem : undefined;
-  const parts = [emb ? emblemSvg(emb, size) : '', b.lv ? `<span class="bdg-rank" title="${rankLabel(b.lv)}">${insigniaAt(b.lv)}</span>` : ''];
+  // The server's staff: a chip nobody else can have (the server sets it from the account).
+  const parts = [b.staff ? `<span class="bdg-staff">${t('pc.staff')}</span>` : '', emb ? emblemSvg(emb, size) : '', b.lv ? `<span class="bdg-rank" title="${rankLabel(b.lv)}">${insigniaAt(b.lv)}</span>` : ''];
   const html = parts.join('');
   return html ? `<span class="bdg" style="--bdg:${size}px">${html}</span>` : '';
 }

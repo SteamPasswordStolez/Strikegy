@@ -108,6 +108,8 @@ export interface TrackerOptions {
   weaponXp?: Readonly<Record<string, number>>;
   /** Boosters running at the start (seconds of match time left; step 5). */
   boost?: Partial<Record<BoostKind, number>>;
+  /** The server's double events on at the start (multipliers by kind; the staff turn them on). */
+  event?: Partial<Record<BoostKind, number>>;
   /** The field contract picked on the deploy screen. */
   contract?: string;
 }
@@ -184,6 +186,7 @@ export class ProgressTracker {
     tutorial: 0,
     ribbon: 0,
     booster: 0,
+    event: 0,
   };
   private readonly counts: MatchCounts = {};
   private readonly ribbons: Record<string, number> = {};
@@ -286,7 +289,10 @@ export class ProgressTracker {
     // The XP booster's share as a line of its own, so the result's parts add up.
     const boost = line !== 'tutorial' && this.boosting('xp') ? BOOSTERS.xp.mult : 1;
     if (boost > 1) this.base.booster += baseXp * (boost - 1);
-    const xp = baseXp * this.mult * boost;
+    // A double event on top (its own line too).
+    const ev = line !== 'tutorial' ? (this.opts.event?.xp ?? 1) : 1;
+    if (ev > 1) this.base.event += baseXp * boost * (ev - 1);
+    const xp = baseXp * this.mult * boost * ev;
     this.earned += xp;
     const c = this.classRow();
     if (c) c.xp += xp;
@@ -379,7 +385,7 @@ export class ProgressTracker {
       if (k.headshot) w.headshots++;
       const start = this.opts.weaponXp?.[weaponId] ?? 0;
       const before = weaponLevelOf(start + w.xp).level;
-      w.xp += (100 + (k.headshot ? 25 : 0)) * XP.perPoint * this.mult * (this.boosting('weapon') ? BOOSTERS.weapon.mult : 1);
+      w.xp += (100 + (k.headshot ? 25 : 0)) * XP.perPoint * this.mult * (this.boosting('weapon') ? BOOSTERS.weapon.mult : 1) * (this.opts.event?.weapon ?? 1);
       const after = weaponLevelOf(start + w.xp).level;
       for (let l = before + 1; l <= after; l++) this.onWeaponLevel?.({ weapon: weaponId, level: l });
       // Camo challenges: kills, headshots, three in a life, the kind's feat.
@@ -532,6 +538,13 @@ export class ProgressTracker {
     if (share > 0) {
       const more = Math.floor(total * (BOOSTERS.tickets.mult - 1) * share);
       put('booster', more);
+      total += more;
+    }
+    // A tickets double event on top.
+    const ev = this.opts.event?.tickets ?? 1;
+    if (ev > 1) {
+      const more = Math.floor(total * (ev - 1));
+      put('event', more);
       total += more;
     }
     return { total, lines };

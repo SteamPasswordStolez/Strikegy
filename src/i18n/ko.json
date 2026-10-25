@@ -1537,5 +1537,17 @@
   "pc.notePlaceholder": "무슨 일이 있었는지 짧게 적어 주세요(선택)",
   "pc.reportRule": "신고는 운영진에게만 전달되고 상대에게는 알려지지 않습니다. 최근 채팅이 함께 전달됩니다.",
   "pc.send": "신고하기",
-  "pc.reported": "신고가 접수되었습니다. 감사합니다."
+  "pc.reported": "신고가 접수되었습니다. 감사합니다.",
+  "event.title": "{x}배 이벤트 진행 중",
+  "event.kind.xp": "경험치",
+  "event.kind.weapon": "무기 경험치",
+  "event.kind.tickets": "보급표",
+  "event.leftDays": "{n}일 남음",
+  "event.leftHours": "{h}시간 {m}분 남음",
+  "event.leftMin": "{m}분 남음",
+  "xpLine.event": "2배 이벤트",
+  "tk.event": "2배 이벤트",
+  "pp.staffTickets": "＋ 보급표 (운영)",
+  "pp.staffAsk": "추가할 보급표 수 (빼려면 음수)",
+  "pc.staff": "운영"
 }

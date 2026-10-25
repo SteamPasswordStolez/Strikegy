@@ -30,7 +30,7 @@ import { getMigrations } from 'better-auth/db/migration';
 import { toNodeHandler } from 'better-auth/node';
 import { levelOf, xpForLevel } from '../src/progression/levels.ts';
 import { applySummary, cleanProfile, cleanSummary, newProfile, type Applied, type MatchSummary, type Profile } from '../src/progression/profile.ts';
-import { parseShopOp, runShopOp, settleCalendar } from '../src/progression/economy.ts';
+import { econOf, parseShopOp, runShopOp, settleCalendar } from '../src/progression/economy.ts';
 
 export interface AccountsOptions {
   /** The database file (':memory:' in tests). */
@@ -72,6 +72,8 @@ export interface AccountView {
   profile: Profile;
   /** The account's game name (the same on every device; owner, 2026-10-25), empty until first set. */
   name: string;
+  /** Marked as the server's staff (adds its own tickets in the shop). */
+  staff?: true;
 }
 
 function makeAuth(db: Database.Database, o: AccountsOptions) {
@@ -163,6 +165,8 @@ export class Accounts {
     const m = await getMigrations(auth.options);
     if (m.toBeCreated.length || m.toBeAdded.length) await m.runMigrations();
     db.exec('create table if not exists profile (userId text primary key, data text not null, name text, updatedAt integer not null)');
+    // The server's staff accounts (marked on the admin page; owner, 2026-10-25).
+    db.exec('create table if not exists staff (userId text primary key, at integer not null)');
     return new Accounts(db, auth, o);
   }
 
@@ -233,6 +237,27 @@ export class Accounts {
       .run(userId, JSON.stringify(p), name ?? null, this.now());
   }
 
+  /** Marked as the server's staff (on the admin page, which needs its key). */
+  isStaff(userId: string): boolean {
+    return !!this.db.prepare('select 1 from staff where userId = ?').get(userId);
+  }
+
+  setStaff(userId: string, on: boolean): void {
+    if (on) this.db.prepare('insert or ignore into staff (userId, at) values (?, ?)').run(userId, this.now());
+    else this.db.prepare('delete from staff where userId = ?').run(userId);
+  }
+
+  /** Supply tickets into an account (the staff's grant; never below 0). Its tickets after, or null without the account. */
+  giveTickets(userId: string, n: number): number | null {
+    if (!this.exists(userId) || !Number.isInteger(n)) return null;
+    const p = this.profile(userId);
+    const e = econOf(p);
+    e.tickets = Math.max(0, e.tickets + n);
+    this.save(userId, p);
+    this.opts.log?.(`account ${userId.slice(0, 8)}: ${n > 0 ? '+' : ''}${n} tickets by the staff`);
+    return e.tickets;
+  }
+
   /** The account's game name, if one is set. */
   nameOf(userId: string): string | null {
     return (this.db.prepare('select name from profile where userId = ?').get(userId) as { name?: string | null } | undefined)?.name || null;
@@ -275,7 +300,7 @@ export class Accounts {
     const before = JSON.stringify(p.econ);
     settleCalendar(p, this.now());
     if (JSON.stringify(p.econ) !== before) this.save(userId, p);
-    return { id: userId, providers: this.providersOf(userId), created: created === undefined ? 0 : new Date(created).getTime(), profile: p, name: this.nameOf(userId) ?? '' };
+    return { id: userId, providers: this.providersOf(userId), created: created === undefined ? 0 : new Date(created).getTime(), profile: p, name: this.nameOf(userId) ?? '', ...(this.isStaff(userId) ? { staff: true } : {}) };
   }
 
   /**
@@ -304,16 +329,18 @@ export class Accounts {
    * (no more XP than the match's length allows, the kills it allows, 1,000,000
    * bot-match XP a day), then added.
    */
-  solo(userId: string, raw: unknown): Applied | null {
+  solo(userId: string, raw: unknown, events: Partial<Record<'xp' | 'weapon' | 'tickets', number>> = {}): Applied | null {
     const s = cleanSummary(raw);
     if (!s) return null;
     s.kind = 'bots';
     s.seconds = Math.min(s.seconds, SOLO_SECONDS_MAX);
-    const cap = Math.floor(s.seconds * SOLO_XP_PER_SEC + SOLO_BONUS);
+    // A double event the staff ran during the match lifts its caps the same way.
+    const ev = { xp: events.xp ?? 1, weapon: events.weapon ?? 1, tickets: events.tickets ?? 1 };
+    const cap = Math.floor((s.seconds * SOLO_XP_PER_SEC + SOLO_BONUS) * ev.xp);
     const p = this.profile(userId);
     const day = new Date(this.now()).toISOString().slice(0, 10);
     const today = p.solo?.day === day ? p.solo.xp : 0;
-    const xp = Math.max(0, Math.min(s.xp, cap, SOLO_DAY_CAP - today));
+    const xp = Math.max(0, Math.min(s.xp, cap, SOLO_DAY_CAP * ev.xp - today));
     if (xp < s.xp) {
       // Cut down: everything that came from the match shrinks with it.
       const k = s.xp > 0 ? xp / s.xp : 0;
@@ -325,7 +352,7 @@ export class Accounts {
     const st = s.stats;
     const most = Math.ceil(s.seconds / 2);
     // Step 5: tickets within what the match's XP, ribbons, standing and bounties allow; counts within its length.
-    s.tickets = Math.min(s.tickets ?? 0, Math.floor(xp * 1.5 / 200) + 1500);
+    s.tickets = Math.min(s.tickets ?? 0, Math.floor(((xp * 1.5) / 200 + 1500) * ev.tickets));
     for (const [k, v] of Object.entries(s.counts ?? {})) (s.counts as Record<string, number>)[k] = Math.min(v ?? 0, k === 'seaDamage' ? s.seconds * 3000 : most);
     for (const [id, c] of Object.entries(s.camo ?? {})) {
       const kills = Math.min(s.weapons[id]?.kills ?? 0, most);
@@ -337,11 +364,11 @@ export class Accounts {
     for (const k of ['kills', 'headshots', 'meleeKills', 'revives', 'captures', 'neutralizes', 'builds', 'resupplies'] as const) if (st[k] !== undefined) st[k] = Math.min(st[k]!, most);
     if (st.headshots !== undefined) st.headshots = Math.min(st.headshots, st.kills ?? 0);
     // Weapon XP only comes from kills (a headshot kill on hard is the most, 1,500), and is part of the match's XP.
-    let left = xp;
+    let left = xp * ev.weapon;
     for (const w of Object.values(s.weapons)) {
       w.kills = Math.min(w.kills, most);
       w.headshots = Math.min(w.headshots, w.kills);
-      w.xp = Math.min(w.xp, w.kills * SOLO_WEAPON_KILL_XP, left);
+      w.xp = Math.min(w.xp, w.kills * SOLO_WEAPON_KILL_XP * ev.weapon, left);
       left -= w.xp;
     }
     const applied = applySummary(p, s, this.now());
@@ -404,7 +431,7 @@ export class Accounts {
   }
 
   /** Accounts for the admin page: by game name (part of it) or id prefix, newest first. */
-  find(query: string, limit = 30): { id: string; name: string; xp: number; level: number; matches: number; updated: number; providers: AccountProviders }[] {
+  find(query: string, limit = 30): { id: string; name: string; xp: number; level: number; matches: number; updated: number; providers: AccountProviders; tickets: number; staff: boolean }[] {
     const q = query.trim().slice(0, 40);
     const rows = this.db
       .prepare("select u.id as id, p.name as name, p.data as data, p.updatedAt as updatedAt from user u left join profile p on p.userId = u.id where (? = '' or p.name like ? escape '\\' or u.id like ?) order by coalesce(p.updatedAt, 0) desc limit ?")
@@ -417,7 +444,7 @@ export class Accounts {
         p = null;
       }
       const xp = p?.xp ?? 0;
-      return { id: r.id, name: r.name ?? '', xp, level: levelOf(xp).level, matches: (p?.stats.bots.matches ?? 0) + (p?.stats.multi.matches ?? 0), updated: r.updatedAt ?? 0, providers: this.providersOf(r.id) };
+      return { id: r.id, name: r.name ?? '', xp, level: levelOf(xp).level, matches: (p?.stats.bots.matches ?? 0) + (p?.stats.multi.matches ?? 0), updated: r.updatedAt ?? 0, providers: this.providersOf(r.id), tickets: p?.econ?.tickets ?? 0, staff: this.isStaff(r.id) };
     });
   }
 

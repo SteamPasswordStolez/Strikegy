@@ -1,3 +1,4 @@
+import { eventBanner } from './EventBanner';
 import { openCard, reportOn } from './ProfileCard';
 import { badgeHtml, plateColour } from './badges';
 import { t, type MessageKey } from '@/i18n';
@@ -458,6 +459,8 @@ export class MultiplayerMenu {
     body.classList.add('mpb');
     const top = el('div', 'mpb-top', body);
     this.idCard(top);
+    // A double event on: the banner beside the player's card.
+    eventBanner(top)?.classList.add('mpb-event');
     const acts = el('div', 'mpb-acts', top);
     const quick = button(acts, 'ds-btn primary', t('mp.quick'), 'play');
     quick.addEventListener('click', () => {

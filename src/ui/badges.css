@@ -15,6 +15,22 @@
   width: var(--bdg);
   height: var(--bdg);
 }
+.bdg-staff {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #e8b04a;
+  color: #1a1408;
+  font-size: 0.72em;
+  font-weight: 800;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+}
+.pc-name .bdg-staff {
+  margin-left: 8px;
+  vertical-align: 0.2em;
+  font-size: 0.5em;
+  text-shadow: none;
+}
 .bdg-rank {
   display: inline-flex;
   color: var(--fg-2, #c9c6bd);

@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -154,10 +154,31 @@ export interface Member {
  * the server, never from the browser.
  */
 export interface Badge {
+  /** The server's staff (marked on the admin page). */
+  staff?: boolean;
   lv?: number;
   card?: string;
   emblem?: string;
   plate?: string;
+}
+
+/**
+ * Server-wide double events the staff turn on from the admin page (owner,
+ * 2026-10-25): XP, weapon XP, supply tickets. Each kind: until when (ms;
+ * 0 for as long as it is on); a past time means it ended then.
+ */
+export type EventKind = 'xp' | 'weapon' | 'tickets';
+export const EVENT_KINDS: readonly EventKind[] = ['xp', 'weapon', 'tickets'];
+export type ServerEvents = Partial<Record<EventKind, number>>;
+/** What an event multiplies by. */
+export const EVENT_MULT = 2;
+
+/** The kinds on at `now`. */
+export function liveEvents(ev: ServerEvents | undefined, now: number): EventKind[] {
+  return EVENT_KINDS.filter((k) => {
+    const u = ev?.[k];
+    return u !== undefined && (u === 0 || u > now);
+  });
 }
 
 /** Who sees a person's account card: everything / name, rank and look / name and look only. */
@@ -417,6 +438,8 @@ export type ServerMsg =
   | { t: 'chat'; line: ChatLine }
   | { t: 'card'; card: PublicCard }
   | { t: 'reported' }
+  /** The server's double events (on hello and whenever the staff change them). */
+  | { t: 'events'; events: ServerEvents }
   /** The room's recent chat, on joining it. */
   | { t: 'chatLog'; lines: ChatLine[] }
   | { t: 'rooms'; rooms: RoomInfo[] }
@@ -465,7 +488,11 @@ export type AdminOp =
   | { op: 'acctReset'; id: string }
   | { op: 'acctRevoke'; id: string }
   /** A report seen to (or opened again). */
-  | { op: 'reportDone'; id: string; done: boolean };
+  | { op: 'reportDone'; id: string; done: boolean }
+  /** Supply tickets into an account (negative takes some away), the staff mark on an account, a double event (minutes 0: until turned off). */
+  | { op: 'acctTickets'; id: string; n: number }
+  | { op: 'acctStaff'; id: string; on: boolean }
+  | { op: 'event'; kind: EventKind; on: boolean; minutes: number };
 
 /** A connected person as the admin page sees them (`addr`: a short hash of the address, never the address). */
 export interface AdminPerson {
@@ -517,6 +544,7 @@ export interface AdminState {
   accounts?: AdminAccount[];
   /** The newest reports first. */
   reports?: AdminReport[];
+  events?: ServerEvents;
 }
 
 /** An account as the admin page sees it (no provider numbers: only which providers). */
@@ -528,6 +556,8 @@ export interface AdminAccount {
   matches: number;
   updated: number;
   providers: string[];
+  tickets?: number;
+  staff?: boolean;
 }
 
 const okId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,40}$/.test(v);
@@ -562,6 +592,12 @@ export function parseAdminOp(raw: unknown): AdminOp | null {
       return okId(raw.id) ? { op: raw.op, id: raw.id } : null;
     case 'reportDone':
       return okId(raw.id) && typeof raw.done === 'boolean' ? { op: 'reportDone', id: raw.id, done: raw.done } : null;
+    case 'acctTickets':
+      return okId(raw.id) && typeof raw.n === 'number' && Number.isInteger(raw.n) && Math.abs(raw.n) <= 10_000_000 && raw.n !== 0 ? { op: 'acctTickets', id: raw.id, n: raw.n } : null;
+    case 'acctStaff':
+      return okId(raw.id) && typeof raw.on === 'boolean' ? { op: 'acctStaff', id: raw.id, on: raw.on } : null;
+    case 'event':
+      return EVENT_KINDS.includes(raw.kind as EventKind) && typeof raw.on === 'boolean' && okMin(raw.minutes) ? { op: 'event', kind: raw.kind as EventKind, on: raw.on, minutes: raw.minutes } : null;
     default:
       return null;
   }

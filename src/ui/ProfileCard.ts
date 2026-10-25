@@ -74,6 +74,7 @@ export function showProfileCard(card: PublicCard, report?: () => void): void {
   const plate = plateColour(card.badge);
   if (plate) nm.style.setProperty('--plate', plate);
   el('span', 'pc-tag', nm, `#${card.tag}`);
+  if (card.badge?.staff) el('span', 'bdg-staff', nm, t('pc.staff'));
   const lv = card.badge?.lv;
   const rank = el('div', 'pc-rank', names);
   if (lv) {

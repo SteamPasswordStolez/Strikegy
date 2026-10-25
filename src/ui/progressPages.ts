@@ -14,7 +14,7 @@
  */
 import { t, type MessageKey } from '@/i18n';
 import { uiSound } from '@/audio/uiSounds';
-import { settledProfile, shopAction } from '@/net/account';
+import { cachedAccount, settledProfile, shopAction, staffTickets } from '@/net/account';
 import { RANKS, levelOf, nextRank, rankAt, xpForLevel, type Rank } from '@/progression/levels';
 import { weaponLevelOf } from '@/progression/unlocks';
 import { BUNDLES, BUNDLE_SHARE, CRAFT_PARTS, ITEMS, PRICE, RARITIES, SERIES, VEHICLE_CLASSES, item, levelRewards, seriesItems, weeklyPool, type Item, type ItemKind, type Rarity, type VehicleClass } from '@/progression/catalog';
@@ -336,6 +336,17 @@ export function renderShop(body: HTMLElement, o: PageOptions): void {
   const head = el('div', 'pp-head', body);
   const cur = tabs(head, 'shop', o);
   wallet(head, p);
+  // An account the admin page marked as staff adds supply tickets to itself (the server checks).
+  if (cachedAccount()?.staff) {
+    const b = el('button', 'ds-btn ghost pp-staff', head, t('pp.staffTickets'));
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      const raw = prompt(t('pp.staffAsk'), '10000');
+      const n = raw === null ? NaN : Math.trunc(Number(raw.replace(/[,\s]/g, '')));
+      if (!Number.isFinite(n) || n === 0) return;
+      void staffTickets(n).then(() => o.redraw());
+    });
+  }
   const main = el('div', 'pp-main', body);
   if (cur === 'featured') renderFeatured(main, p, o);
   else if (cur === 'depot') renderDepot(main, p, o);

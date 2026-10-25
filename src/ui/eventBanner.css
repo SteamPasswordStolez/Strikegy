@@ -1,0 +1,50 @@
+/* The double-event banner (ui/EventBanner.ts): main menu and multiplayer pages. */
+.evb {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u, 16px) * 0.7);
+  padding: calc(var(--u, 16px) * 0.5) calc(var(--u, 16px) * 0.9);
+  border-left: 3px solid #e8b04a;
+  background: linear-gradient(90deg, rgb(232 176 74 / 0.24), rgb(232 176 74 / 0.06));
+  color: #fff;
+  font-size: calc(var(--u, 16px) * 0.85);
+  animation: evb-in 0.4s ease-out both;
+}
+.evb > svg {
+  flex: none;
+  width: 1.4em;
+  height: 1.4em;
+  color: #e8b04a;
+}
+.evb-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.evb-text b {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.evb-text span {
+  opacity: 0.85;
+}
+.evb-left {
+  margin-left: auto;
+  white-space: nowrap;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes evb-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+/* On the main menu: under the wordmark, left. */
+.mm-body > .evb {
+  position: absolute;
+  top: calc(var(--u, 16px) * 7);
+  left: calc(var(--u, 16px) * 2.5);
+  max-width: min(92vw, calc(var(--u, 16px) * 26));
+  z-index: 2;
+}

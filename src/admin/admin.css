@@ -373,3 +373,9 @@ select.ad-btn {
   background: rgb(255 255 255 / 0.04);
   white-space: pre-wrap;
 }
+
+.ad-badge.staff {
+  margin-left: 6px;
+  background: #e8b04a;
+  color: #1a1408;
+}

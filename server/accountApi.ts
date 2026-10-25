@@ -10,6 +10,7 @@
  *   POST /api/logout   this session signed out
  *   POST /api/delete   the account and its progress, for good
  *   POST /api/shop       buying, boxes, the exchange, missions, mail, boosters, what is worn (step 5)
+ *   POST /api/staffTickets  the server's staff add tickets to their own account
  *   POST /api/dev-login  local testing only (`STRIKEGY_DEV_LOGIN`, local requests)
  *   GET  /api/link, /api/linked   the popup that joins a second provider to a signed-in account
  *
@@ -19,12 +20,13 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Accounts } from './accounts.ts';
+import { EVENT_KINDS, EVENT_MULT, type ServerEvents } from '../src/net/lobbyProtocol.ts';
 
 const BODY_MAX = 64 * 1024;
 /** Requests one address may make to the game's routes: a bucket, refilled a second. */
 const RATE = { burst: 30, perSecond: 0.5 } as const;
 
-export function accountApi(accounts: Accounts, log: (line: string) => void): (req: IncomingMessage, res: ServerResponse, addr: string) => void {
+export function accountApi(accounts: Accounts, log: (line: string) => void, events: () => ServerEvents = () => ({})): (req: IncomingMessage, res: ServerResponse, addr: string) => void {
   const buckets = new Map<string, { tokens: number; at: number }>();
   const take = (addr: string): boolean => {
     const now = Date.now();
@@ -95,7 +97,7 @@ export function accountApi(accounts: Accounts, log: (line: string) => void): (re
     if (req.method === 'GET' && (path === '/api/link' || path === '/api/linked' || path === '/api/link.js' || path === '/api/linked.js')) return linkPages(req, res, url, trusted, accounts.providers);
     if (!take(addr)) return json(res, 429, { error: 'rate' });
     void (async () => {
-      if (path === '/api/config' && req.method === 'GET') return json(res, 200, { providers: accounts.providers, devLogin: accounts.devLogin });
+      if (path === '/api/config' && req.method === 'GET') return json(res, 200, { providers: accounts.providers, devLogin: accounts.devLogin, events: events() });
       if (path === '/api/dev-login' && req.method === 'POST') {
         // Local testing only: never through the relay (it comes in as a local socket with a forwarded address).
         const local = /^(::ffff:)?127\.|^::1$/.test(req.socket.remoteAddress ?? '') && !req.headers['x-forwarded-for'] && !req.headers['cf-connecting-ip'];
@@ -119,6 +121,15 @@ export function accountApi(accounts: Accounts, log: (line: string) => void): (re
         const out = accounts.setPrivacy(userId, body?.privacy);
         return json(res, out ? 200 : 400, out ?? { error: 'bad' });
       }
+      if (path === '/api/staffTickets') {
+        // The server's staff add supply tickets to their own account (marked on the admin page).
+        if (!accounts.isStaff(userId)) return json(res, 403, { error: 'staff' });
+        const body = (await readBody(req)) as { n?: unknown } | null;
+        const n = body?.n;
+        if (typeof n !== 'number' || !Number.isInteger(n) || n === 0 || Math.abs(n) > 10_000_000) return json(res, 400, { error: 'bad' });
+        const tickets = accounts.giveTickets(userId, n);
+        return json(res, 200, { tickets, profile: accounts.profile(userId) });
+      }
       if (path === '/api/shop') {
         // The shop and the armory (step 5): one action a request.
         const out = accounts.shop(userId, await readBody(req));
@@ -127,7 +138,11 @@ export function accountApi(accounts: Accounts, log: (line: string) => void): (re
       }
       if (path === '/api/solo') {
         const body = (await readBody(req)) as { summary?: unknown } | null;
-        const applied = accounts.solo(userId, body?.summary);
+        // A double event on now, or ended within the hour (the match may have started under it).
+        const now = Date.now();
+        const ev = events();
+        const mult = Object.fromEntries(EVENT_KINDS.filter((k) => ev[k] !== undefined && (ev[k] === 0 || ev[k]! > now - 3600_000)).map((k) => [k, EVENT_MULT]));
+        const applied = accounts.solo(userId, body?.summary, mult);
         if (!applied) return json(res, 400, { error: 'bad' });
         const after = applied.profile.xp;
         return json(res, 200, { profile: applied.profile, before: after - (applied.profile.history[0]?.xp ?? 0), after, promotions: applied.promotions });

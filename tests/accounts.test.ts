@@ -173,6 +173,48 @@ describe('the lobby with accounts', () => {
     expect(state.reports[0]).toMatchObject({ reason: 'abuse', note: 'was rude', who: { name: 'Alpha' } });
     expect(state.reports[0]!.chat.some((l) => l.text === 'hello there')).toBe(true);
   });
+
+  it('the staff mark, ticket grants and double events from the admin page', async () => {
+    const acc = await accounts();
+    const core = new LobbyCore({ tagSecret: 'k', accounts: acc, adminKey: 'the-admin-key-123' });
+    const a = await acc.devAccount();
+    const admin = fake();
+    const aid = core.open(admin.conn);
+    await core.message(aid, JSON.stringify({ t: 'adminAuth', key: 'the-admin-key-123' }));
+    expect(admin.last('adminOk')).toBeTruthy();
+    const op = (o: unknown) => core.message(aid, JSON.stringify({ t: 'adm', op: o }));
+    await op({ op: 'acctStaff', id: a.userId, on: true });
+    await op({ op: 'acctTickets', id: a.userId, n: 5000 });
+    expect(acc.isStaff(a.userId)).toBe(true);
+    expect(acc.view(a.userId).staff).toBe(true);
+    expect(econOf(acc.profile(a.userId)).tickets).toBe(5000);
+    expect(acc.giveTickets(a.userId, -9999)).toBe(0);
+    // A player hears the events on hello; turning one on reaches everyone, and their badge says staff.
+    const p = fake();
+    const pid = core.open(p.conn);
+    await core.message(pid, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name: 'Kim', uid: 's1', device: 'desktop', token: a.token }));
+    expect(p.last('events')!.events).toEqual({});
+    await op({ op: 'event', kind: 'xp', on: true, minutes: 60 });
+    expect(p.last('events')!.events.xp).toBeGreaterThan(Date.now());
+    await core.message(pid, JSON.stringify({ t: 'create', settings }));
+    expect(p.last('room')!.room.members[0]!.badge?.staff).toBe(true);
+    await op({ op: 'event', kind: 'xp', on: false, minutes: 0 });
+    expect(p.last('events')!.events.xp).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('a double event doubles the match XP, weapon XP and tickets as lines of their own', () => {
+    const plain = new ProgressTracker({ kind: 'multi', map: 'lyon', mode: 'zone', difficulty: null, startXp: 0 });
+    const ev = new ProgressTracker({ kind: 'multi', map: 'lyon', mode: 'zone', difficulty: null, startXp: 0, event: { xp: 2, weapon: 2, tickets: 2 } });
+    for (const t of [plain, ev]) {
+      t.points('kill', 100, 0);
+      t.kill({ weapon: 'ar1', headshot: false, melee: false });
+    }
+    const a = plain.leave(5);
+    const b = ev.leave(5);
+    expect(b.xp).toBe(a.xp * 2);
+    expect(b.lines.find((l) => l.key === 'event')).toBeTruthy();
+    expect(b.weapons.ar1!.xp).toBe(a.weapons.ar1!.xp * 2);
+  });
 });
 
 describe('progress in a room on the server', () => {

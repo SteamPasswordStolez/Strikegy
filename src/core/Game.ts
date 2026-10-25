@@ -1,3 +1,4 @@
+import { eventMults } from '@/net/events';
 import { openCard } from '@/ui/ProfileCard';
 import { disposeTree } from '@/render/dispose';
 import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
@@ -5332,7 +5333,7 @@ export class Game {
     // A match left earlier (reloaded in the middle of it) counts as left before this one starts.
     settleLeft();
     const prof = currentProfile();
-    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: prof.xp, weaponXp: { ...ACCESS.weaponXp }, boost: boostsLeft(prof) });
+    const tr = new ProgressTracker({ kind: 'bots', map: this.mapId, mode: zm.kind, difficulty: b.difficulty, startXp: prof.xp, weaponXp: { ...ACCESS.weaponXp }, boost: boostsLeft(prof), event: eventMults() });
     tr.setClass(this.cls);
     tr.onLevel = (l) => {
       this.toast?.level(l.level, l.promoted, tr.liveXp);

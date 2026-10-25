@@ -1,3 +1,4 @@
+import { setServerEvents } from './events';
 import { loadSettings } from '@/core/Settings';
 import { PROTOCOL_VERSION, type ClientMsg, type Device, type ErrorCode, type ServerMsg } from './lobbyProtocol';
 
@@ -60,6 +61,8 @@ export class ServerLink {
       } catch {
         return;
       }
+      // The server's double events, for the banners and bot matches (whoever is listening).
+      if (msg.t === 'events') setServerEvents(msg.events);
       this.listeners.get(msg.t)?.forEach((fn) => fn(msg));
     });
     ws.addEventListener('close', () => {

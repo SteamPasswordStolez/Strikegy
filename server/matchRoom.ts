@@ -251,7 +251,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown; sex?: unknown; badge?: Badge }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown; sex?: unknown; badge?: Badge; event?: Partial<Record<'xp' | 'weapon' | 'tickets', number>> }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -260,7 +260,7 @@ export class MatchRoom {
       const id = this.nextId++;
       const soldier = this.sim.addSoldier(id, team, name);
       seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
-      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons, player.boost);
+      if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons, player.boost, player.event);
       seat.cos = cleanWorn(player.cos);
       seat.badge = player.badge ? { ...player.badge } : undefined;
       if (player.sex === 'f') seat.sex = 'f';
@@ -458,9 +458,9 @@ export class MatchRoom {
   }
 
   /** A signed-in player's tracker: levels reached are told to them as they happen. */
-  private tracker(seat: Seat, xp: number, weaponXp?: Record<string, number>, boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>): ProgressTracker {
+  private tracker(seat: Seat, xp: number, weaponXp?: Record<string, number>, boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>, event?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>): ProgressTracker {
     const lineup = this.opts.lineup ?? 'users';
-    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp, weaponXp, boost });
+    const tr = new ProgressTracker({ kind: 'multi', map: this.opts.map, mode: this.sim.zoneMode?.kind ?? this.opts.mode, difficulty: lineup === 'users' ? null : (this.opts.difficulty ?? 'normal'), startXp: xp, weaponXp, boost, event });
     tr.onLevel = (l) => seat.events.push({ k: 'prog', level: l.level, promoted: l.promoted, xp: tr.liveXp });
     tr.onWeaponLevel = (l) => seat.events.push({ k: 'wprog', weapon: l.weapon, level: l.level });
     tr.onRibbon = (r) => seat.events.push({ k: 'ribbon', id: r.id, n: r.count, xp: tr.liveXp });

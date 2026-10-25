@@ -119,7 +119,7 @@ export interface MatchSummary {
   /** Booster seconds used in the match. */
   boosted?: Partial<Record<BoostKind, number>>;
 }
-export type XpLineKey = 'score' | 'sea' | 'build' | 'refill' | 'complete' | 'win' | 'tutorial' | 'ribbon' | 'booster';
+export type XpLineKey = 'score' | 'sea' | 'build' | 'refill' | 'complete' | 'win' | 'tutorial' | 'ribbon' | 'booster' | 'event';
 export type MultKey = 'bots' | 'easy' | 'hard';
 
 const KEY = 'strikegy.profile.v1';
@@ -424,7 +424,7 @@ export function cleanSummary(raw: unknown): MatchSummary | null {
   const o = obj(raw);
   const results: readonly MatchResult[] = ['win', 'loss', 'left', 'idle', 'stopped'];
   if (!results.includes(o.result as MatchResult)) return null;
-  const lineKeys: readonly XpLineKey[] = ['score', 'sea', 'build', 'refill', 'complete', 'win', 'tutorial', 'ribbon', 'booster'];
+  const lineKeys: readonly XpLineKey[] = ['score', 'sea', 'build', 'refill', 'complete', 'win', 'tutorial', 'ribbon', 'booster', 'event'];
   const multKeys: readonly MultKey[] = ['bots', 'easy', 'hard'];
   const list = (v: unknown) => (Array.isArray(v) ? v.slice(0, 16).map(obj) : []);
   const stats: Partial<CareerStats> = {};

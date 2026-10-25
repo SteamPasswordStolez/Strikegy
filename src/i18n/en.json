@@ -1537,5 +1537,17 @@
   "pc.notePlaceholder": "What happened, in a few words (optional)",
   "pc.reportRule": "Reports go to the staff only; the player isn't told. The room's recent chat goes with it.",
   "pc.send": "Send report",
-  "pc.reported": "Report received. Thank you."
+  "pc.reported": "Report received. Thank you.",
+  "event.title": "{x}x event on",
+  "event.kind.xp": "XP",
+  "event.kind.weapon": "Weapon XP",
+  "event.kind.tickets": "Supply tickets",
+  "event.leftDays": "{n} days left",
+  "event.leftHours": "{h} h {m} min left",
+  "event.leftMin": "{m} min left",
+  "xpLine.event": "Double event",
+  "tk.event": "Double event",
+  "pp.staffTickets": "+ Tickets (staff)",
+  "pp.staffAsk": "Supply tickets to add (negative to take away)",
+  "pc.staff": "Staff"
 }

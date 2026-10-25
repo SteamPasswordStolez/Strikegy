@@ -1,3 +1,5 @@
+import { onServerEvents } from '@/net/events';
+import { eventBanner } from './EventBanner';
 import { setLocale, t, type MessageKey } from '@/i18n';
 import { isTouchDevice, loadSettings, saveSettings, type Settings } from '@/core/Settings';
 import { loadJSON, saveJSON } from '@/core/storage';
@@ -22,7 +24,7 @@ import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
-import { onAccountChange, refreshAccount, setAccountName, settleLeft, settledProfile, signedIn } from '@/net/account';
+import { accountConfig, onAccountChange, refreshAccount, setAccountName, settleLeft, settledProfile, signedIn } from '@/net/account';
 import { econOf } from '@/progression/economy';
 import { missionsCard, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
@@ -155,6 +157,11 @@ export class Lobby {
     void refreshAccount();
     onAccountChange(() => {
       if (this.screen === 'main' || this.screen === 'record' || this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') this.render();
+    });
+    // The server's double events: asked for with its config (signed in or not), the banner redrawn when they change.
+    void accountConfig();
+    onServerEvents(() => {
+      if (this.screen === 'main') this.render();
     });
     // First visit: a name before anything else.
     if (!this.playerName) this.editName(true);
@@ -514,6 +521,7 @@ export class Lobby {
     });
     for (const b of [lang, prof]) b.addEventListener('pointerenter', () => uiSound('hover'));
 
+    eventBanner(body);
     const menu = el('div', 'ds-menu mm-menu', body);
     ENTRIES.forEach((id, i) => {
       const size = id === 'play' ? ' hero' : BIG_ENTRIES.includes(id) ? '' : ' small';

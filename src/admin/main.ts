@@ -12,7 +12,7 @@
  * holding anyone's IP.
  */
 import './admin.css';
-import { PROTOCOL_VERSION, type AdminMark, type AdminOp, type AdminPerson, type AdminReport, type AdminRoom, type AdminState, type ChatLine, type ServerMsg } from '@/net/lobbyProtocol';
+import { EVENT_KINDS, PROTOCOL_VERSION, liveEvents, type EventKind, type AdminMark, type AdminOp, type AdminPerson, type AdminReport, type AdminRoom, type AdminState, type ChatLine, type ServerMsg } from '@/net/lobbyProtocol';
 
 /** Report reasons in Korean. */
 const REASON: Record<string, string> = { abuse: '욕설·비하', cheat: '핵·부정 행위', name: '부적절한 이름', grief: '팀 방해', other: '기타' };
@@ -59,7 +59,7 @@ const MAP: Record<string, string> = { iron_gate: '철문 주둔지', ardennes: '
 class AdminPage {
   private ws: WebSocket | null = null;
   private state: AdminState | null = null;
-  private tab: 'rooms' | 'people' | 'marks' | 'reports' | 'accounts' | 'tools' = 'rooms';
+  private tab: 'rooms' | 'people' | 'marks' | 'reports' | 'events' | 'accounts' | 'tools' = 'rooms';
   /** The reports tab shows seen-to reports too. */
   private reportsAll = false;
   /** The accounts tab's search (game name or id). */
@@ -215,6 +215,7 @@ class AdminPage {
       ['people', `접속자 ${people}`],
       ['marks', `제재 ${s.bans.length + s.mutes.length}`],
       ['reports', `신고 ${(s.reports ?? []).filter((x) => !x.done).length}`],
+      ['events', `이벤트${liveEvents(s.events, Date.now()).length ? ' ●' : ''}`],
       ...(s.accounts ? ([['accounts', `계정 ${s.accountCount ?? 0}`]] as const) : []),
       ['tools', '공지 · 금칙어'],
     ] as const) {
@@ -233,6 +234,7 @@ class AdminPage {
     else if (this.tab === 'people') this.people(s);
     else if (this.tab === 'marks') this.marks(s);
     else if (this.tab === 'reports') this.reports(s);
+    else if (this.tab === 'events') this.events(s);
     else if (this.tab === 'accounts') this.accounts(s);
     if (keep) {
       this.body.appendChild(keep);
@@ -391,13 +393,15 @@ class AdminPage {
     }
     const table = el('table', 'ad-table', this.body);
     const head = el('tr', '', el('thead', '', table));
-    for (const h of ['이름', '레벨', '경험치', '경기', '로그인', '최근', 'id', '']) el('th', '', head, h);
+    for (const h of ['이름', '레벨', '경험치', '보급표', '경기', '로그인', '최근', 'id', '']) el('th', '', head, h);
     const tbody = el('tbody', '', table);
     for (const a of list) {
       const tr = el('tr', '', tbody);
-      el('td', 'ad-who', tr, a.name || '-');
+      const who = el('td', 'ad-who', tr, a.name || '-');
+      if (a.staff) el('span', 'ad-badge staff', who, '운영');
       el('td', '', tr, `Lv ${a.level}`);
       el('td', '', tr, a.xp.toLocaleString());
+      el('td', '', tr, (a.tickets ?? 0).toLocaleString());
       el('td', '', tr, String(a.matches));
       el('td', '', tr, a.providers.map((p) => (p === 'google' ? 'Google' : p === 'discord' ? 'Discord' : p)).join(' · ') || '-');
       el('td', '', tr, a.updated ? time(a.updated) : '-');
@@ -405,6 +409,37 @@ class AdminPage {
       const acts = el('td', 'ad-acts', tr);
       this.button(acts, '진행 초기화', () => this.op({ op: 'acctReset', id: a.id }), `${a.name || a.id} 의 진행(레벨, 전적, 기록)을 처음으로 되돌릴까요? 되돌릴 수 없습니다.`, true);
       this.button(acts, '모든 기기 로그아웃', () => this.op({ op: 'acctRevoke', id: a.id }), `${a.name || a.id} 를 모든 기기에서 로그아웃시킬까요?`);
+      // Supply tickets (a prompt for how many; negative takes them away) and the staff mark.
+      this.button(acts, '보급표 지급', () => {
+        const raw = prompt(`${a.name || a.id} 에게 줄 보급표 수 (빼려면 음수)`, '10000');
+        const n = raw === null ? NaN : Math.trunc(Number(raw.replace(/[,\s]/g, '')));
+        if (Number.isFinite(n) && n !== 0) this.op({ op: 'acctTickets', id: a.id, n });
+      });
+      this.button(
+        acts,
+        a.staff ? '운영자 해제' : '운영자 지정',
+        () => this.op({ op: 'acctStaff', id: a.id, on: !a.staff }),
+        a.staff ? `${a.name || a.id} 의 운영자 표시를 뗄까요?` : `${a.name || a.id} 를 운영자로 지정할까요? 이름 옆에 "운영" 배지가 붙고, 상점에서 자기 보급표를 마음대로 늘릴 수 있게 됩니다. (관리자 페이지는 여전히 키로만 들어옵니다.)`,
+      );
+    }
+  }
+
+  /** The double events (owner, 2026-10-25): XP, weapon XP, supply tickets; the lobby's banner shows them. */
+  private events(s: AdminState): void {
+    el('p', 'ad-desc', this.body, '켜면 그때부터 시작하는 경기(멀티 방과 봇전)에 2배가 붙고, 메인 메뉴와 멀티 화면에 배너가 뜹니다. 이미 진행 중인 방은 다음 경기부터 적용됩니다.');
+    const now = Date.now();
+    const names: Record<EventKind, string> = { xp: '경험치 2배', weapon: '무기 경험치 2배', tickets: '보급표 2배' };
+    for (const k of EVENT_KINDS) {
+      const card = el('section', 'ad-room', this.body);
+      const sum = el('div', 'ad-sum', card);
+      el('b', '', sum, names[k]);
+      const u = s.events?.[k];
+      const on = u !== undefined && (u === 0 || u > now);
+      el('span', `ad-badge ${on ? 'playing' : ''}`, sum, on ? (u === 0 ? '진행 중 (끌 때까지)' : `진행 중 · ${time(u!)} 까지`) : '꺼짐');
+      const acts = el('div', 'ad-acts', card);
+      for (const [label, minutes] of [['1시간', 60], ['1일', 1440], ['7일', 10080], ['끌 때까지', 0]] as const)
+        this.button(acts, on ? `${label}로 다시` : `${label} 켜기`, () => this.op({ op: 'event', kind: k, on: true, minutes }), `${names[k]} 이벤트를 ${label} 켤까요?`);
+      if (on) this.button(acts, '끄기', () => this.op({ op: 'event', kind: k, on: false, minutes: 0 }), `${names[k]} 이벤트를 끌까요?`, true);
     }
   }
 
