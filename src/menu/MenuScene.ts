@@ -17,6 +17,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { Renderer } from '@/render/Renderer';
 import { LAYER_FX } from '@/render/layers';
 import { SurfaceLibrary } from '@/render/textures';
+import { loadSoldierAssets, sexOf } from '@/ai/soldierAssets';
 import { SoldierModel, type SoldierPose } from '@/ai/SoldierModel';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { FortModels, FORT_SIZE } from '@/world/fortModels';
@@ -223,7 +224,7 @@ export class MenuScene {
   static async create(host: HTMLElement, preset: QualityPreset): Promise<MenuScene> {
     const size = preset === 'low' ? 256 : 512;
     const surfaces = new SurfaceLibrary(size, 8);
-    await Promise.all([surfaces.preload(['ground', 'rock', 'concrete', 'wood', 'metal', 'brick_old', 'plaster'], ASSETS), surfaces.rasterizeAhead(['grass', 'paint', 'canvas'])]);
+    await Promise.all([surfaces.preload(['ground', 'rock', 'concrete', 'wood', 'metal', 'brick_old', 'plaster'], ASSETS), surfaces.rasterizeAhead(['grass', 'paint', 'canvas']), loadSoldierAssets()]);
     return new MenuScene(host, preset, surfaces);
   }
 
@@ -460,7 +461,7 @@ export class MenuScene {
   /** Five soldiers: three firing over the nest, one kneeling by the ammo, one walking up the line. */
   private squad(scene: THREE.Scene): void {
     const add = (gun: WeaponId, x: number, z: number, yaw: number, crouch: number, aimPitch: number, fires: boolean, path: Actor['path'] = null) => {
-      const model = new SoldierModel('blue', WEAPONS[gun]);
+      const model = new SoldierModel('blue', WEAPONS[gun], sexOf(this.actors.length + 3));
       scene.add(model.root);
       this.actors.push({ model, pos: new THREE.Vector3(x, heightAt(x, z) - 0.03, z), pose: { speed: 0, crouch, yaw, aimPitch, deadFor: -1, dt: 0 }, path, fires, nextShot: 0.5 + Math.random() * 2 });
     };

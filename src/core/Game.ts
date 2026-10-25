@@ -3837,7 +3837,7 @@ export class Game {
       return;
     }
     if (!this.rider) {
-      this.rider = new SoldierModel(this.myTeam, this.weapons.def);
+      this.rider = new SoldierModel(this.myTeam, this.weapons.def, this.settings.soldierSex);
       this.renderer.scene.add(this.rider.root);
     }
     const eye = r.v.seatEye(r.seat, new THREE.Vector3(), alpha);

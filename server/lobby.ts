@@ -95,6 +95,8 @@ export interface MatchPlayer {
   boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>;
   /** Signed in: what they wear that others see (skins, charms, kill effects, vehicle skins). */
   cos?: Worn;
+  /** Their soldier's body. */
+  sex?: 'f';
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -197,6 +199,8 @@ interface Client {
   id: string;
   name: string | null;
   device: Device;
+  /** Their soldier's body (from the hello). */
+  sex?: 'f';
   uid: string;
   room: string | null;
   /** On the room list page: gets the list pushed when it changes (no polling). */
@@ -730,7 +734,7 @@ export class LobbyCore {
   }
 
   private player(c: Client): MatchPlayer {
-    const p: MatchPlayer = { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined };
+    const p: MatchPlayer = { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined, ...(c.sex ? { sex: c.sex } : {}) };
     if (c.account && this.accounts) {
       const prof = this.accounts.profile(c.account);
       p.xp = prof.xp;
@@ -788,6 +792,7 @@ export class LobbyCore {
       // The tag comes from the account when signed in (the same on every device), else from the browser.
       c.tag = tagOf(this.tagSecret, account ? `acct${account.replace(/-/g, '')}` : msg.uid);
       c.device = msg.device;
+      c.sex = (msg as { sex?: unknown }).sex === 'f' ? 'f' : undefined;
       if (account) {
         this.accountOf.set(c.uid, account);
         this.accounts?.setName(account, name);

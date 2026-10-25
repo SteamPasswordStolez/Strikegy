@@ -31,6 +31,7 @@ import type { Soldier } from '@/sim/Soldier';
 import { WEAPONS, type WeaponDef, type WeaponId } from '@/weapons/weaponData';
 import { gunKey, withAttachments } from '@/weapons/attachments';
 import { gunWorn } from '@/progression/worn';
+import { sexOf, type Sex } from '@/ai/soldierAssets';
 import { botWeapon } from '@/ai/personality';
 import type { Vehicle } from '@/vehicles/Vehicle';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
@@ -151,6 +152,8 @@ class Remote {
   readonly samples: Sample[] = [];
   /** A person (not a bot): gets a name tag. */
   human = false;
+  /** Which body (people pick theirs; bots by id). */
+  sex: Sex = 'm';
   /** On this browser's side. */
   ally = false;
   private tag: THREE.Sprite | null = null;
@@ -368,7 +371,7 @@ class Remote {
     const def = this.defOf(weapon);
     if (!this.model || weapon !== this.weapon || gunKey(def) !== this.gun) {
       this.model?.dispose();
-      this.model = new SoldierModel(lookTeam(this.team), def);
+      this.model = new SoldierModel(lookTeam(this.team), def, this.sex);
       this.weapon = weapon;
       this.gun = gunKey(def);
       this.view.scene.add(this.model.root);
@@ -718,6 +721,7 @@ export class NetMatch {
       } else {
         r.name = info.name;
         r.human = !info.bot;
+        r.sex = info.bot ? sexOf(id) : info.sex === 'f' ? 'f' : 'm';
       }
     }
     this.onRoster();
@@ -745,6 +749,7 @@ export class NetMatch {
         const id = s.id;
         r.defOf = (w) => this.remoteDef(id, w);
         r.human = !!info && !info.bot;
+        r.sex = info && !info.bot ? (info.sex === 'f' ? 'f' : 'm') : sexOf(id);
         r.ally = !MATCH.ffa && r.team === this.myTeam;
         this.remotes.set(s.id, r);
       }

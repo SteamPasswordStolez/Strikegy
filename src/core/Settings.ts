@@ -38,6 +38,8 @@ export interface Settings {
   progressNotices: 'all' | 'levels' | 'off';
   /** Kill effects (progression step 6): everyone's, one's own only, or none (an ordinary fall). */
   killFx: 'all' | 'mine' | 'off';
+  /** The player's soldier: a man or a woman (owner, 2026-10-25; others see it in rooms). */
+  soldierSex: 'm' | 'f';
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -58,6 +60,7 @@ export const DEFAULT_SETTINGS: Settings = {
   menuScene: true,
   progressNotices: 'all',
   killFx: 'all',
+  soldierSex: 'm',
   musicVolume: 0.5,
   marshalMusic: true,
   inputMode: 'auto',

@@ -111,6 +111,8 @@ interface Seat {
   kit: Loadout | null;
   /** What they wear that others see (their account's; nothing for guests). */
   cos?: Worn;
+  /** Their soldier's body. */
+  sex?: 'f';
   /** Server tick when the player was ready, and inputs stepped since (the input budget). */
   readyTick: number;
   stepped: number;
@@ -247,7 +249,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown; sex?: unknown }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -258,6 +260,7 @@ export class MatchRoom {
       seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
       if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons, player.boost);
       seat.cos = cleanWorn(player.cos);
+      if (player.sex === 'f') seat.sex = 'f';
       this.hook(seat);
       this.seats.set(uid, seat);
       this.byId.set(id, seat);
@@ -800,7 +803,7 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}), ...(s.cos ? { cos: s.cos } : {}) }));
+    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}), ...(s.cos ? { cos: s.cos } : {}), ...(s.sex ? { sex: s.sex } : {}) }));
     for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0, bot: true });
     return out;
   }

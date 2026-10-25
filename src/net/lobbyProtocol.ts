@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -178,6 +178,8 @@ export interface MatchSoldierInfo {
   tag?: string;
   /** A person's attachments on the guns they carry (weapon id -> slot -> attachment id): others draw and hear them. */
   att?: Record<string, Partial<Record<'optic' | 'muzzle' | 'under' | 'mag' | 'laser', string>>>;
+  /** A person's body (their setting; bots' come from their id in every browser). */
+  sex?: 'f';
   /** What a signed-in person wears that others see (from their account): gun skins / charms / kill effects by weapon, vehicle skins by family. */
   cos?: { skin?: Record<string, string>; charm?: Record<string, string>; kfx?: Record<string, string>; vskin?: Record<string, string> };
 }
@@ -297,7 +299,7 @@ export type MatchEvent =
 
 export type ClientMsg =
   /** `token`: the account's session (signed in with Google / Discord); rooms need one. */
-  | { t: 'hello'; v: number; name: string; uid: string; device: Device; token?: string }
+  | { t: 'hello'; v: number; name: string; uid: string; device: Device; token?: string; sex?: 'm' | 'f' }
   | { t: 'list' }
   | { t: 'create'; settings: RoomSettings; password?: string }
   /** `team`: the side wanted (rooms where players pick their own). */

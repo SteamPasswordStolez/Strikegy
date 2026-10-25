@@ -1,3 +1,4 @@
+import { loadSettings } from '@/core/Settings';
 import { PROTOCOL_VERSION, type ClientMsg, type Device, type ErrorCode, type ServerMsg } from './lobbyProtocol';
 
 type Handlers = {
@@ -168,7 +169,8 @@ export class ServerLink {
       try {
         const ws = await open(url);
         const client = new ServerLink(ws);
-        const welcome = await client.request({ t: 'hello', v: PROTOCOL_VERSION, ...hello }, 'welcome');
+        // The player's soldier body goes with the hello (others see it in rooms).
+        const welcome = await client.request({ t: 'hello', v: PROTOCOL_VERSION, ...hello, sex: loadSettings().soldierSex }, 'welcome');
         client.id = welcome.id;
         client.name = welcome.name;
         client.tag = welcome.tag;

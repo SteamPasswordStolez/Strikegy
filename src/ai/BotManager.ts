@@ -16,7 +16,8 @@ import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
-import { SoldierModel, buildFarSoldierPose } from './SoldierModel';
+import { SoldierModel, buildFarSoldierPose, farSoldierMaterial } from './SoldierModel';
+import { sexOf } from './soldierAssets';
 import { botClass, botGuns, botWeapon, rollPersonality, weaponFor, type Personality } from './personality';
 import { botName } from './names';
 import { lobVelocity } from './ballistics';
@@ -564,7 +565,7 @@ export class BotManager implements BotServices {
         const style = rollPersonality(Math.random, cls);
         const bot = new Bot(botName(team, i), team, botWeapon(weaponFor(cls, style)), physics, registry, cls, style);
         this.respawn(bot);
-        const model = new SoldierModel(lookTeam(team), bot.def);
+        const model = new SoldierModel(lookTeam(team), bot.def, sexOf(bot.id));
         scene.add(model.root);
         const marker = team === mine && !MATCH.ffa ? this.makeMarker('#4d8cff') : null;
         if (marker) scene.add(marker);
@@ -618,7 +619,7 @@ export class BotManager implements BotServices {
     for (const team of ['blue', 'red'] as const) {
       // The near soldier, simplified and frozen in each pose: standing, mid-stride, crouched.
       this.far[team] = FAR_POSES.map((pose) => {
-        const m = new THREE.InstancedMesh(buildFarSoldierPose(team, pose), farMat, Math.max(1, room));
+        const m = new THREE.InstancedMesh(buildFarSoldierPose(team, pose), farSoldierMaterial(team) ?? farMat, Math.max(1, room));
         m.count = 0;
         m.frustumCulled = false;
         scene.add(m);
@@ -1295,7 +1296,7 @@ export class BotManager implements BotServices {
   /** New model on respawn (the bot may carry a different weapon). */
   private refreshModel(e: BotEntry): void {
     e.model.dispose();
-    e.model = new SoldierModel(lookTeam(e.bot.team), e.bot.def);
+    e.model = new SoldierModel(lookTeam(e.bot.team), e.bot.def, sexOf(e.bot.id));
     this.scene.add(e.model.root);
   }
 
@@ -3252,7 +3253,7 @@ export class BotManager implements BotServices {
     bot.health.value = o.health;
     bot.medkits = o.medkits;
     bot.grenadeCounts = o.grenades;
-    const model = new SoldierModel(lookTeam(o.team), bot.def);
+    const model = new SoldierModel(lookTeam(o.team), bot.def, sexOf(bot.id));
     this.scene.add(model.root);
     const e: BotEntry = {
       bot,

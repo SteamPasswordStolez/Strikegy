@@ -100,6 +100,7 @@ export class SettingsPanel {
       this.toggle(rows, 'lobby.showFps', 'showFps');
       this.choice(rows, 'lobby.progressNotices', 'progressNotices', ['all', 'levels', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.pn.${v}` as MessageKey)));
       this.choice(rows, 'lobby.killFx', 'killFx', ['all', 'mine', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.kfx.${v}` as MessageKey)));
+      this.choice(rows, 'lobby.soldierSex', 'soldierSex', ['m', 'f'] as const, (v) => t(`lobby.sex.${v}` as MessageKey));
       if (!this.opts.live) this.toggle(rows, 'lobby.menuScene', 'menuScene');
     } else {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
@@ -177,7 +178,7 @@ export class SettingsPanel {
     });
   }
 
-  private choice<K extends 'quality' | 'locale' | 'progressNotices' | 'inputMode' | 'killFx', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
+  private choice<K extends 'quality' | 'locale' | 'progressNotices' | 'inputMode' | 'killFx' | 'soldierSex', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const v of values) {
       const b = el('button', v === this.s[key] ? 'sel' : '', seg);

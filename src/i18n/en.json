@@ -1502,5 +1502,9 @@
   "pp.confirmAfter": "After",
   "pp.confirmBuy": "Confirm",
   "pp.cancel": "Cancel",
-  "pp.craft": "Make"
+  "pp.craft": "Make",
+  "lobby.soldierSex": "My soldier",
+  "lobby.sex.m": "Male",
+  "lobby.sex.f": "Female",
+  "setDesc.soldierSex": "Your soldier's body, seen in third person aboard and by others in rooms. Hit areas are the same."
 }

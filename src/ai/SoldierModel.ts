@@ -6,12 +6,16 @@ import { WEAPONS, type WeaponDef } from '@/weapons/weaponData';
 import { buildGun } from '@/weapons/gunModels';
 import { gunKey } from '@/weapons/attachments';
 import { weld, withIndex } from '@/render/geometryIndex';
+import { MID_FROM, loadSoldierAssets, soldierAsset, type Sex, type SoldierAsset } from './soldierAssets';
 
 /**
- * Procedural soldier: one rigidly skinned mesh (a single draw call) with a
- * small skeleton — hips, spine, head, an aim bone carrying the arms and rifle,
- * and two-segment legs. Animated procedurally: walk cycle, crouch, aim pitch,
- * hit flinch and a death fall.
+ * A soldier: the AI-made model of the side and sex (soldierAssets.ts, owner
+ * 2026-10-25) skinned to a small skeleton — hips, spine, head, an aim bone
+ * carrying the arms (upper arm, forearm, hand, bent onto the gun by two-bone
+ * IK once per weapon) and the rifle, and two-segment legs — with the gun as a
+ * second mesh on the aim bone. Without the models (the game server, tests) the
+ * procedural body: one rigidly skinned mesh, arms fixed on the aim bone.
+ * Animated procedurally: walk cycle, crouch, aim pitch, hit flinch and a death fall.
  */
 
 const enum B {
@@ -24,10 +28,18 @@ const enum B {
   ShinL,
   ThighR,
   ShinR,
+  UpperArmL,
+  ForeArmL,
+  HandL,
+  UpperArmR,
+  ForeArmR,
+  HandR,
 }
 
-/** Bind-pose joint positions (model space, feet at origin, facing -Z). */
-const JOINTS: Record<B, [number, number, number]> = {
+type Joints = Record<B, [number, number, number]>;
+
+/** Bind-pose joint positions of the procedural body (model space, feet at origin, facing -Z; it has no arm bones). */
+const JOINTS: Joints = {
   [B.Root]: [0, 0, 0],
   [B.Hips]: [0, 0.95, 0],
   [B.Spine]: [0, 1.08, 0],
@@ -37,6 +49,12 @@ const JOINTS: Record<B, [number, number, number]> = {
   [B.ShinL]: [-0.1, 0.5, 0],
   [B.ThighR]: [0.1, 0.92, 0],
   [B.ShinR]: [0.1, 0.5, 0],
+  [B.UpperArmL]: [-0.21, 1.43, 0],
+  [B.ForeArmL]: [-0.5, 1.43, 0],
+  [B.HandL]: [-0.75, 1.43, 0],
+  [B.UpperArmR]: [0.21, 1.43, 0],
+  [B.ForeArmR]: [0.5, 1.43, 0],
+  [B.HandR]: [0.75, 1.43, 0],
 };
 const PARENT: Record<B, B | -1> = {
   [B.Root]: -1,
@@ -48,7 +66,69 @@ const PARENT: Record<B, B | -1> = {
   [B.ShinL]: B.ThighL,
   [B.ThighR]: B.Hips,
   [B.ShinR]: B.ThighR,
+  [B.UpperArmL]: B.Aim,
+  [B.ForeArmL]: B.UpperArmL,
+  [B.HandL]: B.ForeArmL,
+  [B.UpperArmR]: B.Aim,
+  [B.ForeArmR]: B.UpperArmR,
+  [B.HandR]: B.ForeArmR,
 };
+
+/** The aim joint the gun and arm targets are laid out against (the procedural body's). */
+const AIM0 = new THREE.Vector3(...JOINTS[B.Aim]);
+
+/** The model's joints in the skeleton's order. */
+function assetJoints(a: SoldierAsset): Joints {
+  const j = a.joints;
+  const v = (x: number[]): [number, number, number] => [x[0]!, x[1]!, x[2]!];
+  return {
+    [B.Root]: [0, 0, 0],
+    [B.Hips]: v(j.hips),
+    [B.Spine]: v(j.spine),
+    [B.Head]: v(j.head),
+    [B.Aim]: v(j.aim),
+    [B.ThighL]: v(j.thighL),
+    [B.ShinL]: v(j.shinL),
+    [B.ThighR]: v(j.thighR),
+    [B.ShinR]: v(j.shinR),
+    [B.UpperArmL]: v(j.shoulderL),
+    [B.ForeArmL]: v(j.elbowL),
+    [B.HandL]: v(j.wristL),
+    [B.UpperArmR]: v(j.shoulderR),
+    [B.ForeArmR]: v(j.elbowR),
+    [B.HandR]: v(j.wristR),
+  };
+}
+
+/**
+ * Two-bone IK in the aim bone's frame: the upper arm and forearm (resting
+ * along the T-pose arm line) turned so the wrist reaches `wrist`, the elbow
+ * bent toward `pole`; the hand rolled by `roll` about the forearm.
+ */
+function bendArm(J: Joints, upper: THREE.Bone, fore: THREE.Bone, hand: THREE.Bone, side: B.UpperArmL | B.UpperArmR, wrist: THREE.Vector3, pole: THREE.Vector3, roll: number): void {
+  const aim = new THREE.Vector3(...J[B.Aim]);
+  const S = new THREE.Vector3(...J[side]).sub(aim);
+  const E0 = new THREE.Vector3(...J[(side + 1) as B]).sub(aim);
+  const W0 = new THREE.Vector3(...J[(side + 2) as B]).sub(aim);
+  const l1 = E0.distanceTo(S);
+  const l2 = W0.distanceTo(E0);
+  const to = wrist.clone().sub(S);
+  const d = Math.min(Math.max(to.length(), 0.05), l1 + l2 - 1e-3);
+  to.normalize();
+  // The elbow: in the plane of the target and the pole, at the angle the lengths give.
+  const a = Math.acos(Math.min(1, Math.max(-1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+  const toPole = pole.clone().sub(S);
+  const n = new THREE.Vector3().crossVectors(to, toPole).normalize();
+  const dirSE = to.clone().applyAxisAngle(n, a);
+  const E = S.clone().addScaledVector(dirSE, l1);
+  const W = S.clone().addScaledVector(to, d);
+  const restU = E0.clone().sub(S).normalize();
+  const restF = W0.clone().sub(E0).normalize();
+  upper.quaternion.setFromUnitVectors(restU, dirSE);
+  const dirEW = W.sub(E).normalize().applyQuaternion(upper.quaternion.clone().invert());
+  fore.quaternion.setFromUnitVectors(restF, dirEW);
+  hand.quaternion.setFromAxisAngle(restF, roll);
+}
 
 interface Palette {
   uniform: number;
@@ -76,6 +156,9 @@ const PALETTES: Record<Team, Palette> = {
 
 /** Where the gun's grip (trigger origin) sits in model space. */
 const GRIP = new THREE.Vector3(0.09, 1.4, -0.12);
+
+/** The hands' roll about the forearm on the model (T-pose palms face down): right palm onto the grip, left under the handguard. */
+const ARM_ROLL = { right: -1.2, left: 1.4 };
 
 type Part = { geo: THREE.BufferGeometry; bone: B; color: number };
 
@@ -226,6 +309,40 @@ function buildGeometry(parts: Part[]): THREE.BufferGeometry {
 const geometryCache = new Map<string, { geo: THREE.BufferGeometry; muzzle: THREE.Vector3 }>();
 let sharedMaterial: THREE.MeshStandardMaterial | null = null;
 
+/** The gun as its own vertex-coloured mesh in the aim bone's frame (the model path), and the hand targets. */
+const gunCache = new Map<string, { geo: THREE.BufferGeometry; muzzle: THREE.Vector3; grip: THREE.Vector3; support: THREE.Vector3 }>();
+let gunMaterial: THREE.MeshStandardMaterial | null = null;
+function gunMeshFor(def: WeaponDef): { geo: THREE.BufferGeometry; muzzle: THREE.Vector3; grip: THREE.Vector3; support: THREE.Vector3 } {
+  const key = gunKey(def);
+  let g = gunCache.get(key);
+  if (g) return g;
+  const gun = gunParts(def);
+  const c = new THREE.Color();
+  const geos = gun.parts.map(({ geo, color }) => {
+    const q = withIndex(geo);
+    for (const k of Object.keys(q.attributes)) if (k !== 'position' && k !== 'normal') q.deleteAttribute(k);
+    const n = q.getAttribute('position').count;
+    const col = new Float32Array(n * 3);
+    c.setHex(color, THREE.SRGBColorSpace);
+    for (let i = 0; i < n; i++) c.toArray(col, i * 3);
+    q.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return q.translate(-AIM0.x, -AIM0.y, -AIM0.z);
+  });
+  const soup = mergeGeometries(geos, false)!;
+  geos.forEach((q) => q.dispose());
+  const geo = weld(soup);
+  soup.dispose();
+  geo.computeBoundingSphere();
+  g = {
+    geo,
+    muzzle: gun.muzzle.clone().sub(AIM0),
+    grip: GRIP.clone().add(V(0, -0.04, 0.05)).sub(AIM0),
+    support: gun.support.clone().add(V(0, -0.02, 0.03)).sub(AIM0),
+  };
+  gunCache.set(key, g);
+  return g;
+}
+
 export interface SoldierPose {
   /** Horizontal speed, m/s. */
   speed: number;
@@ -245,7 +362,12 @@ export class SoldierModel {
   readonly root = new THREE.Group();
   readonly mesh: THREE.SkinnedMesh;
   private readonly bones: THREE.Bone[] = [];
-  private readonly muzzleLocal: THREE.Vector3;
+  /** The muzzle in the aim bone's frame. */
+  private readonly muzzleAim: THREE.Vector3;
+  /** Near / mid looks of the model (null on the procedural body). */
+  private lod: THREE.LOD | null = null;
+  /** This body's joints (the model's, or the procedural body's). */
+  readonly joints: Joints;
   private phase = 0;
   private flinch = 0;
   /** Which way a hit twists the torso (-1 / 1). */
@@ -254,23 +376,16 @@ export class SoldierModel {
   /** How the body falls: 0 back, 1 forward (running), 2 crumpling onto a side. */
   private deathKind = 0;
 
-  constructor(team: Team, def: WeaponDef) {
-    const key = `${team}:${gunKey(def)}`;
-    let cached = geometryCache.get(key);
-    if (!cached) {
-      const gun = gunParts(def);
-      cached = { geo: buildGeometry(bodyParts(PALETTES[team], gun.parts, gun.support)), muzzle: gun.muzzle };
-      geometryCache.set(key, cached);
-    }
-    this.muzzleLocal = cached.muzzle;
-    sharedMaterial ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05 });
-
-    for (let b = B.Root; b <= B.ShinR; b++) {
+  constructor(team: Team, def: WeaponDef, sex: Sex = 'm') {
+    const asset = soldierAsset(team, sex);
+    this.joints = asset ? assetJoints(asset) : JOINTS;
+    const last = asset ? B.HandR : B.ShinR;
+    for (let b = B.Root; b <= last; b++) {
       const bone = new THREE.Bone();
-      const [x, y, z] = JOINTS[b];
+      const [x, y, z] = this.joints[b];
       const parent = PARENT[b];
       if (parent !== -1) {
-        const [px, py, pz] = JOINTS[parent];
+        const [px, py, pz] = this.joints[parent];
         bone.position.set(x - px, y - py, z - pz);
         this.bones[parent]!.add(bone);
       } else {
@@ -278,15 +393,58 @@ export class SoldierModel {
       }
       this.bones.push(bone);
     }
-    this.mesh = new THREE.SkinnedMesh(cached.geo, sharedMaterial);
-    this.mesh.add(this.bones[B.Root]!);
-    this.mesh.bind(new THREE.Skeleton(this.bones));
+    if (asset) {
+      // The model, bound in its T-pose, then the arms bent onto this gun (once: the gun is fixed on the aim bone).
+      this.mesh = new THREE.SkinnedMesh(asset.near, asset.material);
+      // The bones hang off the soldier's root, not a look: whichever look is shown, they stay updated
+      // (the game updates the matrices of shown objects only).
+      this.root.add(this.bones[B.Root]!);
+      this.root.updateMatrixWorld(true);
+      const skeleton = new THREE.Skeleton(this.bones);
+      this.mesh.bind(skeleton);
+      // Near and mid looks on one skeleton, switched by distance.
+      const mid = new THREE.SkinnedMesh(asset.mid, asset.midMaterial);
+      mid.bind(skeleton, this.mesh.bindMatrix);
+      mid.frustumCulled = false;
+      mid.castShadow = false;
+      this.lod = new THREE.LOD();
+      this.lod.addLevel(this.mesh, 0);
+      this.lod.addLevel(mid, MID_FROM);
+      gunMaterial ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2 });
+      const gun = gunMeshFor(def);
+      const gunMesh = new THREE.Mesh(gun.geo, gunMaterial);
+      gunMesh.castShadow = false;
+      this.bones[B.Aim]!.add(gunMesh);
+      this.muzzleAim = gun.muzzle;
+      const J = this.joints;
+      const aim = new THREE.Vector3(...J[B.Aim]);
+      const sR = new THREE.Vector3(...J[B.UpperArmR]).sub(aim);
+      const sL = new THREE.Vector3(...J[B.UpperArmL]).sub(aim);
+      // Wrists a hand's length short of where the hands hold; right elbow out and down, left under the gun.
+      const wristR = gun.grip.clone().addScaledVector(gun.grip.clone().sub(sR).normalize(), -0.06);
+      const wristL = gun.support.clone().addScaledVector(gun.support.clone().sub(sL).normalize(), -0.06);
+      bendArm(J, this.bones[B.UpperArmR]!, this.bones[B.ForeArmR]!, this.bones[B.HandR]!, B.UpperArmR, wristR, sR.clone().add(V(0.35, -0.3, 0.1)), ARM_ROLL.right);
+      bendArm(J, this.bones[B.UpperArmL]!, this.bones[B.ForeArmL]!, this.bones[B.HandL]!, B.UpperArmL, wristL, sL.clone().add(V(-0.1, -0.4, -0.15)), ARM_ROLL.left);
+    } else {
+      const key = `${team}:${gunKey(def)}`;
+      let cached = geometryCache.get(key);
+      if (!cached) {
+        const gun = gunParts(def);
+        cached = { geo: buildGeometry(bodyParts(PALETTES[team], gun.parts, gun.support)), muzzle: gun.muzzle };
+        geometryCache.set(key, cached);
+      }
+      this.muzzleAim = cached.muzzle.clone().sub(AIM0);
+      sharedMaterial ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05 });
+      this.mesh = new THREE.SkinnedMesh(cached.geo, sharedMaterial);
+      this.mesh.add(this.bones[B.Root]!);
+      this.mesh.bind(new THREE.Skeleton(this.bones));
+    }
     // Shadows are static (rendered once for the map), so moving soldiers would
     // leave frozen shadows behind; BotManager draws blob shadows instead.
     this.mesh.castShadow = false;
     // Bones move the vertices outside the bind-pose bounds (crouch, death).
     this.mesh.frustumCulled = false;
-    this.root.add(this.mesh);
+    this.root.add(this.lod ?? this.mesh);
   }
 
   private static readonly warmed = new Set<string>();
@@ -304,6 +462,8 @@ export class SoldierModel {
 
   /** `prewarm` in pieces of about 80 ms, with `pause` between them (the loading screen draws meanwhile). */
   static async prewarmSteps(teams: readonly Team[], defs: readonly WeaponDef[], pause: () => Promise<void>): Promise<void> {
+    // The models first (once a page): the soldiers made from here on wear them.
+    await loadSoldierAssets();
     let since = performance.now();
     for (const team of teams)
       for (const def of defs) {
@@ -343,7 +503,7 @@ export class SoldierModel {
     const c = p.crouch;
 
     const hips = bones[B.Hips]!;
-    hips.position.y = JOINTS[B.Hips][1] - c * 0.4 + Math.abs(Math.sin(this.phase)) * 0.03 * moving;
+    hips.position.y = this.joints[B.Hips][1] - c * 0.4 + Math.abs(Math.sin(this.phase)) * 0.03 * moving;
     // Positive x swings a limb forward (-Z). Crouch is a kneel: left shin upright
     // under a raised knee, right knee on the ground with the shin trailing back.
     bones[B.ThighL]!.rotation.x = swing + c * 1.2;
@@ -356,7 +516,7 @@ export class SoldierModel {
     bones[B.Aim]!.rotation.x = p.aimPitch + c * 0.25 + fl * 0.2;
     bones[B.Head]!.rotation.x = p.aimPitch * 0.6 + c * 0.2 + fl * 0.15;
     if (p.seated) {
-      hips.position.y = JOINTS[B.Hips][1] - 0.45;
+      hips.position.y = this.joints[B.Hips][1] - 0.45;
       bones[B.ThighL]!.rotation.x = bones[B.ThighR]!.rotation.x = 1.45;
       bones[B.ShinL]!.rotation.x = bones[B.ShinR]!.rotation.x = -1.4;
     }
@@ -392,9 +552,7 @@ export class SoldierModel {
   muzzleWorld(out: THREE.Vector3): THREE.Vector3 {
     const aim = this.bones[B.Aim]!;
     aim.updateWorldMatrix(true, false);
-    // Muzzle is in model space; express it relative to the aim joint.
-    const [x, y, z] = JOINTS[B.Aim];
-    return out.set(this.muzzleLocal.x - x, this.muzzleLocal.y - y, this.muzzleLocal.z - z).applyMatrix4(aim.matrixWorld);
+    return out.copy(this.muzzleAim).applyMatrix4(aim.matrixWorld);
   }
 
   dispose(): void {
@@ -429,6 +587,7 @@ function tiny(geo: THREE.BufferGeometry): boolean {
  * vertex-coloured geometry (feet at 0, facing -Z) drawn instanced.
  */
 export function buildFarSoldierPose(team: Team, pose: 'stand' | 'run' | 'crouch'): THREE.BufferGeometry {
+  const asset = soldierAsset(team, 'm');
   // Posed by a normal soldier (same skeleton and animation code).
   const poser = new SoldierModel(team, WEAPONS.ar1);
   const p: SoldierPose = { speed: pose === 'run' ? 6 : 0, crouch: pose === 'crouch' ? 1 : 0, yaw: 0, aimPitch: 0, deadFor: -1, dt: 0 };
@@ -436,7 +595,9 @@ export function buildFarSoldierPose(team: Team, pose: 'stand' | 'run' | 'crouch'
   if (pose === 'run') poser.update(new THREE.Vector3(), { ...p, dt: Math.PI / 2 / (4 + 6 * 1.6) });
   poser.update(new THREE.Vector3(), p);
   const skin = poser.boneMatrices();
+  const aimJoint = new THREE.Vector3(...poser.joints[B.Aim]);
   poser.dispose();
+  if (asset) return farFromModel(asset, skin, aimJoint);
 
   lowDetail = true;
   const gun = farGunParts();
@@ -459,4 +620,61 @@ export function buildFarSoldierPose(team: Team, pose: 'stand' | 'run' | 'crouch'
   soup.dispose();
   merged.computeBoundingSphere();
   return merged;
+}
+
+/** The far crowd's soldier from the model's far look: skinned on the CPU into the pose, with a plain rifle painted the texture's darkest texel. */
+function farFromModel(asset: SoldierAsset, skin: THREE.Matrix4[], aimJoint: THREE.Vector3): THREE.BufferGeometry {
+  const src = asset.far;
+  const pos = src.getAttribute('position');
+  const nrm = src.getAttribute('normal');
+  const si = src.getAttribute('skinIndex');
+  const sw = src.getAttribute('skinWeight');
+  const n = pos.count;
+  const p = new Float32Array(n * 3);
+  const nr = new Float32Array(n * 3);
+  const v = new THREE.Vector3();
+  const vn = new THREE.Vector3();
+  const acc = new THREE.Vector3();
+  const accN = new THREE.Vector3();
+  const nm = new THREE.Matrix3();
+  for (let i = 0; i < n; i++) {
+    acc.set(0, 0, 0);
+    accN.set(0, 0, 0);
+    for (let k = 0; k < 4; k++) {
+      const w = sw.getComponent(i, k);
+      if (w <= 0) continue;
+      const m = skin[si.getComponent(i, k)]!;
+      acc.addScaledVector(v.fromBufferAttribute(pos, i).applyMatrix4(m), w);
+      accN.addScaledVector(vn.fromBufferAttribute(nrm, i).applyMatrix3(nm.getNormalMatrix(m)), w);
+    }
+    acc.toArray(p, i * 3);
+    accN.normalize().toArray(nr, i * 3);
+  }
+  const body = new THREE.BufferGeometry();
+  body.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  body.setAttribute('normal', new THREE.BufferAttribute(nr, 3));
+  body.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(Array.from({ length: n * 2 }, (_, i) => (src.getAttribute('uv') as THREE.BufferAttribute).getComponent(Math.floor(i / 2), i % 2))), 2));
+  body.setIndex(src.getIndex()!.clone());
+  // The plain rifle, laid out against the procedural aim joint, moved onto the model's and posed with the aim bone.
+  const gunGeos = farGunParts().parts.map(({ geo }) => {
+    const g = withIndex(geo).translate(aimJoint.x - AIM0.x, aimJoint.y - AIM0.y, aimJoint.z - AIM0.z).applyMatrix4(skin[B.Aim]!);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    const uv = new Float32Array(g.getAttribute('position').count * 2);
+    for (let i = 0; i < uv.length; i += 2) {
+      uv[i] = asset.dark[0];
+      uv[i + 1] = asset.dark[1];
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    return g;
+  });
+  const merged = mergeGeometries([body, ...gunGeos], false)!;
+  body.dispose();
+  gunGeos.forEach((g) => g.dispose());
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+/** The far crowd's material for a side: the model's texture, or the procedural body's vertex colours. */
+export function farSoldierMaterial(team: Team): THREE.Material | null {
+  return soldierAsset(team, 'm')?.farMaterial ?? null;
 }

@@ -1502,5 +1502,9 @@
   "pp.confirmAfter": "구매 후",
   "pp.confirmBuy": "구매 확정",
   "pp.cancel": "취소",
-  "pp.craft": "만들기"
+  "pp.craft": "만들기",
+  "lobby.soldierSex": "내 병사",
+  "lobby.sex.m": "남성",
+  "lobby.sex.f": "여성",
+  "setDesc.soldierSex": "내 병사의 모습입니다. 탈것의 3인칭과 멀티플레이 방에서 다른 사람에게 보입니다. 맞는 판정은 같습니다."
 }
