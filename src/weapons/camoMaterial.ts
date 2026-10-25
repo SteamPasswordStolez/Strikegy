@@ -115,7 +115,7 @@ vec4 camoColor() {
     vec2 a = mod(q, r) - r * 0.5; vec2 b = mod(q - r * 0.5, r) - r * 0.5;
     vec2 g = dot(a, a) < dot(b, b) ? a : b;
     float edge = smoothstep(0.38, 0.45, max(abs(g.x) * 0.866 + abs(g.y) * 0.5, abs(g.y)));
-    return vec4(mix(mix(camoB, camoA, cNoise(floor(q * 1.3) + 3.0)), camoC, edge), 0.0);
+    return vec4(mix(mix(camoB, camoA, cNoise(vec3(floor(q * 1.3) + 3.0, 0.0))), camoC, edge), 0.0);
   }
   if (kind == 15) {
     // Splinter: hard-edged angular shards.
