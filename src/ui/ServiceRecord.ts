@@ -21,7 +21,7 @@ import { uiSound } from '@/audio/uiSounds';
 import { weaponLevelOf, weaponLocked, weaponUnlockLevel } from '@/progression/unlocks';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { icon } from './icons';
-import { accountConfig, cachedAccount, currentProfile, deleteAccount, linkProvider, signOut, signedIn } from '@/net/account';
+import { accountConfig, cachedAccount, currentProfile, deleteAccount, linkProvider, setPrivacy, signOut, signedIn } from '@/net/account';
 import { loginButtons } from './loginButtons';
 import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
 import './progress.css';
@@ -235,6 +235,24 @@ function account(parent: HTMLElement, p: Profile, o: ServiceRecordOptions): void
     // Signed in: which providers, joining the other one, signing out, deleting the account.
     const who = acc?.providers.length ? acc.providers.map((x) => t(`acct.name.${x}` as MessageKey)).join(' · ') : t(acc ? 'acct.name.test' : 'acct.checking');
     el('div', 'sr-acts-note', parent, t('acct.signedInWith').replace('{who}', who));
+    // Who sees this account's card in rooms (owner, 2026-10-25).
+    const priv = el('div', 'sr-priv', parent);
+    el('span', 'sr-priv-label', priv, t('acct.visibility'));
+    const seg = el('div', 'ds-seg', priv);
+    const now = p.flags.privacy ?? 'public';
+    for (const v of ['public', 'rank', 'private'] as const) {
+      const b = el('button', v === now ? 'sel' : '', seg, t(`acct.visibility.${v}` as MessageKey));
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        if (v === now) return;
+        uiSound('select');
+        void setPrivacy(v).then((ok) => {
+          if (!ok) dialog(o.root, t('acct.visibilityFailed'), null);
+          o.redraw();
+        });
+      });
+    }
+    el('div', 'sr-acts-note', parent, t(`acct.visibilityNote.${now}` as MessageKey));
     void accountConfig().then((cfg) => {
       for (const prov of cfg?.providers ?? [])
         if (acc && !acc.providers.includes(prov))

@@ -6,6 +6,7 @@
  * signed in, to the server (bot matches checked there); a guest, to the local
  * profile as before. Light (the main menu uses it): no game modules.
  */
+import { loadIdentity, saveName } from './identity';
 import { loadJSON, saveJSON } from '@/core/storage';
 import { serverUrls } from './servers';
 import { applySummary, cleanProfile, loadProfile, newProfile, saveProfile, settleAbandoned, type MatchSummary, type Profile } from '@/progression/profile';
@@ -19,6 +20,8 @@ export interface AccountView {
   providers: Provider[];
   created: number;
   profile: Profile;
+  /** The account's game name (the same on every device); empty until first set. */
+  name?: string;
 }
 
 export interface AccountConfig {
@@ -135,8 +138,40 @@ export async function refreshAccount(): Promise<AccountView | null> {
   const { data } = await call<AccountView>('/api/me');
   if (!data) return cachedAccount();
   saveJSON(CACHE_KEY, data);
+  // The account's name on this device too; an account without one takes this device's.
+  if (data.name) saveName(data.name);
+  else if (loadIdentity().name) void setAccountName(loadIdentity().name!);
   changed();
   return cachedAccount();
+}
+
+/** Who sees the account card in rooms (signed in): whether the server took it. */
+export async function setPrivacy(privacy: 'public' | 'rank' | 'private'): Promise<boolean> {
+  if (!signedIn()) return false;
+  const { data } = await call<{ privacy?: string }>('/api/privacy', { privacy });
+  if (data?.privacy !== privacy) return false;
+  const acc = cachedAccount();
+  if (acc) {
+    const flags = { ...acc.profile.flags };
+    if (privacy === 'public') delete flags.privacy;
+    else flags.privacy = privacy;
+    saveJSON(CACHE_KEY, { ...acc, profile: { ...acc.profile, flags } });
+    changed();
+  }
+  return true;
+}
+
+/** Renames the account (signed in): the name it took, or an error code ('name' / 'words' / 'offline'). */
+export async function setAccountName(name: string): Promise<{ name?: string; error?: string }> {
+  if (!signedIn()) return { error: 'offline' };
+  const { data } = await call<{ name?: string; error?: string }>('/api/name', { name });
+  if (!data) return { error: 'offline' };
+  if (data.name) {
+    saveName(data.name);
+    const acc = cachedAccount();
+    if (acc) saveJSON(CACHE_KEY, { ...acc, name: data.name });
+  }
+  return data;
 }
 
 /**

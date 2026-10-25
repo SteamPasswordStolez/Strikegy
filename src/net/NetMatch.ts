@@ -14,6 +14,7 @@
  *   them), except the one this browser's player drives: that one it drives
  *   itself and sends where it has it with the inputs.
  */
+import { emblemImage, plateColour } from '@/ui/badges';
 import * as THREE from 'three';
 import { MATCH, lookTeam } from '@/modes/matchFlags';
 import { SoldierModel } from '@/ai/SoldierModel';
@@ -37,7 +38,7 @@ import type { Vehicle } from '@/vehicles/Vehicle';
 import type { VehicleWorld } from '@/vehicles/VehicleWorld';
 import type { Team } from '@/world/mapTypes';
 import type { ServerLink } from './ServerLink';
-import type { MatchEvent, MatchSoldierInfo, MatchStart, ServerMsg } from './lobbyProtocol';
+import type { Badge, MatchEvent, MatchSoldierInfo, MatchStart, ServerMsg } from './lobbyProtocol';
 import { INTERP_TICKS, SF, THING, TICK_HZ, VF, decodeSnapshot, encodeInputFrame, packInput, type NetBots, type NetInput, type NetVehicle, type Snapshot } from './matchProtocol';
 
 export interface NetOptions {
@@ -89,24 +90,39 @@ const REDUNDANT = 6;
 const CORRECT_MIN = 0.02;
 
 /** Someone else in the match, as this browser draws them. */
-/** A name over a person's head: allies seen through walls, enemies only when in sight. */
-function nameTag(name: string, ally: boolean): THREE.Sprite {
+/**
+ * A name over a person's head: allies seen through walls, enemies only when in
+ * sight. A signed-in person's emblem sits before it and their plate's colour
+ * underlines it (the name keeps the side's colour: friend or foe first).
+ */
+function nameTag(name: string, ally: boolean, badge: Badge | undefined, emblem: HTMLImageElement | null): THREE.Sprite {
   const c = document.createElement('canvas');
-  c.width = 256;
+  c.width = 320;
   c.height = 64;
   const g = c.getContext('2d')!;
   g.font = 'bold 30px Bahnschrift, "Malgun Gothic", sans-serif';
-  g.textAlign = 'center';
   g.textBaseline = 'middle';
+  const left = emblem ? 52 : 0;
+  const w = Math.min(g.measureText(name).width, 300 - left);
+  const x0 = (320 - (w + left)) / 2;
+  if (emblem) g.drawImage(emblem, x0, 10, 44, 44);
+  g.textAlign = 'left';
   g.lineWidth = 6;
   g.strokeStyle = 'rgba(0,0,0,0.75)';
-  g.strokeText(name, 128, 32, 248);
+  g.strokeText(name, x0 + left, 30, 300 - left);
   g.fillStyle = ally ? '#7fb6ff' : '#ff7a6b';
-  g.fillText(name, 128, 32, 248);
+  g.fillText(name, x0 + left, 30, 300 - left);
+  const plate = plateColour(badge);
+  if (plate) {
+    g.fillStyle = 'rgba(0,0,0,0.6)';
+    g.fillRect(x0 + left - 1, 49, w + 2, 7);
+    g.fillStyle = plate;
+    g.fillRect(x0 + left, 50, w, 5);
+  }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: !ally, depthWrite: false, sizeAttenuation: false, toneMapped: false }));
-  s.scale.set(0.1, 0.025, 1);
+  s.scale.set(0.125, 0.025, 1);
   s.renderOrder = 10;
   s.layers.set(LAYER_FX);
   return s;
@@ -154,6 +170,8 @@ class Remote {
   human = false;
   /** Which body (people pick theirs; bots by id). */
   sex: Sex = 'm';
+  /** A signed-in person's emblem, rank and plate. */
+  badge: Badge | undefined;
   /** On this browser's side. */
   ally = false;
   private tag: THREE.Sprite | null = null;
@@ -453,12 +471,14 @@ class Remote {
       this.tag?.removeFromParent();
       return;
     }
-    if (!this.tag || this.tagText !== this.name) {
+    const emblem = this.badge?.emblem ? emblemImage(this.badge.emblem, () => (this.tagText = '')) : null;
+    const key = `${this.name}|${emblem ? this.badge!.emblem : ''}|${this.badge?.plate ?? ''}`;
+    if (!this.tag || this.tagText !== key) {
       this.tag?.removeFromParent();
       this.tag?.material.map?.dispose();
       this.tag?.material.dispose();
-      this.tag = nameTag(this.name, this.ally);
-      this.tagText = this.name;
+      this.tag = nameTag(this.name, this.ally, this.badge, emblem);
+      this.tagText = key;
     }
     this.tag.position.set(this.pos.x, this.pos.y + 2.15 - this.crouch * 0.6, this.pos.z);
     if (!this.tag.parent) this.view.scene.add(this.tag);
@@ -722,6 +742,7 @@ export class NetMatch {
         r.name = info.name;
         r.human = !info.bot;
         r.sex = info.bot ? sexOf(id) : info.sex === 'f' ? 'f' : 'm';
+        r.badge = info.badge;
       }
     }
     this.onRoster();
@@ -750,6 +771,7 @@ export class NetMatch {
         r.defOf = (w) => this.remoteDef(id, w);
         r.human = !!info && !info.bot;
         r.sex = info && !info.bot ? (info.sex === 'f' ? 'f' : 'm') : sexOf(id);
+        r.badge = info?.badge;
         r.ally = !MATCH.ffa && r.team === this.myTeam;
         this.remotes.set(s.id, r);
       }

@@ -107,6 +107,18 @@ export function accountApi(accounts: Accounts, log: (line: string) => void): (re
       if (!userId) return json(res, 401, { error: 'login' });
       if (path === '/api/me' && req.method === 'GET') return json(res, 200, accounts.view(userId));
       if (req.method !== 'POST') return json(res, 404, { error: 'none' });
+      if (path === '/api/name') {
+        // The account's game name (the same on every device).
+        const body = (await readBody(req)) as { name?: unknown } | null;
+        const out = accounts.rename(userId, body?.name);
+        return json(res, 'error' in out ? 400 : 200, out);
+      }
+      if (path === '/api/privacy') {
+        // Who sees the account card in rooms.
+        const body = (await readBody(req)) as { privacy?: unknown } | null;
+        const out = accounts.setPrivacy(userId, body?.privacy);
+        return json(res, out ? 200 : 400, out ?? { error: 'bad' });
+      }
       if (path === '/api/shop') {
         // The shop and the armory (step 5): one action a request.
         const out = accounts.shop(userId, await readBody(req));

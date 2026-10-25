@@ -516,3 +516,15 @@ body.overlay-up .pt {
 .sr-privacy:hover {
   color: var(--ink);
 }
+
+/* The record's "who sees my card" row (multiplayer account cards). */
+.sr-priv {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.75);
+  margin-top: calc(var(--u) * 0.6);
+}
+.sr-priv-label {
+  font-size: var(--fs-sm, 0.85em);
+  color: var(--ink-2, #c9c6bd);
+}

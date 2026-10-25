@@ -14,6 +14,10 @@ export async function serverUrls(): Promise<string[]> {
   } catch {
     /* no file: fall through */
   }
-  if (import.meta.env.DEV) list = [`ws://${location.hostname || 'localhost'}:8787/play`, ...list];
+  if (import.meta.env.DEV) {
+    // Dev: `?server=ws://localhost:<port>/play` when 8787 is taken (Windows can reserve it).
+    const forced = new URLSearchParams(location.search).get('server');
+    list = [forced && /^wss?:\/\//.test(forced) ? forced : `ws://${location.hostname || 'localhost'}:8787/play`, ...list];
+  }
   return list;
 }

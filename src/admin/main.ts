@@ -12,7 +12,10 @@
  * holding anyone's IP.
  */
 import './admin.css';
-import { PROTOCOL_VERSION, type AdminMark, type AdminOp, type AdminPerson, type AdminRoom, type AdminState, type ChatLine, type ServerMsg } from '@/net/lobbyProtocol';
+import { PROTOCOL_VERSION, type AdminMark, type AdminOp, type AdminPerson, type AdminReport, type AdminRoom, type AdminState, type ChatLine, type ServerMsg } from '@/net/lobbyProtocol';
+
+/** Report reasons in Korean. */
+const REASON: Record<string, string> = { abuse: '욕설·비하', cheat: '핵·부정 행위', name: '부적절한 이름', grief: '팀 방해', other: '기타' };
 
 const KEY_STORE = 'strikegy.admin.key';
 /** How often the state is asked for (ms). */
@@ -56,7 +59,9 @@ const MAP: Record<string, string> = { iron_gate: '철문 주둔지', ardennes: '
 class AdminPage {
   private ws: WebSocket | null = null;
   private state: AdminState | null = null;
-  private tab: 'rooms' | 'people' | 'marks' | 'accounts' | 'tools' = 'rooms';
+  private tab: 'rooms' | 'people' | 'marks' | 'reports' | 'accounts' | 'tools' = 'rooms';
+  /** The reports tab shows seen-to reports too. */
+  private reportsAll = false;
   /** The accounts tab's search (game name or id). */
   private acctQuery = '';
   private open = new Set<string>();
@@ -209,6 +214,7 @@ class AdminPage {
       ['rooms', `방 ${s.rooms.length}`],
       ['people', `접속자 ${people}`],
       ['marks', `제재 ${s.bans.length + s.mutes.length}`],
+      ['reports', `신고 ${(s.reports ?? []).filter((x) => !x.done).length}`],
       ...(s.accounts ? ([['accounts', `계정 ${s.accountCount ?? 0}`]] as const) : []),
       ['tools', '공지 · 금칙어'],
     ] as const) {
@@ -226,6 +232,7 @@ class AdminPage {
     if (this.tab === 'rooms') this.rooms(s);
     else if (this.tab === 'people') this.people(s);
     else if (this.tab === 'marks') this.marks(s);
+    else if (this.tab === 'reports') this.reports(s);
     else if (this.tab === 'accounts') this.accounts(s);
     if (keep) {
       this.body.appendChild(keep);
@@ -328,6 +335,37 @@ class AdminPage {
         this.button(el('td', 'ad-acts', tr), '해제', () => this.op({ op, id: m.id }), `${m.name}#${m.tag} 의 ${title}를 풀까요?`);
       }
     }
+  }
+
+  /** Players' reports (owner, 2026-10-25): who, why, the room's chat at the time; marked seen to here. */
+  private reports(s: AdminState): void {
+    el('p', 'ad-desc', this.body, '방 안에서 플레이어가 보낸 신고입니다. 신고 당시 방의 최근 채팅(팀 채팅 포함)이 함께 저장됩니다. 제재는 접속자 탭에서 하고, 처리한 신고는 "처리함"으로 넘기세요.');
+    const row = el('div', 'ad-row', this.body);
+    this.button(row, this.reportsAll ? '처리 안 한 것만' : '처리한 것도 보기', () => {
+      this.reportsAll = !this.reportsAll;
+      this.draw();
+    });
+    const list = (s.reports ?? []).filter((x) => this.reportsAll || !x.done);
+    if (!list.length) {
+      el('div', 'ad-empty', this.body, '신고가 없습니다.');
+      return;
+    }
+    for (const r of list) this.report(r);
+  }
+
+  private report(r: AdminReport): void {
+    const card = el('section', `ad-room${r.done ? ' ad-done' : ''}`, this.body);
+    const sum = el('div', 'ad-sum', card);
+    el('span', 'ad-badge', sum, REASON[r.reason] ?? r.reason);
+    el('b', '', sum, `${r.who.name}#${r.who.tag}`);
+    el('span', 'ad-dim', sum, `${r.who.account ? `계정 ${r.who.account.slice(0, 8)}` : '손님'} · 주소 ${r.who.addr}`);
+    el('span', 'ad-dim', sum, `신고자 ${r.from.name}#${r.from.tag} · 방 "${r.room}" · ${time(r.at)}`);
+    if (r.note) el('div', 'ad-note', card, r.note);
+    const acts = el('div', 'ad-acts', card);
+    this.button(acts, r.done ? '다시 열기' : '처리함', () => this.op({ op: 'reportDone', id: r.id, done: !r.done }));
+    const log = el('div', 'ad-chat', card);
+    if (!r.chat.length) el('div', 'ad-dim', log, '대화 없음');
+    for (const line of r.chat) this.chatLine(log, line);
   }
 
   /** Accounts (progression step 2): find by game name or id, reset progress, sign out everywhere. */

@@ -1,4 +1,6 @@
 import { t } from '@/i18n';
+import type { Badge } from '@/net/lobbyProtocol';
+import { badgeHtml, plateStyle } from './badges';
 import './ds.css';
 import './scoreboard.css';
 
@@ -6,6 +8,8 @@ export interface ScoreboardRow {
   name: string;
   /** A person's server tag in a multiplayer match (names can repeat across rooms, tags can't be copied). */
   tag?: string;
+  /** A signed-in person's emblem, rank and plate. */
+  badge?: Badge;
   squad: string | null;
   kills: number;
   deaths: number;
@@ -37,12 +41,18 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 export class Scoreboard {
   readonly root: HTMLDivElement;
   private last = '';
+  /** A person's row was clicked (their tag): the result screen opens their account card. */
+  onPick: ((tag: string) => void) | null = null;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
     this.root.className = 'scoreboard ds-root hidden';
     this.root.dataset.dsTheme = 'bfv';
     parent.appendChild(this.root);
+    this.root.addEventListener('click', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-tag]');
+      if (row?.dataset.tag) this.onPick?.(row.dataset.tag);
+    });
   }
 
   get visible(): boolean {
@@ -80,7 +90,8 @@ export class Scoreboard {
       .map((r) => {
         const c = ['sb-row', r.you ? 'you' : '', r.mate ? 'mate' : '', r.alive ? '' : 'dead'].filter(Boolean).join(' ');
         return (
-          `<div class="${c}"><span class="sb-sq">${r.squad ? esc(r.squad.slice(0, 1)) : ''}</span><span class="sb-name">${esc(r.name)}${r.tag ? `<span class="sb-tag">#${esc(r.tag)}</span>` : ''}</span>` +
+          `<div class="${c}"${r.tag ? ` data-tag="${esc(r.tag)}"` : ''}><span class="sb-sq">${r.squad ? esc(r.squad.slice(0, 1)) : ''}</span>` +
+          `<span class="sb-name">${badgeHtml(r.badge, 14)}<span class="bdg-name"${plateStyle(r.badge)}>${esc(r.name)}</span>${r.tag ? `<span class="sb-tag">#${esc(r.tag)}</span>` : ''}</span>` +
           `<span>${r.kills}</span><span>${r.deaths}</span><span>${r.captures}</span><span class="sb-score">${r.score}</span></div>`
         );
       })

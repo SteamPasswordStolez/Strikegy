@@ -16,7 +16,7 @@ import { setNavFiles } from '../src/ai/navCache.ts';
 import { sanitizeLoadout, type AttachOk, type ClassId, type Loadout } from '../src/data/classes.ts';
 import { STATION } from '../src/modes/fortify.ts';
 import { createInputState, type InputState } from '../src/input/InputState.ts';
-import type { AdoptBot, Lineup, MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
+import type { AdoptBot, Badge, Lineup, MatchEvent, MatchSoldierInfo, MatchStart, ScoreRowMsg, ServerMsg } from '../src/net/lobbyProtocol.ts';
 import {
   REWIND_MAX,
   SF,
@@ -113,6 +113,8 @@ interface Seat {
   cos?: Worn;
   /** Their soldier's body. */
   sex?: 'f';
+  /** Their level, card, emblem and plate (from the lobby, the account's). */
+  badge?: Badge;
   /** Server tick when the player was ready, and inputs stepped since (the input budget). */
   readyTick: number;
   stepped: number;
@@ -249,7 +251,7 @@ export class MatchRoom {
    * A player joins (or comes back: same uid, same soldier). Sends them the
    * match's start message; snapshots follow once they say they're ready.
    */
-  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown; sex?: unknown }, conn: MatchConn): void {
+  join(player: { uid: string; name: string; tag?: string; team?: Team; xp?: number; weapons?: Record<string, number>; boost?: Partial<Record<'xp' | 'weapon' | 'tickets', number>>; cos?: unknown; sex?: unknown; badge?: Badge }, conn: MatchConn): void {
     const { uid, name } = player;
     let seat = this.seats.get(uid);
     if (!seat) {
@@ -260,6 +262,7 @@ export class MatchRoom {
       seat = { uid, name, tag: player.tag ?? '', soldier, conn, ready: false, queue: [], lastSeq: 0, ack: 0, input: createInputState(), events: [], kit: null, readyTick: 0, stepped: 0, hits: 0, farHeads: 0, flagged: false, drive: null, refused: 0, hostBots: false, botStates: new Map(), botEvents: [], botView: 0, serverBots: new Set(), lastFrameAt: -Infinity, lag: -1, aims: [], snapHeads: 0, kicked: false, progress: null, lastAim: [0, 0] };
       if (player.xp !== undefined) seat.progress = this.tracker(seat, player.xp, player.weapons, player.boost);
       seat.cos = cleanWorn(player.cos);
+      seat.badge = player.badge ? { ...player.badge } : undefined;
       if (player.sex === 'f') seat.sex = 'f';
       this.hook(seat);
       this.seats.set(uid, seat);
@@ -803,7 +806,7 @@ export class MatchRoom {
   }
 
   private roster(): MatchSoldierInfo[] {
-    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}), ...(s.cos ? { cos: s.cos } : {}), ...(s.sex ? { sex: s.sex } : {}) }));
+    const out: MatchSoldierInfo[] = [...this.seats.values()].map((s) => ({ id: s.soldier.id, name: s.name, tag: s.tag || undefined, team: s.soldier.team, squad: this.sim.squadOf(s.soldier.id)?.index ?? 0, ...(s.kit?.attach ? { att: s.kit.attach } : {}), ...(s.cos ? { cos: s.cos } : {}), ...(s.sex ? { sex: s.sex } : {}), ...(s.badge ? { badge: s.badge } : {}) }));
     for (const b of this.sim.bots?.bots ?? []) if (!b.benched) out.push({ id: b.id, name: b.name, team: b.team, squad: this.sim.squadOf(b.id)?.index ?? 0, bot: true });
     return out;
   }

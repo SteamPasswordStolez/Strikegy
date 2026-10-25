@@ -8,7 +8,7 @@
  */
 
 /** Bumped whenever a message changes shape; a mismatch asks the player to reload. */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 export type Device = 'desktop' | 'mobile';
 export type Lineup = 'users' | 'usersBots' | 'coop';
@@ -143,6 +143,56 @@ export interface Member {
   away?: boolean;
   /** The owner took their chat away (in this room). */
   muted?: boolean;
+  /** Signed in: what they show beside their name (their account's). */
+  badge?: Badge;
+}
+
+/**
+ * What a signed-in person shows beside their name in rooms, on name tags and
+ * on the scoreboard (owner, 2026-10-25): their level (left out when they hide
+ * it) and the card, emblem and name plate they put on. From their account on
+ * the server, never from the browser.
+ */
+export interface Badge {
+  lv?: number;
+  card?: string;
+  emblem?: string;
+  plate?: string;
+}
+
+/** Who sees a person's account card: everything / name, rank and look / name and look only. */
+export type Privacy = 'public' | 'rank' | 'private';
+export const PRIVACIES: readonly Privacy[] = ['public', 'rank', 'private'];
+
+/** A person's account card as others see it (asked for by tag, in one's room). */
+export interface PublicCard {
+  name: string;
+  tag: string;
+  /** Signed in (guests have only a name). */
+  account: boolean;
+  privacy: Privacy;
+  badge?: Badge;
+  /** 'public' only: their record, every kind of match together. */
+  stats?: { matches: number; wins: number; kills: number; deaths: number; headshots: number; hours: number; best?: string; since: number };
+}
+
+/** Why someone is reported. */
+export const REPORT_REASONS = ['abuse', 'cheat', 'name', 'grief', 'other'] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+/** A report's note (characters). */
+export const REPORT_NOTE = 200;
+
+/** A report as the admin page sees it (`addr`: a short hash; the chat: the room's last lines). */
+export interface AdminReport {
+  id: string;
+  at: number;
+  reason: ReportReason;
+  note: string;
+  room: string;
+  from: { name: string; tag: string; account: string | null };
+  who: { name: string; tag: string; account: string | null; addr: string };
+  chat: ChatLine[];
+  done?: boolean;
 }
 
 /** One row of the room list. */
@@ -182,6 +232,8 @@ export interface MatchSoldierInfo {
   sex?: 'f';
   /** What a signed-in person wears that others see (from their account): gun skins / charms / kill effects by weapon, vehicle skins by family. */
   cos?: { skin?: Record<string, string>; charm?: Record<string, string>; kfx?: Record<string, string>; vskin?: Record<string, string> };
+  /** Their level, card, emblem and name plate (name tags and the scoreboard). */
+  badge?: Badge;
 }
 
 /** Sent when a match starts, or when joining (or coming back to) one under way. */
@@ -310,6 +362,10 @@ export type ClientMsg =
   | { t: 'team'; team: Side; member?: string }
   /** The owner takes someone's chat away or gives it back (by member id, or by name: `/채금 name` in a match). */
   | { t: 'mute'; member?: string; name?: string; on: boolean }
+  /** Someone's account card (by tag, in one's room). */
+  | { t: 'card'; tag: string }
+  /** Reports someone in one's room (by tag) to the staff. */
+  | { t: 'report'; tag: string; reason: ReportReason; note?: string }
   /** The admin page: the server's admin key, then its operations. */
   | { t: 'adminAuth'; key: string }
   | { t: 'adm'; op: AdminOp }
@@ -359,6 +415,8 @@ export type ServerMsg =
    */
   | { t: 'progress'; summary: unknown; before: number; after: number; promotions: string[]; econ?: unknown }
   | { t: 'chat'; line: ChatLine }
+  | { t: 'card'; card: PublicCard }
+  | { t: 'reported' }
   /** The room's recent chat, on joining it. */
   | { t: 'chatLog'; lines: ChatLine[] }
   | { t: 'rooms'; rooms: RoomInfo[] }
@@ -405,7 +463,9 @@ export type AdminOp =
   /** Accounts: find by game name or id, reset one's progress, sign it out everywhere. */
   | { op: 'accounts'; q: string }
   | { op: 'acctReset'; id: string }
-  | { op: 'acctRevoke'; id: string };
+  | { op: 'acctRevoke'; id: string }
+  /** A report seen to (or opened again). */
+  | { op: 'reportDone'; id: string; done: boolean };
 
 /** A connected person as the admin page sees them (`addr`: a short hash of the address, never the address). */
 export interface AdminPerson {
@@ -455,6 +515,8 @@ export interface AdminState {
   /** Accounts on the server, and the last search's results. */
   accountCount?: number;
   accounts?: AdminAccount[];
+  /** The newest reports first. */
+  reports?: AdminReport[];
 }
 
 /** An account as the admin page sees it (no provider numbers: only which providers). */
@@ -498,6 +560,8 @@ export function parseAdminOp(raw: unknown): AdminOp | null {
     case 'acctReset':
     case 'acctRevoke':
       return okId(raw.id) ? { op: raw.op, id: raw.id } : null;
+    case 'reportDone':
+      return okId(raw.id) && typeof raw.done === 'boolean' ? { op: 'reportDone', id: raw.id, done: raw.done } : null;
     default:
       return null;
   }
@@ -596,6 +660,12 @@ export function parseClientMsg(text: string): ClientMsg | null {
     case 'mute':
       return typeof raw.on === 'boolean' && (raw.member === undefined || str(raw.member, 32)) && (raw.name === undefined || str(raw.name, 32)) && (raw.member !== undefined || raw.name !== undefined)
         ? { t: 'mute', member: raw.member as string | undefined, name: raw.name as string | undefined, on: raw.on }
+        : null;
+    case 'card':
+      return str(raw.tag, 24) ? { t: 'card', tag: raw.tag } : null;
+    case 'report':
+      return str(raw.tag, 24) && REPORT_REASONS.includes(raw.reason as ReportReason) && (raw.note === undefined || str(raw.note, REPORT_NOTE * 2))
+        ? { t: 'report', tag: raw.tag, reason: raw.reason as ReportReason, note: raw.note as string | undefined }
         : null;
     case 'adminAuth':
       return str(raw.key, 200) ? { t: 'adminAuth', key: raw.key } : null;

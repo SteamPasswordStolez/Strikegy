@@ -28,6 +28,7 @@ import {
   CHAT_MAX,
   HUMAN_CAP,
   PROTOCOL_VERSION,
+  REPORT_NOTE,
   SERVER_MAX,
   TAG_ALPHABET,
   TAG_LEN,
@@ -53,11 +54,11 @@ import {
   type ServerMsg,
   type Side,
 } from '../src/net/lobbyProtocol.ts';
-import type { AdminAccount } from '../src/net/lobbyProtocol.ts';
+import type { AdminAccount, AdminReport, Badge, PublicCard } from '../src/net/lobbyProtocol.ts';
 import type { Applied, MatchSummary, Profile } from '../src/progression/profile.ts';
 import { boostsLeft, econOf } from '../src/progression/economy.ts';
 import { wornOf, type Worn } from '../src/progression/worn.ts';
-import { xpForLevel } from '../src/progression/levels.ts';
+import { levelOf, xpForLevel } from '../src/progression/levels.ts';
 
 /** Messages a connection may send: a bucket of this many, refilled per second. */
 const RATE = { burst: 120, perSecond: 60 } as const;
@@ -97,6 +98,8 @@ export interface MatchPlayer {
   cos?: Worn;
   /** Their soldier's body. */
   sex?: 'f';
+  /** Their level, card, emblem and plate (the account's). */
+  badge?: Badge;
 }
 
 /** Runs the rooms' matches (the gateway's `Matches`; tests may leave it out). */
@@ -141,6 +144,8 @@ export interface AccountHost {
   profile(userId: string): Profile;
   apply(userId: string, summary: MatchSummary): Applied;
   setName(userId: string, name: string): void;
+  /** The account's game name, if one is set. */
+  nameOf(userId: string): string | null;
   find(query: string): AdminAccount[];
   reset(userId: string): void;
   revoke(userId: string): void;
@@ -170,6 +175,26 @@ export interface AdminData {
   bans: StaffMark[];
   mutes: StaffMark[];
   words: string[];
+  /** Players' reports, newest first (owner, 2026-10-25). */
+  reports?: AdminReport[];
+}
+
+/** Reports kept, and how many one person may send (and per person reported). */
+const REPORTS = { keep: 500, perWindow: 5, windowMs: 10 * 60_000, chat: 20 } as const;
+/** Account cards one person may ask for in a burst (each reads the database). */
+const CARDS = { perWindow: 20, windowMs: 10_000 } as const;
+/** A badge is read from the account again after this long (equipping happens on the account's web side). */
+const BADGE_MS = 10_000;
+
+/** What a profile shows beside its owner's name (`private`: no level). */
+export function badgeOf(prof: Profile): Badge | undefined {
+  const eq = econOf(prof).equip;
+  const b: Badge = {};
+  if (prof.flags.privacy !== 'private') b.lv = levelOf(prof.xp).level;
+  if (eq.card) b.card = eq.card;
+  if (eq.emblem) b.emblem = eq.emblem;
+  if (eq.plate) b.plate = eq.plate;
+  return Object.keys(b).length ? b : undefined;
 }
 
 export interface AdminStore {
@@ -233,6 +258,12 @@ interface Client {
   account: string | null;
   /** The admin page's account search. */
   adminQuery: string;
+  /** Its badge as last read from the account, and when. */
+  badge?: Badge;
+  badgeAt?: number;
+  /** Recent account cards asked for and reports sent (ms), for their limits. */
+  cardTimes?: number[];
+  reportTimes?: number[];
 }
 
 /** Chat: lines in a burst, refilled per second; the same line in a row at most this often. */
@@ -322,7 +353,7 @@ export class LobbyCore {
     this.log = opts.log ?? (() => {});
     this.tagSecret = opts.tagSecret ?? randomBytes(32).toString('hex');
     const saved = opts.store?.load();
-    this.staff = { bans: saved?.bans ?? [], mutes: saved?.mutes ?? [], words: saved?.words ?? [] };
+    this.staff = { bans: saved?.bans ?? [], mutes: saved?.mutes ?? [], words: saved?.words ?? [], reports: saved?.reports ?? [] };
     this.serverMax = opts.serverMax ?? SERVER_MAX;
     this.matches = opts.matches ?? null;
     this.now = opts.now ?? Date.now;
@@ -535,7 +566,67 @@ export class LobbyCore {
     if (c?.awayUntil != null) m.away = true;
     const r = c?.room ? this.rooms.get(c.room) : undefined;
     if (c && r?.muted.has(uidBase(c.uid))) m.muted = true;
+    const badge = c && this.badge(c);
+    if (badge) m.badge = badge;
     return m;
+  }
+
+  /** A signed-in client's badge (read again from the account every few seconds). */
+  private badge(c: Client): Badge | undefined {
+    if (!c.account || !this.accounts) return undefined;
+    const now = this.now();
+    if (c.badgeAt === undefined || now - c.badgeAt > BADGE_MS) {
+      c.badge = badgeOf(this.accounts.profile(c.account));
+      c.badgeAt = now;
+    }
+    return c.badge;
+  }
+
+  /** Whether one more of something limited to `n` in `windowMs` fits in `list` (and counts it). */
+  private spend(list: number[], n: number, windowMs: number): boolean {
+    const now = this.now();
+    while (list.length && now - list[0]! > windowMs) list.shift();
+    if (list.length >= n) return false;
+    list.push(now);
+    return true;
+  }
+
+  /** Someone in room `r` by their tag. */
+  private byTag(r: RoomRec, tag: string): Client | undefined {
+    for (const id of r.members) {
+      const m = this.clients.get(id);
+      if (m?.tag === tag) return m;
+    }
+    return undefined;
+  }
+
+  /** `target`'s account card, as their privacy lets others see it. */
+  private cardOf(target: Client): PublicCard {
+    const card: PublicCard = { name: target.name ?? '?', tag: target.tag, account: !!target.account, privacy: 'public' };
+    if (!target.account || !this.accounts) return card;
+    const prof = this.accounts.profile(target.account);
+    card.privacy = prof.flags.privacy ?? 'public';
+    const badge = badgeOf(prof);
+    if (badge) card.badge = badge;
+    target.badge = badge;
+    target.badgeAt = this.now();
+    if (card.privacy !== 'public') return card;
+    const a = prof.stats.multi;
+    const b = prof.stats.bots;
+    let best: string | undefined;
+    let most = 0;
+    for (const [id, w] of Object.entries(prof.weapons)) if (w.kills > most) [best, most] = [id, w.kills];
+    card.stats = {
+      matches: a.matches + b.matches,
+      wins: a.wins + b.wins,
+      kills: a.kills + b.kills,
+      deaths: a.deaths + b.deaths,
+      headshots: a.headshots + b.headshots,
+      hours: Math.round(((a.seconds + b.seconds) / 3600) * 10) / 10,
+      since: prof.created,
+      ...(best ? { best } : {}),
+    };
+    return card;
   }
 
   private info(r: RoomRec): RoomInfo {
@@ -735,6 +826,9 @@ export class LobbyCore {
 
   private player(c: Client): MatchPlayer {
     const p: MatchPlayer = { uid: c.uid, name: c.name!, tag: c.tag, team: c.team ?? undefined, ...(c.sex ? { sex: c.sex } : {}) };
+    c.badgeAt = undefined;
+    const badge = this.badge(c);
+    if (badge) p.badge = badge;
     if (c.account && this.accounts) {
       const prof = this.accounts.profile(c.account);
       p.xp = prof.xp;
@@ -795,9 +889,12 @@ export class LobbyCore {
       c.sex = (msg as { sex?: unknown }).sex === 'f' ? 'f' : undefined;
       if (account) {
         this.accountOf.set(c.uid, account);
-        this.accounts?.setName(account, name);
+        // Signed in: the account's name wins (the same on every device); a first sign-in keeps this one.
+        const stored = this.accounts?.nameOf(account) ?? null;
+        if (stored && !profane(stored, this.staff.words)) c.name = stored;
+        else this.accounts?.setName(account, name);
       }
-      this.send(c, { t: 'welcome', id: c.id, name, tag: c.tag, account: !!account });
+      this.send(c, { t: 'welcome', id: c.id, name: c.name ?? name, tag: c.tag, account: !!account });
       if (c.uid) this.rejoin(c);
       return;
     }
@@ -907,6 +1004,39 @@ export class LobbyCore {
         else r.muted.delete(key);
         this.note(r, msg.on ? 'muted' : 'unmuted', target);
         return this.broadcast(r);
+      }
+      case 'card': {
+        if (!r) return this.fail(c, 'notInRoom');
+        const target = this.byTag(r, msg.tag);
+        if (!target) return this.fail(c, 'bad', 'card');
+        if (!this.spend((c.cardTimes ??= []), CARDS.perWindow, CARDS.windowMs)) return this.fail(c, 'rate');
+        return this.send(c, { t: 'card', card: this.cardOf(target) });
+      }
+      case 'report': {
+        if (!r) return this.fail(c, 'notInRoom');
+        const target = this.byTag(r, msg.tag);
+        if (!target || target === c) return this.fail(c, 'bad', 'report');
+        const reports = this.staff.reports!;
+        // The same person reported again for the same thing within the window: taken as the one already sent.
+        const now = this.now();
+        const again = reports.find((x) => !x.done && now - x.at < REPORTS.windowMs && x.from.tag === c.tag && x.who.tag === target.tag && x.reason === msg.reason);
+        if (again) return this.send(c, { t: 'reported' });
+        if (!this.spend((c.reportTimes ??= []), REPORTS.perWindow, REPORTS.windowMs)) return this.fail(c, 'rate');
+        const note = (msg.note !== undefined ? (cleanChat(msg.note) ?? '') : '').slice(0, REPORT_NOTE);
+        reports.unshift({
+          id: randomHex(4),
+          at: now,
+          reason: msg.reason,
+          note,
+          room: r.settings.name,
+          from: { name: c.name ?? '?', tag: c.tag, account: c.account },
+          who: { name: target.name ?? '?', tag: target.tag, account: target.account, addr: this.addrHash(target.addr) },
+          chat: r.chat.slice(-REPORTS.chat),
+        });
+        if (reports.length > REPORTS.keep) reports.length = REPORTS.keep;
+        this.saveStaff();
+        this.log(`report: ${c.tag} -> ${target.tag} (${msg.reason})`);
+        return this.send(c, { t: 'reported' });
       }
       case 'start': {
         if (!r) return this.fail(c, 'notInRoom');
@@ -1067,6 +1197,7 @@ export class LobbyCore {
       bans: this.staff.bans.map((m) => this.mark(m)),
       mutes: this.staff.mutes.map((m) => this.mark(m)),
       words: this.staff.words,
+      reports: this.staff.reports!.slice(0, 150),
       ...(this.accounts ? { accountCount: this.accounts.count, accounts: this.accounts.find(admin.adminQuery) } : {}),
     };
   }
@@ -1159,6 +1290,14 @@ export class LobbyCore {
       case 'accounts':
         c.adminQuery = op.q;
         break;
+      case 'reportDone': {
+        const rep = this.staff.reports!.find((x) => x.id === op.id);
+        if (!rep) break;
+        if (op.done) rep.done = true;
+        else delete rep.done;
+        this.saveStaff();
+        break;
+      }
       case 'acctReset':
         if (!this.accounts) break;
         this.accounts.reset(op.id);

@@ -161,3 +161,17 @@
     animation: none;
   }
 }
+
+/* Badges (ui/badges.ts): the plate's colour except on one's own light row; at the end a person's row opens their card. */
+.sb-row.you .bdg-name {
+  color: inherit;
+}
+.sb-row .bdg .rk {
+  --rk-cut: transparent;
+}
+.scoreboard.final .sb-row[data-tag] {
+  cursor: pointer;
+}
+.scoreboard.final .sb-row[data-tag]:hover {
+  box-shadow: inset 2px 0 0 var(--accent);
+}

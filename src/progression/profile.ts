@@ -80,7 +80,7 @@ export interface Profile {
   modes: Record<string, { matches: number; wins: number }>;
   history: MatchRecord[];
   /** One-off things already given (the tutorial's bonus). */
-  flags: { tutorial?: boolean; imported?: boolean };
+  flags: { tutorial?: boolean; imported?: boolean; privacy?: 'rank' | 'private' };
   /** Bot-match XP taken on the server today (its daily cap; UTC day). */
   solo?: { day: string; xp: number };
   created: number;
@@ -237,6 +237,9 @@ export function cleanProfile(raw: unknown): Profile | null {
     });
   if (obj(o.flags).tutorial === true) p.flags.tutorial = true;
   if (obj(o.flags).imported === true) p.flags.imported = true;
+  // Who sees the account card (absent: everyone sees all of it).
+  const priv = obj(o.flags).privacy;
+  if (priv === 'rank' || priv === 'private') p.flags.privacy = priv;
   const solo = obj(o.solo);
   if (typeof solo.day === 'string') p.solo = { day: solo.day.slice(0, 10), xp: num(solo.xp) };
   p.econ = cleanEcon(o.econ);

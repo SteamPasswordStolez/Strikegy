@@ -22,7 +22,7 @@ import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
-import { onAccountChange, refreshAccount, settleLeft, settledProfile, signedIn } from '@/net/account';
+import { onAccountChange, refreshAccount, setAccountName, settleLeft, settledProfile, signedIn } from '@/net/account';
 import { econOf } from '@/progression/economy';
 import { missionsCard, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
@@ -169,6 +169,11 @@ export class Lobby {
       required,
       (name) => {
         if (name) this.playerName = name;
+        // Signed in: the name goes on the account (the same on every device).
+        if (name && signedIn())
+          void setAccountName(name).then((r) => {
+            if (r.error === 'words' || r.error === 'name') this.note(t(r.error === 'words' ? 'name.words' : 'name.reserved'));
+          });
         this.render();
       },
       () => this.toggleLocale(),

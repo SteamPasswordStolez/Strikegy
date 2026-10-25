@@ -19,6 +19,8 @@
  * as `Authorization: Bearer` (`bearer`) and in the WebSocket's hello.
  */
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
+import { cleanName, reservedText } from '../src/net/lobbyProtocol.ts';
+import { profane } from '../src/net/wordFilter.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import Database from 'better-sqlite3';
@@ -68,6 +70,8 @@ export interface AccountView {
   providers: AccountProviders;
   created: number;
   profile: Profile;
+  /** The account's game name (the same on every device; owner, 2026-10-25), empty until first set. */
+  name: string;
 }
 
 function makeAuth(db: Database.Database, o: AccountsOptions) {
@@ -229,7 +233,31 @@ export class Accounts {
       .run(userId, JSON.stringify(p), name ?? null, this.now());
   }
 
-  /** The game name last used (the admin page finds people by it). */
+  /** The account's game name, if one is set. */
+  nameOf(userId: string): string | null {
+    return (this.db.prepare('select name from profile where userId = ?').get(userId) as { name?: string | null } | undefined)?.name || null;
+  }
+
+  /** A new game name for the account (checked like a hello's name): the name, or why not. */
+  rename(userId: string, raw: unknown, words: readonly string[] = []): { name: string } | { error: 'name' | 'words' } {
+    const name = typeof raw === 'string' ? cleanName(raw) : null;
+    if (!name || reservedText(name)) return { error: 'name' };
+    if (profane(name, words)) return { error: 'words' };
+    this.setName(userId, name);
+    return { name };
+  }
+
+  /** Who sees the account card: everyone all of it, its rank and look, or its look only. */
+  setPrivacy(userId: string, raw: unknown): { privacy: 'public' | 'rank' | 'private' } | null {
+    if (raw !== 'public' && raw !== 'rank' && raw !== 'private') return null;
+    const p = this.profile(userId);
+    if (raw === 'public') delete p.flags.privacy;
+    else p.flags.privacy = raw;
+    this.save(userId, p);
+    return { privacy: raw };
+  }
+
+  /** The account's game name (the admin page finds people by it). */
   setName(userId: string, name: string): void {
     this.db.prepare('update profile set name = ? where userId = ?').run(name, userId);
     if (!this.db.prepare('select 1 from profile where userId = ?').get(userId)) this.save(userId, this.profile(userId), name);
@@ -247,7 +275,7 @@ export class Accounts {
     const before = JSON.stringify(p.econ);
     settleCalendar(p, this.now());
     if (JSON.stringify(p.econ) !== before) this.save(userId, p);
-    return { id: userId, providers: this.providersOf(userId), created: created === undefined ? 0 : new Date(created).getTime(), profile: p };
+    return { id: userId, providers: this.providersOf(userId), created: created === undefined ? 0 : new Date(created).getTime(), profile: p, name: this.nameOf(userId) ?? '' };
   }
 
   /**

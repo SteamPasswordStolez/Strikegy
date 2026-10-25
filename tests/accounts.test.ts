@@ -3,6 +3,8 @@ import { PROTOCOL_VERSION, type RoomSettings, type ServerMsg } from '@/net/lobby
 import { newProfile, type MatchSummary } from '@/progression/profile';
 import { ProgressTracker } from '@/progression/tracker';
 import { xpForLevel } from '@/progression/levels';
+import { ITEMS } from '@/progression/catalog';
+import { econOf } from '@/progression/economy';
 import { Accounts, IMPORT_CAP, SOLO_DAY_CAP } from '../server/accounts';
 import { LobbyCore, type Conn } from '../server/lobby';
 import { MatchRoom } from '../server/matchRoom';
@@ -111,6 +113,65 @@ describe('the lobby with accounts', () => {
     }
     // Two browsers, one account: the same tag.
     expect(tags[0]).toBe(tags[1]);
+  });
+
+  it('one name an account on every device; badges, account cards by privacy, and reports for the staff', async () => {
+    const acc = await accounts();
+    const core = new LobbyCore({ tagSecret: 'k', accounts: acc });
+    const a = await acc.devAccount();
+    const b = await acc.devAccount();
+    // A's look: an emblem and a plate (from the catalog).
+    const pa = acc.profile(a.userId);
+    const emblem = ITEMS.find((i) => i.kind === 'emblem')!.id;
+    const plate = ITEMS.find((i) => i.kind === 'plate')!.id;
+    Object.assign(econOf(pa).equip, { emblem, plate });
+    pa.xp = xpForLevel(30);
+    acc.save(a.userId, pa);
+    const join = async (uid: string, name: string, token: string) => {
+      const f = fake();
+      const id = core.open(f.conn);
+      await core.message(id, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name, uid, device: 'desktop', token }));
+      return { ...f, id };
+    };
+    const first = await join('a1', 'Alpha', a.token);
+    expect(first.last('welcome')!.name).toBe('Alpha');
+    // A second device with another name: the account's name wins.
+    const second = await join('a2', 'Other', a.token);
+    expect(second.last('welcome')!.name).toBe('Alpha');
+    expect(acc.rename(a.userId, '관리자')).toEqual({ error: 'name' });
+    expect(acc.rename(a.userId, 'Alpha2')).toEqual({ name: 'Alpha2' });
+    expect(acc.view(a.userId).name).toBe('Alpha2');
+
+    await core.message(first.id, JSON.stringify({ t: 'create', settings }));
+    const room = first.last('room')!.room;
+    const other = await join('b1', 'Bravo', b.token);
+    await core.message(other.id, JSON.stringify({ t: 'join', room: room.id }));
+    const me = other.last('room')!.room.members.find((m) => m.name === 'Alpha')!;
+    expect(me.badge).toMatchObject({ lv: 30, emblem, plate });
+
+    // The card: everything by default, then rank only, then the look only.
+    await core.message(other.id, JSON.stringify({ t: 'card', tag: me.tag }));
+    expect(other.last('card')!.card).toMatchObject({ name: 'Alpha', account: true, privacy: 'public', badge: { lv: 30 } });
+    expect(other.last('card')!.card.stats).toBeTruthy();
+    expect(acc.setPrivacy(a.userId, 'rank')).toEqual({ privacy: 'rank' });
+    await core.message(other.id, JSON.stringify({ t: 'card', tag: me.tag }));
+    expect(other.last('card')!.card.stats).toBeUndefined();
+    expect(other.last('card')!.card.badge?.lv).toBe(30);
+    acc.setPrivacy(a.userId, 'private');
+    await core.message(other.id, JSON.stringify({ t: 'card', tag: me.tag }));
+    expect(other.last('card')!.card.badge).toEqual({ emblem, plate });
+
+    // Reports: kept for the staff with the room's chat; the same one twice counts once; not oneself.
+    await core.message(first.id, JSON.stringify({ t: 'chat', text: 'hello there' }));
+    await core.message(other.id, JSON.stringify({ t: 'report', tag: me.tag, reason: 'abuse', note: 'was rude' }));
+    expect(other.last('reported')).toBeTruthy();
+    await core.message(other.id, JSON.stringify({ t: 'report', tag: me.tag, reason: 'abuse' }));
+    await core.message(other.id, JSON.stringify({ t: 'report', tag: other.last('welcome')!.tag, reason: 'cheat' }));
+    expect(other.last('error')).toMatchObject({ code: 'bad' });
+    const state = (core as unknown as { adminState(c: { adminQuery: string }): { reports: { reason: string; note: string; who: { name: string }; chat: { text?: string }[] }[] } }).adminState({ adminQuery: '' });
+    expect(state.reports).toHaveLength(1);
+    expect(state.reports[0]).toMatchObject({ reason: 'abuse', note: 'was rude', who: { name: 'Alpha' } });
+    expect(state.reports[0]!.chat.some((l) => l.text === 'hello there')).toBe(true);
   });
 });
 

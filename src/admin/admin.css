@@ -361,3 +361,15 @@ select.ad-btn {
     display: none;
   }
 }
+
+/* Reports. */
+.ad-done {
+  opacity: 0.55;
+}
+.ad-note {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-left: 3px solid #d9a441;
+  background: rgb(255 255 255 / 0.04);
+  white-space: pre-wrap;
+}

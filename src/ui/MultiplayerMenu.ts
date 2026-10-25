@@ -1,3 +1,5 @@
+import { openCard, reportOn } from './ProfileCard';
+import { badgeHtml, plateColour } from './badges';
 import { t, type MessageKey } from '@/i18n';
 import { MAPS, TEAM_SIZES, type LobbyMode } from '@/data/maps';
 import { loadJSON, saveJSON } from '@/core/storage';
@@ -927,7 +929,16 @@ export class MultiplayerMenu {
     const dev = el('span', 'mpr-dev', card);
     dev.insertAdjacentHTML('beforeend', icon(m.device === 'mobile' ? 'phone' : 'desktop'));
     const who = el('span', 'mpr-who', card);
-    nameView(who, m);
+    // The account's emblem / rank before the name, the name in its plate's colour; a click opens their card.
+    if (m.badge) who.insertAdjacentHTML('beforeend', badgeHtml(m.badge, 18));
+    const nv = nameView(who, m);
+    const plate = plateColour(m.badge);
+    if (plate) nv.querySelector<HTMLElement>('.chat-name')?.style.setProperty('color', plate);
+    if (m.tag) {
+      who.classList.add('mpr-card');
+      who.title = t('pc.open');
+      who.addEventListener('click', () => this.link && openCard(this.link, m.tag));
+    }
     const tags = el('span', 'mpr-tags', card);
     if (m.id === room.owner) el('span', 'ds-badge accent', tags, t('mp.hostBadge'));
     if (self) el('span', 'ds-badge', tags, t('mp.meBadge'));
@@ -957,6 +968,10 @@ export class MultiplayerMenu {
       const cb = button(acts, 'ds-btn ghost mp-sm', t(m.muted ? 'mp.chatUnban' : 'mp.chatBan'));
       cb.title = t('mp.chatBanHint');
       cb.addEventListener('click', () => this.link?.send({ t: 'mute', member: m.id, on: !m.muted }));
+    }
+    if (!self && m.tag && m.tag !== this.link?.tag) {
+      const rp = button(acts, 'ds-btn ghost mp-sm', t('pc.report'));
+      rp.addEventListener('click', () => this.link && reportOn(this.link, m.name, m.tag));
     }
     if (owner && !self) {
       button(acts, 'ds-btn ghost mp-sm danger', t('mp.kick')).addEventListener('click', () => this.link?.send({ t: 'kick', member: m.id }));

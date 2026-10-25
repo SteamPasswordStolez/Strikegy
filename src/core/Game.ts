@@ -1,3 +1,4 @@
+import { openCard } from '@/ui/ProfileCard';
 import { disposeTree } from '@/render/dispose';
 import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
 import { SIMPLE, simplifyInput } from '@/modes/simple';
@@ -550,6 +551,10 @@ export class Game {
     this.renderer.instrument(this.perf.section);
     this.overlay = new Overlay(container);
     this.scoreboard = new Scoreboard(container);
+    // Multiplayer: a person's row opens their account card (the result screen's standings; the pointer is free there).
+    this.scoreboard.onPick = (tag) => {
+      if (this.net) openCard(this.net.link, tag);
+    };
     this.audio = new AudioSystem(this.settings.masterVolume);
     this.audio.setVoiceVolume(this.settings.voiceVolume);
     this.viewModel = new ViewModel(this.renderer.fpScene, this.models);
@@ -4343,7 +4348,7 @@ export class Game {
       const all = this.scores.table(null).sort((a, b) => m.scoreOf(b.id) - m.scoreOf(a.id) || b.score - a.score || a.id - b.id);
       const half = Math.ceil(all.length / 2);
       const rows = (list: typeof all) =>
-        list.map((r) => ({ name: r.name, tag: this.net?.roster.get(r.id)?.tag, squad: null, kills: r.kills, deaths: r.deaths, captures: m.scoreOf(r.id), score: r.score, alive: alive.get(r.id) ?? false, you: r.id === this.myId, mate: false }));
+        list.map((r) => ({ name: r.name, tag: this.net?.roster.get(r.id)?.tag, badge: this.net?.roster.get(r.id)?.badge, squad: null, kills: r.kills, deaths: r.deaths, captures: m.scoreOf(r.id), score: r.score, alive: alive.get(r.id) ?? false, you: r.id === this.myId, mate: false }));
       const label = (from: number, to: number) => t('score.ranks').replace('{a}', String(from)).replace('{b}', String(Math.max(from, to)));
       this.scoreboard.update(
         { label: label(1, half), stat: null, kills: all.slice(0, half).reduce((a, r) => a + r.kills, 0), rows: rows(all.slice(0, half)) },
@@ -4358,6 +4363,7 @@ export class Game {
       rows: this.scores.table(team).map((r) => ({
         name: r.name,
         tag: this.net?.roster.get(r.id)?.tag,
+        badge: this.net?.roster.get(r.id)?.badge,
         squad: this.squads.find((s) => s.team === team && s.has(r.id))?.name ?? null,
         kills: r.kills,
         deaths: r.deaths,
