@@ -48,7 +48,9 @@ const io = new NodeIO()
   .registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
 
 fs.mkdirSync(path.join(OUT, 'models'), { recursive: true });
-for (const [id, spec] of want('models') ? Object.entries(manifest.models) : []) {
+// `ONLY=id1,id2` converts just those models (the rest keep their files as they are).
+const only = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
+for (const [id, spec] of want('models') ? Object.entries(manifest.models).filter(([k]) => !only || only.has(k)) : []) {
   const dir = path.join(SRC, 'models', id);
   const gltf = fs.readdirSync(dir).find((f) => f.endsWith('.gltf'));
   const doc = await io.read(path.join(dir, gltf));

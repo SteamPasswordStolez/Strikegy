@@ -1,3 +1,4 @@
+import { buildScanDressing, cullScanDressing, scanModelsFor } from '@/world/scanDress';
 import { armColors } from '@/ai/soldierAssets';
 import { setHandColors } from '@/weapons/fpHands';
 import { eventMults } from '@/net/events';
@@ -635,7 +636,7 @@ export class Game {
     const [photoSky] = await Promise.all([
       procSky ? null : loadPhotoSky(map.world.visualProfile, ASSET_BASE),
       art,
-      this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : [])]),
+      this.models.load([...(map.props ?? []).map((p) => p.model), ...(outdoor ? BACKDROP_MODELS : []), ...scanModelsFor(map)]),
     ]);
     // Vehicle models take the map's surfaces (paint, rubber, canvas) from here on.
     setVehicleSurfaces(this.surfaces);
@@ -666,6 +667,9 @@ export class Game {
     this.sea = sea;
     lap('world');
     const props = placeProps(map, r.scene, this.models);
+    // Scanned rocks over rock walls, manholes on wide asphalt (render only; see scanDress).
+    this.scanDress = buildScanDressing(map, terrain, this.models);
+    r.scene.add(this.scanDress);
     lap('props');
     await this.loadStep(0.48, 'load.nature');
     if (water && terrain.rivers.length) r.scene.add(buildRivers(terrain, r.scene.environment));
@@ -3573,6 +3577,7 @@ export class Game {
     if (this.forest?.update(at)) this.renderer.requestShadowUpdate();
     // Scenery clutter near the camera only, and the outer tree line's 3D / impostor switch.
     if (this.backdrop) cullBackdropDetail(this.backdrop, at);
+    if (this.scanDress) cullScanDressing(this.scanDress, at);
     if (this.seaView) this.seaView.update(at, this.net ? this.net.serverTick() * SIM_DT : this.simTime, this.renderer.scene);
     // After the first physics step: scene queries only see the map colliders from then on.
     if (this.simTime > 0) this.groundCover?.update(at, this.elapsed);
@@ -3859,6 +3864,9 @@ export class Game {
     const def = this.weapons.def;
     return this.cls === 'recon' && def.scope && this.reconZoom ? zoomedFov(def.adsFov, RECON_ZOOM) : def.adsFov;
   }
+
+  /** Scanned models laid over the map's boxes (rocks, manholes), culled by distance. */
+  private scanDress: THREE.Group | null = null;
 
   /** Which soldier the first-person sleeves / gloves are tinted to (side + body). */
   private handLook = '';

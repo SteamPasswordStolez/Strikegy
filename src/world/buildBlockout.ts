@@ -1,3 +1,4 @@
+import { dressGeometry, dressKind } from './boxDress';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { worldScaleBoxUVs, type SurfaceLibrary } from '@/render/textures';
@@ -33,6 +34,8 @@ interface Batch {
   inside?: boolean;
   /** Map kits: each geometry's far look (null: left out far away), drawn past KIT_FAR (see addKitPieces). */
   far?: (THREE.BufferGeometry | null)[];
+  /** Dressed map boxes (DRESS_TAG). */
+  dress?: boolean;
 }
 
 /**
@@ -62,6 +65,13 @@ const KIT_SHADE = { contact: 0.38, height: 0.8, under: 0.55 };
  */
 const KIT_FAR = { distance: 60, drop: 0.1 };
 
+/** Batches of dressed map boxes (their far look is the plain box; see boxDress). */
+const DRESS_TAG = 'dress';
+/** Dressed boxes switch to their plain look this far (m) beyond their cell (chamfers and lumps are under a few pixels there). */
+const DRESS_FAR = 35;
+/** Dev: `?nodress` draws the plain boxes (A/B measurements). */
+const DRESS_ON = !(typeof location !== 'undefined' && (import.meta as { env?: { DEV?: boolean } }).env?.DEV && new URLSearchParams(location.search).has('nodress'));
+
 /** The kits' shared looks, taking the shade from vertex colours. */
 function kitLooks(): ReturnType<typeof kitMaterials> {
   const looks = kitMaterials();
@@ -78,7 +88,7 @@ function pushTinted(batches: Map<string, Batch>, surfaces: SurfaceLibrary, kind:
   const key = `${kind}:${tag}:${castShadow ? 1 : 0}:v`;
   let batch = batches.get(key);
   if (!batch) {
-    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [], grime: tag === '' || tag === INSIDE_TAG, inside: tag === INSIDE_TAG };
+    batch = { material: surfaces.vertexTinted(kind), geometries: [], castShadow, tints: [], grime: tag === '' || tag === INSIDE_TAG || tag === DRESS_TAG, inside: tag === INSIDE_TAG, dress: tag === DRESS_TAG };
     batches.set(key, batch);
   }
   batch.geometries.push(geo);
@@ -197,7 +207,7 @@ export function buildBlockout(
       const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
       impacts.paint(groundHandle, obj.pos[0], obj.pos[2], (obj.rot?.[1] ?? 0) * DEG, obj.size[0], obj.size[2], SURFACE_FROM_MATERIAL[kind]);
     }
-    else addBox(obj, batches, physics, surfaces, impacts);
+    else addBox(obj, batches, physics, surfaces, impacts, '', true, true);
   }
   for (const b of map.buildings ?? []) {
     const base = terrain ? terrain.heightAt(b.pos[0], b.pos[1]) : 0;
@@ -248,13 +258,14 @@ export function buildBlockout(
       b.geometries.forEach((g, i) => colour(g, b.tints![i]!));
       b.far?.forEach((g, i) => g && colour(g, b.tints![i]!));
     }
-    const cells = splitByCell(b.geometries, b.inside ? 0 : CELL.minVertices);
+    // Interiors and dressed boxes always by cell: off-screen cells culled, far cells drawn plain.
+    const cells = splitByCell(b.geometries, b.inside || b.dress ? 0 : CELL.minVertices);
     for (const idx of cells) {
       const part = idx.map((i) => b.geometries[i]!);
       const merged = mergeGeometries(part);
       for (const g of part) g.dispose();
       // Kits' far look, only where the batch was cut into cells (a cell's distance means something).
-      const farParts = b.far && cells.length > 1 ? idx.map((i) => b.far![i]).filter((g): g is THREE.BufferGeometry => !!g) : [];
+      const farParts = b.far && (cells.length > 1 || b.dress) ? idx.map((i) => b.far![i]).filter((g): g is THREE.BufferGeometry => !!g) : [];
       const farMerged = farParts.length ? mergeGeometries(farParts) : null;
       if (b.far) for (const i of idx) b.far[i]?.dispose();
       if (!merged) continue;
@@ -263,7 +274,7 @@ export function buildBlockout(
       mesh.castShadow = b.castShadow;
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
-      if (b.far && cells.length > 1) {
+      if (b.far && (cells.length > 1 || b.dress)) {
         // Kits: the detailed look near, the far look (plain boxes, no small
         // parts) once the cell is KIT_FAR beyond its edge: chamfers and bolts
         // are under a pixel there, and they were ~8 % of the frame's drawing.
@@ -282,7 +293,9 @@ export function buildBlockout(
           fm.matrixAutoUpdate = false;
           far = fm;
         }
-        lod.addLevel(far, KIT_FAR.distance + merged.boundingSphere!.radius);
+        lod.addLevel(far, (b.dress ? DRESS_FAR : KIT_FAR.distance) + merged.boundingSphere!.radius);
+        // Dev A/B: dressed cells are marked so a measurement can show their far (plain) look up close.
+        if (b.dress) lod.userData.dress = true;
         root.add(lod);
         continue;
       }
@@ -658,6 +671,8 @@ function addBox(
   impacts: SurfaceRegistry,
   batchTag = '',
   collide = true,
+  /** A map object (not a building piece): drawn dressed near, as the plain box far (see boxDress). */
+  dress = false,
 ): void {
   const [w, h, d] = obj.size;
   const kind = obj.material ?? DEFAULT_MATERIAL[obj.type];
@@ -668,8 +683,14 @@ function addBox(
   if (surfaces) {
     const geo = new THREE.BoxGeometry(w, h, d);
     worldScaleBoxUVs(geo, w, h, d);
-    geo.applyMatrix4(tmpMatrix.compose(new THREE.Vector3(...obj.pos), tmpQuat, one));
-    pushTinted(batches, surfaces, kind, obj.color, geo, batchTag, batchTag !== 'ground');
+    tmpMatrix.compose(new THREE.Vector3(...obj.pos), tmpQuat, one);
+    geo.applyMatrix4(tmpMatrix);
+    const look = dress && DRESS_ON ? dressKind(obj, kind) : null;
+    if (look) {
+      const seed = (Math.round(obj.pos[0] * 7 + obj.pos[2] * 13) % 997) / 997;
+      const near = dressGeometry(look, [w, h, d], seed).applyMatrix4(tmpMatrix);
+      pushTinted(batches, surfaces, kind, obj.color, near, DRESS_TAG, true, geo);
+    } else pushTinted(batches, surfaces, kind, obj.color, geo, batchTag, batchTag !== 'ground');
   }
   if (!collide) return;
 

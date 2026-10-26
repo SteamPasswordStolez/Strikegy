@@ -135,11 +135,13 @@ function dequantize(geo: THREE.BufferGeometry): THREE.BufferGeometry {
 }
 
 /** One InstancedMesh per material of `template`, with an instance per placement matrix. */
-export function instanceModel(template: THREE.Object3D, matrices: THREE.Matrix4[], parent: THREE.Object3D, shadows: boolean): void {
+export function instanceModel(template: THREE.Object3D, matrices: THREE.Matrix4[], parent: THREE.Object3D, shadows: boolean, colors?: THREE.Color[]): void {
   const tmp = new THREE.Matrix4();
   for (const part of modelParts(template)) {
     const inst = new THREE.InstancedMesh(part.geometry, part.material, matrices.length);
     matrices.forEach((m, i) => inst.setMatrixAt(i, tmp.multiplyMatrices(m, part.matrix)));
+    // A tint per placement (multiplies the material's colour).
+    if (colors) colors.forEach((c, i) => inst.setColorAt(i, c));
     inst.castShadow = shadows;
     inst.receiveShadow = true;
     inst.computeBoundingSphere();
