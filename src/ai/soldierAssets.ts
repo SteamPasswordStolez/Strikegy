@@ -148,3 +148,60 @@ export function soldierAsset(team: Team, sex: Sex): SoldierAsset | null {
 export function sexOf(id: number): Sex {
   return Math.imul(id + 7, 2654435761) >>> 0 < 0xffffffff / 3 ? 'f' : 'm';
 }
+
+const armColorCache = new Map<string, { sleeve: THREE.Color; glove: THREE.Color }>();
+
+/**
+ * The sleeve and hand colours of a model (the first-person arms wear them so
+ * they match one's body seen by others): the median of the colour texture at
+ * the near look's forearm and hand vertices. Null until the model has loaded.
+ */
+export function armColors(team: Team, sex: Sex): { sleeve: THREE.Color; glove: THREE.Color } | null {
+  const a = soldierAsset(team, sex);
+  if (!a) return null;
+  const hit = armColorCache.get(a.id);
+  if (hit) return hit;
+  const img = a.material.map?.image as CanvasImageSource | undefined;
+  if (!img) return null;
+  const S = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  if (!g) return null;
+  g.drawImage(img, 0, 0, S, S);
+  const px = g.getImageData(0, 0, S, S).data;
+  const uv = a.near.getAttribute('uv');
+  const si = a.near.getAttribute('skinIndex');
+  const sw = a.near.getAttribute('skinWeight');
+  const pick = (bones: number[]): THREE.Color | null => {
+    const rs: number[] = [];
+    const gs: number[] = [];
+    const bs: number[] = [];
+    for (let i = 0; i < uv.count; i++) {
+      // The bone that moves the vertex most.
+      let best = -1;
+      let w = -1;
+      for (let k = 0; k < 4; k++) {
+        const wk = (sw.array as ArrayLike<number>)[i * 4 + k]!;
+        if (wk > w) [w, best] = [wk, (si.array as ArrayLike<number>)[i * 4 + k]!];
+      }
+      if (!bones.includes(best)) continue;
+      const x = Math.min(S - 1, Math.max(0, Math.floor(uv.getX(i) * S)));
+      const y = Math.min(S - 1, Math.max(0, Math.floor((1 - uv.getY(i)) * S)));
+      const o = (y * S + x) * 4;
+      rs.push(px[o]!);
+      gs.push(px[o + 1]!);
+      bs.push(px[o + 2]!);
+    }
+    if (rs.length < 10) return null;
+    const med = (l: number[]) => l.sort((p, q) => p - q)[l.length >> 1]! / 255;
+    return new THREE.Color().setRGB(med(rs), med(gs), med(bs), THREE.SRGBColorSpace);
+  };
+  // Bones: forearms 10 / 13, hands 11 / 14 (the bake's order, as in SoldierModel).
+  const sleeve = pick([10, 13]);
+  const glove = pick([11, 14]);
+  if (!sleeve || !glove) return null;
+  const out = { sleeve, glove };
+  armColorCache.set(a.id, out);
+  return out;
+}

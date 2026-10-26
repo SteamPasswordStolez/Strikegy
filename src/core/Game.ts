@@ -1,3 +1,5 @@
+import { armColors } from '@/ai/soldierAssets';
+import { setHandColors } from '@/weapons/fpHands';
 import { eventMults } from '@/net/events';
 import { openCard } from '@/ui/ProfileCard';
 import { disposeTree } from '@/render/dispose';
@@ -3858,7 +3860,19 @@ export class Game {
     return this.cls === 'recon' && def.scope && this.reconZoom ? zoomedFov(def.adsFov, RECON_ZOOM) : def.adsFov;
   }
 
+  /** Which soldier the first-person sleeves / gloves are tinted to (side + body). */
+  private handLook = '';
+
   private updateViewModel(dt: number, lookYaw: number, lookPitch: number): void {
+    // The sleeves and gloves in one's own soldier's colours (once the models have loaded).
+    const look = `${this.myTeam}:${this.settings.soldierSex}`;
+    if (look !== this.handLook) {
+      const c = armColors(this.myTeam, this.settings.soldierSex);
+      if (c) {
+        setHandColors(c.sleeve, c.glove);
+        this.handLook = look;
+      }
+    }
     const w = this.weapons;
     const p = this.player;
     const k = 1 - Math.exp(-9 * dt);

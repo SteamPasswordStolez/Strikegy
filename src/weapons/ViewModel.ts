@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HandKit, gloveGeometry, handMaterials } from './fpHands';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ModelLibrary } from '@/render/models';
 import type { ShotKick, WeaponDef } from './weaponData';
@@ -373,89 +374,73 @@ export class ViewModel {
   }
 
   /**
-   * Gloved hands with jointed fingers: the trigger hand wraps the grip with the
-   * index finger on the trigger, the support hand cups the handguard (or the
-   * trigger hand, on pistols); sleeves run off-screen.
+   * Gloved hands (remade 2026-10-25, `fpHands.ts`): the trigger hand wraps the
+   * grip with the index finger on the trigger, the support hand cups the
+   * handguard (or the trigger hand, on pistols); sleeves run off-screen. The
+   * joint points below place each finger; the kit shapes smooth fingers, palms,
+   * leather pads, cuffs and folded sleeves through them.
    */
   private buildArms(pistol: boolean, support: P): void {
-    const m = gunMaterials();
-    // The trigger hand is fixed to the gun; the support hand's parts go into its own group.
-    let into: THREE.Object3D = this.gun;
-    const armParts = new Set<THREE.Mesh>();
-    const own = (mesh: THREE.Mesh) => {
-      mesh.userData.owned = true;
-      armParts.add(mesh);
-      into.add(mesh);
-    };
-    /** A rounded segment (finger bone) between two points. */
-    const bone = (a: THREE.Vector3, b: THREE.Vector3, r: number) => {
-      const dir = b.clone().sub(a);
-      const len = dir.length();
-      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.001, len), 3, 8), m.glove);
-      mesh.position.copy(a).addScaledVector(dir, 0.5);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-      own(mesh);
-    };
-    /** A finger through the given joints (knuckle first). */
-    const finger = (pts: THREE.Vector3[], r: number) => {
-      for (let i = 0; i < pts.length - 1; i++) bone(pts[i]!, pts[i + 1]!, r * (1 - i * 0.08));
-    };
-    /** Palm / back of the hand: a flattened capsule from wrist to knuckles. */
-    const palm = (wrist: THREE.Vector3, knuckles: THREE.Vector3, width: number, thick: number, roll: number) => {
-      const dir = knuckles.clone().sub(wrist);
-      const len = dir.length();
-      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(width / 2, Math.max(0.001, len - width), 4, 10), m.glove);
-      mesh.scale.set(1, 1, thick / width);
-      mesh.position.copy(wrist).addScaledVector(dir, 0.5);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-      mesh.rotateY(roll);
-      own(mesh);
-    };
-    const limb = (from: THREE.Vector3, to: THREE.Vector3, r0: number, r1: number, mat: THREE.Material) => {
-      const dir = to.clone().sub(from);
-      const len = dir.length();
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, len, 10), mat);
-      mesh.position.copy(from).addScaledVector(dir, 0.5);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-      own(mesh);
-    };
+    const m = handMaterials();
     const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+    let kit = new HandKit();
+    /** Puts the kit's shapes into `parent`, one mesh per material. */
+    const flush = (parent: THREE.Object3D) => {
+      const glove = gloveGeometry(kit.out.glove, kit.out.leather);
+      const sleeve = kit.out.sleeve.length ? mergeGeometries(kit.out.sleeve) : null;
+      for (const g of [...kit.out.glove, ...kit.out.leather, ...kit.out.sleeve]) g.dispose();
+      for (const [merged, mat] of [
+        [glove, m.glove],
+        [sleeve, m.sleeve],
+      ] as const) {
+        if (!merged) continue;
+        const mesh = new THREE.Mesh(merged, mat);
+        mesh.userData.owned = true;
+        mesh.castShadow = mesh.receiveShadow = false;
+        parent.add(mesh);
+      }
+      kit = new HandKit();
+    };
+    /** A finger round an axis: its back faces away from `axis` at the knuckle. */
+    const curled = (pts: THREE.Vector3[], r: number, axis: THREE.Vector3) => kit.finger(pts, r, pts[0]!.clone().sub(axis).normalize());
 
     // Trigger hand (right) around the pistol grip. The grip rakes back: lower
     // points sit further toward the shooter.
     const top = -0.07;
     const rake = (y: number) => (top - y) * 0.35;
+    const gripAxis = (y: number) => V(0, y, 0.045 + rake(y));
     /** Point on a ring of radius r around the grip at height y; a = 0 on the right, pi/2 in front, pi on the left. */
     const around = (y: number, a: number, r: number) => V(Math.cos(a) * r, y, 0.045 + rake(y) - Math.sin(a) * r);
-    palm(V(0.03, -0.12, 0.085), V(0.03, -0.085, 0.05), 0.05, 0.024, 0.35);
+    kit.palm(V(0.03, -0.12, 0.085), V(0.03, -0.085, 0.05), 0.05, 0.024, 0.35);
     // Middle, ring and little fingers curl round the front of the grip.
     [-0.085, -0.105, -0.124].forEach((y, i) => {
       const r = 0.027 - i * 0.001;
-      finger([around(y, 0.25, r), around(y, 1.05, r), around(y, 1.9, r), around(y, 2.55, r - 0.004)], 0.0085 - i * 0.0006);
+      curled([around(y, 0.25, r), around(y, 1.05, r), around(y, 1.9, r), around(y, 2.55, r - 0.004)], 0.0088 - i * 0.0006, gripAxis(y));
     });
-    // Index finger along the frame and into the trigger guard.
-    finger([V(0.024, -0.068, 0.04), V(0.018, -0.064, 0.012), V(0.008, -0.07, -0.006), V(0.001, -0.08, -0.012)], 0.0082);
-    // Thumb over the top of the grip on the far side.
-    finger([V(0.018, -0.07, 0.07), V(-0.006, -0.062, 0.058), V(-0.024, -0.066, 0.036), V(-0.028, -0.072, 0.018)], 0.0095);
-    // Wrist cuff and sleeve.
-    limb(V(0.03, -0.125, 0.09), V(0.035, -0.145, 0.125), 0.031, 0.034, m.glove);
-    limb(V(0.035, -0.145, 0.125), V(0.13, -0.33, 0.42), 0.042, 0.05, m.sleeve);
+    // Index finger along the frame and into the trigger guard (its back to the right).
+    kit.finger([V(0.024, -0.068, 0.04), V(0.018, -0.064, 0.012), V(0.008, -0.07, -0.006), V(0.001, -0.08, -0.012)], 0.0085, V(1, 0.5, 0).normalize());
+    // Thumb over the top of the grip on the far side (its nail up).
+    kit.finger([V(0.024, -0.082, 0.076), V(0.016, -0.072, 0.068), V(-0.006, -0.064, 0.058), V(-0.024, -0.067, 0.036), V(-0.028, -0.072, 0.018)], 0.0102, V(0, 1, 0), true);
+    // Cuff and sleeve.
+    kit.cuff(V(0.03, -0.125, 0.09), V(0.035, -0.148, 0.13), 0.03, 0.034);
+    kit.sleeve(V(0.035, -0.146, 0.128), V(0.13, -0.33, 0.42), 0.04, 0.05);
+    flush(this.gun);
 
     // Support hand pivot (palm center); its parts are built in gun space and offset back.
     const rest = pistol ? V(-0.04, -0.108, 0.065) : V(-0.035, support[1] + 0.01, -support[0] + 0.02);
     this.support.position.copy(rest);
     this.supportInner.position.copy(rest).negate();
-    into = this.supportInner;
     if (pistol) {
       // Support hand cups the trigger hand from the left, fingers over its fingers.
-      palm(V(-0.04, -0.125, 0.08), V(-0.038, -0.09, 0.05), 0.05, 0.024, -0.35);
+      kit.palm(V(-0.04, -0.125, 0.08), V(-0.038, -0.09, 0.05), 0.05, 0.024, -0.35);
       [-0.088, -0.107, -0.126, -0.143].forEach((y, i) => {
         const r = 0.043;
-        finger([around(y, Math.PI - 0.25, r), around(y, Math.PI - 0.95, r), around(y, 1.5, r - 0.002), around(y, 1.0, r - 0.006)], 0.0088 - i * 0.0005);
+        curled([around(y, Math.PI - 0.25, r), around(y, Math.PI - 0.95, r), around(y, 1.5, r - 0.002), around(y, 1.0, r - 0.006)], 0.009 - i * 0.0005, gripAxis(y));
       });
       // Thumb forward along the left side of the frame.
-      finger([V(-0.03, -0.075, 0.06), V(-0.03, -0.062, 0.03), V(-0.026, -0.058, 0.004)], 0.0095);
-      limb(V(-0.042, -0.13, 0.09), V(-0.18, -0.32, 0.4), 0.034, 0.05, m.sleeve);
+      kit.finger([V(-0.036, -0.088, 0.075), V(-0.03, -0.075, 0.06), V(-0.03, -0.062, 0.03), V(-0.026, -0.058, 0.004)], 0.0102, V(-1, 0.4, 0).normalize(), true);
+      kit.cuff(V(-0.042, -0.13, 0.09), V(-0.06, -0.155, 0.125), 0.029, 0.033);
+      kit.sleeve(V(-0.058, -0.152, 0.122), V(-0.18, -0.32, 0.4), 0.036, 0.05);
     } else {
       // Support hand (left) under the handguard: palm on the lower left, fingers
       // wrapping underneath and up the right side, thumb along the left.
@@ -464,18 +449,16 @@ export class ViewModel {
       const r = 0.032;
       /** Ring around the handguard axis at depth z; a = 0 on the left, pi/2 below, pi on the right. */
       const ring = (z: number, a: number, rr: number) => V(-Math.cos(a) * rr, cy - Math.sin(a) * rr, z);
-      palm(V(-0.03, cy - 0.05, hz + 0.045), ring(hz, 0.75, r + 0.012), 0.052, 0.024, 0.9);
+      kit.palm(V(-0.03, cy - 0.05, hz + 0.045), ring(hz, 0.75, r + 0.012), 0.052, 0.024, 0.9);
       [-0.028, -0.009, 0.01, 0.028].forEach((dz, i) => {
         const z = hz + dz;
-        finger([ring(z, 0.95, r), ring(z, 1.6, r), ring(z, 2.25, r - 0.001), ring(z, 2.75, r - 0.005)], 0.0088 - i * 0.0005);
+        curled([ring(z, 0.95, r), ring(z, 1.6, r), ring(z, 2.25, r - 0.001), ring(z, 2.75, r - 0.005)], 0.0091 - i * 0.0005, V(0, cy, z));
       });
-      finger([V(-0.036, cy - 0.022, hz + 0.03), V(-0.034, cy - 0.006, hz), V(-0.03, cy + 0.004, hz - 0.028)], 0.0095);
-      limb(V(-0.03, cy - 0.06, hz + 0.05), V(-0.04, cy - 0.075, hz + 0.09), 0.029, 0.031, m.glove);
-      limb(V(-0.04, cy - 0.075, hz + 0.09), V(-0.2, -0.3, hz + 0.42), 0.04, 0.05, m.sleeve);
+      kit.finger([V(-0.04, cy - 0.04, hz + 0.045), V(-0.036, cy - 0.022, hz + 0.03), V(-0.034, cy - 0.006, hz), V(-0.03, cy + 0.004, hz - 0.028)], 0.0102, V(-1, 0.3, 0).normalize(), true);
+      kit.cuff(V(-0.03, cy - 0.06, hz + 0.05), V(-0.042, cy - 0.078, hz + 0.095), 0.028, 0.032);
+      kit.sleeve(V(-0.041, cy - 0.076, hz + 0.092), V(-0.2, -0.3, hz + 0.42), 0.037, 0.05);
     }
-    // ~25 bones, palms and limbs: one mesh per material in each hand's group
-    // (each hand moves as a whole), instead of a draw call each.
-    for (const parent of [this.gun, this.supportInner]) mergeArmParts(parent, armParts);
+    flush(this.supportInner);
   }
 
   /** Bolt or pump worked after a shot. */
@@ -871,34 +854,3 @@ export class ViewModel {
   }
 }
 
-/** Merges the arm parts among `parent`'s children into one mesh per material (in place, still owned). */
-function mergeArmParts(parent: THREE.Object3D, parts: Set<THREE.Mesh>): void {
-  const byMat = new Map<THREE.Material, THREE.Mesh[]>();
-  for (const c of parent.children) {
-    const mesh = c as THREE.Mesh;
-    if (!parts.has(mesh) || Array.isArray(mesh.material)) continue;
-    const list = byMat.get(mesh.material) ?? [];
-    list.push(mesh);
-    byMat.set(mesh.material, list);
-  }
-  for (const [material, list] of byMat) {
-    if (list.length < 2) continue;
-    const geos = list.map((mesh) => {
-      mesh.updateMatrix();
-      const g = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix);
-      for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') g.deleteAttribute(k);
-      return g;
-    });
-    const merged = mergeGeometries(geos);
-    for (const g of geos) g.dispose();
-    if (!merged) continue;
-    for (const mesh of list) {
-      parent.remove(mesh);
-      mesh.geometry.dispose();
-    }
-    const one = new THREE.Mesh(merged, material);
-    one.userData.owned = true;
-    one.renderOrder = list[0]!.renderOrder;
-    parent.add(one);
-  }
-}
