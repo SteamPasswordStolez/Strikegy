@@ -116,9 +116,14 @@ export interface Item {
   grants?: string[];
 }
 
-/** Prices (supply tickets) by rarity: the week's shop; the depot asks 120 %. */
-export const PRICE: Record<Rarity, number> = { common: 400, uncommon: 800, rare: 1500, epic: 3000, legendary: 6000 };
-export const DEPOT_MARKUP = 1.2;
+/**
+ * Prices (supply tickets) by rarity in the week's shop. Launch preparation 1
+ * (owner, 2026-10-26): raised 10-75 % by rarity from 400 / 800 / 1,500 /
+ * 3,000 / 6,000 (x1.1 / 1.25 / 1.4 / 1.55 / 1.75), and the depot from 120 %
+ * to 200 % (+80 percentage points).
+ */
+export const PRICE: Record<Rarity, number> = { common: 440, uncommon: 1000, rare: 2100, epic: 4650, legendary: 10500 };
+export const DEPOT_MARKUP = 2;
 /** Parts a duplicate turns into, and what the exchange asks to make one. */
 export const DUP_PARTS: Record<Rarity, number> = { common: 20, uncommon: 50, rare: 150, epic: 400, legendary: 1200 };
 export const CRAFT_PARTS: Record<Rarity, number> = { common: 100, uncommon: 250, rare: 750, epic: 2000, legendary: 6000 };

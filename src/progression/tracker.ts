@@ -11,6 +11,7 @@
  * and more when it is used, capped a match. Multipliers in order: sea damage
  * points × 1/20, × 10, bot matches × 0.5, bot difficulty.
  */
+import { earn } from './income';
 import { levelOf, rankAt, type RankId } from './levels';
 import { weaponLevelOf } from './unlocks';
 import { RIBBON, RIBBONS, ribbonsDue, type CountKey, type MatchCounts } from './ribbons';
@@ -86,7 +87,7 @@ export const XP = {
 export type Difficulty = keyof typeof XP.difficulty;
 
 /** Supply tickets a match pays beyond its base (progression-data.md S-1). */
-export const TICKETS = { mvp: 200, place: [150, 100, 50], bountyTop: 50, bountyStreak: 30 } as const;
+export const TICKETS = { mvp: earn(200), place: [earn(150), earn(100), earn(50)], bountyTop: earn(50), bountyStreak: earn(30) } as const;
 
 /** What the end of a match knows about one's standing (`finish`). */
 export interface FinishExtra {

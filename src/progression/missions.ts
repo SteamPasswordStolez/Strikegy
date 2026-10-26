@@ -7,6 +7,7 @@
  * a match's counts (`MatchCounts`) plus a few things the profile works out
  * (finished matches, wins, weapon levels, camo tiers, modes).
  */
+import { earn } from './income';
 import { hashText, seeded } from './calendar';
 import type { CountKey } from './ribbons';
 
@@ -21,8 +22,8 @@ export interface MissionDef {
 }
 
 export const MISSION = {
-  daily: { count: 3, xp: 30_000, tickets: 100 },
-  weekly: { count: 6, xp: 100_000, tickets: 500, allBoxes: 2 },
+  daily: { count: 3, xp: 30_000, tickets: earn(100) },
+  weekly: { count: 6, xp: 100_000, tickets: earn(500), allBoxes: 2 },
   /** Swaps a day: one free, then this many more at a price. */
   rerollFree: 1,
   rerollPaid: 3,

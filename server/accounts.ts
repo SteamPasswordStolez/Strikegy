@@ -18,6 +18,7 @@
  * page posts the session token to the site (a trusted origin), which sends it
  * as `Authorization: Bearer` (`bearer`) and in the WebSocket's hello.
  */
+import { INCOME } from '../src/progression/income.ts';
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
 import { cleanName, reservedText } from '../src/net/lobbyProtocol.ts';
 import { profane } from '../src/net/wordFilter.ts';
@@ -352,7 +353,7 @@ export class Accounts {
     const st = s.stats;
     const most = Math.ceil(s.seconds / 2);
     // Step 5: tickets within what the match's XP, ribbons, standing and bounties allow; counts within its length.
-    s.tickets = Math.min(s.tickets ?? 0, Math.floor(((xp * 1.5) / 200 + 1500) * ev.tickets));
+    s.tickets = Math.min(s.tickets ?? 0, Math.floor(((xp * 1.5) / 200 + 1500) * INCOME * ev.tickets) + 1);
     for (const [k, v] of Object.entries(s.counts ?? {})) (s.counts as Record<string, number>)[k] = Math.min(v ?? 0, k === 'seaDamage' ? s.seconds * 3000 : most);
     for (const [id, c] of Object.entries(s.camo ?? {})) {
       const kills = Math.min(s.weapons[id]?.kills ?? 0, most);

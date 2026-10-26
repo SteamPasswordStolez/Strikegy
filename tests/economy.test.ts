@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dayKey, weekKey } from '@/progression/calendar';
-import { CRAFT_PARTS, DUP_PARTS, item, levelRewards, seriesItems } from '@/progression/catalog';
+import { CRAFT_PARTS, DEPOT_MARKUP, DUP_PARTS, PRICE, item, levelRewards, seriesItems } from '@/progression/catalog';
 import { advanceCamo, CAMO_TIERS, tierTarget } from '@/progression/camo';
 import { contractOffer } from '@/progression/contracts';
 import {
@@ -74,15 +74,15 @@ describe('level rewards', () => {
     p.xp = xpForLevel(10);
     settleCalendar(p, MON);
     const e = econOf(p);
-    // Levels 2-10 at 20 each, the promotion to 일병 at 10.
-    expect(e.tickets).toBe(9 * 20 + ECON.promotion.enlisted);
+    // Levels 2-10 at their level tickets each, the promotion to 일병 at 10.
+    expect(e.tickets).toBe(9 * ECON.levelTickets(5) + ECON.promotion.enlisted);
     for (const it of levelRewards(10)) expect(e.items[it.id]).toBeDefined();
     settleCalendar(p, MON);
-    expect(e.tickets).toBe(9 * 20 + ECON.promotion.enlisted);
+    expect(e.tickets).toBe(9 * ECON.levelTickets(5) + ECON.promotion.enlisted);
     // A profile from before step 5 (no economy): everything since level 1 is owed.
     const old = cleanProfile({ ...JSON.parse(JSON.stringify(p)), econ: undefined })!;
     settleCalendar(old, MON);
-    expect(econOf(old).tickets).toBe(9 * 20 + ECON.promotion.enlisted);
+    expect(econOf(old).tickets).toBe(9 * ECON.levelTickets(5) + ECON.promotion.enlisted);
   });
 });
 
@@ -384,5 +384,19 @@ describe('step 6: skins, charms, vehicle skins, kill effects', () => {
 });
 
 function PRICE_OF(id: string): number {
-  return { common: 400, uncommon: 800, rare: 1500, epic: 3000, legendary: 6000 }[item(id)!.rarity];
+  return PRICE[item(id)!.rarity];
 }
+
+describe('launch preparation 1 (owner, 2026-10-26)', () => {
+  it('pays a quarter of the old income and asks the new prices', async () => {
+    const { INCOME, earn } = await import('@/progression/income');
+    expect(INCOME).toBe(1 / 4);
+    expect(ECON.levelTickets(5)).toBe(earn(20));
+    expect(ECON.promotion.enlisted).toBe(125);
+    expect(ECON.boxPrice).toBe(400);
+    expect(DEPOT_MARKUP).toBe(2);
+    expect(PRICE).toEqual({ common: 440, uncommon: 1000, rare: 2100, epic: 4650, legendary: 10500 });
+    expect(RIBBON.tickets).toBe(3);
+    expect(MISSION.daily.tickets).toBe(25);
+  });
+});

@@ -11,6 +11,7 @@
  * server's own for accounts). No tickets for money, ever: they only come from
  * playing. Numbers are the data doc's [제안].
  */
+import { INCOME, earn } from './income';
 import { DAILY, MISSION, WEEKLY, drawMissions, missionDef, type MissionKey, type MissionState } from './missions';
 import { CRAFT_PARTS, DEPOT_MARKUP, DUP_PARTS, PRICE, RARITIES, BUNDLES, VEHICLE_CLASSES, bundlePrice, item, levelRewards, seriesItems, weeklyPool, type Item, type Rarity } from './catalog';
 import { advanceCamo, type CamoCounts, type CamoState } from './camo';
@@ -23,38 +24,42 @@ import type { MatchSummary, Profile } from './profile';
 export type BoostKind = 'xp' | 'weapon' | 'tickets';
 export type BoostItem = `${BoostKind}${30 | 60 | 180}`;
 
+/** Boosters (prices +25 % on 2026-10-26, launch preparation 1). */
 export const BOOSTERS: Record<BoostKind, { mult: number; price: Partial<Record<30 | 60 | 180, number>> }> = {
-  xp: { mult: 2, price: { 30: 500, 60: 900, 180: 2400 } },
-  weapon: { mult: 2, price: { 30: 400, 60: 700, 180: 1800 } },
-  tickets: { mult: 1.5, price: { 60: 600, 180: 1500 } },
+  xp: { mult: 2, price: { 30: 625, 60: 1125, 180: 3000 } },
+  weapon: { mult: 2, price: { 30: 500, 60: 875, 180: 2250 } },
+  tickets: { mult: 1.5, price: { 60: 750, 180: 1875 } },
 };
 
 export const ECON = {
-  /** Match tickets: XP / 200. */
-  perXp: 1 / 200,
-  levelTickets: (level: number) => (level < 100 ? 20 : 100),
-  promotion: { enlisted: 500, nco: 1000, officer: 2000, general: 5000, marshal: 20000 },
-  weaponLevel: 10,
-  camo: { tier: 50, brass: 500, obsidian: 2000, dragon: 10000 },
-  firstWin: { tickets: 300, boxes: 1 },
-  boxPrice: 300,
+  /** Match tickets: XP / 200 at the old rate (income scaled by `INCOME`, see income.ts). */
+  perXp: INCOME / 200,
+  levelTickets: (level: number) => (level < 100 ? earn(20) : earn(100)),
+  promotion: { enlisted: earn(500), nco: earn(1000), officer: earn(2000), general: earn(5000), marshal: earn(20000) },
+  weaponLevel: earn(10),
+  camo: { tier: earn(50), brass: earn(500), obsidian: earn(2000), dragon: earn(10000) },
+  firstWin: { tickets: earn(300), boxes: 1 },
+  /** A Pacific Fleet supply box (300 -> 400 on 2026-10-26). */
+  boxPrice: 400,
   odds: { common: 0.55, uncommon: 0.27, rare: 0.12, epic: 0.05, legendary: 0.01 } as Record<Rarity, number>,
   pity: { epic: 20, legendary: 80 },
   partsPack: { price: 300, parts: 100 },
   pass: { price: 300, perDay: 2 },
-  attendance: [50, 50, 100, 100, 150, 150, 0] as const,
+  attendance: [earn(50), earn(50), earn(100), earn(100), earn(150), earn(150), 0] as const,
   attendanceBoxes: 2,
-  month: { days: 20, tickets: 1000 },
+  month: { days: 20, tickets: earn(1000) },
   /** Weekly salary by rank (paid on Monday for a week of 3+ finished matches). */
   salaryMatches: 3,
   mailDays: 30,
 } as const;
 
-export const SALARY: Record<RankId, number> = {
-  pvt: 100, pfc: 150, cpl: 200, sgt: 300, ssg: 400, sfc: 500, msg: 600, sgm: 700,
-  '2lt': 800, '1lt': 900, cpt: 1000, maj: 1200, ltc: 1400, col: 1600,
-  bg: 2000, mg: 2200, ltg: 2400, gen: 2600, goa: 3000,
-};
+export const SALARY: Record<RankId, number> = Object.fromEntries(
+  Object.entries({
+    pvt: 100, pfc: 150, cpl: 200, sgt: 300, ssg: 400, sfc: 500, msg: 600, sgm: 700,
+    '2lt': 800, '1lt': 900, cpt: 1000, maj: 1200, ltc: 1400, col: 1600,
+    bg: 2000, mg: 2200, ltg: 2400, gen: 2600, goa: 3000,
+  }).map(([k, v]) => [k, earn(v)]),
+) as Record<RankId, number>;
 
 export interface Mail {
   id: string;
@@ -573,7 +578,7 @@ export function dailyDeal(now: number): Offer {
   return { key: `deal.${it.id}`, items: [it.id], price: Math.round(PRICE[it.rarity] * DEAL_SHARE), deal: true };
 }
 
-/** The depot: the week pool's other items, any time, at 120 %. */
+/** The depot: the week pool's other items, any time, at `DEPOT_MARKUP` (200 %). */
 export function depotOffer(now: number): Offer[] {
   const week = new Set(weeklyOffer(now).flatMap((o) => o.items));
   return weeklyPool()

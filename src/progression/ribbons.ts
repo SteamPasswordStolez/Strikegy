@@ -4,6 +4,7 @@
  * each, the same ribbon at most three times a match. `ProgressTracker` counts
  * the feats (`MatchCounts`) and calls `ribbonsDue` as they come in.
  */
+import { earn } from './income';
 
 /** Feats counted through a match (missions and ribbons read them). */
 export type CountKey =
@@ -42,7 +43,7 @@ export interface Ribbon {
   name: [string, string];
 }
 
-export const RIBBON = { xp: 2500, tickets: 10, max: 3 } as const;
+export const RIBBON = { xp: 2500, tickets: earn(10), max: 3 } as const;
 
 export const RIBBONS: readonly Ribbon[] = [
   { id: 'gunner', key: 'kills', n: 4, name: ['사격', 'Gunner'] },

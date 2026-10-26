@@ -17,7 +17,7 @@ import { uiSound } from '@/audio/uiSounds';
 import { cachedAccount, settledProfile, shopAction, staffTickets } from '@/net/account';
 import { RANKS, levelOf, nextRank, rankAt, xpForLevel, type Rank } from '@/progression/levels';
 import { weaponLevelOf } from '@/progression/unlocks';
-import { BUNDLES, BUNDLE_SHARE, CRAFT_PARTS, ITEMS, PRICE, RARITIES, SERIES, VEHICLE_CLASSES, item, levelRewards, seriesItems, weeklyPool, type Item, type ItemKind, type Rarity, type VehicleClass } from '@/progression/catalog';
+import { BUNDLES, BUNDLE_SHARE, CRAFT_PARTS, DEPOT_MARKUP, ITEMS, PRICE, RARITIES, SERIES, VEHICLE_CLASSES, item, levelRewards, seriesItems, weeklyPool, type Item, type ItemKind, type Rarity, type VehicleClass } from '@/progression/catalog';
 import { CAMO_TIERS, SPECIAL, camoLookOf, camoNameOf, tierTarget } from '@/progression/camo';
 import { MISSION, missionDef } from '@/progression/missions';
 import {
@@ -420,7 +420,7 @@ const DEPOT_KINDS: (ItemKind | 'all')[] = ['all', 'skin', 'camo', 'charm', 'vski
 
 function renderDepot(main: HTMLElement, p: Profile, o: PageOptions): void {
   const e = econOf(p);
-  el('div', 'pp-note top', main, t('pp.depotNote'));
+  el('div', 'pp-note top', main, t('pp.depotNote').replace('{p}', String(Math.round(DEPOT_MARKUP * 100))));
   const chips = el('div', 'pp-filter', main);
   const list = depotOffer(Date.now());
   for (const k of DEPOT_KINDS) {
@@ -972,7 +972,7 @@ function renderMissions(main: HTMLElement, p: Profile, o: PageOptions): void {
     c.insertAdjacentHTML('beforeend', icon(i === 6 ? 'ammo' : 'star'));
     el('div', 'ds-num', c, i === 6 ? `×${ECON.attendanceBoxes}` : String(v));
   });
-  el('div', 'pp-note', left, t('pp.month').replace('{n}', String(e.att.days)).replace('{m}', String(ECON.month.days)));
+  el('div', 'pp-note', left, t('pp.month').replace('{n}', String(e.att.days)).replace('{m}', String(ECON.month.days)).replace('{t}', n(ECON.month.tickets)));
   const rank = rankAt(levelOf(p.xp).level).id;
   el('div', 'pp-note', left, t('pp.salary').replace('{n}', String(Math.min(e.week.matches, ECON.salaryMatches))).replace('{m}', String(ECON.salaryMatches)).replace('{p}', n(SALARY[rank])));
   const right = el('div', 'pp-mcol', cols);
