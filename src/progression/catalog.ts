@@ -110,7 +110,15 @@ export interface KillFxLook {
   count: number;
   /** Piece size (m). */
   size: number;
+  /** A soft glowing halo round each piece (0 none; brighter on rarer effects; no light is cast). */
+  glow?: number;
+  /** A ring rippling out over the ground and a short flash at the body (legendaries). */
+  wave?: boolean;
 }
+
+/** How bright a kill effect's halo is by rarity, and whether it ripples (2026-10-27, BM quality). */
+const KFX_GLOW: Record<Rarity, number> = { common: 0, uncommon: 0.4, rare: 0.7, epic: 1.2, legendary: 2 };
+const kfxBy = (rarity: Rarity, look: KillFxLook): KillFxLook => ({ ...look, glow: KFX_GLOW[rarity], ...(rarity === 'legendary' ? { wave: true } : {}) });
 
 export interface Item {
   id: string;
@@ -380,7 +388,7 @@ box('landing', 'skin', 'epic', '해병 상륙', 'Marine landing', { weapon: 'lmg
 box('ink', 'kfx', 'epic', '먹물', 'Ink', { kfx: { motion: 'wrap', shape: 'shard', colors: [0x06060a, 0x2a2a4a], count: 36, size: 0.06 } });
 box('dazzle', 'vskin', 'epic', '구축함 다즐', 'Destroyer dazzle', { vclass: 'ship', vskin: { pattern: 'dazzle', scale: 1, tones: [1.4, 0.65, 0.45] } });
 box('coral', 'skin', 'legendary', '산호 저격수', 'Coral marksman', { weapon: 'sr2', grants: ['kfx.pac.splash'], skin: { metal: [0x2a1a18, 0.7, 0.4], pattern: { pattern: 'flow', colors: [0xe8826a, 0x2a8a9a, 0xfff0d0], scale: 5, flow: 0.6, metal: 0.6 }, engrave: { color: 0xffd0b0, glow: true } } });
-add({ id: 'kfx.pac.splash', kind: 'kfx', rarity: 'legendary', name: ['물보라', 'Sea spray'], source: 'box', kfx: { motion: 'burst', shape: 'flake', colors: [0x8ad0f0, 0xffffff], count: 40, size: 0.05 } });
+add({ id: 'kfx.pac.splash', kind: 'kfx', rarity: 'legendary', name: ['물보라', 'Sea spray'], source: 'box', kfx: kfxBy('legendary', { motion: 'burst', shape: 'flake', colors: [0x8ad0f0, 0xffffff], count: 40, size: 0.05 }) });
 // Legendary 1.
 moved('sniper', 'camo', 'legendary', '산호 저격수', 'Coral marksman', { camo: camo('flow', [0xe8826a, 0x2a8a9a, 0xfff0d0], 5, { flow: 0.6, metal: 0.6 }) });
 
@@ -555,9 +563,9 @@ const KFX: [id: string, ko: string, en: string, rarity: Rarity, source: Source, 
   ['void', '공허', 'Void', 'legendary', 'weekly', undefined, K('swirl', 'shard', [0x2a0a4a, 0xb060ff], 40, 0.05)],
   ['goldrush', '황금 소나기', 'Gold rush', 'legendary', 'weekly', undefined, K('burst', 'star', [0xffd060, 0xfff8d0], 14, 0.08)],
 ];
-for (const [id, ko, en, rarity, source, level, look] of KFX) add({ id: `kfx.${id}`, kind: 'kfx', rarity, name: [ko, en], source, ...(level ? { level } : {}), kfx: look });
+for (const [id, ko, en, rarity, source, level, look] of KFX) add({ id: `kfx.${id}`, kind: 'kfx', rarity, name: [ko, en], source, ...(level ? { level } : {}), kfx: kfxBy(rarity, look) });
 // The blue dragon challenge (all 23 guns in obsidian) brings its own effect.
-add({ id: 'kfx.dragonscale', kind: 'kfx', rarity: 'legendary', name: ['청룡 비늘', 'Dragon scales'], source: 'challenge', kfx: K('swirl', 'scale', [0x1a5aa8, 0x8ae0ff], 30, 0.07) });
+add({ id: 'kfx.dragonscale', kind: 'kfx', rarity: 'legendary', name: ['청룡 비늘', 'Dragon scales'], source: 'challenge', kfx: kfxBy('legendary', K('swirl', 'scale', [0x1a5aa8, 0x8ae0ff], 30, 0.07)) });
 
 // Level rewards (progression.md 3-12): a gun skin every 50 levels from 100 (+ the officer's M1911 at 210), a vehicle skin every 50 from 250.
 const LEVEL_SKIN_ORDER: [theme: string, weapon: string][] = [

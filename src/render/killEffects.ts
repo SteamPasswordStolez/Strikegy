@@ -7,7 +7,9 @@ import type { KillFxLook } from '@/progression/catalog';
  * scales, dog tags, leaves. Rules from the owner: at most 0.6 s, within about
  * a metre of the body, no light cast, nothing that lingers like smoke; at most
  * four at once (more play as an ordinary fall). One instanced quad mesh per
- * piece shape, facing the camera; shapes drawn once on small canvases.
+ * piece shape, facing the camera; shapes drawn once on small canvases. Rarer
+ * effects add a glowing halo behind each piece and legendaries a ground ring
+ * and a short flash (2026-10-27): added colour for the bloom, still no light.
  */
 
 export const KILL_FX = { life: 0.6, maxAtOnce: 4, maxPieces: 48 } as const;
@@ -94,6 +96,23 @@ function shapeTexture(shape: Shape): THREE.Texture {
   return tex;
 }
 
+/** A soft ring (the legendary effects' ground ripple). */
+function ringTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  const r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  r.addColorStop(0, 'rgba(255,255,255,0)');
+  r.addColorStop(0.72, 'rgba(255,255,255,0)');
+  r.addColorStop(0.86, 'rgba(255,255,255,1)');
+  r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r;
+  g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 interface Piece {
   off: THREE.Vector3;
   vel: THREE.Vector3;
@@ -137,7 +156,29 @@ export class KillEffects {
       this.meshes.set(shape, mesh);
       this.group.add(mesh);
     }
+    // Halos behind the pieces, the ground ring and the flash: added light colour (bright enough for the
+    // bloom to pick up, no tone mapping), never a real light.
+    const glowTex = shapeTexture('spark');
+    const additive = (map: THREE.Texture, n: number, order: number) => {
+      const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, side: THREE.DoubleSide, fog: true }), n);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      mesh.visible = false;
+      mesh.renderOrder = order;
+      this.group.add(mesh);
+      return mesh;
+    };
+    this.glow = additive(glowTex, cap, 4.9);
+    this.ring = additive(ringTexture(), KILL_FX.maxAtOnce, 4.8);
+    this.flash = additive(glowTex, KILL_FX.maxAtOnce, 5.1);
   }
+
+  private readonly glow: THREE.InstancedMesh;
+  private readonly ring: THREE.InstancedMesh;
+  private readonly flash: THREE.InstancedMesh;
+  private readonly c = new THREE.Color();
+  private readonly flat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
 
   /** A kill effect at a body (`at`: where the soldier stood). False when four are already playing. */
   play(look: KillFxLook, at: THREE.Vector3): boolean {
@@ -188,6 +229,8 @@ export class KillEffects {
       if (e.t >= KILL_FX.life) this.effects.splice(i, 1);
     }
     for (const mesh of this.meshes.values()) mesh.count = 0;
+    let glows = 0;
+    let waves = 0;
     camera.getWorldQuaternion(this.q);
     for (const e of this.effects) {
       const u = e.t / KILL_FX.life;
@@ -217,8 +260,40 @@ export class KillEffects {
         mesh.setMatrixAt(n, this.m);
         mesh.setColorAt(n, pc.color);
         n++;
+        const g = e.look.glow ?? 0;
+        if (g > 0 && glows < this.glow.instanceMatrix.count) {
+          this.s.setScalar(size * 2.8);
+          this.m.compose(this.p, this.q, this.s);
+          this.glow.setMatrixAt(glows, this.m);
+          this.glow.setColorAt(glows, this.c.copy(pc.color).multiplyScalar(g * 0.55 * fade));
+          glows++;
+        }
       }
       counts.set(e.look.shape, n);
+      if (e.look.wave) {
+        // A ring rippling out over the ground (to ~1.3 m across) and a flash at the chest for the first 0.15 s.
+        const k = Math.min(1, e.t / (KILL_FX.life * 0.7));
+        this.p.copy(e.at).y += 0.04;
+        this.s.setScalar(0.2 + k * 1.3);
+        this.m.compose(this.p, this.flat, this.s);
+        this.ring.setMatrixAt(waves, this.m);
+        this.ring.setColorAt(waves, this.c.copy(e.pieces[0]?.color ?? this.c.set(0xffffff)).multiplyScalar(1.6 * (1 - k) * (1 - k)));
+        const f = Math.max(0, 1 - e.t / 0.15);
+        this.p.copy(e.at).y += 1.1;
+        this.s.setScalar(0.9 + (1 - f) * 0.5);
+        this.m.compose(this.p, this.q, this.s);
+        this.flash.setMatrixAt(waves, this.m);
+        this.flash.setColorAt(waves, this.c.set(e.look.colors[1]).multiplyScalar(2.2 * f));
+        waves++;
+      }
+    }
+    for (const [mesh, count] of [[this.glow, glows], [this.ring, waves], [this.flash, waves]] as const) {
+      mesh.count = count;
+      mesh.visible = count > 0;
+      if (count) {
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
     }
     for (const [shape, mesh] of this.meshes) {
       mesh.count = counts.get(shape) ?? 0;
@@ -235,6 +310,10 @@ export class KillEffects {
   }
 
   dispose(): void {
+    for (const mesh of [this.glow, this.ring, this.flash]) {
+      (mesh.material as THREE.MeshBasicMaterial).map?.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
     for (const mesh of this.meshes.values()) {
       (mesh.material as THREE.MeshBasicMaterial).map?.dispose();
       (mesh.material as THREE.Material).dispose();
