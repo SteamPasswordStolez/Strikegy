@@ -13,7 +13,7 @@
  */
 import { INCOME, earn } from './income';
 import { DAILY, MISSION, WEEKLY, drawMissions, missionDef, type MissionKey, type MissionState } from './missions';
-import { CRAFT_PARTS, DEPOT_MARKUP, DUP_PARTS, PRICE, RARITIES, BUNDLES, VEHICLE_CLASSES, bundlePrice, item, levelRewards, seriesItems, weeklyPool, type Item, type Rarity } from './catalog';
+import { CRAFT_PARTS, DEPOT_MARKUP, DEPOT_SIZE, DUP_PARTS, PRICE, RARITIES, BUNDLES, VEHICLE_CLASSES, bundlePrice, item, levelRewards, seriesItems, weeklyPool, type Item, type Rarity } from './catalog';
 import { advanceCamo, type CamoCounts, type CamoState } from './camo';
 import { dayKey, dayNumber, hashText, monthKey, seeded, weekKey } from './calendar';
 import { levelOf, rankAt, RANKS, type RankId } from './levels';
@@ -578,12 +578,20 @@ export function dailyDeal(now: number): Offer {
   return { key: `deal.${it.id}`, items: [it.id], price: Math.round(PRICE[it.rarity] * DEAL_SHARE), deal: true };
 }
 
-/** The depot: the week pool's other items, any time, at `DEPOT_MARKUP` (200 %). */
+/**
+ * The depot: `DEPOT_SIZE` (50) pieces of the pool not in this week's shop, drawn by the week's seed
+ * (the same for everyone, new each Monday 05:00 KST), at `DEPOT_MARKUP` (150 %).
+ */
 export function depotOffer(now: number): Offer[] {
   const week = new Set(weeklyOffer(now).flatMap((o) => o.items));
-  return weeklyPool()
-    .filter((i) => !week.has(i.id))
-    .map((i) => ({ key: i.id, items: [i.id], price: Math.round(PRICE[i.rarity] * DEPOT_MARKUP) }));
+  const rand = seeded(hashText(`depot:${weekKey(now)}`));
+  const pool = weeklyPool().filter((i) => !week.has(i.id));
+  // A partial shuffle: the first DEPOT_SIZE places.
+  for (let k = 0; k < Math.min(DEPOT_SIZE, pool.length); k++) {
+    const j = k + Math.floor(rand() * (pool.length - k));
+    [pool[k], pool[j]] = [pool[j]!, pool[k]!];
+  }
+  return pool.slice(0, DEPOT_SIZE).map((i) => ({ key: i.id, items: [i.id], price: Math.round(PRICE[i.rarity] * DEPOT_MARKUP) }));
 }
 
 /** Buys an offer from the week's shop or the depot. */

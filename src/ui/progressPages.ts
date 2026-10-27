@@ -17,7 +17,7 @@ import { uiSound } from '@/audio/uiSounds';
 import { cachedAccount, settledProfile, shopAction, staffTickets } from '@/net/account';
 import { RANKS, levelOf, nextRank, rankAt, xpForLevel, type Rank } from '@/progression/levels';
 import { weaponLevelOf } from '@/progression/unlocks';
-import { BUNDLES, BUNDLE_SHARE, CRAFT_PARTS, DEPOT_MARKUP, ITEMS, PRICE, RARITIES, SERIES, VEHICLE_CLASSES, item, levelRewards, seriesItems, weeklyPool, type Item, type ItemKind, type Rarity, type VehicleClass } from '@/progression/catalog';
+import { BUNDLES, BUNDLE_SHARE, CRAFT_PARTS, DEPOT_MARKUP, DEPOT_SIZE, ITEMS, PRICE, RARITIES, SERIES, VEHICLE_CLASSES, item, levelRewards, seriesItems, weeklyPool, type Item, type ItemKind, type Rarity, type VehicleClass } from '@/progression/catalog';
 import { CAMO_TIERS, SPECIAL, camoLookOf, camoNameOf, tierTarget } from '@/progression/camo';
 import { MISSION, missionDef } from '@/progression/missions';
 import {
@@ -346,7 +346,7 @@ function escToClose(shade: HTMLElement, done: () => void): () => void {
 // 상점
 
 let depotKind: ItemKind | 'all' = 'all';
-let depotShown = 48;
+let depotShown: number = DEPOT_SIZE;
 
 export function renderShop(body: HTMLElement, o: PageOptions): void {
   const p = settledProfile();
@@ -446,7 +446,7 @@ function renderDepot(main: HTMLElement, p: Profile, o: PageOptions): void {
     const b = el('button', `pp-fchip${depotKind === k ? ' sel' : ''}`, chips, `${k === 'all' ? t('pp.all') : t(`pp.kind.${k}` as MessageKey)} ${count}`);
     b.addEventListener('click', () => {
       depotKind = k;
-      depotShown = 48;
+      depotShown = DEPOT_SIZE;
       uiSound('move');
       o.redraw();
     });
@@ -829,6 +829,7 @@ function renderStorage(main: HTMLElement, p: Profile, o: PageOptions): void {
 function howToGet(it: Item): string {
   if (it.source === 'level') return t('pp.howLevel').replace('{l}', String(it.level)).replace('{r}', rankName(it.level ?? 1));
   if (it.source === 'box') return `${t('pp.howBox')} · ${nameOf(SERIES.name)}`;
+  if (it.source === 'vault') return t('pp.howVault');
   if (it.source === 'challenge') return t('pp.howChallenge');
   return t('pp.howShop').replace('{p}', n(PRICE[it.rarity]));
 }

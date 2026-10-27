@@ -12,7 +12,8 @@
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export const RARITIES: readonly Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 export type ItemKind = 'camo' | 'card' | 'emblem' | 'plate' | 'skin' | 'charm' | 'vskin' | 'kfx';
-export type Source = 'level' | 'box' | 'weekly' | 'challenge';
+/** Where an item comes from; `vault`: no longer sold (owners keep it). */
+export type Source = 'level' | 'box' | 'weekly' | 'challenge' | 'vault';
 
 /** A camo pattern for the gun shader. */
 export interface CamoLook {
@@ -137,10 +138,13 @@ export interface Item {
  * Prices (supply tickets) by rarity in the week's shop. Launch preparation 1
  * (owner, 2026-10-26): raised 10-75 % by rarity from 400 / 800 / 1,500 /
  * 3,000 / 6,000 (x1.1 / 1.25 / 1.4 / 1.55 / 1.75), and the depot from 120 %
- * to 200 % (+80 percentage points).
+ * to 200 % (+80 percentage points); then (owner, 2026-10-27) the depot became
+ * 50 random pieces a week at 150 %.
  */
 export const PRICE: Record<Rarity, number> = { common: 440, uncommon: 1000, rare: 2100, epic: 4650, legendary: 10500 };
-export const DEPOT_MARKUP = 2;
+export const DEPOT_MARKUP = 1.5;
+/** The depot's stock: this many pieces of the pool a week, drawn afresh each Monday (owner, 2026-10-27). */
+export const DEPOT_SIZE = 50;
 /** Parts a duplicate turns into, and what the exchange asks to make one. */
 export const DUP_PARTS: Record<Rarity, number> = { common: 20, uncommon: 50, rare: 150, epic: 400, legendary: 1200 };
 export const CRAFT_PARTS: Record<Rarity, number> = { common: 100, uncommon: 250, rare: 750, epic: 2000, legendary: 6000 };
@@ -449,8 +453,37 @@ const SKIN_THEMES: [id: string, ko: string, en: string, rarity: Rarity, look: Gu
   ['blackflame', '흑염', 'Black flame', 'legendary', S([0x0e0c0c, 0.6, 0.5], undefined, { pattern: camo('obsidian', [0x141010, 0x050404, 0xff4a1a], 6, { flow: 0.4 }), engrave: { color: 0xff7a2a, glow: true }, finish: { coat: 0.8, irid: 0.2 } })],
   ['frost', '서리', 'Frost', 'legendary', S([0xb8d0e0, 0.9, 0.3], undefined, { pattern: camo('flow', [0xe0f4ff, 0x6a9ac8, 0xffffff], 6, { flow: 0.3, metal: 0.7 }), engrave: { color: 0x9ae0ff, glow: true }, finish: { coat: 1, irid: 0.5, scratch: 0.2 } })],
 ];
+/**
+ * Which theme / gun pairs the shop sells (owner, 2026-10-27: "fewer, each made
+ * with care"): plain colour finishes on every gun, each epic theme on the
+ * three guns it suits, each legendary on one gun. The other pairs stay
+ * defined (players who bought them keep them) but are in the vault.
+ */
+const SOLD_ON: Record<string, readonly string[] | 'all'> = {
+  night: 'all', hunter: 'all', urban: 'all', jungle: 'all', olive: 'all', fde: 'all', arctic: 'all', navy: 'all',
+  desertsof: ['ar1', 'ar4', 'smg4'],
+  titanium: ['sg3', 'dmr2', 'pistol1'],
+  marine: ['lmg3', 'ar3', 'sg1'],
+  winter: ['sr1', 'dmr3', 'sr2'],
+  carbon: ['smg2', 'smg1', 'smg3'],
+  tiger: ['ar2', 'lmg1', 'sr3'],
+  officer: ['pistol1', 'pistol2', 'dmr1'],
+  ghost: ['smg1', 'smg3', 'pistol3'],
+  rust: ['ar2', 'lmg2', 'sg2'],
+  bone: ['sr3', 'dmr3', 'lmg1'],
+  reddragon: ['ar2'],
+  gold: ['pistol2'],
+  aurora: ['dmr1'],
+  frost: ['lmg2'],
+  walnut: ['sr1'],
+  blackflame: ['smg4'],
+};
+const sold = (theme: string, w: string) => {
+  const on = SOLD_ON[theme];
+  return on === 'all' || !!on?.includes(w);
+};
 for (const [theme, ko, en, rarity, look] of SKIN_THEMES)
-  for (const w of SKIN_WEAPONS) add({ id: `skin.${theme}.${w}`, kind: 'skin', rarity, name: [ko, en], source: 'weekly', weapon: w, skin: look });
+  for (const w of SKIN_WEAPONS) add({ id: `skin.${theme}.${w}`, kind: 'skin', rarity, name: [ko, en], source: sold(theme, w) ? 'weekly' : 'vault', weapon: w, skin: look });
 
 // Charms: hung off the left of the receiver (the first-person gun and the pictures).
 const CHARMS: [id: string, ko: string, en: string, rarity: Rarity, look: CharmLook][] = [

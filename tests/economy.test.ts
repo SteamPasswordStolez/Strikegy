@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dayKey, weekKey } from '@/progression/calendar';
-import { CRAFT_PARTS, DEPOT_MARKUP, DUP_PARTS, PRICE, item, levelRewards, seriesItems } from '@/progression/catalog';
+import { BUNDLES, CRAFT_PARTS, DEPOT_MARKUP, DEPOT_SIZE, DUP_PARTS, PRICE, item, levelRewards, seriesItems } from '@/progression/catalog';
 import { advanceCamo, CAMO_TIERS, tierTarget } from '@/progression/camo';
 import { contractOffer } from '@/progression/contracts';
 import {
@@ -286,7 +286,7 @@ describe('supply boxes', () => {
 });
 
 describe('shop', () => {
-  it('offers eight a week (a bundle first), the depot the rest at 120 %', () => {
+  it('offers the week shop (a bundle first)', () => {
     const w = weeklyOffer(MON);
     expect(w).toHaveLength(1 + WEEK_SLOTS.length);
     expect(w[0]!.bundle).toBeDefined();
@@ -299,6 +299,32 @@ describe('shop', () => {
     expect(buy(p, w[1]!.key, MON)).toBeNull();
     expect(buy(p, w[1]!.key, MON)).toBe('owned');
     expect(buy(p, 'nothing', MON)).toBe('gone');
+  });
+
+  it('stocks the depot with 50 pieces a week at 150 % (owner, 2026-10-27)', () => {
+    expect(DEPOT_MARKUP).toBe(1.5);
+    const d = depotOffer(MON);
+    expect(d).toHaveLength(DEPOT_SIZE);
+    expect(new Set(d.map((o) => o.key)).size).toBe(DEPOT_SIZE);
+    // The same all week, none of them in the week's shop, a new draw the next week.
+    expect(depotOffer(MON + 5 * DAY)).toEqual(d);
+    const shop = new Set(weeklyOffer(MON).flatMap((o) => o.items));
+    for (const o of d) {
+      expect(shop.has(o.items[0]!)).toBe(false);
+      expect(o.price).toBe(Math.round(PRICE[item(o.items[0]!)!.rarity] * 1.5));
+    }
+    const next = depotOffer(MON + 7 * DAY).map((o) => o.key);
+    expect(next.filter((k) => d.some((o) => o.key === k)).length).toBeLessThan(25);
+  });
+
+  it('sells a curated set of gun skins; the rest are kept but vaulted (owner, 2026-10-27)', () => {
+    const pool = weeklyPool().filter((i) => i.kind === 'skin');
+    expect(pool.filter((i) => i.rarity === 'legendary')).toHaveLength(6);
+    expect(pool.filter((i) => i.rarity === 'epic')).toHaveLength(30);
+    // A vaulted skin is still an item (owners keep wearing it), just not in the shop.
+    expect(item('skin.reddragon.ar1')?.source).toBe('vault');
+    expect(item('skin.reddragon.ar2')?.source).toBe('weekly');
+    for (const b of BUNDLES) for (const id of b.items) expect(item(id)?.source).toBe('weekly');
   });
 
   it('sells two leave passes a day', () => {
@@ -322,8 +348,9 @@ describe('shop', () => {
 });
 
 describe('step 6: skins, charms, vehicle skins, kill effects', () => {
-  it('has a big week pool and rotates a mix every week', () => {
-    expect(weeklyPool().length).toBeGreaterThan(500);
+  it('has a week pool and rotates a mix every week', () => {
+    // Curated on 2026-10-27 (883 -> ~460); still enough for a different mix every week.
+    expect(weeklyPool().length).toBeGreaterThan(400);
     const ids = new Set(ITEMS.map((i) => i.id));
     expect(ids.size).toBe(ITEMS.length);
     const kinds = new Set(weeklyOffer(MON).flatMap((o) => o.items.map((id) => item(id)!.kind)));
@@ -394,7 +421,6 @@ describe('launch preparation 1 (owner, 2026-10-26)', () => {
     expect(ECON.levelTickets(5)).toBe(earn(20));
     expect(ECON.promotion.enlisted).toBe(125);
     expect(ECON.boxPrice).toBe(400);
-    expect(DEPOT_MARKUP).toBe(2);
     expect(PRICE).toEqual({ common: 440, uncommon: 1000, rare: 2100, epic: 4650, legendary: 10500 });
     expect(RIBBON.tickets).toBe(3);
     expect(MISSION.daily.tickets).toBe(25);
