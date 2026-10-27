@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildGun } from '@/weapons/gunModels';
+import { scannedBody, scannedModelFor } from '@/weapons/ViewModel';
+import { ModelLibrary } from '@/render/models';
 import { tickCamo } from '@/weapons/camoMaterial';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { buildVehicleModel } from '@/vehicles/vehicleModels';
@@ -30,6 +32,7 @@ const FX_DOWN = 0.9;
 const FX_LOOP = 2.6;
 
 let vehicleSurfaces: Promise<SurfaceLibrary> | null = null;
+let scannedModels: Promise<ModelLibrary> | null = null;
 
 /** Whether `it` has a 3D look (cards, emblems and plates stay pictures). */
 export function hasViewer(it: Item): boolean {
@@ -119,13 +122,27 @@ export function openViewer(host: HTMLElement, it: Item): () => void {
   if (it.kind === 'skin' || it.kind === 'camo' || it.kind === 'charm') {
     const weapon = (it.kind === 'skin' && it.weapon && it.weapon in WEAPONS ? it.weapon : 'ar1') as WeaponId;
     const def = { ...WEAPONS[weapon], ...(it.kind === 'skin' ? { skin: it.id } : it.kind === 'camo' ? { camo: it.id } : { charm: it.id }) };
-    const gun = buildGun(def).group;
-    // Muzzle toward the right of the first view, the gun's left side (where the charm hangs) to the camera.
-    gun.rotation.y = -Math.PI / 2;
     const holder = new THREE.Group();
-    holder.add(gun);
     stage.add(holder);
-    frame(holder);
+    const place = (gun: THREE.Object3D) => {
+      // Muzzle toward the right of the first view, the gun's left side (where the charm hangs) to the camera.
+      gun.rotation.y += -Math.PI / 2;
+      holder.add(gun);
+      frame(holder);
+    };
+    // Bolt rifles and pistols are scanned models in first person: show that one (the procedural stand-in otherwise).
+    if (scannedModelFor(def)) {
+      scannedModels ??= (async () => {
+        const lib = new ModelLibrary(ASSETS);
+        await lib.load(['bolt_action_rifle_7_62', 'service_pistol']);
+        return lib;
+      })();
+      void scannedModels.then((lib) => {
+        if (disposed) return;
+        place(scannedBody(def, lib) ?? buildGun(def).group);
+        fitK = 0.62;
+      });
+    } else place(buildGun(def).group);
     // Mostly length: its sphere is far taller than the gun, so frame tighter.
     fitK = 0.62;
   } else if (it.kind === 'vskin' && it.vclass) {

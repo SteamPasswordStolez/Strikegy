@@ -182,6 +182,75 @@ function skinned(role: Role, base: THREE.MeshStandardMaterial, look: GunSkinLook
   return out;
 }
 
+const SCANNED_GLSL = /* glsl */ `
+uniform vec3 skMetal;
+uniform vec3 skWood;
+uniform vec2 skMetalMR;
+uniform vec2 skWoodMR;
+`;
+
+/**
+ * A skin on the scanned bolt rifle and pistol (first person): one texture
+ * holds both their wood and their metal, so the shader tells them apart by
+ * the texel's colour (warm and saturated = wood) and recolours each with the
+ * skin's colours, keeping the texture's light and dark so the scan's detail
+ * stays (no engraving: see skEngrave).
+ */
+export function scannedSkin(base: THREE.MeshStandardMaterial, look: GunSkinLook, key: string): THREE.Material {
+  const k = `${key}|scan|${base.uuid}`;
+  const hit = cache.get(k);
+  if (hit) return hit;
+  // Patterns are worked out from the model's own coordinates, which the scans don't share with the
+  // procedural guns: a pattern skin goes on as its colours (the shop sells those on procedural guns).
+  const pat = look.pattern?.colors;
+  const metal = look.metal ?? (pat ? ([pat[1], 0.5, 0.55] as const) : (look.furniture ?? [0x2a2c30, 0.6, 0.5]));
+  const wood = look.wood !== undefined ? ([look.wood, 0, 0.55] as const) : pat ? ([pat[0], 0, 0.7] as const) : (look.furniture ?? metal);
+  let out = base.clone();
+  const uniforms = {
+    skMetal: { value: new THREE.Color(metal[0]) },
+    skWood: { value: new THREE.Color(wood[0]).multiplyScalar(look.wood !== undefined ? 1.6 : 1) },
+    skMetalMR: { value: new THREE.Vector2(metal[1], metal[2]) },
+    skWoodMR: { value: new THREE.Vector2(wood[1], wood[2]) },
+    engraveColor: { value: new THREE.Color(look.engrave?.color ?? 0) },
+    engraveGlow: { value: look.engrave?.glow ? 1 : 0 },
+    // The engraving's lines are sized for the procedural guns' coordinates; on the scans they came out as a coarse grid.
+    skEngrave: { value: 0 },
+  };
+  out.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEngravePos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEngravePos = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${SCANNED_GLSL}\n${ENGRAVE_GLSL}\nuniform float skEngrave;`)
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        vec3 skTx = diffuseColor.rgb;
+        float skL = dot(skTx, vec3(0.299, 0.587, 0.114));
+        float skSat = max(skTx.r, max(skTx.g, skTx.b)) - min(skTx.r, min(skTx.g, skTx.b));
+        // Wood: warm, saturated and not near black (the blued steel has a faint warm cast, but is dark); soft edges, so the grain's dark lines stay wood.
+        float skWoodK = smoothstep(0.035, 0.1, skSat) * smoothstep(-0.01, 0.03, skTx.r - skTx.b) * smoothstep(0.025, 0.07, skL);
+        // The texture's shading kept: a mid-grey texel gives the skin's colour.
+        float skShade = clamp(skL / 0.32, 0.25, 1.8);
+        diffuseColor.rgb = mix(skMetal, skWood, skWoodK) * skShade;
+        float engr = clamp(engraveLines(vEngravePos), 0.0, 1.0) * (1.0 - skWoodK) * skEngrave;
+        diffuseColor.rgb = mix(diffuseColor.rgb, engraveColor, engr);`,
+      )
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(skMetalMR.x, skWoodMR.x, skWoodK);')
+      .replace(
+        '#include <roughnessmap_fragment>',
+        '#include <roughnessmap_fragment>\nroughnessFactor = mix(skMetalMR.y, skWoodMR.y, skWoodK) * mix(0.75, 1.25, clamp(roughnessFactor, 0.0, 1.0));',
+      )
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += engraveColor * engr * engraveGlow * 1.4;');
+  };
+  out.customProgramCacheKey = () => 'scanSkin';
+  out = finished(out, look.finish, 'metal');
+  out.userData.skin = true;
+  cache.set(k, out);
+  return out;
+}
+
 /** Puts a skin on a built gun (its own parts only: optics, lenses and rubber keep theirs). */
 export function applySkin(group: THREE.Object3D, look: GunSkinLook, key: string): void {
   const g = gunMaterials();

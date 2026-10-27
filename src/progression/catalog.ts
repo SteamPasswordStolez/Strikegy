@@ -457,18 +457,20 @@ const SKIN_THEMES: [id: string, ko: string, en: string, rarity: Rarity, look: Gu
  * Which theme / gun pairs the shop sells (owner, 2026-10-27: "fewer, each made
  * with care"): plain colour finishes on every gun, each epic theme on the
  * three guns it suits, each legendary on one gun. The other pairs stay
- * defined (players who bought them keep them) but are in the vault.
+ * defined (players who bought them keep them) but are in the vault. Pattern
+ * themes stay off the bolt rifles and pistols: in first person those are
+ * scanned models, which wear a skin's colours but not its pattern.
  */
 const SOLD_ON: Record<string, readonly string[] | 'all'> = {
   night: 'all', hunter: 'all', urban: 'all', jungle: 'all', olive: 'all', fde: 'all', arctic: 'all', navy: 'all',
   desertsof: ['ar1', 'ar4', 'smg4'],
   titanium: ['sg3', 'dmr2', 'pistol1'],
   marine: ['lmg3', 'ar3', 'sg1'],
-  winter: ['sr1', 'dmr3', 'sr2'],
+  winter: ['dmr3', 'dmr2', 'lmg1'],
   carbon: ['smg2', 'smg1', 'smg3'],
-  tiger: ['ar2', 'lmg1', 'sr3'],
+  tiger: ['ar2', 'smg4', 'lmg3'],
   officer: ['pistol1', 'pistol2', 'dmr1'],
-  ghost: ['smg1', 'smg3', 'pistol3'],
+  ghost: ['smg1', 'smg3', 'ar4'],
   rust: ['ar2', 'lmg2', 'sg2'],
   bone: ['sr3', 'dmr3', 'lmg1'],
   reddragon: ['ar2'],
@@ -651,7 +653,7 @@ export const BUNDLES: { id: string; name: [string, string]; items: string[] }[] 
   { id: 'fire', name: ['불의 묶음', 'Fire bundle'], items: ['camo.wk.ember', 'card.wk.sunrise', 'emblem.wk.phoenix'] },
   { id: 'tiger', name: ['호랑이 묶음', 'Tiger bundle'], items: ['camo.wk.tigerstripe', 'emblem.wk.redtiger', 'plate.wk.crimson'] },
   { id: 'operator', name: ['특수전 묶음', 'Operator bundle'], items: ['skin.desertsof.ar1', 'charm.skull', 'kfx.smokepuff'] },
-  { id: 'arctic', name: ['북극 묶음', 'Arctic bundle'], items: ['skin.winter.sr1', 'kfx.frost', 'vskin.sun.armor'] },
+  { id: 'arctic', name: ['북극 묶음', 'Arctic bundle'], items: ['skin.winter.dmr3', 'kfx.frost', 'vskin.sun.armor'] },
   { id: 'gold', name: ['황금 묶음', 'Gold bundle'], items: ['skin.gold.pistol2', 'charm.goldtag', 'kfx.goldrush'] },
   { id: 'dragon', name: ['붉은 용 묶음', 'Red dragon bundle'], items: ['skin.reddragon.ar2', 'charm.dragoneye', 'kfx.embers'] },
   { id: 'ghost', name: ['유령 묶음', 'Ghost bundle'], items: ['skin.ghost.smg1', 'kfx.void', 'vskin.shadow.car'] },

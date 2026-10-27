@@ -8,6 +8,8 @@ import { gunMaterials, type P } from './gunKit';
 import { buildGun, buildOptic, fittedExtras } from './gunModels';
 import { gunKey } from './attachments';
 import { camoMaterial } from './camoMaterial';
+import { scannedSkin } from './gunSkins';
+import { item } from '@/progression/catalog';
 import { camoLookOf } from '@/progression/camo';
 import type { GadgetId } from '@/data/gadgets';
 import {
@@ -41,6 +43,56 @@ const PISTOL_PARTS = {
   /** Shift along the source X axis that puts the magazine inside the grip (measured from the mesh). */
   magIntoGrip: 0.094,
 };
+
+/** The scanned model a weapon's first-person body comes from (null: a procedural gun). */
+export function scannedModelFor(def: WeaponDef): string | null {
+  return def.class === 'sr' ? SCANNED_RIFLE : def.class === 'pistol' ? SCANNED_PISTOL : null;
+}
+
+/**
+ * The scanned body as the player sees it (no arms, no attachments), wearing
+ * `def`'s skin or camo, muzzle toward -Z: the shop's 3D view shows the gun
+ * the game shows (ui/ItemViewer). Null without the model.
+ */
+export function scannedBody(def: WeaponDef, models: ModelLibrary): THREE.Object3D | null {
+  const id = scannedModelFor(def);
+  const src = id ? models.instantiate(id) : null;
+  if (!src) return null;
+  const body = new THREE.Group();
+  if (id === SCANNED_RIFLE) {
+    src.rotation.y = Math.PI / 2;
+    body.add(src);
+    const own = src.getObjectByName(SCANNED_SCOPE);
+    if (own) own.visible = false;
+    const optic = buildOptic(def, 0.008 + 0.06, 0.085 - 0.29);
+    body.add(optic.group);
+  } else {
+    const keep = new Set(PISTOL_PARTS.keep);
+    for (const child of [...src.children]) if (keep.has(child.name)) body.add(child);
+    const mag = body.getObjectByName(PISTOL_PARTS.mag);
+    if (mag) mag.position.x += PISTOL_PARTS.magIntoGrip;
+    body.rotation.y = Math.PI / 2;
+  }
+  const skin = def.skin ? item(def.skin) : undefined;
+  const look = skin?.skin && skin.weapon === def.id ? skin.skin : undefined;
+  const camo = !look && def.camo ? camoLookOf(def.camo) : undefined;
+  if (look || camo)
+    src.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (!mesh.isMesh || !(mat instanceof THREE.MeshStandardMaterial) || mat.transparent) return;
+      mesh.material = look ? scannedSkin(mat, look, skin!.id) : camoMaterial(camo!, mat);
+    });
+  // The pistol's parts were taken out of `src`: skin them where they are now.
+  if (id === SCANNED_PISTOL && (look || camo))
+    body.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (!mesh.isMesh || !(mat instanceof THREE.MeshStandardMaterial) || mat.transparent || mat.userData.skin || mat.userData.camo) return;
+      mesh.material = look ? scannedSkin(mat, look, skin!.id) : camoMaterial(camo!, mat);
+    });
+  return body;
+}
 
 const HIP = new THREE.Vector3(0.13, -0.14, -0.4);
 const SPRINT_OFFSET = new THREE.Vector3(-0.04, -0.05, 0.03);
@@ -200,14 +252,17 @@ export class ViewModel {
     }
     this.buildShell(def);
     this.measureAnchors(def);
-    // The scanned bodies wear the camo over their own textures (the procedural guns got it in `buildGun`).
-    const camo = def.camo ? camoLookOf(def.camo) : undefined;
-    if (camo && ((def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) || (def.class === 'pistol' && this.models?.has(SCANNED_PISTOL)))) {
+    // The scanned bodies wear the skin, else the camo, over their own textures (the procedural guns got it in `buildGun`).
+    const scanned = (def.class === 'sr' && this.models?.has(SCANNED_RIFLE)) || (def.class === 'pistol' && this.models?.has(SCANNED_PISTOL));
+    const skin = def.skin ? item(def.skin) : undefined;
+    const skinLook = skin?.skin && skin.weapon === def.id ? skin.skin : undefined;
+    const camo = !skinLook && def.camo ? camoLookOf(def.camo) : undefined;
+    if (scanned && (skinLook || camo)) {
       this.gun.traverse((o) => {
         const mesh = o as THREE.Mesh;
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (!mesh.isMesh || mesh.userData.owned || mesh === this.flash || !(mat instanceof THREE.MeshStandardMaterial) || mat.transparent) return;
-        mesh.material = camoMaterial(camo, mat);
+        mesh.material = skinLook ? scannedSkin(mat, skinLook, skin!.id) : camoMaterial(camo!, mat);
       });
     }
   }
