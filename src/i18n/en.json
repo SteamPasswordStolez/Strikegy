@@ -901,7 +901,7 @@
   "lobby.side.red": "Red",
   "lobby.sideDesc": "Pick which side you fight for. Random is settled when the match starts.",
   "lobby.menuScene": "Battle behind the menu",
-  "setDesc.menuScene": "Plays a recorded film of bot battles behind the main menu (light, nothing to load). Off: the map picture instead.",
+  "setDesc.menuScene": "Plays a looping film of a battle behind the main menu (light, phones too). Off shows the map picture instead.",
   "lobby.live": "LIVE",
   "menu.continue": "Continue",
   "load.tip": "Tip",

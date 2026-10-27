@@ -9,7 +9,7 @@ import './page.css';
 import { icon, ICON_NAMES, type IconName } from '@/ui/icons';
 import { uiSound, setUiVolume, loadUiSounds, type UiSound } from '@/audio/uiSounds';
 
-const FILM = `${import.meta.env.BASE_URL}menu/battle.mp4`;
+const FILM = `${import.meta.env.BASE_URL}menu/scene.mp4`;
 const MAPS = ['철문 주둔지', '아르덴 숲', '리옹 초원 전선', '빌바오 공방전', '페르시아 침공'];
 
 const page = document.getElementById('page')!;

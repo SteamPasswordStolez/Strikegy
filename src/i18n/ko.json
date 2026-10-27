@@ -901,7 +901,7 @@
   "lobby.side.red": "레드",
   "lobby.sideDesc": "블루와 레드 중 어느 편에서 싸울지 고릅니다. 무작위는 게임을 시작할 때 정해집니다.",
   "lobby.menuScene": "메뉴 배경 전투",
-  "setDesc.menuScene": "메인 메뉴 뒤에 봇 전투를 녹화한 영상을 틉니다(가볍고 로딩이 없습니다). 끄면 지도 그림으로 바뀝니다.",
+  "setDesc.menuScene": "메인 메뉴 뒤에 전투 장면 영상을 반복해서 틉니다(가볍고 휴대폰에서도 나옵니다). 끄면 지도 그림으로 바뀝니다.",
   "lobby.live": "실시간 전장",
   "menu.continue": "이어서 하기",
   "load.tip": "팁",

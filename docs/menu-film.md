@@ -1,29 +1,33 @@
-# The main menu's film (`public/menu/battle.mp4`)
+# The main menu's film (`public/menu/scene.mp4`)
 
-Since 2026-10-12 the main menu plays a short looping film of real bot battles
-instead of running a live bot match behind it (owner: the live one was heavy,
-slow to load and stuttered). How it was made, to make it again:
+Since 2026-10-27 the main menu loops a 56 s film of the dusk battle diorama
+(`src/menu/MenuScene.ts`) instead of running that scene live (owner: it never
+showed on phones and was heavy enough to stutter on computers). The film plays
+on phones too (muted, inline), unless the browser asks to save data; the
+setting 화면 → 메뉴 배경 전투 turns it off. `scene.jpg` is its first frame, shown
+while it loads. (Before that, 2026-10-12 to 10-24: `battle.mp4`, a cut of bot
+matches recorded from the game; the live scene replaced it, and this film
+replaces the live scene.)
 
-1. `npm run dev`, then open `/?showcase=<map>` (dev builds only): a bot match
-   on that map with the showcase camera, full screen; `window.__showcase` is
-   the `Game`.
-2. Record frame by frame, not in real time (a hidden pane doesn't animate, and
-   fixed 30 fps steps never drop frames): stop its loop
-   (`cancelAnimationFrame(g.rafId); window.requestAnimationFrame = () => 0`),
-   warm it up ~45 s of sim time with `g.renderer.render` stubbed out (the
-   sides meet), then per frame `g.frame(now += 1000 / 30)` and read the canvas
-   right after (`canvas.toDataURL('image/jpeg', 0.92)`, same task, before the
-   drawing buffer is cleared); POST each frame to a small local receiver that
-   writes numbered JPEGs. Render scale 1 at a 1280x720 viewport.
-3. The camera for the film was replaced in the page (`g.showcaseCam.update`):
-   over-the-shoulder trails of a soldier who is fighting in the open (4 s,
-   3.8 m behind, 1.5 m aside, 2 m up, pulled in front of walls), and slow
-   passes 32 m over the busiest zone. The stock showcase camera's orbit is
-   too high for a film.
-4. Cut and encode (2026-10-12 cut: Iron Gate pass, Bilbao base with tanks,
-   Lyon pass, Bilbao street fight, Ardennes pass, Lyon street, Persia pass,
-   Bilbao smoke; ~37 s):
-   `ffmpeg -framerate 30 -i cut/%05d.jpg -vf scale=960:540 -c:v libx264 -preset medium -crf 31 -pix_fmt yuv420p -movflags +faststart -an battle.mp4` (3.6 MB; it sits under the menu's dark shade)
+To make it again (after changing the scene):
 
-Rendering on this PC's GPU for a few minutes runs it hot: record only what is
-needed, one map at a time, and close the pane afterwards.
+1. `npm run dev`, a small local receiver that writes each POSTed frame to a
+   numbered JPEG (it must accept `text/plain` bodies holding a `data:` URL, so
+   the page's request needs no CORS preflight), the browser viewport at
+   1280x720.
+2. In the page: `const { MenuScene } = await import('/src/menu/MenuScene.ts')`,
+   `MenuScene.create(host, 'high')` in a fixed 1280x720 host, stop its loop
+   (`cancelAnimationFrame(s.raf)`, `window.requestAnimationFrame = () => 0`),
+   `s.renderer.setRenderScale(1)`, warm up 8 s of `s.step(1 / 30)`, then per
+   frame `s.step(1 / 30); s.render();` and `canvas.toDataURL('image/jpeg',
+   0.95)` right after, in the same task (`toBlob` is throttled in a hidden
+   pane: ~1.2 s a frame against ~0.05 s). Record one loop (56 s) plus 1.5 s:
+   1,725 frames, about 90 s on this PC's GPU.
+3. Encode with the last 1.5 s faded into the first so the loop has no seam:
+   ```
+   ffmpeg -framerate 30 -start_number 45 -i f/%05d.jpg -framerate 30 -start_number 0 -i f/%05d.jpg -filter_complex "[0:v]trim=end_frame=1680,setpts=PTS-STARTPTS[a];[1:v]trim=end_frame=45,setpts=PTS-STARTPTS[b];[a][b]xfade=transition=fade:duration=1.5:offset=54.5,format=yuv420p[v]" -map "[v]" -c:v libx264 -preset slow -crf 33 -tune film -g 60 -movflags +faststart -an scene.mp4
+   ```
+   (4.9 MB; crf 27 was 11 MB, 31 was 6.5 MB, and it sits under the menu's dark shade.)
+   Poster: `ffmpeg -i scene.mp4 -frames:v 1 -vf scale=960:-2 -q:v 6 scene.jpg`.
+
+The scene has no pointer lean in the film (it followed the mouse live).

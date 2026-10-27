@@ -3,7 +3,7 @@ import type { Game } from '@/core/Game';
 import type { NetOptions } from '@/net/NetMatch';
 import { Lobby } from '@/ui/Lobby';
 import { forgetPlay, recallMatch, rememberMatch, rememberRoom } from '@/core/session';
-import { isTouchDevice, loadSettings, resolveQuality } from '@/core/Settings';
+import { loadSettings } from '@/core/Settings';
 import { music } from '@/audio/music';
 import { currentProfile } from '@/net/account';
 import { levelOf } from '@/progression/levels';
@@ -86,42 +86,45 @@ else {
 }
 
 /**
- * The main menu's background (owner, 2026-10-24: "a light real-time 3D scene",
- * after the live bot match (heavy, slow to load) and the recorded film): a
- * small diorama drawn by the game's renderer, no simulation (menu/MenuScene.ts,
- * its own chunk, loaded after the menu paints). Desktops only (a phone keeps
- * the still map); off in the settings (화면 → 메뉴 배경 전투).
+ * The main menu's background: a looping film of the dusk battle diorama
+ * (owner, 2026-10-27: the real-time scene `menu/MenuScene.ts` never showed on
+ * phones and was heavy enough to stutter on computers, so it was recorded
+ * frame by frame and looped; docs/menu-film.md). Phones too, unless the
+ * browser asks to save data; off in the settings (화면 → 메뉴 배경 전투).
  */
+const FILM = `${import.meta.env.BASE_URL}menu/scene.mp4`;
 let showcase: HTMLDivElement | null = null;
-let scene: { dispose(): void } | null = null;
 
 function startShowcase(): void {
-  if (showcase || !loadSettings().menuScene || isTouchDevice()) return;
+  if (showcase || !loadSettings().menuScene) return;
+  if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
   const host = document.createElement('div');
-  host.className = 'showcase scene';
+  host.className = 'showcase';
+  const video = document.createElement('video');
+  video.src = FILM;
+  video.poster = `${import.meta.env.BASE_URL}menu/scene.jpg`;
+  video.muted = true;
+  video.loop = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.setAttribute('aria-hidden', 'true');
+  video.addEventListener('playing', () => host.classList.add('ready'), { once: true });
+  video.addEventListener('error', () => host.remove(), { once: true });
+  host.appendChild(video);
   container.prepend(host);
   showcase = host;
-  void import('@/menu/MenuScene')
-    .then(({ MenuScene }) => {
-      if (showcase !== host) return;
-      return MenuScene.create(host, resolveQuality(loadSettings().quality));
-    })
-    .then((s) => {
-      if (!s) return;
-      if (showcase !== host) return s.dispose();
-      s.onReady = () => host.classList.add('ready');
-      scene = s;
-      if (import.meta.env.DEV) (window as unknown as { __menuScene: unknown }).__menuScene = s;
-    })
-    .catch(() => host.remove());
+  void video.play().catch(() => {});
 }
 
 function stopShowcase(): void {
   const s = showcase;
   if (!s) return;
   showcase = null;
-  scene?.dispose();
-  scene = null;
+  const v = s.querySelector('video');
+  v?.pause();
+  v?.removeAttribute('src');
+  v?.load();
   s.remove();
 }
 
