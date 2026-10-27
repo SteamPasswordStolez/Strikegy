@@ -87,11 +87,19 @@ vec4 camoColor() {
     return vec4(mix(mix(camoB, camoA, cNoise(p * 2.0)), camoC * 1.6, vein), 0.9 - vein * 0.6);
   }
   if (kind == 9) {
-    vec2 q = vec2(p.z * 1.2, p.y * 1.2 + mod(floor(p.z * 1.2), 2.0) * 0.5);
-    vec2 f = fract(q) - 0.5;
-    float edge = smoothstep(0.38, 0.5, length(f));
-    float shine = 0.5 + 0.5 * sin(floor(q.x) * 1.7 + floor(q.y) * 2.3 + t * 3.0);
-    return vec4(mix(mix(camoB, camoA, shine), camoC, edge * 0.7), 0.85);
+    // Overlapping scales in rows along the gun, rounded ends pointing back: each scale is the
+    // disc round its cell's back-middle; what it doesn't cover belongs to the row behind (darker).
+    vec2 q = vec2(p.z * 1.4, p.y * 1.4);
+    q.y += mod(floor(q.x), 2.0) * 0.5;
+    vec2 cell = floor(q);
+    vec2 f = fract(q);
+    float d = length(vec2(f.x, (f.y - 0.5) * 1.15));
+    float mine = 1.0 - step(0.72, d);
+    float rim = smoothstep(0.56, 0.7, d) * mine;
+    float shine = 0.5 + 0.5 * sin(cell.x * 1.7 + cell.y * 2.3 + t * 3.0);
+    vec3 body = mix(camoA, camoC, shine * (1.0 - smoothstep(0.0, 0.6, d)) * 0.8);
+    vec3 col = mine > 0.5 ? mix(body, camoB, rim) : mix(camoA, camoB, 0.55);
+    return vec4(col, 0.85);
   }
   if (kind == 10) { float s = sin(p.z * 2.0 + sin(p.y * 3.0 + t * 2.0) * 1.5 + cFbm(p) * 3.0); return vec4(mix(camoB, s > 0.0 ? camoA : camoC, abs(s)), 0.2); }
   if (kind == 12) {

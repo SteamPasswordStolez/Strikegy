@@ -62,7 +62,11 @@ export interface GunSkinLook {
   engrave?: { color: number; glow?: boolean };
   /** How the finish wears and shines (all 0..1; see `GunFinish`). */
   finish?: GunFinish;
+  /** Legendary blueprints: their own muzzle device (shown unless one is fitted; numbers unchanged). */
+  muzzle?: BlueprintMuzzle;
 }
+
+export type BlueprintMuzzle = 'dragon' | 'crystal' | 'crown' | 'fin';
 
 /**
  * The finish over a skin's colours (2026-10-27, BM quality): what makes a
@@ -448,10 +452,10 @@ const SKIN_THEMES: [id: string, ko: string, en: string, rarity: Rarity, look: Gu
   // Legendary: moving patterns, engraving that glows.
   ['walnut', '호두나무 각인', 'Engraved walnut', 'legendary', S([0x2a2420, 0.85, 0.35], undefined, { wood: 0x5a3218, engrave: { color: 0xd8b052 }, finish: { coat: 0.7, wear: 0.15 } })],
   ['gold', '황금', 'Gold', 'legendary', S([0xd4a440, 1, 0.25], [0x161618, 0, 0.6], { steel: [0xb08a3e, 1, 0.3], engrave: { color: 0x5a3a0a }, finish: { coat: 0.8, scratch: 0.25 } })],
-  ['reddragon', '붉은 용', 'Red dragon', 'legendary', S([0x2a0a0a, 0.7, 0.4], undefined, { pattern: camo('scales', [0xb0201a, 0x3a0505, 0xffb060], 9, { metal: 0.6, flow: 0.5 }), engrave: { color: 0xff6a3a, glow: true }, finish: { coat: 1, irid: 0.3 } })],
-  ['aurora', '오로라', 'Aurora', 'legendary', S([0x101820, 0.6, 0.4], undefined, { pattern: camo('flow', [0x2ad0a0, 0x0a1430, 0xb060ff], 5, { flow: 0.6, metal: 0.4 }), engrave: { color: 0x6af0ff, glow: true }, finish: { coat: 1, irid: 0.8 } })],
-  ['blackflame', '흑염', 'Black flame', 'legendary', S([0x0e0c0c, 0.6, 0.5], undefined, { pattern: camo('obsidian', [0x141010, 0x050404, 0xff4a1a], 6, { flow: 0.4 }), engrave: { color: 0xff7a2a, glow: true }, finish: { coat: 0.8, irid: 0.2 } })],
-  ['frost', '서리', 'Frost', 'legendary', S([0xb8d0e0, 0.9, 0.3], undefined, { pattern: camo('flow', [0xe0f4ff, 0x6a9ac8, 0xffffff], 6, { flow: 0.3, metal: 0.7 }), engrave: { color: 0x9ae0ff, glow: true }, finish: { coat: 1, irid: 0.5, scratch: 0.2 } })],
+  ['reddragon', '붉은 용', 'Red dragon', 'legendary', S([0x2a0a0a, 0.7, 0.4], undefined, { pattern: camo('scales', [0xb0201a, 0x3a0505, 0xffb060], 28, { metal: 0.6, flow: 0.5 }), engrave: { color: 0xff6a3a, glow: true }, finish: { coat: 1, irid: 0.3 }, muzzle: 'dragon' })],
+  ['aurora', '오로라', 'Aurora', 'legendary', S([0x101820, 0.6, 0.4], undefined, { pattern: camo('flow', [0x2ad0a0, 0x0a1430, 0xb060ff], 5, { flow: 0.6, metal: 0.4 }), engrave: { color: 0x6af0ff, glow: true }, finish: { coat: 1, irid: 0.8 }, muzzle: 'fin' })],
+  ['blackflame', '흑염', 'Black flame', 'legendary', S([0x0e0c0c, 0.6, 0.5], undefined, { pattern: camo('obsidian', [0x141010, 0x050404, 0xff4a1a], 6, { flow: 0.4 }), engrave: { color: 0xff7a2a, glow: true }, finish: { coat: 0.8, irid: 0.2 }, muzzle: 'crown' })],
+  ['frost', '서리', 'Frost', 'legendary', S([0xb8d0e0, 0.9, 0.3], undefined, { pattern: camo('flow', [0xe0f4ff, 0x6a9ac8, 0xffffff], 6, { flow: 0.3, metal: 0.7 }), engrave: { color: 0x9ae0ff, glow: true }, finish: { coat: 1, irid: 0.5, scratch: 0.2 }, muzzle: 'crystal' })],
 ];
 /**
  * Which theme / gun pairs the shop sells (owner, 2026-10-27: "fewer, each made

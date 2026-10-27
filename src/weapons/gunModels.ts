@@ -3,7 +3,7 @@ import type { WeaponDef } from './weaponData';
 import { opticFor, type Optic, type Reticle, type ScopeShape } from './optics';
 import { applyCamo } from './camoMaterial';
 import { camoLookOf } from '@/progression/camo';
-import { item } from '@/progression/catalog';
+import { item, type BlueprintMuzzle } from '@/progression/catalog';
 import { addCharm, applySkin } from './gunSkins';
 import { DISCARD, PartBuilder, block, furniture, gunMaterials, lathe, loop, rail, railUnder, roundRect, slab, tube, vcyl, xcyl, type P } from './gunKit';
 
@@ -411,11 +411,16 @@ function magazine(kind: 'curved' | 'straight' | 'smg', fine: boolean): THREE.Gro
   return b.build('mag');
 }
 
-type MuzzleKind = 'flash' | 'brake' | 'suppressor' | 'comp' | 'choke';
+/** Muzzle devices: the attachments' and the legendary skins' own (`GunSkinLook.muzzle`). */
+type MuzzleKind = 'flash' | 'brake' | 'suppressor' | 'comp' | 'choke' | BlueprintMuzzle;
 
 /** The gun's default kit with the fitted attachments in their slots. */
 function lookFor(def: WeaponDef): Look {
   const look: Look = { ...(LOOKS[def.id] ?? {}) };
+  // A legendary skin's own muzzle device, unless one is fitted.
+  const skin = def.skin ? item(def.skin) : undefined;
+  const own = skin?.weapon === def.id ? skin.skin?.muzzle : undefined;
+  if (own && !def.attach?.muzzle) look.muzzle = own;
   const a = def.attach;
   if (!a) return look;
   switch (a.under) {
@@ -467,6 +472,45 @@ function muzzleDevice(b: PartBuilder, f: PartBuilder, kind: MuzzleKind, u0: numb
     for (let i = 0; i < 3; i++) b.add(m.dark, block(u0 + 0.012 + i * 0.011, u0 + 0.018 + i * 0.011, v + r * 0.4, v + r * 1.32, r * 1.1));
     for (const x of [-1, 1]) f.add(m.dark, block(u0 + 0.03, u0 + 0.04, v - r * 0.5, v + r * 0.5, 0.002, x * r * 1.31));
     return u0 + 0.048;
+  }
+  if (kind === 'dragon') {
+    // Dragon's mouth: a ribbed brake flaring open like jaws, swept fins along its sides, teeth round the crown.
+    b.add(m.steel, lathe([[r * 0.85, 0], [r * 1.15, 0.005], [r * 1.2, 0.02], [r * 1.35, 0.048], [r * 1.7, 0.072], [r * 1.75, 0.078], [r * 1.05, 0.08], [0.004, 0.08]], u0, v, 0, 22));
+    for (let i = 0; i < 4; i++) f.add(m.dark, lathe([[r * (1.2 + i * 0.1), 0], [r * (1.22 + i * 0.1), 0.0025]], u0 + 0.018 + i * 0.012, v, 0, 22));
+    for (const x of [-1, 1]) b.add(m.steel, slab([[u0 + 0.008, v - r * 0.2], [u0 + 0.066, v - r * 0.5], [u0 + 0.078, v + r * 1.9], [u0 + 0.03, v + r * 1.05]], 0.0016, x * r * 1.25, 0.0004));
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      f.add(m.steel, lathe([[0.0016, 0], [0.0002, 0.011]], u0 + 0.078, v + Math.sin(a) * r * 1.45, Math.cos(a) * r * 1.45, 4));
+    }
+    return u0 + 0.089;
+  }
+  if (kind === 'crystal') {
+    // Frost: a six-sided faceted can (the lathe's six sides are its facets) with ice shards leaning forward.
+    b.add(m.steel, lathe([[r * 0.85, 0], [r * 1.45, 0.012], [r * 1.55, 0.032], [r * 1.35, 0.058], [r * 0.95, 0.072], [0.004, 0.072]], u0, v, 0, 6));
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const R = r * (1.35 + (i % 2) * 0.12);
+      b.add(m.steel, lathe([[0.0026, 0], [0.0018, 0.012], [0.0002, 0.03 + (i % 3) * 0.008]], u0 + 0.03, v + Math.sin(a) * R, Math.cos(a) * R, 4));
+    }
+    return u0 + 0.072;
+  }
+  if (kind === 'crown') {
+    // Black flame: a short can ending in a crown of curling flame tongues.
+    b.add(m.steel, lathe([[r * 0.9, 0], [r * 1.28, 0.006], [r * 1.28, 0.044], [r * 1.0, 0.048], [0.004, 0.048]], u0, v, 0, 18));
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2;
+      const R = r * 1.05;
+      f.add(m.steel, lathe([[0.0034, 0], [0.0022, 0.014], [0.0002, 0.03 + (i % 2) * 0.01]], u0 + 0.042, v + Math.sin(a) * R, Math.cos(a) * R, 5));
+    }
+    for (let u = u0 + 0.01; u < u0 + 0.04; u += 0.009) f.add(m.dark, lathe([[r * 1.3, 0], [r * 1.3, 0.002]], u, v, 0, 18));
+    return u0 + 0.08;
+  }
+  if (kind === 'fin') {
+    // Aurora: a long slender brake with three thin cooling discs.
+    b.add(m.steel, lathe([[r * 0.85, 0], [r * 1.1, 0.006], [r * 1.1, 0.088], [r * 0.9, 0.098], [0.004, 0.098]], u0, v, 0, 20));
+    for (const du of [0.026, 0.048, 0.07]) b.add(m.alloy, lathe([[r * 1.1, 0], [r * 1.95, 0.001], [r * 1.95, 0.0032], [r * 1.1, 0.0042]], u0 + du, v, 0, 24));
+    for (const x of [-1, 1]) f.add(m.dark, block(u0 + 0.078, u0 + 0.09, v - r * 0.5, v + r * 0.5, 0.002, x * r * 1.1));
+    return u0 + 0.098;
   }
   if (kind === 'choke') {
     // Extended choke tube: a knurled band past the barrel end.
