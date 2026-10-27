@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { MapObject, SurfaceMaterial } from './mapTypes';
 
 /**
@@ -26,6 +27,8 @@ export interface SoftBoxOptions {
   displace?: (x: number, y: number, z: number, edge: number, top: boolean) => number;
   /** Leave the bottom face out (it sits in the ground). */
   skipBottom?: boolean;
+  /** Extra rows (local coordinates) per axis x, y, z, where the shape bends. */
+  extraRows?: [number[], number[], number[]];
 }
 
 /** Rows along one axis: the bevel rows at each end, then interior rows `grid` apart. */
@@ -57,7 +60,11 @@ export function softBox(w: number, h: number, d: number, o: SoftBoxOptions): THR
   const r = Math.max(0.002, Math.min(o.r, half[0]! * 0.48, half[1]! * 0.48, half[2]! * 0.48));
   const bevel = o.bevelRows ?? 0;
   const grid = o.grid ?? 0;
-  const axisRows = half.map((hh, i) => rows(hh, r, bevel, o.gridAxes && !o.gridAxes[i] ? 0 : grid));
+  const axisRows = half.map((hh, i) => {
+    const rs = rows(hh, r, bevel, o.gridAxes && !o.gridAxes[i] ? 0 : grid);
+    for (const x of o.extraRows?.[i] ?? []) if (x > -hh + r && x < hh - r && !rs.some((y) => Math.abs(y - x) < 1e-3)) rs.push(x);
+    return rs.sort((a, b) => a - b);
+  });
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
@@ -151,7 +158,7 @@ export function noise3(x: number, y: number, z: number): number {
 }
 
 /** What a plain box is drawn as. */
-export type DressKind = 'slab' | 'concrete' | 'masonry' | 'adobe' | 'hedge' | 'rock' | 'wood' | 'pipe' | 'rail' | 'metal';
+export type DressKind = 'slab' | 'lowwall' | 'concrete' | 'masonry' | 'adobe' | 'hedge' | 'rock' | 'wood' | 'pipe' | 'rail' | 'metal';
 
 /** Picks a box's look from its type, material and shape (null: kept a plain box). */
 export function dressKind(obj: MapObject, kind: SurfaceMaterial): DressKind | null {
@@ -168,6 +175,8 @@ export function dressKind(obj: MapObject, kind: SurfaceMaterial): DressKind | nu
       if (long > 2.5 * Math.max(thin, h) && Math.abs(thin - h) < 0.35 * Math.max(thin, h) && Math.max(thin, h) <= 1.2) return 'pipe';
       return 'metal';
     case 'concrete':
+      // Low walls (cover along streets and fields): precast blocks in a row.
+      if ((obj.type === 'cover' || obj.type === 'wall') && thin >= 0.3 && thin <= 0.9 && h >= 0.8 && h <= 1.8 && long >= 1.2) return 'lowwall';
       return 'concrete';
     case 'brick':
     case 'plaster':
@@ -197,6 +206,8 @@ export function dressGeometry(kind: DressKind, size: [number, number, number], s
     case 'slab':
       // Roads, pavements, plazas: soft top edges instead of a cut slab edge.
       return softBox(w, h, d, { r: Math.min(0.06, h * 0.45), skipBottom: true });
+    case 'lowwall':
+      return lowWall(w, h, d, seed);
     case 'concrete':
       // Chamfered edges.
       return softBox(w, h, d, { r: 0.035, skipBottom: true });
@@ -277,6 +288,63 @@ export function dressGeometry(kind: DressKind, size: [number, number, number], s
       return flat;
     }
   }
+}
+
+/**
+ * A low concrete wall as a row of precast blocks about 2 m long: a foot as
+ * wide as the box, faces leaning in a little above it (2.5 cm at the top),
+ * chamfered edges, chipped corners, each block set a touch off its
+ * neighbours and cast with its own texture offset; thin seams between them.
+ * Everything stays inside the box (it is the collider).
+ */
+function lowWall(w: number, h: number, d: number, seed: number): THREE.BufferGeometry {
+  const alongX = w >= d;
+  const L = alongX ? w : d;
+  const T = alongX ? d : w;
+  const n = Math.max(1, Math.round(L / 2));
+  const gap = n > 1 ? 0.014 : 0;
+  const seg = (L - gap * (n - 1)) / n;
+  const foot = -h / 2 + Math.min(0.16, h * 0.13);
+  const parts: THREE.BufferGeometry[] = [];
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < n; i++) {
+    const r = (k: number) => (noise3(seed * 31 + i * 1.7, k * 3.1, 0.5) + 1) / 2;
+    // Blocks lean in from the foot; the leaning faces stay inside the box after the jitter below.
+    const g = softBox(seg, h, T, { r: 0.028, skipBottom: true, extraRows: [[], [foot, foot + 0.025], []] });
+    const pos = g.getAttribute('position') as THREE.BufferAttribute;
+    const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+    const du = r(1) * 4;
+    const dv = r(2) * 4;
+    for (let k = 0; k < pos.count; k++) {
+      const x = pos.getX(k);
+      const y = pos.getY(k);
+      let z = pos.getZ(k);
+      const inset = y <= foot ? 0 : y <= foot + 0.025 ? 0.008 * ((y - foot) / 0.025) : 0.008 + 0.017 * ((y - foot - 0.025) / (h / 2 - foot - 0.025));
+      z *= Math.max(0.5, (T / 2 - 0.006 - inset) / (T / 2));
+      // Chipped corners: the block's vertical and top edges knocked in a little at its ends.
+      const end = Math.abs(x) > seg / 2 - 0.05;
+      const edge = Math.abs(z) > T / 2 - 0.06;
+      let y2 = y;
+      if (end && edge) {
+        const c = Math.max(0, noise3(x * 6 + seed * 9 + i, y * 6, z * 6)) * 0.025;
+        z -= Math.sign(z) * c;
+        if (y > h / 2 - 0.05) y2 -= c;
+      }
+      pos.setXYZ(k, x, y2, z);
+      uv.setXY(k, uv.getX(k) + du, uv.getY(k) + dv);
+    }
+    g.computeVertexNormals();
+    // Each block a touch off line: turned up to 0.4 deg, shifted up to 6 mm across, sunk up to 8 mm.
+    const yaw = (r(3) - 0.5) * 0.014;
+    const shift = (r(4) - 0.5) * 0.012;
+    m.makeRotationY(yaw).setPosition(-L / 2 + seg / 2 + i * (seg + gap), -r(5) * 0.008, shift);
+    g.applyMatrix4(m);
+    if (!alongX) g.rotateY(Math.PI / 2);
+    parts.push(g);
+  }
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return merged ?? softBox(w, h, d, { r: 0.035, skipBottom: true });
 }
 
 /** UVs from positions (box projection in metres) for shapes that don't carry fitting ones. */

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { noise3 } from './boxDress';
 
 /**
  * Procedural models for map objects that used to be plain boxes: vehicles,
@@ -450,6 +451,24 @@ export class KitBuilder {
   }
 }
 
+/** Turns the last piece's triangles round (a one-sided grid seen from its other side). */
+function flipLast(b: KitBuilder): void {
+  const g = b.pieces[b.pieces.length - 1]!.geo;
+  for (const name of Object.keys(g.attributes)) {
+    const a = g.getAttribute(name) as THREE.BufferAttribute;
+    const n = a.itemSize;
+    for (let t = 0; t < a.count; t += 3)
+      for (let k = 0; k < n; k++) {
+        const x = a.array[(t + 1) * n + k]!;
+        (a.array as Float32Array)[(t + 1) * n + k] = a.array[(t + 2) * n + k]!;
+        (a.array as Float32Array)[(t + 2) * n + k] = x;
+      }
+  }
+  // Normals point the other way too.
+  const nrm = g.getAttribute('normal') as THREE.BufferAttribute | undefined;
+  if (nrm) for (let i = 0; i < nrm.array.length; i++) (nrm.array as Float32Array)[i] = -nrm.array[i]!;
+}
+
 /**
  * A fuel dispenser standing at (x, z) on y0, w x h x d (faces +-z): cabinet,
  * a rounded head with lit displays, nozzles in holsters at both ends with
@@ -880,23 +899,81 @@ const KITS: Record<ModelKind, Kit> = {
   },
 
   hesco(b, w, h, d) {
-    // Wire-mesh baskets filled with earth, in 1 m cells.
+    // Wire-mesh baskets lined with geotextile and filled with earth, in 1 m
+    // cells (props-rework.md stage 1): the cloth bulges out between the
+    // cell's corners and sags under the earth's weight, welded wires in a
+    // grid over it, coil hinges at the corners, lumpy earth on top.
     const alongX = w >= d;
     const L = alongX ? w : d;
     const T = alongX ? d : w;
     const cells = Math.max(1, Math.round(L / 1.05));
     const cl = L / cells;
+    // (along, y, across) in the box frame -> local x, y, z.
+    const P = (a: number, y: number, s: number): V3 => (alongX ? [a, y, s] : [s, y, a]);
+    const FABRIC = '#a09178';
+    const WIRE = 0.006;
+    const WIRE_TINT = '#3e3c37';
+    const WIRE_OUT = 0.036;
     for (let i = 0; i < cells; i++) {
       const c = -L / 2 + cl * (i + 0.5);
-      const at: V3 = alongX ? [c, h / 2, 0] : [0, h / 2, c];
-      b.box('dirt', alongX ? [cl - 0.04, h - 0.02, T - 0.04] : [T - 0.04, h - 0.02, cl - 0.04], at);
-      // Frame: posts at the cell corners and top rims.
-      for (const s of [-1, 1]) {
-        const post: V3 = alongX ? [c - cl / 2 + 0.02, h / 2, (s * T) / 2] : [(s * T) / 2, h / 2, c - cl / 2 + 0.02];
-        b.box('mesh', [0.04, h, 0.04], post);
-        b.box('mesh', alongX ? [cl, 0.04, 0.04] : [0.04, 0.04, cl], alongX ? [c, h, (s * T) / 2] : [(s * T) / 2, h, c]);
-        b.box('mesh', alongX ? [cl, 0.03, 0.03] : [0.03, 0.03, cl], alongX ? [c, h / 2, (s * T) / 2 + s * 0.01] : [(s * T) / 2 + s * 0.01, h / 2, c]);
-      }
+      const o = (i * 7.3 + L) * 1.7;
+      const first = b.pieces.length;
+      b.tinted(FABRIC, () => {
+        // The two long faces: bulging most at mid-height, a little out at the foot.
+        for (const s of [-1, 1]) {
+          b.grid('canvas', 4, 5, (u, v) => {
+            const a = c + (u - 0.5) * (cl - 0.03);
+            const y = v * (h - 0.05);
+            const bulge = Math.sin(u * Math.PI) * (0.016 + 0.022 * Math.sin(v * Math.PI * 0.85)) + 0.006 * noise3(a * 3 + o, y * 3, s);
+            const across = s * (T / 2 - 0.012 + bulge);
+            return P(a, y, across);
+          }, false);
+          // Seen from outside: flip the winding on one side (grid faces v x u).
+          if ((s > 0) === alongX) flipLast(b);
+        }
+        // Ends only at the line's two ends (inside the line the cells touch).
+        for (const e of i === 0 ? [-1] : i === cells - 1 ? [1] : []) {
+          b.grid('canvas', 4, 6, (u, v) => {
+            const s = (u - 0.5) * (T - 0.03);
+            const y = v * (h - 0.05);
+            return P(c + e * (cl / 2 - 0.015 + Math.sin(u * Math.PI) * 0.035), y, s);
+          }, false);
+          if ((e < 0) === alongX) flipLast(b);
+        }
+        if (cells === 1) {
+          b.grid('canvas', 4, 6, (u, v) => P(c + (cl / 2 - 0.015 + Math.sin(u * Math.PI) * 0.035), v * (h - 0.05), (u - 0.5) * (T - 0.03)), false);
+          if (!alongX) flipLast(b);
+        }
+      });
+      // Earth on top, lumpy, just under the rim.
+      b.grid('dirt', 4, 4, (u, v) => {
+        const a = c + (u - 0.5) * (cl - 0.06);
+        const s = (v - 0.5) * (T - 0.06);
+        const y = h - 0.08 + 0.035 * noise3(a * 2.5 + o, 0, s * 2.5) + 0.02 * Math.sin(u * Math.PI) * Math.sin(v * Math.PI);
+        return P(a, y, s);
+      }, false);
+      if (!alongX) flipLast(b);
+      // One plain box per cell is the far look (the cloth, earth and wires are under a pixel there).
+      const far = new KitBuilder();
+      far.box('canvas', alongX ? [cl, h, T] : [T, h, cl], P(c, h / 2, 0));
+      const fp = far.pieces[0]!;
+      for (let k = first; k < b.pieces.length; k++) b.pieces[k]!.far = k === first ? (fp.bevel ? unchamfer(fp.geo, fp.bevel) : fp.geo) : null;
+      // Welded wire: flat panels just outside the cloth (it bows out to them mid-cell): the rim, two
+      // wires across and two up a panel, the coil hinges at the corners. Real mesh is finer, but fine
+      // wires go under a pixel a few metres off and cost more than they show; drawn in the cloth's
+      // batch (dark tint), so they add no draw call.
+      b.tinted(WIRE_TINT, () => {
+        for (const s of [-1, 1]) {
+          const out = s * (T / 2 + WIRE_OUT);
+          for (const f of [1 / 3, 2 / 3]) {
+            b.rod('canvas', P(c - cl / 2, h * f, out), P(c + cl / 2, h * f, out), WIRE, 3);
+            b.rod('canvas', P(c + (f - 0.5) * cl, 0.02, out), P(c + (f - 0.5) * cl, h - 0.02, out), WIRE, 3);
+          }
+          b.rod('canvas', P(c - cl / 2, h - 0.02, out), P(c + cl / 2, h - 0.02, out), 0.007, 3);
+          b.rod('canvas', P(c - cl / 2, 0, out), P(c - cl / 2, h, out), 0.013, 4);
+          if (i === cells - 1) b.rod('canvas', P(c + cl / 2, 0, out), P(c + cl / 2, h, out), 0.013, 4);
+        }
+      });
     }
   },
 
