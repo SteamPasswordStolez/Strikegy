@@ -1495,6 +1495,7 @@
   "pp.tier.general": "장성",
   "pp.tier.marshal": "원수",
   "pp.mail": "우편함",
+  "pp.viewHint": "드래그해서 돌려 보기 · 휠로 확대",
   "pp.close": "닫기",
   "pp.confirmTitle": "구매 확인",
   "pp.confirmHave": "지금 가진 것",

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { CharmLook, GunSkinLook } from '@/progression/catalog';
+import type { CharmLook, GunFinish, GunSkinLook } from '@/progression/catalog';
 import { camoMaterial } from './camoMaterial';
 import { gunMaterials } from './gunKit';
 
@@ -47,11 +47,99 @@ function engraved(base: THREE.MeshStandardMaterial, color: number, glow: boolean
   return base;
 }
 
+const FINISH_GLSL = /* glsl */ `
+uniform float finWear;
+uniform float finScratch;
+uniform vec3 finBare;
+varying vec3 vFinPos;
+varying vec3 vFinNrm;
+float fHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float fNoise(vec3 x) {
+  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(fHash(i), fHash(i + vec3(1,0,0)), f.x), mix(fHash(i + vec3(0,1,0)), fHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(fHash(i + vec3(0,0,1)), fHash(i + vec3(1,0,1)), f.x), mix(fHash(i + vec3(0,1,1)), fHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+`;
+
+/**
+ * Wear and scratches on a gun's finish, worked out in the shader: the
+ * procedural guns are boxes with chamfered edges, so the edges are the flat
+ * faces turned between the gun's axes; there the paint is rubbed through in
+ * patches (noise) down to bright bare steel. Scratches are fine streaks along
+ * the gun (its -z) in the shine. A few metres off the chamfers are under a
+ * pixel and it fades by itself.
+ */
+function wearLayer(m: THREE.MeshStandardMaterial, f: GunFinish): void {
+  const uniforms = { finWear: { value: f.wear ?? 0 }, finScratch: { value: f.scratch ?? 0 }, finBare: { value: new THREE.Color(0x8e8f90) } };
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, r) => {
+    prev?.call(m, shader, r);
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFinPos;\nvarying vec3 vFinNrm;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFinPos = position;\nvFinNrm = objectNormal;');
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${FINISH_GLSL}`).replace(
+      '#include <normal_fragment_maps>',
+      `#include <normal_fragment_maps>
+      {
+        // Bevels: flat faces turned between the gun's axes (its main faces lie along them);
+        // curved parts (barrels, tubes) are left out by their normal changing across a face.
+        vec3 on = normalize(vFinNrm);
+        vec3 an = abs(on);
+        float bevel = smoothstep(0.95, 0.82, max(an.x, max(an.y, an.z))) * (1.0 - smoothstep(0.002, 0.012, length(fwidth(on))));
+        float patchy = fNoise(vFinPos * 160.0) * 0.6 + fNoise(vFinPos * 600.0) * 0.4;
+        float w = bevel * smoothstep(0.66, 0.42, patchy - finWear * 0.5) * step(0.001, finWear);
+        diffuseColor.rgb = mix(diffuseColor.rgb, finBare, w);
+        metalnessFactor = mix(metalnessFactor, 1.0, w);
+        roughnessFactor = mix(roughnessFactor, 0.3, w);
+        float streak = fNoise(vec3(vFinPos.x * 900.0, vFinPos.y * 900.0, vFinPos.z * 22.0));
+        float fine = smoothstep(0.86, 0.95, streak);
+        roughnessFactor = clamp(roughnessFactor + (streak - 0.5) * 0.22 * finScratch - fine * 0.25 * finScratch, 0.04, 1.0);
+        diffuseColor.rgb = mix(diffuseColor.rgb, finBare, fine * 0.35 * finScratch);
+      }`,
+    );
+  };
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => `${prevKey()}|wear`;
+}
+
+/** The same material as a physical one (clear coat, iridescence), keeping its shader hooks. */
+function physical(m: THREE.MeshStandardMaterial): THREE.MeshPhysicalMaterial {
+  const p = new THREE.MeshPhysicalMaterial();
+  THREE.MeshStandardMaterial.prototype.copy.call(p, m);
+  // The standard copy writes its own defines over the physical ones.
+  p.defines = { STANDARD: '', PHYSICAL: '' };
+  p.onBeforeCompile = m.onBeforeCompile;
+  p.customProgramCacheKey = m.customProgramCacheKey;
+  p.userData = { ...m.userData };
+  return p;
+}
+
+/** Puts `f` on a skin's material (a new one where it needs the physical model). */
+function finished(m: THREE.MeshStandardMaterial, f: GunFinish | undefined, role: Role): THREE.MeshStandardMaterial {
+  if (!f) return m;
+  let out = m;
+  const irid = role === 'metal' || role === 'steel' ? (f.irid ?? 0) : 0;
+  if ((f.coat ?? 0) > 0 || irid > 0) {
+    const p = physical(m);
+    p.clearcoat = f.coat ?? 0;
+    p.clearcoatRoughness = 0.06;
+    p.iridescence = irid;
+    p.iridescenceIOR = 1.8;
+    p.iridescenceThicknessRange = [180, 620];
+    out = p;
+  }
+  if (((f.wear ?? 0) > 0 || (f.scratch ?? 0) > 0) && role !== 'wood') wearLayer(out, f);
+  return out;
+}
+
 function finish(base: THREE.MeshStandardMaterial, c: [number, number, number]): THREE.MeshStandardMaterial {
   const m = base.clone();
   m.color.set(c[0]);
   m.metalness = c[1];
   m.roughness = c[2];
+  // Polished finishes are smooth: the base metal's hammered normal map read as crumpled foil under them.
+  if (c[2] < 0.5) m.normalScale.multiplyScalar(0.3);
   // Plain colours: no albedo map left over (wood keeps its grain map only when asked for).
   m.map = null;
   return m;
@@ -72,7 +160,14 @@ function skinned(role: Role, base: THREE.MeshStandardMaterial, look: GunSkinLook
     if (look.wood !== undefined) out.color.set(look.wood).multiplyScalar(1.6);
   } else if (look.pattern) {
     // The camo material itself (cloning would drop its shader hook); cached there per look.
-    const pm = camoMaterial(look.pattern, base);
+    // The camo material is shared by plain camos; a finish goes on a copy of it.
+    let pm: THREE.MeshStandardMaterial = camoMaterial(look.pattern, base);
+    if (look.finish) {
+      const c = pm.clone();
+      c.onBeforeCompile = pm.onBeforeCompile;
+      c.customProgramCacheKey = pm.customProgramCacheKey;
+      pm = finished(c, look.finish, role);
+    }
     pm.userData.skin = true;
     cache.set(k, pm);
     return pm;
@@ -80,6 +175,7 @@ function skinned(role: Role, base: THREE.MeshStandardMaterial, look: GunSkinLook
   else if (look.furniture) out = finish(base, look.furniture);
   else out = base.clone();
   if (look.engrave && (role === 'metal' || (role === 'steel' && look.metal))) engraved(out, look.engrave.color, !!look.engrave.glow);
+  out = finished(out, look.finish, role);
   out.userData.camo = true;
   out.userData.skin = true;
   cache.set(k, out);

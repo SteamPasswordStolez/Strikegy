@@ -59,6 +59,23 @@ export interface GunSkinLook {
   wood?: number;
   /** Engraving over the metal, glowing on the top skins. */
   engrave?: { color: number; glow?: boolean };
+  /** How the finish wears and shines (all 0..1; see `GunFinish`). */
+  finish?: GunFinish;
+}
+
+/**
+ * The finish over a skin's colours (2026-10-27, BM quality): what makes a
+ * skin read as a material rather than a colour.
+ */
+export interface GunFinish {
+  /** Clear lacquer over everything (a wet, deep shine). */
+  coat?: number;
+  /** Heat-tinted / anodised rainbow sheen on the metal. */
+  irid?: number;
+  /** Paint rubbed through to bare steel along the edges. */
+  wear?: number;
+  /** Fine scratches breaking up the shine. */
+  scratch?: number;
 }
 
 /** A charm on the gun: a small shape on a cord. */
@@ -414,23 +431,23 @@ const SKIN_THEMES: [id: string, ko: string, en: string, rarity: Rarity, look: Gu
   ['sage', '세이지', 'Sage', 'rare', S([0x4a5048, 0.4, 0.7], [0x7d8a72, 0, 0.85])],
   ['plum', '자두', 'Plum', 'rare', S([0x2a1e2a, 0.5, 0.6], [0x4a2a4a, 0, 0.8])],
   // Epic: material and pattern.
-  ['desertsof', '사막 특수전', 'Desert operator', 'epic', S([0x8a7a5a, 0.4, 0.6], undefined, { pattern: camo('splinter', [0xb59a6a, 0x8c7448, 0xd8c39a], 7) })],
-  ['titanium', '티타늄', 'Titanium', 'epic', S([0x9aa0a6, 0.95, 0.35], [0x2a2c30, 0, 0.8], { steel: [0x7a8086, 0.95, 0.3] })],
-  ['marine', '해병 상륙', 'Marine landing', 'epic', S([0x3a3f2a, 0.4, 0.7], undefined, { pattern: camo('wrap', [0x5c6b3f, 0x3a4428, 0x8f8a5c], 7) })],
-  ['winter', '설원 저격수', 'Winter marksman', 'epic', S([0xc8ccd0, 0.3, 0.6], undefined, { pattern: camo('wrap', [0xe8ecef, 0xb7bec4, 0x8d959c], 7) })],
-  ['carbon', '카본', 'Carbon', 'epic', S([0x1a1b1d, 0.6, 0.45], undefined, { pattern: camo('carbon', [0x2a2b2e, 0x101113, 0x3c3e42], 60) })],
-  ['tiger', '호랑이', 'Tiger', 'epic', S([0x1a1612, 0.5, 0.6], undefined, { pattern: camo('tiger', [0xd8822a, 0x120c08, 0xf0b060], 6) })],
-  ['officer', '장교', 'Officer', 'epic', S([0x2a2c30, 0.8, 0.4], [0xe8dcc0, 0, 0.5], { engrave: { color: 0xd8dde3 } })],
-  ['ghost', '유령', 'Ghost', 'epic', S([0x1e2a2c, 0.5, 0.6], undefined, { pattern: camo('hex', [0x2a4a4e, 0x0e1a1c, 0x5aa0a8], 14) })],
-  ['rust', '녹슨 강철', 'Rusted steel', 'epic', S([0x6a3a20, 0.7, 0.8], undefined, { pattern: camo('blotch', [0x8a4a22, 0x4a2410, 0xb07040], 12, { metal: 0.5 }) })],
-  ['bone', '뼈', 'Bone', 'epic', S([0xc8b898, 0.3, 0.6], [0xe0d4b8, 0, 0.6], { engrave: { color: 0x5a4a32 } })],
+  ['desertsof', '사막 특수전', 'Desert operator', 'epic', S([0x8a7a5a, 0.4, 0.6], undefined, { pattern: camo('splinter', [0xb59a6a, 0x8c7448, 0xd8c39a], 7), finish: { wear: 0.5, scratch: 0.5 } })],
+  ['titanium', '티타늄', 'Titanium', 'epic', S([0x9aa0a6, 0.95, 0.35], [0x2a2c30, 0, 0.8], { steel: [0x7a8086, 0.95, 0.3], finish: { wear: 0.25, scratch: 0.8, irid: 0.25 } })],
+  ['marine', '해병 상륙', 'Marine landing', 'epic', S([0x3a3f2a, 0.4, 0.7], undefined, { pattern: camo('wrap', [0x5c6b3f, 0x3a4428, 0x8f8a5c], 7), finish: { wear: 0.6, scratch: 0.4 } })],
+  ['winter', '설원 저격수', 'Winter marksman', 'epic', S([0xc8ccd0, 0.3, 0.6], undefined, { pattern: camo('wrap', [0xe8ecef, 0xb7bec4, 0x8d959c], 7), finish: { wear: 0.45, scratch: 0.3 } })],
+  ['carbon', '카본', 'Carbon', 'epic', S([0x1a1b1d, 0.6, 0.45], undefined, { pattern: camo('carbon', [0x2a2b2e, 0x101113, 0x3c3e42], 60), finish: { coat: 0.9, scratch: 0.2 } })],
+  ['tiger', '호랑이', 'Tiger', 'epic', S([0x1a1612, 0.5, 0.6], undefined, { pattern: camo('tiger', [0xd8822a, 0x120c08, 0xf0b060], 6), finish: { coat: 0.5, wear: 0.3 } })],
+  ['officer', '장교', 'Officer', 'epic', S([0x2a2c30, 0.8, 0.4], [0xe8dcc0, 0, 0.5], { engrave: { color: 0xd8dde3 }, finish: { coat: 0.6, scratch: 0.3 } })],
+  ['ghost', '유령', 'Ghost', 'epic', S([0x1e2a2c, 0.5, 0.6], undefined, { pattern: camo('hex', [0x2a4a4e, 0x0e1a1c, 0x5aa0a8], 14), finish: { coat: 0.3, wear: 0.2, scratch: 0.4 } })],
+  ['rust', '녹슨 강철', 'Rusted steel', 'epic', S([0x6a3a20, 0.7, 0.8], undefined, { pattern: camo('blotch', [0x8a4a22, 0x4a2410, 0xb07040], 12, { metal: 0.5 }), finish: { wear: 0.9, scratch: 0.6 } })],
+  ['bone', '뼈', 'Bone', 'epic', S([0xc8b898, 0.3, 0.6], [0xe0d4b8, 0, 0.6], { engrave: { color: 0x5a4a32 }, finish: { wear: 0.4, scratch: 0.5 } })],
   // Legendary: moving patterns, engraving that glows.
-  ['walnut', '호두나무 각인', 'Engraved walnut', 'legendary', S([0x2a2420, 0.85, 0.35], undefined, { wood: 0x5a3218, engrave: { color: 0xd8b052 } })],
-  ['gold', '황금', 'Gold', 'legendary', S([0xd4a440, 1, 0.25], [0x161618, 0, 0.6], { steel: [0xb08a3e, 1, 0.3], engrave: { color: 0x5a3a0a } })],
-  ['reddragon', '붉은 용', 'Red dragon', 'legendary', S([0x2a0a0a, 0.7, 0.4], undefined, { pattern: camo('scales', [0xb0201a, 0x3a0505, 0xffb060], 9, { metal: 0.6, flow: 0.5 }), engrave: { color: 0xff6a3a, glow: true } })],
-  ['aurora', '오로라', 'Aurora', 'legendary', S([0x101820, 0.6, 0.4], undefined, { pattern: camo('flow', [0x2ad0a0, 0x0a1430, 0xb060ff], 5, { flow: 0.6, metal: 0.4 }), engrave: { color: 0x6af0ff, glow: true } })],
-  ['blackflame', '흑염', 'Black flame', 'legendary', S([0x0e0c0c, 0.6, 0.5], undefined, { pattern: camo('obsidian', [0x141010, 0x050404, 0xff4a1a], 6, { flow: 0.4 }), engrave: { color: 0xff7a2a, glow: true } })],
-  ['frost', '서리', 'Frost', 'legendary', S([0xb8d0e0, 0.9, 0.3], undefined, { pattern: camo('flow', [0xe0f4ff, 0x6a9ac8, 0xffffff], 6, { flow: 0.3, metal: 0.7 }), engrave: { color: 0x9ae0ff, glow: true } })],
+  ['walnut', '호두나무 각인', 'Engraved walnut', 'legendary', S([0x2a2420, 0.85, 0.35], undefined, { wood: 0x5a3218, engrave: { color: 0xd8b052 }, finish: { coat: 0.7, wear: 0.15 } })],
+  ['gold', '황금', 'Gold', 'legendary', S([0xd4a440, 1, 0.25], [0x161618, 0, 0.6], { steel: [0xb08a3e, 1, 0.3], engrave: { color: 0x5a3a0a }, finish: { coat: 0.8, scratch: 0.25 } })],
+  ['reddragon', '붉은 용', 'Red dragon', 'legendary', S([0x2a0a0a, 0.7, 0.4], undefined, { pattern: camo('scales', [0xb0201a, 0x3a0505, 0xffb060], 9, { metal: 0.6, flow: 0.5 }), engrave: { color: 0xff6a3a, glow: true }, finish: { coat: 1, irid: 0.3 } })],
+  ['aurora', '오로라', 'Aurora', 'legendary', S([0x101820, 0.6, 0.4], undefined, { pattern: camo('flow', [0x2ad0a0, 0x0a1430, 0xb060ff], 5, { flow: 0.6, metal: 0.4 }), engrave: { color: 0x6af0ff, glow: true }, finish: { coat: 1, irid: 0.8 } })],
+  ['blackflame', '흑염', 'Black flame', 'legendary', S([0x0e0c0c, 0.6, 0.5], undefined, { pattern: camo('obsidian', [0x141010, 0x050404, 0xff4a1a], 6, { flow: 0.4 }), engrave: { color: 0xff7a2a, glow: true }, finish: { coat: 0.8, irid: 0.2 } })],
+  ['frost', '서리', 'Frost', 'legendary', S([0xb8d0e0, 0.9, 0.3], undefined, { pattern: camo('flow', [0xe0f4ff, 0x6a9ac8, 0xffffff], 6, { flow: 0.3, metal: 0.7 }), engrave: { color: 0x9ae0ff, glow: true }, finish: { coat: 1, irid: 0.5, scratch: 0.2 } })],
 ];
 for (const [theme, ko, en, rarity, look] of SKIN_THEMES)
   for (const w of SKIN_WEAPONS) add({ id: `skin.${theme}.${w}`, kind: 'skin', rarity, name: [ko, en], source: 'weekly', weapon: w, skin: look });

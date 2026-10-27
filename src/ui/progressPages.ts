@@ -214,17 +214,35 @@ function slotOf(it: Item): { slot: EquipSlot; on?: string } | null {
  * An item large: its picture, rarity, kind, what it does, and buying it (or
  * wearing it once owned). `offer`: how it is sold here (none: shown only).
  */
+/** Items the 3D viewer shows (ItemViewer.hasViewer, without loading it). */
+const viewable = (it: Item) => it.kind === 'skin' || it.kind === 'camo' || it.kind === 'charm' || it.kind === 'vskin' || it.kind === 'kfx';
+
 function openItem(o: PageOptions, it: Item, offer?: Offer, craftParts?: number): void {
   const shade = el('div', 'dlg-shade ds-root pp-detail-shade', o.root);
   shade.dataset.dsTheme = 'bfv';
   const box = el('div', `pp-detail r-${it.rarity}`, shade);
-  const close = escToClose(shade, () => shade.remove());
+  let stopViewer = () => {};
+  const close = escToClose(shade, () => {
+    stopViewer();
+    shade.remove();
+  });
   const x = el('button', 'pp-detail-x', box);
   x.innerHTML = icon('close');
   x.addEventListener('click', close);
   shade.addEventListener('click', (ev) => ev.target === shade && close());
   const pic = el('div', 'pp-detail-pic', box);
   itemPicture(pic, it, 150);
+  // Guns, camos, charms, vehicle skins and kill effects: turned round in 3D (the picture stands in while it loads).
+  if (viewable(it)) {
+    box.classList.add('pp-detail-3d');
+    const stage = el('div', 'pp-detail-stage', pic);
+    el('div', 'pp-detail-hint', pic, t('pp.viewHint'));
+    void import('./ItemViewer').then((v) => {
+      if (!shade.isConnected) return;
+      stopViewer = v.openViewer(stage, it);
+      pic.classList.add('live');
+    });
+  }
   const side = el('div', 'pp-detail-side', box);
   rarityBadge(side, it.rarity);
   el('h2', 'pp-detail-name', side, nameOf(it.name));

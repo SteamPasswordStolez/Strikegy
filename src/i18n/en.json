@@ -1495,6 +1495,7 @@
   "pp.tier.general": "Generals",
   "pp.tier.marshal": "Marshal",
   "pp.mail": "Mailbox",
+  "pp.viewHint": "Drag to turn · wheel to zoom",
   "pp.close": "Close",
   "pp.confirmTitle": "Confirm purchase",
   "pp.confirmHave": "You have",
