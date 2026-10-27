@@ -47,6 +47,7 @@ const CAMO_GLSL = /* glsl */ `
 varying vec3 vCamoPos;
 uniform vec3 uCamoA, uCamoB, uCamoC;
 uniform float uCamoScale, uDust, uPattern, uBand;
+uniform vec3 uBandColor;
 float camoHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float camoNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -62,15 +63,17 @@ const VPATTERN: Record<VehicleSkinLook['pattern'], number> = { blotch: 0, bands:
 /**
  * Painted steel in the side's camouflage: blotches in object space (they stay
  * put on the hull), dust toward the bottom. A vehicle skin changes the
- * pattern and the tones of the side's own three colours (never the colours'
- * family: friend or foe still reads at a distance), and can add a dark band.
+ * pattern and the tones of the side's own three colours, and can add a dark
+ * band; a skin with colours of its own (owner, 2026-10-27: allowed) always
+ * wears a band in its side's colour, so friend or foe still reads.
  */
 function camoPaint(team: Team | null, livery: Livery, skin?: VehicleSkinLook): THREE.Material {
-  const skey = skin ? `${skin.pattern}:${skin.scale}:${skin.tones.join(',')}:${skin.band ? 1 : 0}` : '';
+  const skey = skin ? `${skin.pattern}:${skin.scale}:${skin.tones.join(',')}:${skin.band ? 1 : 0}:${skin.colors?.join(',') ?? ''}` : '';
   return cached(`camo-${livery}-${team}-${skey}`, () => {
     const pal = CAMO[livery][team ?? 'none'];
     const tone = (c: number, k: number) => new THREE.Color(c).multiplyScalar(k).getHex();
-    const [a, b, c] = skin && team ? [tone(pal[0], skin.tones[0]), tone(pal[1], skin.tones[1]), tone(pal[2], skin.tones[2])] : pal;
+    const own = skin?.colors && team ? skin.colors : null;
+    const [a, b, c] = own ?? (skin && team ? [tone(pal[0], skin.tones[0]), tone(pal[1], skin.tones[1]), tone(pal[2], skin.tones[2])] : pal);
     const base = lib ? lib.get('paint').clone() : new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.2 });
     // The paint texture's colour (chips, rust) reads as measles at a vehicle's
     // scale; its roughness / normal maps keep the worn finish.
@@ -84,7 +87,8 @@ function camoPaint(team: Team | null, livery: Livery, skin?: VehicleSkinLook): T
       uCamoScale: { value: team ? (livery === 'air' ? 0.22 : 0.55) * (skin?.scale ?? 1) : 0 },
       uDust: { value: livery === 'air' ? 0 : 0.35 },
       uPattern: { value: skin ? VPATTERN[skin.pattern] : 0 },
-      uBand: { value: skin?.band ? 1 : 0 },
+      uBand: { value: skin?.band || own ? 1 : 0 },
+      uBandColor: { value: own ? new THREE.Color(team === 'red' ? 0xa8322a : 0x2f62b8) : new THREE.Color(c).multiplyScalar(0.55) },
     };
     base.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
@@ -128,7 +132,7 @@ function camoPaint(team: Team | null, livery: Livery, skin?: VehicleSkinLook): T
             camo = mix(camo, uCamoC, smoothstep(0.6, 0.63, n2));
           }
           // A band round the middle of the hull.
-          if (uBand > 0.5) camo = mix(camo, uCamoC * 0.55, step(abs(vCamoPos.z - 0.4), 0.22));
+          if (uBand > 0.5) camo = mix(camo, uBandColor, step(abs(vCamoPos.z - 0.4), 0.22));
         }
         // Dust and dried mud up the lower hull and running gear.
         float dust = (1.0 - smoothstep(-1.0, 0.3, vCamoPos.y)) * uDust * (0.7 + 0.3 * camoNoise(vCamoPos * 4.0));

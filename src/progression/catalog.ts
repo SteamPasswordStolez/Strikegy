@@ -100,6 +100,8 @@ export interface VehicleSkinLook {
   tones: [number, number, number];
   /** A dark band round the hull (command vehicles, aces). */
   band?: boolean;
+  /** Colours of its own instead of the side's (owner, 2026-10-27); a band in the side's colour is drawn then. */
+  colors?: [number, number, number];
 }
 
 /** A kill effect: a short burst of small pieces round the body, no light (progression-data.md I). */
@@ -525,7 +527,7 @@ const CHARMS: [id: string, ko: string, en: string, rarity: Rarity, look: CharmLo
 for (const [id, ko, en, rarity, look] of CHARMS) add({ id: `charm.${id}`, kind: 'charm', rarity, name: [ko, en], source: 'weekly', charm: look });
 
 // Vehicle skins: a family (armor, cars and boats, aircraft, warships), a pattern and tones inside the side's colours.
-const V = (pattern: VehicleSkinLook['pattern'], scale: number, tones: [number, number, number], band = false): VehicleSkinLook => ({ pattern, scale, tones, ...(band ? { band } : {}) });
+const V = (pattern: VehicleSkinLook['pattern'], scale: number, tones: [number, number, number], band = false, colors?: [number, number, number]): VehicleSkinLook => ({ pattern, scale, tones, ...(band ? { band } : {}), ...(colors ? { colors } : {}) });
 const VSKINS: [id: string, ko: string, en: string, rarity: Rarity, look: VehicleSkinLook][] = [
   ['bands', '띠무늬', 'Bands', 'uncommon', V('bands', 1, [1, 1, 1])],
   ['clouds', '구름무늬', 'Clouds', 'uncommon', V('clouds', 0.8, [1.05, 0.95, 1])],
@@ -538,6 +540,13 @@ const VSKINS: [id: string, ko: string, en: string, rarity: Rarity, look: Vehicle
   ['dazzle', '다즐', 'Dazzle', 'epic', V('dazzle', 1, [1.35, 0.7, 0.5])],
   ['banded', '지휘차 띠', "Commander's band", 'epic', V('clouds', 1, [1, 1, 1], true)],
   ['ace', '에이스', 'Ace', 'epic', V('splinter', 1.2, [1.2, 0.75, 0.55], true)],
+  // Colours of their own (owner, 2026-10-27), a band in the side's colour for friend or foe.
+  ['arctic', '극지', 'Arctic', 'rare', V('blotch', 0.9, [1, 1, 1], false, [0xc4c9cc, 0x8e979c, 0x565f64])],
+  ['urban', '도시', 'Urban', 'rare', V('digital', 1.3, [1, 1, 1], false, [0x6c7076, 0x3a3d42, 0x9da2a8])],
+  ['night', '야간', 'Night', 'epic', V('splinter', 1, [1, 1, 1], false, [0x1c1e22, 0x0e0f11, 0x2e3440])],
+  ['navydazzle', '해군 다즐', 'Navy dazzle', 'epic', V('dazzle', 1, [1, 1, 1], false, [0x7e8a96, 0x1e2630, 0x4a5662])],
+  ['jungletiger', '밀림 호랑이', 'Jungle tiger', 'epic', V('tiger', 1, [1, 1, 1], false, [0x3e5a2a, 0x141a10, 0x7a8a3a])],
+  ['parade', '의장', 'Parade', 'legendary', V('stripes', 1.2, [1, 1, 1], false, [0x14181e, 0xc9a24a, 0x2a2e36])],
 ];
 for (const cls of VEHICLE_CLASSES)
   for (const [id, ko, en, rarity, look] of VSKINS) add({ id: `vskin.${id}.${cls}`, kind: 'vskin', rarity, name: [ko, en], source: 'weekly', vclass: cls, vskin: look });
