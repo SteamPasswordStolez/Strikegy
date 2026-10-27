@@ -1,6 +1,6 @@
 /**
  * The staff's page, strikegy.xyz/admin (owner, 2026-10-14): logs in to the
- * game server with its admin key (kept in the server's `.strikegy-admin-key`;
+ * game server with its admin key (a passphrase set by `npm run admin:key`, kept as a hash in the server's `.strikegy-admin-key`;
  * this page keeps it for the tab only, if asked) and shows the server's
  * numbers, every room with its people and chat, everyone connected, the bans
  * and mutes; it closes rooms and ends matches, kicks, mutes and bans people
@@ -85,7 +85,7 @@ class AdminPage {
     const box = el('form', 'ad-login', root);
     el('div', 'ad-eyebrow', box, 'STRIKEGY');
     el('h1', 'ad-title', box, '운영 페이지');
-    el('p', 'ad-desc', box, '게임 서버의 운영자 키로 로그인합니다. 키는 서버 노트북의 ~/strikegy/.strikegy-admin-key 에 있습니다.');
+    el('p', 'ad-desc', box, '게임 서버의 운영자 키로 로그인합니다. 키는 서버 노트북에서 npm run admin:key 로 정한 문구입니다.');
     if (error) el('div', 'ad-error', box, error);
     el('label', 'ad-label', box, '서버');
     const pick = el('select', 'ad-input', box);

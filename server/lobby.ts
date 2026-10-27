@@ -22,7 +22,7 @@
  * signalling core for P2P; host picking, WebRTC set-up and TURN went when the
  * owner chose a server-authoritative design (2026-10-04).
  */
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { filterText, profane } from '../src/net/wordFilter.ts';
 import {
   CHAT_MAX,
@@ -1161,10 +1161,7 @@ export class LobbyCore {
       this.adminTries.set(c.addr, mine);
       return this.strike(c, 'rate');
     }
-    // Compared as hashes, in constant time.
-    const a = createHash('sha256').update(key).digest();
-    const b = createHash('sha256').update(real).digest();
-    if (!timingSafeEqual(a, b)) {
+    if (!adminKeyMatches(key, real)) {
       mine.push(now);
       this.adminTriesAll.push(now);
       this.adminTries.set(c.addr, mine);
@@ -1367,4 +1364,24 @@ export class LobbyCore {
     this.lastList = text;
     for (const c of this.clients.values()) if (c.watching && !c.room) this.send(c, { t: 'rooms', rooms });
   }
+}
+
+/**
+ * Whether `key` is the admin key `real`: a passphrase kept as a scrypt hash
+ * (`scrypt$<salt>$<hash>`, base64url, written by `npm run admin:key`), or a
+ * plain key (`STRIKEGY_ADMIN_KEY`, tests). Constant-time either way.
+ */
+export function adminKeyMatches(key: string, real: string): boolean {
+  const parts = real.split('$');
+  if (parts.length === 4 && parts[0] === 'scrypt') {
+    const [, n, salt, hash] = parts as [string, string, string, string];
+    const want = Buffer.from(hash, 'base64url');
+    const N = Number(n);
+    if (!(N >= 1024 && N <= 1 << 20) || want.length < 16) return false;
+    const got = scryptSync(key.normalize('NFC'), Buffer.from(salt, 'base64url'), want.length, { N, r: 8, p: 1, maxmem: 256 * N * 8 });
+    return timingSafeEqual(got, want);
+  }
+  const a = createHash('sha256').update(key).digest();
+  const b = createHash('sha256').update(real).digest();
+  return timingSafeEqual(a, b);
 }

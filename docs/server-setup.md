@@ -113,7 +113,7 @@ UDP 단절 회귀 확인: `node scripts/udpCheck.mjs wss://game.strikegy.xyz/pla
 
 ## 7. 업데이트
 
-운영자 페이지(https://strikegy.xyz/admin/)의 키는 처음 켤 때 `~/strikegy/.strikegy-admin-key`에 만들어집니다(`cat ~/strikegy/.strikegy-admin-key`로 확인, git에 안 올라감). 바꾸려면 파일을 지우고 서버를 재시작하거나 `STRIKEGY_ADMIN_KEY` 환경 변수를 주세요. 차단·채금·금칙어는 `~/strikegy/.strikegy-admin.json`에 저장됩니다.
+운영자 페이지(https://strikegy.xyz/admin/)의 키는 오너가 정한 문구입니다(2026-10-27). 노트북에서 직접(Claude를 거치지 않는 본인 터미널에서) `cd ~/strikegy && npm run admin:key` → 문구를 두 번 입력(화면에 안 보임, 14자 이상, 한글 가능) 또는 Enter로 영어 단어 다섯 개 받기 → `sudo systemctl restart strikegy`. `~/strikegy/.strikegy-admin-key`에는 scrypt 해시만 들어가서 파일이 새도 문구는 드러나지 않습니다. 파일이 없으면 서버가 무작위 키를 만들어 원문으로 저장하고, `STRIKEGY_ADMIN_KEY` 환경 변수가 있으면 그것이 먼저입니다. 차단·채금·금칙어는 `~/strikegy/.strikegy-admin.json`에 저장됩니다.
 
 이름 태그(`이름#K7Q2M`)를 만드는 서버 비밀키는 처음 켤 때 작업 폴더의 `.strikegy-tag-secret`(git에 안 올라감)에 저장됩니다. 지우거나 바꾸면 모든 사람의 태그가 바뀌니 그대로 두세요(`STRIKEGY_TAG_SECRET` 환경 변수로 줄 수도 있음).
 

@@ -28,7 +28,8 @@
     "wasm": "node scripts/build-wasm.mjs",
     "voice": "node scripts/build-voice.mjs",
     "voice:lines": "node scripts/briefing-lines.mjs",
-    "music": "node scripts/build-music.mjs"
+    "music": "node scripts/build-music.mjs",
+    "admin:key": "node scripts/admin-key.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
