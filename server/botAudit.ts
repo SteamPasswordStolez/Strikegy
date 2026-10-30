@@ -156,6 +156,13 @@ for (let i = 0; i < steps; i++) {
         if (s === 4) {
           stuckEpisodes++;
           count(hotspots, `${Math.round(b.feet.x / 10) * 10},${Math.round(b.feet.z / 10) * 10}`);
+          // STUCKLOG=1: each 4 s stand-still with what the bot was after.
+          if (process.env.STUCKLOG) {
+            const f = (v: { x: number; y: number; z: number }) => `${v.x.toFixed(1)},${v.y.toFixed(1)},${v.z.toFixed(1)}`;
+            const path = (bb.path as { x: number; y: number; z: number }[]) ?? [];
+            const next = path[Math.min(bb.pathIndex ?? 0, path.length - 1)];
+            console.log(`stuck t=${Math.round(now)} ${b.team} ${bb.action} at ${f(b.feet)} goal ${f(bb.goal)} next ${next ? f(next) : '-'} path ${path.length} indoors ${bots.insideBuilding(b.feet)}`);
+          }
         }
       } else idle++;
     } else stuckFor.delete(b.id);

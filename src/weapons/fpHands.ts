@@ -328,5 +328,6 @@ export function setHandColors(sleeve: THREE.Color, glove: THREE.Color): void {
   m.sleeve.color.copy(sleeve);
   const hsl = { h: 0, s: 0, l: 0 };
   glove.getHSL(hsl);
-  m.glove.color.setHSL(hsl.h, Math.min(hsl.s, 0.35), Math.min(hsl.l, 0.16));
+  // Dark, but light enough for the fingers and the leather pads to read against the gun.
+  m.glove.color.setHSL(hsl.h, Math.min(hsl.s, 0.3), Math.min(Math.max(hsl.l, 0.24), 0.3));
 }

@@ -45,62 +45,171 @@ const tmp = new THREE.Vector3();
 
 /** Whole-gun pose while reloading (blended in and out): offset and rotation. */
 export const RELOAD_POSE = {
-  mag: { pos: [-0.06, 0.03, 0.03] as Vec, rot: [0.12, 0.35, -0.4] as Vec },
+  mag: { pos: [-0.05, 0.035, 0.02] as Vec, rot: [0.16, 0.42, -0.58] as Vec },
   shell: { pos: [-0.05, 0.02, 0.03] as Vec, rot: [0.1, 0.3, -0.6] as Vec },
 };
 
-/** Hand anchors: the magazine grip, the charging handle / slide, the loading port. */
-export type HandAnchor = 'mag' | 'chamber' | 'port';
+/** Hand anchors: the magazine grip, the charging handle / slide, the loading port, the bolt catch. */
+export type HandAnchor = 'mag' | 'chamber' | 'port' | 'catch';
 
 const O: Vec = [0, 0, 0];
-/** The hand carries the magazine down and out of view, then back. */
-const MAG_AWAY: Vec = [-0.06, -0.3, 0.1];
+/** The hand down at the pouches, out of view. */
+const MAG_AWAY: Vec = [-0.07, -0.32, 0.12];
 
 /**
- * Magazine reload (0..1 of the reload time): support hand to the magazine,
- * pulls it (cue at 0.2), takes it off screen, brings a fresh one, seats it
- * (cue at 0.62) with a slap, works the charging handle / slide (cue at 0.86)
- * and returns to the handguard.
+ * A magazine reload, two ways (0..1 of the reload time; the sound cues stay
+ * at 0.2 magazine out, 0.62 in, 0.86 bolt; owner, 2026-10-30: CoD-like):
+ * - with rounds left: the support hand takes the magazine, pulls it down and
+ *   away, swaps it at the pouch for a full one, brings it up, seats it with a
+ *   push and a slap of the palm under it, and goes back to the handguard as
+ *   the gun is tipped back level;
+ * - empty: the hand thumbs the release and the empty magazine drops free
+ *   (ViewModel lets it fall), the hand goes straight to the pouch, seats the
+ *   new one, then slaps the bolt catch on the receiver's left side.
  */
-export const RELOAD_HAND: readonly Key<HandAnchor>[] = [
-  { t: 0, v: O },
-  { t: 0.1, v: [0, -0.01, 0.02], at: 'mag' },
-  { t: 0.16, v: O, at: 'mag' },
-  { t: 0.2, v: O, at: 'mag' },
-  { t: 0.32, v: MAG_AWAY, at: 'mag' },
-  { t: 0.46, v: MAG_AWAY, at: 'mag' },
-  { t: 0.56, v: [0, -0.05, 0.01], at: 'mag' },
-  { t: 0.62, v: O, at: 'mag' },
-  { t: 0.66, v: [0, 0.014, 0], at: 'mag' },
-  { t: 0.7, v: O, at: 'mag' },
-  { t: 0.79, v: O, at: 'chamber' },
-  { t: 0.85, v: [0, 0, 0.07], at: 'chamber' },
-  { t: 0.89, v: [0, 0, 0.07], at: 'chamber' },
-  { t: 1, v: O },
-];
-/** Hand twist (radians) along the reload. */
-export const RELOAD_HAND_ROT: readonly Key[] = [
-  { t: 0, v: O },
-  { t: 0.12, v: [0.2, 0, 0.5] },
-  { t: 0.62, v: [0.2, 0, 0.5] },
-  { t: 0.72, v: [0, 0, 0.1] },
-  { t: 0.8, v: [0, 0.3, -0.4] },
-  { t: 0.9, v: [0, 0.3, -0.4] },
-  { t: 1, v: O },
-];
-/** Magazine carried by the hand between these reload times. */
-export const RELOAD_MAG_HELD: readonly [number, number] = [0.2, 0.62];
-/** Gun jolts (seating the magazine, releasing the handle) as extra pitch. */
-export const RELOAD_GUN_ROT: readonly Key[] = [
-  { t: 0, v: O },
-  { t: 0.6, v: O },
-  { t: 0.63, v: [0.07, 0, -0.04] },
-  { t: 0.7, v: O },
-  { t: 0.84, v: O },
-  { t: 0.87, v: [-0.05, 0.03, 0] },
-  { t: 0.93, v: O },
-  { t: 1, v: O },
-];
+export interface MagReload {
+  hand: readonly Key<HandAnchor>[];
+  handRot: readonly Key[];
+  /** The magazine moves with the hand between these times. */
+  held: readonly [number, number];
+  /** The gun's own jolts (extra offset / rotation on top of the reload pose). */
+  gunPos: readonly Key[];
+  gunRot: readonly Key[];
+}
+
+export const RELOAD_TACTICAL: MagReload = {
+  hand: [
+    { t: 0, v: O },
+    { t: 0.08, v: [-0.01, -0.03, 0.03], at: 'mag' },
+    { t: 0.15, v: O, at: 'mag' },
+    { t: 0.2, v: O, at: 'mag' },
+    { t: 0.27, v: [0, -0.07, 0.015], at: 'mag' },
+    { t: 0.36, v: MAG_AWAY, at: 'mag' },
+    { t: 0.44, v: MAG_AWAY, at: 'mag' },
+    { t: 0.53, v: [-0.01, -0.07, 0.01], at: 'mag' },
+    { t: 0.58, v: [0, -0.016, 0], at: 'mag' },
+    { t: 0.62, v: O, at: 'mag' },
+    { t: 0.645, v: [0, 0.016, 0], at: 'mag' },
+    { t: 0.68, v: [0, 0.004, 0], at: 'mag' },
+    { t: 0.84, v: [0, -0.01, -0.01] },
+    { t: 1, v: O },
+  ],
+  handRot: [
+    { t: 0, v: O },
+    { t: 0.12, v: [0.25, 0, 0.55] },
+    { t: 0.3, v: [0.5, 0.1, 0.7] },
+    { t: 0.44, v: [0.6, 0.15, 0.8] },
+    { t: 0.56, v: [0.25, 0, 0.55] },
+    { t: 0.64, v: [0.1, 0, 0.4] },
+    { t: 0.82, v: [0, 0, 0.05] },
+    { t: 1, v: O },
+  ],
+  held: [0.2, 0.62],
+  gunPos: [
+    { t: 0, v: O },
+    { t: 0.19, v: O },
+    { t: 0.23, v: [0, -0.008, 0] },
+    { t: 0.3, v: O },
+    { t: 0.6, v: O },
+    { t: 0.625, v: [0, 0.012, -0.004] },
+    { t: 0.65, v: [0, -0.004, 0] },
+    { t: 0.72, v: O },
+    { t: 0.84, v: O },
+    { t: 0.88, v: [0, 0.004, 0.006] },
+    { t: 1, v: O },
+  ],
+  gunRot: [
+    { t: 0, v: O },
+    { t: 0.19, v: O },
+    { t: 0.24, v: [-0.03, 0, 0.02] },
+    { t: 0.32, v: O },
+    { t: 0.6, v: O },
+    { t: 0.63, v: [0.07, 0, -0.05] },
+    { t: 0.66, v: [-0.02, 0, 0.015] },
+    { t: 0.72, v: O },
+    { t: 0.84, v: O },
+    // Tipped back level with a small shake as the hand returns.
+    { t: 0.88, v: [0.03, -0.02, 0.04] },
+    { t: 0.94, v: O },
+    { t: 1, v: O },
+  ],
+};
+
+export const RELOAD_EMPTY: MagReload = {
+  hand: [
+    { t: 0, v: O },
+    { t: 0.08, v: [-0.01, -0.03, 0.03], at: 'mag' },
+    { t: 0.15, v: [0, -0.004, 0], at: 'mag' },
+    // Thumb on the release, the magazine falls; the hand is already on its way down.
+    { t: 0.2, v: [0, -0.01, 0], at: 'mag' },
+    { t: 0.34, v: MAG_AWAY, at: 'mag' },
+    { t: 0.44, v: MAG_AWAY, at: 'mag' },
+    { t: 0.53, v: [-0.01, -0.07, 0.01], at: 'mag' },
+    { t: 0.58, v: [0, -0.016, 0], at: 'mag' },
+    { t: 0.62, v: O, at: 'mag' },
+    { t: 0.645, v: [0, 0.016, 0], at: 'mag' },
+    { t: 0.68, v: [0, 0.004, 0], at: 'mag' },
+    { t: 0.78, v: [-0.018, 0, 0.01], at: 'catch' },
+    { t: 0.84, v: [-0.012, 0, 0], at: 'catch' },
+    { t: 0.86, v: O, at: 'catch' },
+    { t: 0.9, v: [-0.015, 0.004, 0], at: 'catch' },
+    { t: 1, v: O },
+  ],
+  handRot: [
+    { t: 0, v: O },
+    { t: 0.12, v: [0.25, 0, 0.55] },
+    { t: 0.3, v: [0.5, 0.1, 0.7] },
+    { t: 0.44, v: [0.6, 0.15, 0.8] },
+    { t: 0.56, v: [0.25, 0, 0.55] },
+    { t: 0.66, v: [0.1, 0, 0.4] },
+    // Palm against the receiver's side, fingers along it.
+    { t: 0.78, v: [0.1, 0.25, 0.55] },
+    { t: 0.9, v: [0.1, 0.25, 0.55] },
+    { t: 1, v: O },
+  ],
+  held: [0.34, 0.62],
+  gunPos: [
+    { t: 0, v: O },
+    { t: 0.19, v: O },
+    { t: 0.22, v: [0, 0.004, 0] },
+    { t: 0.28, v: O },
+    { t: 0.6, v: O },
+    { t: 0.625, v: [0, 0.012, -0.004] },
+    { t: 0.65, v: [0, -0.004, 0] },
+    { t: 0.72, v: O },
+    { t: 0.855, v: O },
+    { t: 0.875, v: [0.006, 0.003, 0.008] },
+    { t: 0.93, v: O },
+    { t: 1, v: O },
+  ],
+  gunRot: [
+    { t: 0, v: O },
+    { t: 0.6, v: O },
+    { t: 0.63, v: [0.07, 0, -0.05] },
+    { t: 0.66, v: [-0.02, 0, 0.015] },
+    { t: 0.72, v: O },
+    { t: 0.855, v: O },
+    // The bolt slams home: the gun jumps.
+    { t: 0.875, v: [-0.06, 0.04, -0.06] },
+    { t: 0.92, v: [0.015, -0.01, 0.01] },
+    { t: 0.97, v: O },
+    { t: 1, v: O },
+  ],
+};
+
+/**
+ * Pistols, empty: the same drop and new magazine, then the hand goes back
+ * round the grip and the thumb drops the slide (ViewModel holds the slide
+ * back until the bolt cue).
+ */
+export const RELOAD_EMPTY_PISTOL: MagReload = {
+  ...RELOAD_EMPTY,
+  hand: [...RELOAD_EMPTY.hand.filter((k) => k.t <= 0.68), { t: 0.8, v: O }, { t: 1, v: O }],
+  handRot: [...RELOAD_EMPTY.handRot.filter((k) => k.t <= 0.66), { t: 0.8, v: O }, { t: 1, v: O }],
+};
+
+/** The empty magazine's drop (reload time it is let go). */
+export const MAG_DROP_T = 0.2;
 
 /** One shell (0..1 of the insert time): fetch from below, push into the port. */
 const SHELL_FETCH: Vec = [-0.05, -0.18, 0.12];

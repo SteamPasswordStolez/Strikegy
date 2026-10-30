@@ -14,6 +14,7 @@ import { WeaponState } from '@/weapons/WeaponState';
 import { shotHeard } from '@/weapons/attachments';
 import { MELEE_DAMAGE, type ShotCaster } from '@/weapons/WeaponController';
 import { Bot, setNextBotId, type BotServices } from './Bot';
+import { MOVE } from '@/player/movement';
 import type { NavWorld, VehicleNav } from './NavWorld';
 import { SKILLS, type BotSkill, type Difficulty } from './difficulty';
 import { SoldierModel, buildFarSoldierPose, farSoldierMaterial } from './SoldierModel';
@@ -101,6 +102,8 @@ const squadKey = (team: Team, squad: number): string => `${team}:${squad}`;
 
 /** Whoever a question is about: a combatant, or a whole side (no id). */
 type Side = { readonly id?: number; readonly team: Team };
+/** Closest a bot walks up to a person (feet to feet, m): two capsule radii and a hair. */
+const PERSON_GAP = MOVE.radius * 2 + 0.06;
 /** Neighbour grid cell (m); at least the separation radius. */
 const CELL = 2;
 /** How long one pair's line-of-sight result is reused by the other side. */
@@ -3378,6 +3381,41 @@ export class BotManager implements BotServices {
       if (hit) this.audio.remoteFootstep(this.surfaces.get(hit.collider.handle, hit.point), bot.feet, sprinting, bot.id);
     }
     this.alert(bot.feet, sprinting ? HEAR_STEP_SPRINT : HEAR_STEP, bot, 'step');
+  }
+
+  /**
+   * A bot's step never ends inside a person: the part of it toward someone
+   * closer than two capsule radii is dropped, the part along them kept (so
+   * it slides round). A person who walked into the bot is left to it: steps
+   * away from them still go.
+   */
+  keepOutOfPeople(from: THREE.Vector3, to: THREE.Vector3): void {
+    const R = PERSON_GAP;
+    for (const h of this.humans()) {
+      if (!h.alive || (h as { riding?: unknown }).riding) continue;
+      const p = h.feet;
+      if (Math.abs(p.y - to.y) > 1.7) continue;
+      const dx = to.x - p.x;
+      const dz = to.z - p.z;
+      if (dx * dx + dz * dz >= R * R) continue;
+      // Direction from the person to where the bot stands now.
+      let nx = from.x - p.x;
+      let nz = from.z - p.z;
+      const d = Math.hypot(nx, nz);
+      if (d < 1e-4) continue;
+      nx /= d;
+      nz /= d;
+      const mx = to.x - from.x;
+      const mz = to.z - from.z;
+      const toward = mx * nx + mz * nz;
+      // Moving away already: fine. Else keep the sideways part, and only the
+      // approach that stops at the gap.
+      if (toward >= 0) continue;
+      const room = Math.max(0, d - R);
+      const keep = Math.max(toward, -room);
+      to.x = from.x + (mx - toward * nx) + keep * nx;
+      to.z = from.z + (mz - toward * nz) + keep * nz;
+    }
   }
 
   separation(bot: Bot, out: THREE.Vector3, wx = 0, wz = 0, speed = 0): THREE.Vector3 {

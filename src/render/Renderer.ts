@@ -152,6 +152,10 @@ export class Renderer {
     const fill = new THREE.DirectionalLight(0xdce6f2, 0.7);
     fill.position.set(-1.6, 0.9, 0.8);
     this.fpScene.add(fill);
+    // Rim light from beyond the gun: edges of the gloves, fingers and sleeves catch it, so dark shapes keep their outline.
+    const rim = new THREE.DirectionalLight(0xd8e4ff, 0.9);
+    rim.position.set(0.4, 1.2, -2);
+    this.fpScene.add(rim);
 
     if (this.quality.postfx) {
       this.postfx = new PostFX(this.gl, this.scene, this.camera, this.fpScene, this.fpCamera, {

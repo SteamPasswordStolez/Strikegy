@@ -8,13 +8,14 @@ import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { SurfaceRegistry } from '@/physics/surfaces';
 import type { Player } from '@/player/Player';
 import { INSPECT_TIME, MELEE_DAMAGE, MELEE_HIT, MELEE_TIME, WeaponController } from '@/weapons/WeaponController';
-import { MELEE_LONG, MELEE_PISTOL, MELEE_STRIKE_T, RELOAD_HAND, RELOAD_MAG_HELD, SHELL_HAND, pickMelee, sampleTrack, type HandAnchor } from '@/weapons/viewAnims';
+import { MELEE_LONG, MELEE_PISTOL, MELEE_STRIKE_T, MAG_DROP_T, RELOAD_EMPTY, RELOAD_TACTICAL, SHELL_HAND, pickMelee, sampleTrack, type HandAnchor } from '@/weapons/viewAnims';
 
 describe('view motion tracks', () => {
   const anchors: Record<HandAnchor, THREE.Vector3> = {
     mag: new THREE.Vector3(0.01, -0.08, 0.05),
     chamber: new THREE.Vector3(-0.01, 0.1, 0.2),
     port: new THREE.Vector3(0, -0.02, 0.1),
+    catch: new THREE.Vector3(-0.02, 0.02, 0.08),
   };
   const at = (a: HandAnchor) => anchors[a];
   const v = new THREE.Vector3();
@@ -30,15 +31,21 @@ describe('view motion tracks', () => {
     expect(sampleTrack(keys, 2, v).toArray()).toEqual([1, 2, 0]);
   });
 
-  it('the reload hand leaves the handguard, holds the magazine at the cue points and comes back', () => {
-    expect(sampleTrack(RELOAD_HAND, 0, v, at).length()).toBe(0);
-    expect(sampleTrack(RELOAD_HAND, 1, v, at).length()).toBe(0);
-    // On the magazine when it is released and when it is seated.
-    for (const p of RELOAD_MAG_HELD) expect(sampleTrack(RELOAD_HAND, p, v, at).distanceTo(anchors.mag)).toBeLessThan(1e-6);
-    // Away with the old magazine in between.
-    expect(sampleTrack(RELOAD_HAND, 0.4, v, at).y).toBeLessThan(anchors.mag.y - 0.2);
-    // Works the charging handle near the chamber cue.
-    expect(sampleTrack(RELOAD_HAND, 0.86, v, at).distanceTo(anchors.chamber)).toBeLessThan(0.08);
+  it('both magazine reloads leave the handguard, meet the magazine at the cue points and come back', () => {
+    for (const r of [RELOAD_TACTICAL, RELOAD_EMPTY]) {
+      expect(sampleTrack(r.hand, 0, v, at).length()).toBe(0);
+      expect(sampleTrack(r.hand, 1, v, at).length()).toBe(0);
+      // Seated: the hand is on the magazine; the magazine rides with the hand until then.
+      expect(sampleTrack(r.hand, r.held[1], v, at).distanceTo(anchors.mag)).toBeLessThan(1e-6);
+      // At the pouch, well below the gun, in between.
+      expect(sampleTrack(r.hand, 0.4, v, at).y).toBeLessThan(anchors.mag.y - 0.2);
+      for (const k of [...r.gunPos, ...r.gunRot]) expect(Math.max(...k.v.map(Math.abs))).toBeLessThan(0.1);
+    }
+    // With rounds left the hand takes the old magazine at its release.
+    expect(sampleTrack(RELOAD_TACTICAL.hand, MAG_DROP_T, v, at).distanceTo(anchors.mag)).toBeLessThan(1e-6);
+    // Empty: the hand only picks a magazine up at the pouch, and slaps the bolt catch at the bolt cue.
+    expect(RELOAD_EMPTY.held[0]).toBeGreaterThan(MAG_DROP_T);
+    expect(sampleTrack(RELOAD_EMPTY.hand, 0.86, v, at).distanceTo(anchors.catch)).toBeLessThan(1e-6);
   });
 
   it('a shell is pushed into the port once per insert and the loop joins up', () => {

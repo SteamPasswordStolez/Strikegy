@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ModelLibrary } from '@/render/models';
 import type { ShotKick, WeaponDef } from './weaponData';
 import { Spring } from './spring';
+import { ViewMotion } from './viewMotion';
 import { gunMaterials, type P } from './gunKit';
 import { buildGun, buildOptic, fittedExtras } from './gunModels';
 import { gunKey } from './attachments';
@@ -20,11 +21,11 @@ import {
   MELEE_LONG,
   MELEE_PISTOL,
   pickMelee,
-  RELOAD_GUN_ROT,
-  RELOAD_HAND,
-  RELOAD_HAND_ROT,
-  RELOAD_MAG_HELD,
+  MAG_DROP_T,
+  RELOAD_EMPTY,
+  RELOAD_EMPTY_PISTOL,
   RELOAD_POSE,
+  RELOAD_TACTICAL,
   SHELL_HAND,
   SHELL_IN_HAND_UNTIL,
   sampleTrack,
@@ -94,8 +95,12 @@ export function scannedBody(def: WeaponDef, models: ModelLibrary): THREE.Object3
   return body;
 }
 
-const HIP = new THREE.Vector3(0.13, -0.14, -0.4);
-const SPRINT_OFFSET = new THREE.Vector3(-0.04, -0.05, 0.03);
+const HIP = new THREE.Vector3(0.12, -0.128, -0.38);
+/** At the hip the muzzle turns in a little toward the middle of the screen, showing the gun's left side and the support hand. */
+const HIP_TURN = 0.06;
+/** Pistols at the hip: higher and nearer, both hands round the grip in view. */
+const PISTOL_HIP = new THREE.Vector3(-0.02, 0.07, 0.05);
+const SPRINT_OFFSET = new THREE.Vector3(-0.03, -0.025, 0.01);
 /** ADS x/y are derived per weapon so the sight line sits on screen center. */
 /** Eye distance behind the gun origin at ADS: cheek on the stock, pistols at arm's length. */
 const ADS_EYE = { rifle: 0.2, pistol: 0.42, scanned: 0.3 };
@@ -129,6 +134,14 @@ export interface ViewModelFrame {
   gadgetUsed?: number;
   /** Gadget uses left (the panzerfaust brings up no new tube after the last). */
   gadgetLeft?: number;
+  /** Movement feel (viewMotion.ts): ground speed along / across the view, vertical speed, crouching, clock. */
+  forward?: number;
+  strafe?: number;
+  vy?: number;
+  crouching?: boolean;
+  time?: number;
+  /** The magazine was empty when this reload began (drop it, slap the bolt catch). */
+  reloadEmpty?: boolean;
 }
 
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
@@ -139,8 +152,11 @@ export class ViewModel {
   private flash: THREE.Mesh;
   private sightHeight = 0.05;
   private adsZ = -ADS_EYE.rifle;
-  private bobPhase = 0;
-  private sway = new THREE.Vector2();
+  /** Bob, sway, inertia, jump / landing / crouch (Call of Duty-like, viewMotion.ts). */
+  private readonly motion = new ViewMotion();
+  /** Empty magazines falling out of view after an empty reload. */
+  private readonly drops: { obj: THREE.Object3D; v: THREE.Vector3; spin: THREE.Vector3; life: number }[] = [];
+  private lastReloadP = 1;
   /** The gun shoved back by the last shots (m), and how fast it comes forward again. */
   private kick = 0;
   private kickSettle = 16;
@@ -166,7 +182,6 @@ export class ViewModel {
   private slideT = 1;
   private cycleT = 1;
   private throwT = 1;
-  private landDip = 0;
   private pistol = false;
   /** Support hand: its own group (pivot at the palm) so it can let go of the gun. */
   private support = new THREE.Group();
@@ -178,6 +193,7 @@ export class ViewModel {
     mag: new THREE.Vector3(),
     chamber: new THREE.Vector3(),
     port: new THREE.Vector3(),
+    catch: new THREE.Vector3(),
   };
   /** Magazine rest position in gun space and gun space -> magazine parent space. */
   private magRestGun = new THREE.Vector3();
@@ -311,6 +327,11 @@ export class ViewModel {
     }
     this.anchors.mag.copy(grip).sub(rest);
     this.anchors.chamber.set(pistol ? -0.035 : -0.045, pistol ? 0.02 : 0.03, pistol ? 0.06 : 0.12).sub(rest);
+    // Bolt catch / slide stop: the receiver's left side, above the back of the magazine well.
+    if (this.mag) {
+      const box = new THREE.Box3().setFromObject(this.mag);
+      this.anchors.catch.set(box.min.x - (pistol ? 0.012 : 0.02), pistol ? -0.01 : box.max.y - 0.004, pistol ? 0.035 : box.max.z + 0.012).sub(rest);
+    } else this.anchors.catch.copy(this.anchors.chamber);
     if (def.class === 'sg') this.anchors.port.set(-0.035, -0.05, -0.04).sub(rest);
     else if (def.class === 'sr') this.anchors.port.set(-0.045, 0.02, 0.0).sub(rest);
     else this.anchors.port.copy(this.anchors.mag);
@@ -532,7 +553,7 @@ export class ViewModel {
   }
 
   onLand(impactSpeed: number): void {
-    this.landDip = Math.min(0.06, impactSpeed * 0.006);
+    this.motion.land(impactSpeed);
   }
 
   /**
@@ -567,33 +588,46 @@ export class ViewModel {
     this.adsSettle.step(dt);
     this.reloadBlend += ((f.reloading ? 1 : 0) - this.reloadBlend) * ease(10);
 
-    // Bob scales with ground speed and fades while aiming.
-    if (f.grounded) this.bobPhase += dt * (6 + f.speed * 1.4) * Math.min(1, f.speed / 2);
-    const bobAmt = Math.min(1, f.speed / 5) * (1 - 0.85 * f.adsBlend) * (f.grounded ? 1 : 0.3);
-    const bobX = Math.sin(this.bobPhase) * 0.012 * bobAmt;
-    const bobY = -Math.abs(Math.cos(this.bobPhase)) * 0.01 * bobAmt;
-
-    // Sway lags behind look movement.
-    const swayScale = 1 - 0.8 * f.adsBlend;
-    this.sway.x += (THREE.MathUtils.clamp(f.lookDYaw * 0.35, -0.03, 0.03) - this.sway.x) * ease(22);
-    this.sway.y += (THREE.MathUtils.clamp(f.lookDPitch * 0.35, -0.03, 0.03) - this.sway.y) * ease(22);
+    // Bob, sway, inertia, jumps, crouching.
+    const mo = this.motion;
+    mo.update({
+      dt,
+      time: f.time ?? 0,
+      adsBlend: f.adsBlend,
+      sprintBlend: this.sprintBlend,
+      grounded: f.grounded,
+      crouching: !!f.crouching,
+      forward: f.forward ?? f.speed,
+      strafe: f.strafe ?? 0,
+      vy: f.vy ?? 0,
+      lookDYaw: f.lookDYaw,
+      lookDPitch: f.lookDPitch,
+    });
+    const bobX = mo.pos.x;
+    const bobY = mo.pos.y;
 
     this.kick *= Math.exp(-this.kickSettle * dt);
     this.rise.step(dt);
     this.roll.step(dt);
     this.turn.step(dt);
-    this.landDip *= Math.exp(-8 * dt);
 
     // Support hand: works the magazine / handle, loads shells, checks the mag on inspect.
     const hand = this.tv.set(0, 0, 0);
     const handRot = this.tr.set(0, 0, 0);
     const anchor = (a: HandAnchor) => this.anchors[a];
     let magHeld = false;
+    const rl = f.reloadEmpty ? (this.pistol ? RELOAD_EMPTY_PISTOL : RELOAD_EMPTY) : RELOAD_TACTICAL;
+    let magGone = false;
     if (f.reloading && f.magReload) {
       const p = f.reloadProgress;
-      sampleTrack(RELOAD_HAND, p, hand, anchor);
-      sampleTrack(RELOAD_HAND_ROT, p, handRot);
-      magHeld = p >= RELOAD_MAG_HELD[0] && p < RELOAD_MAG_HELD[1];
+      sampleTrack(rl.hand, p, hand, anchor);
+      sampleTrack(rl.handRot, p, handRot);
+      magHeld = p >= rl.held[0] && p < rl.held[1];
+      // Empty: the old magazine drops free, the new one comes up from the pouch.
+      if (f.reloadEmpty) {
+        if (this.lastReloadP < MAG_DROP_T && p >= MAG_DROP_T) this.dropMag();
+        magGone = p >= MAG_DROP_T && p < rl.held[0];
+      }
     } else if (f.inspectT >= 0 && this.mag) {
       sampleTrack(INSPECT_HAND, f.inspectT, hand, anchor);
       magHeld = f.inspectT >= INSPECT_MAG_HELD[0] && f.inspectT < INSPECT_MAG_HELD[1];
@@ -602,6 +636,7 @@ export class ViewModel {
       sampleTrack(SHELL_HAND, f.reloading ? f.reloadProgress : 1, hand, anchor).multiplyScalar(this.reloadBlend);
       handRot.set(0.3 * this.reloadBlend, 0, 0.6 * this.reloadBlend);
     }
+    this.lastReloadP = f.reloading ? f.reloadProgress : 1;
     if (this.shell) this.shell.visible = f.reloading && !f.magReload && f.reloadProgress < SHELL_IN_HAND_UNTIL;
     this.support.position.copy(this.supportInner.position).negate().add(hand);
     this.support.rotation.set(handRot.x, handRot.y, handRot.z);
@@ -610,6 +645,7 @@ export class ViewModel {
       const at = this.tq.copy(this.magRestGun);
       if (magHeld) at.add(hand).sub(this.anchors.mag);
       this.mag.position.copy(at.applyMatrix4(this.magToParent));
+      this.mag.visible = !magGone;
     }
     // Pump/bolt stroke: back then forward over ~0.35 s.
     this.cycleT = Math.min(1, this.cycleT + dt / 0.35);
@@ -618,7 +654,9 @@ export class ViewModel {
     // Slide / bolt snaps back and returns within ~70 ms of each shot.
     this.slideT = Math.min(1, this.slideT + dt / 0.07);
     if (this.slide) {
-      const back = Math.sin(this.slideT * Math.PI) * (this.slideT < 1 ? 0.022 : 0);
+      let back = Math.sin(this.slideT * Math.PI) * (this.slideT < 1 ? 0.022 : 0);
+      // Empty pistol: the slide stays locked back until the thumb drops it at the bolt cue.
+      if (this.pistol && f.reloading && f.magReload && f.reloadEmpty) back = f.reloadProgress < 0.86 ? 0.022 : 0.022 * Math.max(0, 1 - (f.reloadProgress - 0.86) / 0.02);
       this.slide.position.copy(this.slideBase).addScaledVector(this.slideDir, back);
     }
     this.throwT = Math.min(1, this.throwT + dt / 0.65);
@@ -633,7 +671,11 @@ export class ViewModel {
     // Whole-gun motions: seating jolts, inspection, melee.
     const extraPos = this.extraPos.set(0, 0, 0);
     const extraRot = this.extraRot.set(0, 0, 0);
-    if (f.reloading && f.magReload) sampleTrack(RELOAD_GUN_ROT, f.reloadProgress, extraRot);
+    if (f.reloading && f.magReload) {
+      sampleTrack(rl.gunPos, f.reloadProgress, extraPos);
+      sampleTrack(rl.gunRot, f.reloadProgress, extraRot);
+    }
+    this.updateDrops(dt);
     if (f.inspectT >= 0) {
       sampleTrack(INSPECT_POS, f.inspectT, extraPos);
       extraRot.add(sampleTrack(INSPECT_ROT, f.inspectT, this.tq));
@@ -656,31 +698,59 @@ export class ViewModel {
     extraRot.x += this.meleeJolt * 0.08;
 
     const ads = new THREE.Vector3(0, -this.sightHeight, this.adsZ);
-    const pos = HIP.clone().lerp(ads, f.adsBlend);
+    const hip = this.pistol ? this.tq.copy(HIP).add(PISTOL_HIP) : HIP;
+    const pos = hip.clone().lerp(ads, f.adsBlend);
     pos.addScaledVector(SPRINT_OFFSET, this.sprintBlend);
-    pos.x += bobX + this.sway.x * swayScale * 0.4;
-    pos.y += bobY + this.sway.y * swayScale * 0.4;
+    pos.add(mo.pos);
     // Reload pose: the gun comes in toward the middle and turns its left side
     // (magazine well / loading port) to the working hand.
     const rp = f.magReload ? RELOAD_POSE.mag : RELOAD_POSE.shell;
     pos.x += rp.pos[0] * this.reloadBlend;
     pos.y += rp.pos[1] * this.reloadBlend;
     pos.z += rp.pos[2] * this.reloadBlend;
-    pos.y -= (1 - f.drawProgress) * 0.25 + throwDip * 0.28 + this.landDip + this.toolBlend * 0.5;
+    pos.y -= (1 - f.drawProgress) * 0.25 + throwDip * 0.28 + this.toolBlend * 0.5;
     pos.z += stroke * (this.pump ? 0.01 : 0.025);
     pos.z += this.kick;
     pos.y -= this.adsSettle.x * 0.004;
     pos.add(extraPos);
     this.root.position.copy(pos);
     this.root.rotation.set(
-      this.rise.x - this.adsSettle.x * 0.01 + this.sway.y * swayScale + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.2 - throwDip * 0.5 - this.toolBlend * 0.9 + extraRot.x,
-      this.turn.x + this.sway.x * swayScale + rp.rot[1] * this.reloadBlend + this.sprintBlend * 0.6 - throwDip * 0.3 + extraRot.y,
-      this.roll.x + rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.25 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
+      this.rise.x - this.adsSettle.x * 0.01 + mo.rot.x + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.14 - throwDip * 0.5 - this.toolBlend * 0.9 + extraRot.x,
+      this.turn.x + mo.rot.y + rp.rot[1] * this.reloadBlend + this.sprintBlend * 0.55 + HIP_TURN * (1 - f.adsBlend) - throwDip * 0.3 + extraRot.y,
+      this.roll.x + mo.rot.z + rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.42 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
     );
 
     this.flashTimer -= dt;
     this.flash.visible = this.flashTimer > 0;
     this.root.visible = !f.hideForScope && this.toolBlend < 0.97;
+  }
+
+  /** Lets a copy of the magazine fall away from the gun (empty reloads); the real one hides until the new one comes. */
+  private dropMag(): void {
+    if (!this.mag) return;
+    this.root.updateMatrixWorld(true);
+    const copy = this.mag.clone();
+    copy.visible = true;
+    this.mag.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
+    this.fpScene.add(copy);
+    const r = () => Math.random() - 0.5;
+    this.drops.push({ obj: copy, v: new THREE.Vector3(-0.15 + r() * 0.1, -0.35, 0.12), spin: new THREE.Vector3(2.5 + r() * 2, r() * 3, 3 + r() * 2), life: 0.8 });
+  }
+
+  private updateDrops(dt: number): void {
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const d = this.drops[i]!;
+      d.life -= dt;
+      d.v.y -= 7 * dt;
+      d.obj.position.addScaledVector(d.v, dt);
+      d.obj.rotateX(d.spin.x * dt);
+      d.obj.rotateY(d.spin.y * dt);
+      d.obj.rotateZ(d.spin.z * dt);
+      if (d.life <= 0) {
+        this.fpScene.remove(d.obj);
+        this.drops.splice(i, 1);
+      }
+    }
   }
 
   /**

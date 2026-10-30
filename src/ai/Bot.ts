@@ -62,6 +62,12 @@ export type BotSide = { readonly id?: number; readonly team: Team };
 /** Services the bot needs from the world (implemented by BotManager). */
 export interface BotServices {
   readonly time: number;
+  /**
+   * Trims a step (feet -> to) so it doesn't walk into a person's capsule (the
+   * person's character controller would push them out of it: bots shoved
+   * players aside).
+   */
+  keepOutOfPeople?(from: THREE.Vector3, to: THREE.Vector3): void;
   readonly physics: PhysicsWorld;
   readonly nav: NavWorld;
   readonly skill: BotSkill;
@@ -1810,6 +1816,7 @@ export class Bot implements Damageable, Combatant {
     // a character controller per bot cost ~70 us a step on terrain.
     const next = this.tmp2.set(this.feet.x + this.velocity.x * dt, this.feet.y, this.feet.z + this.velocity.z * dt);
     this.navRef = s.nav.move(this.navRef, this.feet, next, next);
+    s.keepOutOfPeople?.(this.feet, next);
     // Navmesh heights are approximate (the tile cache has no height detail, up to
     // ~0.5 m off on hills): take the exact ground below, looking from above
     // whichever is higher so a low mesh can't put the ray under the ground.

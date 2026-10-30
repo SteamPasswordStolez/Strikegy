@@ -3892,6 +3892,12 @@ export class Game {
     this.scopeShift.y += (ty - this.scopeShift.y) * k;
     this.viewModel.setWeapon(this.viewDef(w.def));
     tickCamo(this.elapsed);
+    // Whether this reload began on an empty magazine (the view drops it and slaps the bolt catch).
+    if (w.state.reloading && !this.vmReloading) this.vmReloadEmpty = w.state.ammo === 0;
+    this.vmReloading = w.state.reloading;
+    // Ground speed along and across the view, for the gun's lean and inertia.
+    const sy = Math.sin(p.yaw);
+    const cy = Math.cos(p.yaw);
     this.viewModel.update({
       dt,
       adsBlend: w.adsBlend,
@@ -3914,12 +3920,20 @@ export class Game {
       gadget: this.gadgetOut && p.alive && this.deployed ? this.gadget : null,
       gadgetUsed: this.simTime - this.gadgetUsedAt,
       gadgetLeft: this.gadgetCount,
+      forward: -p.velocity.x * sy - p.velocity.z * cy,
+      strafe: p.velocity.x * cy - p.velocity.z * sy,
+      vy: p.velocity.y,
+      crouching: p.crouching,
+      time: this.elapsed,
+      reloadEmpty: this.vmReloadEmpty,
     });
     this.fort?.render(this.renderer.camera.position, this.buildMode, this.buildTarget);
     this.renderSupportAim();
 
   }
 
+  private vmReloading = false;
+  private vmReloadEmpty = false;
   private readonly assistEye = new THREE.Vector3();
   private readonly assistAt = new THREE.Vector3();
   private aimCheckIn = 0;
