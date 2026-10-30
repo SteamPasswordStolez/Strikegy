@@ -35,6 +35,9 @@ function devSnapshot(): Plugin {
 export default defineConfig({
   base: './',
   plugins: [devSnapshot()],
+  // STRIKEGY_NO_HMR=1 npm run dev: no live reload, so pages kept open for measuring are not reloaded
+  // while files change (several sessions editing one working tree); a manual reload picks up the edits.
+  server: process.env.STRIKEGY_NO_HMR ? { hmr: false } : undefined,
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
