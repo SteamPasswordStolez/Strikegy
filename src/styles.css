@@ -191,6 +191,14 @@ body {
 .touch-stick.sprint::before {
   border-color: rgba(255, 179, 71, 1);
 }
+/* Sprint latched (thumb pushed far out): the stick stays up, filled, while running on its own. */
+.touch-stick.locked {
+  border-color: rgba(255, 179, 71, 1);
+  background: rgba(255, 179, 71, 0.18);
+}
+.touch-stick.locked .touch-knob {
+  background: rgba(255, 179, 71, 0.75);
+}
 .touch-layer.riding .touch-stick::before {
   display: none;
 }

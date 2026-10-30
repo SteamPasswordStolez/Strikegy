@@ -1,3 +1,4 @@
+import { buildSedan } from './carKit';
 import * as THREE from 'three';
 import { noise3 } from './boxDress';
 
@@ -561,49 +562,7 @@ type Kit = (b: KitBuilder, w: number, h: number, d: number, rand: () => number) 
 
 const KITS: Record<ModelKind, Kit> = {
   car(b, w, h, d) {
-    const r = 0.33;
-    const bodyTop = h * 0.56;
-    // Lower body with a lower, rounded-off nose and tail.
-    b.profile(
-      'body',
-      [
-        [-d / 2, 0.3],
-        [d / 2, 0.3],
-        [d / 2, bodyTop - 0.12],
-        [d / 2 - 0.25, bodyTop],
-        [-d / 2 + 0.2, bodyTop],
-        [-d / 2, bodyTop - 0.1],
-      ],
-      w,
-    );
-    // Cabin: glass all round, roof panel on top.
-    const c0 = -d * 0.28;
-    const c1 = d * 0.2;
-    const roof = h - 0.05;
-    b.profile(
-      'glass',
-      [
-        [c0 - 0.45, bodyTop],
-        [c1 + 0.55, bodyTop],
-        [c1, roof],
-        [c0, roof],
-      ],
-      w - 0.16,
-    );
-    b.box('body', [w - 0.14, 0.06, c1 - c0 + 0.1], [0, roof + 0.02, (c0 + c1) / 2]);
-    // Pillars between the windows.
-    for (const z of [(c0 + c1) / 2]) b.box('body', [w - 0.12, roof - bodyTop, 0.12], [0, (roof + bodyTop) / 2, z]);
-    // Bumpers, lights, mirrors.
-    b.box('dark', [w + 0.04, 0.16, 0.14], [0, 0.42, d / 2 + 0.02]);
-    b.box('dark', [w + 0.04, 0.16, 0.14], [0, 0.42, -d / 2 - 0.02]);
-    for (const s of [-1, 1]) {
-      b.box('light', [0.32, 0.12, 0.04], [s * (w / 2 - 0.28), bodyTop - 0.2, d / 2 + 0.01]);
-      b.box('redLight', [0.3, 0.12, 0.04], [s * (w / 2 - 0.26), bodyTop - 0.18, -d / 2 - 0.01]);
-      b.box('body', [0.14, 0.1, 0.18], [s * (w / 2 + 0.05), bodyTop + 0.08, c1 + 0.35]);
-    }
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.wheel(sx * (w / 2 - 0.13), r, sz * (d / 2 - 0.8), r, 0.24);
-    // Dark underside so the wheel wells don't show daylight.
-    b.box('dark', [w - 0.3, 0.12, d - 0.4], [0, 0.26, 0]);
+    buildSedan(b, w, h, d);
   },
 
   truck(b, w, h, d) {
@@ -2131,3 +2090,4 @@ export function kitMaterials(): Record<Exclude<KitMaterial, 'body' | 'trim' | 'm
     snow: new THREE.MeshStandardMaterial({ color: 0xeef2f6, roughness: 0.85 }),
   };
 }
+

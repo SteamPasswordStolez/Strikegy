@@ -14,6 +14,34 @@ const SPRINT_REACH = 1.3;
 const SPRINT_FORWARD = 0.75;
 /** Thumb wobble around the middle that doesn't count as moving (share of the radius). */
 const DEAD_ZONE = 0.12;
+/** Full walking speed this far out (share of the radius): the rim itself is hard to hold under a thumb. */
+const FULL_REACH = 0.85;
+/**
+ * Sprint lock: pushed this far out (radii) while sprinting, the stick latches
+ * and the soldier keeps running forward with the thumb off the screen; the
+ * next touch on the move side takes the stick back.
+ */
+const LOCK_REACH = 2.1;
+
+/**
+ * Look gain by how fast the finger moves (CSS px per ms): slow drags turn a
+ * little finer than the base sensitivity (tracking a target), a quick flick
+ * turns further (a 180 without three swipes). Smooth in between, so a drag
+ * that speeds up never jumps.
+ */
+export function touchLookGain(speed: number): number {
+  const step = (a: number, b: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  return 0.8 + 0.2 * step(0.05, 0.3, speed) + 0.6 * step(0.6, 2, speed);
+}
+
+/** Stick deflection (0..1 of the radius) to move input: dead zone cut out, full speed before the rim. */
+export function stickResponse(deflection: number): number {
+  if (deflection <= DEAD_ZONE) return 0;
+  return Math.min(1, (deflection - DEAD_ZONE) / (FULL_REACH - DEAD_ZONE));
+}
 
 type ButtonAction =
   | 'fire'
@@ -79,13 +107,15 @@ export class TouchControls implements InputSource {
   private stickVec = { x: 0, y: 0 };
   /** Thumb pushed out past the rim, forward: sprint. */
   private stickSprint = false;
+  /** Sprint latched: running forward with no thumb on the stick (see LOCK_REACH). */
+  private sprintLock = false;
   /** In a vehicle: 'drive' / 'fly' (driver's / pilot's seat: pedals, the stick steers), 'seat' (any other seat), or null. */
   private ride: 'drive' | 'fly' | 'seat' | null = null;
   /** Touches holding the pedals (gas / brake-reverse; throttle up / down in a plane) and, aboard, the aim button. */
   private gasHeld = 0;
   private brakeHeld = 0;
   private adsHeld = 0;
-  private lookTouches = new Map<number, { x: number; y: number }>();
+  private lookTouches = new Map<number, { x: number; y: number; t: number }>();
   private lookDx = 0;
   private lookDy = 0;
   /** Touch ids holding a fire button. */
@@ -183,6 +213,9 @@ export class TouchControls implements InputSource {
     this.root.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
     this.root.addEventListener('touchend', (e) => this.onEnd(e), { passive: false });
     this.root.addEventListener('touchcancel', (e) => this.onEnd(e), { passive: false });
+    document.addEventListener('visibilitychange', this.onHidden);
+    window.addEventListener('blur', this.releaseAll);
+    window.addEventListener('orientationchange', this.releaseAll);
     parent.appendChild(this.root);
   }
 
@@ -200,7 +233,7 @@ export class TouchControls implements InputSource {
         if (down) {
           if (this.firing.size === 0) this.pulses.add('fire');
           this.firing.add(tch.identifier);
-          this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY });
+          this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY, t: e.timeStamp });
         } else {
           this.firing.delete(tch.identifier);
           this.lookTouches.delete(tch.identifier);
@@ -263,6 +296,7 @@ export class TouchControls implements InputSource {
     }
     for (const tch of Array.from(e.changedTouches)) {
       if (tch.clientX < window.innerWidth * 0.42 && this.stickId === null) {
+        this.setSprintLock(false);
         this.stickId = tch.identifier;
         this.stickOrigin = { x: tch.clientX, y: tch.clientY };
         this.stickVec = { x: 0, y: 0 };
@@ -273,7 +307,7 @@ export class TouchControls implements InputSource {
         this.stickEl.style.top = `${tch.clientY - STICK_RADIUS}px`;
         this.knobEl.style.transform = 'translate(0px, 0px)';
       } else {
-        this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY });
+        this.lookTouches.set(tch.identifier, { x: tch.clientX, y: tch.clientY, t: e.timeStamp });
       }
     }
   }
@@ -294,19 +328,26 @@ export class TouchControls implements InputSource {
         const reach = Math.min(len, STICK_RADIUS);
         const kx = len > 0 ? (dx / len) * reach : 0;
         const ky = len > 0 ? (dy / len) * reach : 0;
-        const live = len > STICK_RADIUS * DEAD_ZONE;
-        this.stickVec = live ? { x: kx / STICK_RADIUS, y: -ky / STICK_RADIUS } : { x: 0, y: 0 };
+        const k = len > 0 ? stickResponse(reach / STICK_RADIUS) / len : 0;
+        this.stickVec = { x: dx * k, y: -dy * k };
         this.stickSprint = !this.ride && len > STICK_RADIUS * SPRINT_REACH && -dy / len > SPRINT_FORWARD;
+        if (this.stickSprint && len > STICK_RADIUS * LOCK_REACH) this.setSprintLock(true);
+        else if (this.sprintLock && -dy < STICK_RADIUS * SPRINT_REACH) this.setSprintLock(false);
         this.knobEl.style.transform = `translate(${kx}px, ${ky}px)`;
         this.stickEl.classList.toggle('sprint', this.stickSprint);
         continue;
       }
       const prev = this.lookTouches.get(tch.identifier);
       if (prev) {
-        this.lookDx += tch.clientX - prev.x;
-        this.lookDy += tch.clientY - prev.y;
+        const dx = tch.clientX - prev.x;
+        const dy = tch.clientY - prev.y;
+        // Speed over this step (events come every 4-16 ms; a floor keeps a burst after a stall from reading as a flick).
+        const gain = touchLookGain(Math.hypot(dx, dy) / Math.max(8, e.timeStamp - prev.t));
+        this.lookDx += dx * gain;
+        this.lookDy += dy * gain;
         prev.x = tch.clientX;
         prev.y = tch.clientY;
+        prev.t = e.timeStamp;
       }
     }
   }
@@ -317,18 +358,61 @@ export class TouchControls implements InputSource {
       return;
     }
     for (const tch of Array.from(e.changedTouches)) {
-      if (tch.identifier === this.stickId) {
-        this.stickId = null;
-        this.stickVec = { x: 0, y: 0 };
-        this.stickSprint = false;
-        this.stickEl.style.display = 'none';
-        this.stickEl.classList.remove('sprint');
-        this.restEl.style.display = '';
-      }
+      if (tch.identifier === this.stickId) this.releaseStick();
       this.lookTouches.delete(tch.identifier);
       this.firing.delete(tch.identifier);
     }
   }
+
+  /** The thumb left the stick (or everything is let go): stop, unless the sprint is latched. */
+  private releaseStick(): void {
+    this.stickId = null;
+    if (this.sprintLock) {
+      // Keep running: the stick stays drawn, pushed to its top.
+      this.stickVec = { x: 0, y: 1 };
+      this.stickSprint = true;
+      this.knobEl.style.transform = `translate(0px, ${-STICK_RADIUS}px)`;
+      return;
+    }
+    this.stickVec = { x: 0, y: 0 };
+    this.stickSprint = false;
+    this.stickEl.style.display = 'none';
+    this.stickEl.classList.remove('sprint');
+    this.restEl.style.display = '';
+  }
+
+  private setSprintLock(on: boolean): void {
+    if (on === this.sprintLock) return;
+    this.sprintLock = on;
+    this.stickEl.classList.toggle('locked', on);
+    if (!on && this.stickId === null) {
+      this.stickVec = { x: 0, y: 0 };
+      this.stickSprint = false;
+      this.stickEl.style.display = 'none';
+      this.stickEl.classList.remove('sprint');
+      this.restEl.style.display = '';
+    }
+  }
+
+  /**
+   * Lets go of every touch: the browser may never send their ends when the
+   * page is hidden (app switch, notification shade, a call), the screen turns
+   * or the controls are hidden, and a fire button would stay held.
+   */
+  releaseAll = (): void => {
+    this.setSprintLock(false);
+    if (this.stickId !== null) this.releaseStick();
+    this.lookTouches.clear();
+    this.firing.clear();
+    this.lookDx = this.lookDy = 0;
+    this.interactHeld = this.giveUpHeld = this.breathHeld = 0;
+    this.gasHeld = this.brakeHeld = this.adsHeld = 0;
+    for (const b of this.buttons.values()) b.classList.remove('held');
+  };
+
+  private readonly onHidden = (): void => {
+    if (document.visibilityState === 'hidden') this.releaseAll();
+  };
 
   apply(s: InputState): void {
     const { x, y } = this.stickVec;
@@ -454,6 +538,7 @@ export class TouchControls implements InputSource {
     if (ride === this.ride) return;
     this.ride = ride;
     this.gasHeld = this.brakeHeld = this.adsHeld = 0;
+    this.setSprintLock(false);
     this.stickSprint = false;
     this.stickEl.classList.remove('sprint');
     this.root.classList.toggle('riding', !!ride);
@@ -483,6 +568,7 @@ export class TouchControls implements InputSource {
 
   /** Drops toggles (after death / respawn) so the player doesn't spawn aiming or crouched. */
   reset(): void {
+    this.setSprintLock(false);
     this.adsToggled = false;
     this.crouchToggled = false;
     this.scoreOpen = false;
@@ -600,10 +686,14 @@ export class TouchControls implements InputSource {
   }
 
   setVisible(v: boolean): void {
+    if (!v) this.releaseAll();
     this.root.style.display = v ? 'block' : 'none';
   }
 
   dispose(): void {
+    document.removeEventListener('visibilitychange', this.onHidden);
+    window.removeEventListener('blur', this.releaseAll);
+    window.removeEventListener('orientationchange', this.releaseAll);
     this.root.remove();
   }
 }

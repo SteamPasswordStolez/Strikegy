@@ -7,8 +7,12 @@ import type { Pass } from 'three/addons/postprocessing/Pass.js';
 import { BloomPass, FinalPass } from './bloom';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { LAYER_BACKDROP, LAYER_FX, LAYER_WORLD } from './layers';
+import { hideOffLayers } from './sceneMatrices';
 
-/** RenderPass that draws only the given camera layers. */
+/**
+ * RenderPass that draws only the given camera layers; the scene's top-level
+ * groups with nothing on them are not even walked (hideOffLayers).
+ */
 class LayerRenderPass extends RenderPass {
   private readonly mask: number;
 
@@ -21,8 +25,11 @@ class LayerRenderPass extends RenderPass {
     const cam = this.camera as THREE.Camera;
     const prev = cam.layers.mask;
     cam.layers.mask = this.mask;
-    super.render(...args);
-    cam.layers.mask = prev;
+    try {
+      hideOffLayers(this.scene, this.mask, () => super.render(...args));
+    } finally {
+      cam.layers.mask = prev;
+    }
   }
 }
 

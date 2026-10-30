@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeLayout, SIZE_MAX } from '@/input/touchLayout';
 import * as THREE from 'three';
 import { applyAimAssist } from '@/input/aimAssist';
+import { stickResponse, touchLookGain } from '@/input/Touch';
 import { Boundary, Terrain, buildTerrain } from '@/world/terrain';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
 
@@ -87,5 +88,28 @@ describe('touch layout', () => {
     expect(l.reload!.s).toBe(1);
     expect(sanitizeLayout(null)).toEqual({});
     expect(sanitizeLayout('x')).toEqual({});
+  });
+});
+
+describe('touch look and stick response', () => {
+  it('turns finer on slow drags, further on flicks, never jumping in between', () => {
+    expect(touchLookGain(0.02)).toBeCloseTo(0.8);
+    expect(touchLookGain(0.4)).toBeCloseTo(1);
+    expect(touchLookGain(3)).toBeCloseTo(1.6);
+    let prev = touchLookGain(0);
+    for (let v = 0.01; v < 3; v += 0.01) {
+      const g = touchLookGain(v);
+      expect(g).toBeGreaterThanOrEqual(prev);
+      expect(g - prev).toBeLessThan(0.02);
+      prev = g;
+    }
+  });
+
+  it('cuts the dead zone out and reaches full speed before the rim', () => {
+    expect(stickResponse(0.1)).toBe(0);
+    expect(stickResponse(0.13)).toBeLessThan(0.05);
+    expect(stickResponse(0.5)).toBeGreaterThan(0.45);
+    expect(stickResponse(0.85)).toBe(1);
+    expect(stickResponse(1)).toBe(1);
   });
 });

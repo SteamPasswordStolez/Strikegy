@@ -3,7 +3,7 @@ import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
-import { updateShownMatrices } from './sceneMatrices';
+import { hideOffLayers, updateShownMatrices } from './sceneMatrices';
 
 installGradeToneMapping();
 
@@ -267,11 +267,11 @@ export class Renderer {
       this.section('world', () => {
         this.gl.clear();
         cam.layers.disable(LAYER_BACKDROP);
-        this.gl.render(this.scene, cam);
+        hideOffLayers(this.scene, cam.layers.mask, () => this.gl.render(this.scene, cam));
       });
       this.section('scenery', () => {
         cam.layers.set(LAYER_BACKDROP);
-        this.gl.render(this.scene, cam);
+        hideOffLayers(this.scene, cam.layers.mask, () => this.gl.render(this.scene, cam));
       });
       cam.layers.mask = mask;
       this.section('viewmodel', () => {

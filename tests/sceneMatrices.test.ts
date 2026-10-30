@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { updateShownMatrices } from '@/render/sceneMatrices';
+import { hideOffLayers, updateShownMatrices } from '@/render/sceneMatrices';
 
 describe('updateShownMatrices', () => {
   it('matches three.js for shown objects, skips hidden ones and catches them up when shown', () => {
@@ -36,5 +36,35 @@ describe('updateShownMatrices', () => {
     scene.add(lod);
     updateShownMatrices(scene);
     expect(new THREE.Vector3().setFromMatrixPosition(far.matrixWorld).y).toBe(5);
+  });
+
+  it('skips top-level groups with nothing on the drawn layers, keeping lights and restoring them after', () => {
+    const scene = new THREE.Scene();
+    const world = new THREE.Group();
+    world.add(new THREE.Mesh());
+    const fx = new THREE.Group();
+    const spark = new THREE.Mesh();
+    spark.layers.set(1);
+    fx.add(spark);
+    const mixed = new THREE.Group();
+    const smoke = new THREE.Mesh();
+    smoke.layers.set(1);
+    mixed.add(new THREE.Mesh(), smoke);
+    const sun = new THREE.DirectionalLight();
+    scene.add(world, fx, mixed, sun);
+    updateShownMatrices(scene);
+    const shownDuring = (layers: number) => {
+      let shown: THREE.Object3D[] = [];
+      hideOffLayers(scene, layers, () => (shown = scene.children.filter((o) => o.visible)));
+      return shown;
+    };
+    expect(shownDuring(1 << 1)).toEqual([fx, mixed, sun]);
+    expect(shownDuring(1 << 0)).toEqual([world, mixed, sun]);
+    expect(shownDuring(1 << 2)).toEqual([sun]);
+    expect(scene.children.every((o) => o.visible)).toBe(true);
+    // A group added after the update is kept whatever it holds.
+    const late = new THREE.Group();
+    scene.add(late);
+    expect(shownDuring(1 << 2)).toEqual([sun, late]);
   });
 });
