@@ -1299,7 +1299,7 @@
   "pp.collection": "This series",
   "pp.partsGot": "{n} parts",
   "pp.exchangeNote": "Make what you want from this series with parts. Nothing here is bought with money.",
-  "pp.buyParts": "Buy parts ({p} → {n})",
+  "pp.buyParts": "Buy {n} parts for {p} tickets",
   "pp.noCamo": "Factory finish",
   "pp.challenge": "Camo challenges",
   "pp.goal.kills": "Kills",

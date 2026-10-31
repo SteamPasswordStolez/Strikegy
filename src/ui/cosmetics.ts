@@ -484,7 +484,16 @@ export function itemPicture(parent: HTMLElement, it: Item, size = 56): void {
     const w = it.weapon as WeaponId;
     const now = weaponPortraitNow(w, undefined, undefined, it.id);
     if (now) img.src = now;
-    else void weaponPortrait(w, undefined, undefined, it.id).then((u) => u && (img.src = u));
+    else {
+      // Pictures are drawn one gun at a time: a soft placeholder meanwhile (an empty
+      // <img> showed as a bare outlined box until its turn came).
+      img.classList.add('cos-wait');
+      void weaponPortrait(w, undefined, undefined, it.id).then((u) => {
+        if (!u) return;
+        img.addEventListener('load', () => img.classList.remove('cos-wait'), { once: true });
+        img.src = u;
+      });
+    }
     parent.appendChild(img);
     return;
   }

@@ -1299,7 +1299,7 @@
   "pp.collection": "이번 시리즈",
   "pp.partsGot": "부품 {n}",
   "pp.exchangeNote": "부품으로 이번 시리즈의 원하는 것을 바로 만듭니다. 현금과 바꿀 길은 없습니다.",
-  "pp.buyParts": "부품 사기 ({p} → {n})",
+  "pp.buyParts": "보급표 {p}로 부품 {n}개 사기",
   "pp.noCamo": "기본 도색",
   "pp.challenge": "위장 도전",
   "pp.goal.kills": "처치",

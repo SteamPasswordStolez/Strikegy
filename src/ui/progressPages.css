@@ -508,7 +508,8 @@
   min-height: calc(var(--u) * 28);
 }
 .pp-detail-3d .pp-detail-pic > :not(.pp-detail-stage):not(.pp-detail-hint) {
-  transition: opacity 0.4s var(--ease);
+  /* Quick: a camo swatch fading slowly over the 3D gun looked like a glitch. */
+  transition: opacity 0.12s var(--ease);
 }
 .pp-detail-3d .pp-detail-pic.live > :not(.pp-detail-stage):not(.pp-detail-hint) {
   opacity: 0;
@@ -1614,4 +1615,45 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--s2);
+}
+
+/* Shop polish (2026-10-31): gun pictures still being drawn, wallet labels, prices out of reach. */
+img.cos-skin.cos-wait {
+  visibility: hidden;
+}
+.pp-card-pic:has(img.cos-wait),
+.pp-bundle-item:has(img.cos-wait) {
+  background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.06) 50%, transparent 70%) 0 0 / 220% 100%;
+  animation: pp-wait 1.4s linear infinite;
+}
+@keyframes pp-wait {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+.pp-chip-label {
+  font: 600 var(--fs-xs) / 1 var(--font-ui);
+  color: var(--text-dim, rgb(255 255 255 / 0.6));
+}
+@media (max-width: 900px) {
+  .pp-chip-label { display: none; }
+}
+.pp-card.short .pp-card-foot .ds-num,
+.pp-card.short .pp-card-foot .ds-icon {
+  color: #e2705f;
+}
+.ds-btn.short {
+  opacity: 0.7;
+}
+.ds-btn.short:not(.primary) .ds-icon,
+.ds-btn.short:not(.primary) .ds-num,
+.ds-btn.short:not(.primary) span {
+  color: #ff9a8a;
+}
+.ds-btn.primary.short {
+  opacity: 0.55;
+  filter: saturate(0.5);
+}
+.pp-fchip:disabled {
+  opacity: 0.35;
+  cursor: default;
 }

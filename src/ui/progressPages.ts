@@ -111,12 +111,17 @@ export function stepTab(page: 'shop' | 'armory' | 'ranks', d: number): void {
 }
 
 /** The wallet: supply tickets, parts, boxes. */
+/** Supply tickets on hand while a shop page draws (prices beyond it show as out of reach). */
+let ticketsOnHand = Infinity;
+
 function wallet(parent: HTMLElement, p: Profile): void {
   const e = econOf(p);
+  ticketsOnHand = e.tickets;
   const w = el('div', 'pp-wallet', parent);
   const chip = (ic: IconName, label: string, v: number, cls: string) => {
     const c = el('span', `pp-chip ${cls}`, w);
     c.innerHTML = icon(ic);
+    el('span', 'pp-chip-label', c, label);
     el('span', 'ds-num', c, n(v));
     c.title = label;
   };
@@ -183,6 +188,7 @@ function storeCard(parent: HTMLElement, it: Item, opts: { owned: boolean; price?
     foot.innerHTML = icon('check');
     el('span', '', foot, t('pp.owned'));
   } else if (opts.price !== undefined) {
+    if (opts.price > ticketsOnHand) c.classList.add('short');
     if (opts.old) el('s', 'pp-old', foot, n(opts.old));
     foot.insertAdjacentHTML('beforeend', icon('star'));
     el('span', 'ds-num', foot, n(opts.price));
@@ -404,7 +410,7 @@ function renderFeatured(main: HTMLElement, p: Profile, o: PageOptions): void {
     if (owned) el('span', 'pp-owned-line', foot, t('pp.owned'));
     else {
       el('s', 'pp-old', foot, n(full));
-      const b = el('button', 'ds-btn primary pp-bundle-buy', foot);
+      const b = el('button', `ds-btn primary pp-bundle-buy${bundle.price > ticketsOnHand ? ' short' : ''}`, foot);
       b.innerHTML = icon('star');
       el('span', '', b, n(bundle.price));
       b.addEventListener('click', () =>
@@ -444,6 +450,8 @@ function renderDepot(main: HTMLElement, p: Profile, o: PageOptions): void {
   for (const k of DEPOT_KINDS) {
     const count = k === 'all' ? list.length : list.filter((x) => item(x.items[0]!)?.kind === k).length;
     const b = el('button', `pp-fchip${depotKind === k ? ' sel' : ''}`, chips, `${k === 'all' ? t('pp.all') : t(`pp.kind.${k}` as MessageKey)} ${count}`);
+    // Nothing of that kind this week: nothing to filter to.
+    b.disabled = count === 0 && depotKind !== k;
     b.addEventListener('click', () => {
       depotKind = k;
       depotShown = DEPOT_SIZE;
@@ -489,7 +497,7 @@ function renderBoosters(main: HTMLElement, p: Profile, o: PageOptions): void {
         const use = el('button', 'ds-btn primary', row, `${t('pp.activate')} (${owned})`);
         use.addEventListener('click', () => void act(o, { op: 'activate', item: id }));
       }
-      const buy = el('button', 'ds-btn', row);
+      const buy = el('button', `ds-btn${price! > ticketsOnHand ? ' short' : ''}`, row);
       buy.innerHTML = icon('star');
       el('span', '', buy, n(price!));
       buy.addEventListener('click', () => confirmBuy(o, { title: `${t(`pp.boost.${kind}` as MessageKey)} · ${t('pp.minutes').replace('{n}', min)}`, sub: t('pp.boostersNote'), price: price! }, { op: 'booster', item: id }));
@@ -509,11 +517,11 @@ function renderBoxes(main: HTMLElement, p: Profile, o: PageOptions): void {
   const open = el('button', 'ds-btn primary pp-open', btns, t('pp.open'));
   open.disabled = e.boxes < 1;
   open.addEventListener('click', () => void act(o, { op: 'open' }, (r) => showBox(o.root, r as BoxResult)));
-  const b1 = el('button', 'ds-btn', btns);
+  const b1 = el('button', `ds-btn${ECON.boxPrice > ticketsOnHand ? ' short' : ''}`, btns);
   b1.innerHTML = icon('star');
   el('span', '', b1, `${t('pp.buyBox')} · ${n(ECON.boxPrice)}`);
   b1.addEventListener('click', () => confirmBuy(o, { title: `${nameOf(SERIES.name)} ×1`, sub: t('pp.boxes'), price: ECON.boxPrice }, { op: 'box', count: 1 }));
-  const b10 = el('button', 'ds-btn', btns);
+  const b10 = el('button', `ds-btn${ECON.boxPrice * 10 > ticketsOnHand ? ' short' : ''}`, btns);
   b10.innerHTML = icon('star');
   el('span', '', b10, `${t('pp.buyBox10')} · ${n(ECON.boxPrice * 10)}`);
   b10.addEventListener('click', () => confirmBuy(o, { title: `${nameOf(SERIES.name)} ×10`, sub: t('pp.boxes'), price: ECON.boxPrice * 10 }, { op: 'box', count: 10 }));
@@ -559,13 +567,14 @@ function renderExchange(main: HTMLElement, p: Profile, o: PageOptions): void {
   const e = econOf(p);
   const top = el('div', 'pp-exch', main);
   el('div', 'pp-note', top, t('pp.exchangeNote'));
-  const bp = el('button', 'ds-btn', top, t('pp.buyParts').replace('{p}', n(ECON.partsPack.price)).replace('{n}', n(ECON.partsPack.parts)));
+  const bp = el('button', `ds-btn${ECON.partsPack.price > ticketsOnHand ? ' short' : ''}`, top, t('pp.buyParts').replace('{p}', n(ECON.partsPack.price)).replace('{n}', n(ECON.partsPack.parts)));
   bp.addEventListener('click', () => confirmBuy(o, { title: `${t('pp.parts')} +${n(ECON.partsPack.parts)}`, price: ECON.partsPack.price }, { op: 'parts' }));
   const grid = el('div', 'pp-shelf', main);
   for (const it of seriesItems()) {
     const owned = !!e.items[it.id];
     const c = storeCard(grid, it, { owned, onClick: () => openItem(o, it, undefined, owned ? undefined : CRAFT_PARTS[it.rarity]) });
     if (!owned) {
+      if (CRAFT_PARTS[it.rarity] > e.parts) c.classList.add('short');
       const foot = c.querySelector('.pp-card-foot')!;
       foot.innerHTML = icon('settings');
       el('span', 'ds-num', foot as HTMLElement, `${n(CRAFT_PARTS[it.rarity])}`);
