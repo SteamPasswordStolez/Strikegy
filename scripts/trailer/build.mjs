@@ -65,6 +65,9 @@ const VENC = [
   draft ? '28' : '16',
   '-pix_fmt',
   'yuv420p',
+  // One colour range tag on every piece (see `fit`).
+  '-color_range',
+  'tv',
   '-r',
   String(FPS),
 ];
@@ -142,7 +145,9 @@ function check(segs) {
 function renderSegment(s, file) {
   const src = sourceOf(s);
   const dur = (s.frames / FPS).toFixed(4);
-  const fit = 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1,fps=30';
+  // Every segment limited-range yuv420p: footage from JPEG frames comes as full-range yuvj420p, and a
+  // format change mid-stream rebuilds the final pass's filters (their clocks restart: ~150 frames lost).
+  const fit = 'scale=1920:1080:force_original_aspect_ratio=increase:out_range=tv,crop=1920:1080,setsar=1,fps=30,format=yuv420p';
   const silence = ['-f', 'lavfi', '-t', dur, '-i', 'anullsrc=r=48000:cl=stereo'];
   if (src.kind === 'black') {
     run([
@@ -316,6 +321,8 @@ function main() {
     // A segment whose inputs haven't changed (source, in-point, gain, speed, frames, file times) is kept.
     const src = sourceOf(s);
     const key = JSON.stringify({
+      // Bumped when renderSegment's output changes (3: every segment limited-range yuv420p, tagged tv).
+      v: 3,
       src,
       frames: s.frames,
       draft,
@@ -355,7 +362,8 @@ function main() {
   const voiced = lines.filter((l) => fs.existsSync(path.join(T, 'voice', `${l.id}.wav`)));
   const subsMov = subsTrack();
   for (const subs of [true, false]) {
-    const inputs = ['-i', picture, '-i', music];
+    // -reinit_filter 0: a frame property changing between cuts must not rebuild (and restart the clocks of) the graph.
+    const inputs = ['-reinit_filter', '0', '-i', picture, '-i', music];
     for (const l of voiced) inputs.push('-i', path.join(T, 'voice', `${l.id}.wav`));
     let n = 2 + voiced.length;
     const g = [];

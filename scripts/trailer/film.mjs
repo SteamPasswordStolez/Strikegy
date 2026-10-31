@@ -33,6 +33,8 @@ const args = process.argv.slice(2);
 const opt = (k, def) => (args.includes(k) ? args[args.indexOf(k) + 1] : def);
 const BASE = opt('--url', 'http://localhost:5173');
 const keepFrames = args.includes('--keep');
+/** FILM_DEBUG=1: say each step as it starts (to find where a run stops). */
+const debug = (...a) => process.env.FILM_DEBUG && console.log('[debug]', ...a);
 const positional = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--url');
 const [groupName, ...only] = positional;
 if (!groupName) {
@@ -98,6 +100,24 @@ function rmFlat(dir) {
 lock();
 let browser = null;
 let pid = 0;
+/** Whatever ends this process (even a crash outside the try below): the browser's tree goes, the lock is freed. */
+function cleanUp() {
+  if (pid && process.platform === 'win32') {
+    try {
+      execSync(`taskkill /T /F /PID ${pid}`, { stdio: 'ignore' });
+    } catch {
+      /* already gone */
+    }
+    pid = 0;
+  }
+  unlock();
+}
+process.on('exit', cleanUp);
+process.on('uncaughtException', (e) => {
+  console.log('crashed:', e.message);
+  cleanUp();
+  process.exit(1);
+});
 try {
   browser = await chromium.launch({
     executablePath: EDGE,
@@ -137,8 +157,11 @@ try {
   const sep = group.query.includes('?') ? '&' : '?';
   const url = `${BASE}/${sep}${group.query}&nohud=1`;
   console.log(`${groupName}: ${url}`);
+  const loadStart = Date.now();
   await page.goto(url);
-  await page.waitForFunction(() => window.__strikegy?.running, null, { timeout: 180_000, polling: 500 });
+  // Big maps can take minutes (a navmesh built in the page when the baked one is stale).
+  await page.waitForFunction(() => window.__strikegy?.running, null, { timeout: 600_000, polling: 500 });
+  console.log(`loaded in ${((Date.now() - loadStart) / 1000).toFixed(0)} s`);
   const gpu = await page.evaluate(() => {
     const gl = window.__strikegy.renderer.canvas.getContext('webgl2');
     const e = gl.getExtension('WEBGL_debug_renderer_info');
@@ -147,7 +170,11 @@ try {
   console.log(`GPU: ${gpu}`);
   if (/swiftshader|llvmpipe|software/i.test(gpu)) throw new Error('software rendering: refusing to film on the CPU');
   await page.addScriptTag({ path: path.join(ROOT, 'scripts/trailer/director.js') });
-  await page.evaluate(() => window.__director.start());
+  // start() returns the director (and the whole game behind it): nothing comes back to Node.
+  await page.evaluate(() => {
+    window.__director.start();
+  });
+  debug('group setup');
   if (group.setup) await page.evaluate(`(${src(group.setup)})(window.__director)`);
   if (group.warm) await page.evaluate((s) => window.__director.warm(s), group.warm);
 
@@ -159,6 +186,7 @@ try {
     rmFlat(dir);
     fs.mkdirSync(dir, { recursive: true });
     const t0 = Date.now();
+    debug(id, 'setup');
     try {
       await page.evaluate(
         ([setup, frame, sim]) => {
@@ -177,7 +205,9 @@ try {
         },
         [src(spec.setup), src(spec.frame), spec.sim ?? 1 / 30],
       );
+      debug(id, 'frames');
       for (let i = 0; i < n; i++) {
+        if (i % 20 === 0) debug(id, 'frame', i);
         const url64 = await page.evaluate((k) => {
           const d = window.__director;
           const sim = typeof d.shot.sim === 'function' ? d.shot.sim(k) : d.shot.sim;

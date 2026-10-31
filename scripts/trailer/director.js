@@ -312,6 +312,16 @@
       g.blast(kind, p, { id: -900, name: '', team, squad: null }, kind);
     },
 
+    /** A fireball and smoke at `p` only (no damage, no sound): muzzle blasts of big guns. */
+    flash(p) {
+      g.effects.explosion(p);
+    },
+    /** A big gun's muzzle blast: fireballs along the line it fires, `len` m out. */
+    muzzleBlast(veh, seat, at, len = 14) {
+      const mz = veh.muzzleOf(seat, v());
+      const dir = at.clone().sub(mz).normalize();
+      for (const k of [2, len * 0.5, len]) d.flash(mz.clone().addScaledVector(dir, k));
+    },
     /** A vehicle of `kind` at `pos` facing `yaw`, for `team`. */
     vehicle(kind, pos, yaw, team = 'blue') {
       const veh = g.vehicles.spawn(kind, pos, yaw, team);
