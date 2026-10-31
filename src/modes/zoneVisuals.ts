@@ -24,6 +24,8 @@ interface Marker {
 export class ZoneVisuals {
   private readonly markers: Marker[] = [];
   private readonly group = new THREE.Group();
+  /** Filming (F2): the ring and the letter are interface; the pole and the flag stay (they stand in the world). */
+  uiHidden = false;
 
   constructor(scene: THREE.Scene, zones: readonly ZoneState[], groundAt: (x: number, z: number) => number) {
     this.group.name = 'zones';
@@ -64,7 +66,8 @@ export class ZoneVisuals {
       const leaning: Team | null = z.control > 0.001 ? 'blue' : z.control < -0.001 ? 'red' : null;
       const colorTeam = z.owner ?? leaning;
       const shown = !z.hidden;
-      m.ring.visible = m.pole.visible = m.flag.visible = m.label.visible = shown;
+      m.pole.visible = m.flag.visible = shown;
+      m.ring.visible = m.label.visible = shown && !this.uiHidden;
       if (!shown) continue;
       const key = `${z.owner}|${leaning}|${Math.round(progress * 40)}|${z.contested}|${z.locked}`;
       if (key !== m.key) {

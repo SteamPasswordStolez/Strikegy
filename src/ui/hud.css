@@ -1561,3 +1561,20 @@
   align-items: center;
   gap: var(--s1);
 }
+
+/* Filming (F2 or ?nohud=1, the launch trailer): the picture only. The HUD is hidden by
+   visibility so a scope's lens (an optic, part of the picture) can stay; everything else goes. */
+.film-nohud .hud {
+  visibility: hidden !important;
+}
+.film-nohud .hud .scope {
+  visibility: visible !important;
+}
+.film-nohud .hud .scope-breath,
+.film-nohud .crit-layer,
+.film-nohud .tut,
+.film-nohud .pt,
+.film-nohud .chat-hud,
+.film-nohud .touch-layer {
+  display: none !important;
+}

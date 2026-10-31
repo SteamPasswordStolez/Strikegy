@@ -161,6 +161,15 @@ function startSolo(query: string, onLoadingShown?: () => void): void {
   void startGame(new URLSearchParams(query), onLoadingShown);
 }
 
+/** `?at=x,z,bearing` / `?at=x,y,z,bearing` (degrees clockwise from north). */
+function filmSpot(raw: string | null): { x: number; z: number; y?: number; bearing: number } | undefined {
+  const n = (raw ?? '').split(',').map(Number);
+  if (n.some((v) => !Number.isFinite(v))) return undefined;
+  if (n.length === 3) return { x: n[0]!, z: n[1]!, bearing: n[2]! };
+  if (n.length === 4) return { x: n[0]!, y: n[1]!, z: n[2]!, bearing: n[3]! };
+  return undefined;
+}
+
 async function startGame(params: URLSearchParams, onLoadingShown?: () => void, net?: NetOptions): Promise<void> {
   // The loading screen's music (the menu's goes on if there is none); the game fades it out on the field.
   const s = loadSettings();
@@ -205,6 +214,9 @@ async function startGame(params: URLSearchParams, onLoadingShown?: () => void, n
     simple: params.get('simple') === '1',
     // ?side=red: the player's side in a solo match (blue without it).
     team: params.get('side') === 'red' ? 'red' : 'blue',
+    // Filming (solo): ?at=x,z,bearing or ?at=x,y,z,bearing puts every deploy there; ?nohud=1 hides the HUD.
+    at: net ? undefined : filmSpot(params.get('at')),
+    noHud: !net && params.get('nohud') === '1',
   });
   // Game.create puts its loading screen up before its first await.
   onLoadingShown?.();

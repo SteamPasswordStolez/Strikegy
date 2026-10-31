@@ -85,10 +85,11 @@ export const DEFAULT_BINDINGS: Readonly<Record<Action, readonly string[]>> = {
 };
 
 /**
- * Keys that can't be bound: Esc pauses (and cancels a binding), F3 / F4 are the
- * FPS panel and quality, Backspace / Delete clear a key while binding.
+ * Keys that can't be bound: Esc pauses (and cancels a binding), F2 hides the
+ * interface (filming), F3 / F4 are the FPS panel and quality, Backspace / Delete
+ * clear a key while binding.
  */
-export const RESERVED = new Set(['Escape', 'F3', 'F4', 'Backspace', 'Delete', 'MetaLeft', 'MetaRight', 'ContextMenu']);
+export const RESERVED = new Set(['Escape', 'F2', 'F3', 'F4', 'Backspace', 'Delete', 'MetaLeft', 'MetaRight', 'ContextMenu']);
 
 /** Only in a vehicle: may share a key with actions only on foot (C: view there, crouch on foot). */
 const VEHICLE_ONLY = new Set<Action>(['view']);

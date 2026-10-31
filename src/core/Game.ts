@@ -1,4 +1,5 @@
 import { buildScanDressing, cullScanDressing, scanModelsFor } from '@/world/scanDress';
+import { typing } from '@/input/typing';
 import { armColors } from '@/ai/soldierAssets';
 import { setHandColors } from '@/weapons/fpHands';
 import { eventMults } from '@/net/events';
@@ -200,6 +201,14 @@ export interface GameOptions {
   team?: Team;
   /** Behind the main menu: the bots fight, a camera drifts over it; no player, HUD, input or sound. */
   showcase?: boolean;
+  /**
+   * Filming (the launch trailer, solo only): every deploy puts the player here,
+   * on the first floor below `y` (or the ground), facing `bearing` (degrees
+   * clockwise from north, -z). Matches with it never count for progression.
+   */
+  at?: { x: number; z: number; y?: number; bearing: number };
+  /** Filming: no HUD over the picture (the first-person gun stays). */
+  noHud?: boolean;
 }
 
 /** How big a blast (local or from the game server) sounds. */
@@ -574,6 +583,8 @@ export class Game {
       () => this.settings.crouchHold,
     );
     if (!options.showcase) this.sources.push(this.kbm);
+    // Filming (?nohud=1, or F2 in a match): the picture without the interface.
+    if (options.noHud) this.setFilming(true);
     if (isTouchDevice() && !options.showcase) {
       container.classList.add('is-touch');
       this.touch = new TouchControls(
@@ -819,6 +830,7 @@ export class Game {
         await this.loadStep(0.72, 'load.soldiers');
         await SoldierModel.prewarmSteps(['blue', 'red'], botGuns(), () => this.loadStep(0.72, 'load.soldiers'));
         this.bots = new BotManager(r.scene, this.physics, this.nav, this.registry, this.impacts, this.bus, this.audio, this.effects, this.playerCombatant, map.spawns, { ...botOpts, side: this.myTeam });
+        this.bots.hideMarkers = this.filming;
         this.bots.grenades = this.throwables;
         this.bots.landing = map.world.landing ?? null;
         this.bots.gadgets = this.gadgets;
@@ -914,6 +926,12 @@ export class Game {
       this.overlay.root.addEventListener('click', () => location.reload(), { once: true });
     });
     window.addEventListener('keydown', (e) => {
+      // F2: filming, no interface over the picture (the launch trailer; owner, 2026-10-31).
+      if (e.code === 'F2' && !e.repeat && !typing(e)) {
+        e.preventDefault();
+        this.setFilming(!this.filming);
+        return;
+      }
       if (e.code === 'F3') {
         e.preventDefault();
         this.settings.showFps = !this.settings.showFps;
@@ -3022,7 +3040,7 @@ export class Game {
       this.renderer.scene.add(this.supportRing);
     }
     const r = Math.max(3, SUPPORT[id].spread);
-    this.supportRing.visible = true;
+    this.supportRing.visible = !this.filming;
     this.supportRing.position.set(p.x, p.y + 0.15, p.z);
     this.supportRing.scale.setScalar(r);
   }
@@ -3473,7 +3491,28 @@ export class Game {
       const sp = this.playerSpawns.length ? this.playerSpawns[Math.floor(Math.random() * this.playerSpawns.length)]! : this.spawn;
       at = { pos: new THREE.Vector3(...sp.pos), yaw: sp.yaw * DEG };
     }
+    if (this.options.at && !this.net) at = this.filmSpot(this.options.at);
     this.startLife(at, this.loadouts.current, key);
+  }
+
+  /** Filming (F2 / ?nohud=1): no interface over the picture — not the HUD, nor the markers drawn in the world. */
+  private filming = false;
+
+  private setFilming(on: boolean): void {
+    this.filming = on;
+    this.container.classList.toggle('film-nohud', on);
+    if (this.zoneVisuals) this.zoneVisuals.uiHidden = on;
+    if (this.bots) this.bots.hideMarkers = on;
+    if (this.fort) this.fort.uiHidden = on;
+    this.airMarkers.group.visible = !on;
+  }
+
+  /** `GameOptions.at`: the floor under the spot (from `y`, else from the sky) and the facing. */
+  private filmSpot(a: NonNullable<GameOptions['at']>): { pos: THREE.Vector3; yaw: number } {
+    const from = new THREE.Vector3(a.x, a.y !== undefined ? a.y + 1.5 : 600, a.z);
+    const hit = this.physics.raycast(from, new THREE.Vector3(0, -1, 0), from.y + 200, Layer.WORLD);
+    const y = hit ? hit.point.y : (a.y ?? 0);
+    return { pos: new THREE.Vector3(a.x, y + 0.05, a.z), yaw: (-a.bearing * Math.PI) / 180 };
   }
 
   /** A new life at `at` with `kit` (the loadout picked on the deploy screen); `key`: what was picked to deploy at. */
@@ -3948,6 +3987,7 @@ export class Game {
       time: this.elapsed,
       reloadEmpty: this.vmReloadEmpty,
     });
+    if (this.fort) this.fort.uiHidden = this.filming;
     this.fort?.render(this.renderer.camera.position, this.buildMode, this.buildTarget);
     this.renderSupportAim();
 
@@ -4227,7 +4267,7 @@ export class Game {
         aimAt: this.aimAtFor(dt),
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
-          ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)}`
+          ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)} · ${Math.round(((((-this.player.yaw * 180) / Math.PI) % 360) + 360) % 360)}°`
           : null,
       },
       dt,
@@ -4275,6 +4315,7 @@ export class Game {
     this.zoneMode = zm;
     if (import.meta.env.DEV) console.info(`[strikegy] mode ${zm.kind}`);
     this.zoneVisuals = new ZoneVisuals(this.renderer.scene, zm.zones, (x, z) => terrain.heightAt(x, z));
+    this.zoneVisuals.uiHidden = this.filming;
     if (!this.options.net) this.bus.on('combatant:died', (e) => zm.onDeath(e.team));
     // The battle briefing (owner, 2026-10-17): the strip and HQ's radio take the news below.
     this.briefing = new Briefing(this.hud.root, this.audio, this.settings.locale, this.settings.subtitles, ASSET_BASE, voiceLangFor(map.meta.id));
@@ -5387,7 +5428,7 @@ export class Game {
   private setupProgress(): void {
     const b = this.options.bots;
     const zm = this.zoneMode;
-    if (this.progress || this.options.net || this.options.showcase || this.options.sandbox || this.options.tutorial || !b || b.enemies <= 0 || !zm) return;
+    if (this.progress || this.options.net || this.options.showcase || this.options.sandbox || this.options.tutorial || this.options.at || !b || b.enemies <= 0 || !zm) return;
     // A match left earlier (reloaded in the middle of it) counts as left before this one starts.
     settleLeft();
     const prof = currentProfile();

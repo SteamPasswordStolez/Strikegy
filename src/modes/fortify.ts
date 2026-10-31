@@ -738,6 +738,9 @@ export class Fortifications {
     this.nav?.update();
   }
 
+  /** Filming (F2, the launch trailer): the station icons and the blueprints out of build mode are interface. */
+  uiHidden = false;
+
   /**
    * Per frame: station icons and empty build spots show up close by. In build
    * mode the spots show from further off, brighter and outlined, and the one
@@ -745,13 +748,14 @@ export class Fortifications {
    */
   render(camera: THREE.Vector3, building = false, target: FortSlot | null = null): void {
     this.batch.flush();
-    for (const s of this.stations) s.icon.visible = s.pos.distanceToSquared(camera) < 45 * 45;
+    for (const s of this.stations) s.icon.visible = !this.uiHidden && s.pos.distanceToSquared(camera) < 45 * 45;
     const m = this.models;
     // Outside build mode only the near ones: each is a see-through draw (41 within 28 m at
     // Iron Gate's square cost ~0.9 ms of GPU, 2026-10-10).
     const far = (building ? 60 : 16) ** 2;
     for (const s of this.slots) {
-      const show = !s.built && s.pos.distanceToSquared(camera) < far;
+      // Filming (F2): blueprints only in build mode (the shot of one going up), no station icons.
+      const show = !s.built && (building || !this.uiHidden) && s.pos.distanceToSquared(camera) < far;
       s.ghost.visible = show;
       s.outline.visible = show && building;
       if (!show) continue;

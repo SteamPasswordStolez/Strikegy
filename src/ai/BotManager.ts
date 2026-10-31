@@ -3604,6 +3604,8 @@ export class BotManager implements BotServices {
   private stepCount = 0;
   /** Ally chevrons and revive crosses: one point cloud each (a sprite per ally was a draw call each). */
   private markers!: THREE.Points;
+  /** Filming (F2): no ally chevrons or revive crosses over heads. */
+  hideMarkers = false;
   private crosses!: THREE.Points;
   private markerCount = 0;
   private crossCount = 0;
@@ -3703,6 +3705,7 @@ export class BotManager implements BotServices {
       });
     }
     for (const [pts, n] of [[this.markers, this.markerCount], [this.crosses, this.crossCount]] as const) {
+      pts.visible = !this.hideMarkers;
       pts.geometry.setDrawRange(0, n);
       pts.geometry.getAttribute('position').needsUpdate = true;
       const col = pts.geometry.getAttribute('color');
