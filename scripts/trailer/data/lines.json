@@ -1,0 +1,542 @@
+[
+ {
+  "id": "L01",
+  "start": 5.2,
+  "end": 6.1,
+  "speaker": "Sarge",
+  "delivery": "근접",
+  "en": "First time out?",
+  "ko": "첫 실전이지?"
+ },
+ {
+  "id": "L02",
+  "start": 6.4,
+  "end": 7.1,
+  "speaker": "Private",
+  "delivery": "근접",
+  "en": "Yes, Sarge.",
+  "ko": "예, 그렇습니다."
+ },
+ {
+  "id": "L03",
+  "start": 7.3,
+  "end": 9.3,
+  "speaker": "Sarge",
+  "delivery": "근접",
+  "en": "Hold that radio tight. It's our voice.",
+  "ko": "무전기 꽉 잡아. 우리 목소리는 그거 하나다."
+ },
+ {
+  "id": "L04",
+  "start": 10.6,
+  "end": 11.8,
+  "speaker": "Squadmate 1",
+  "delivery": "속삭임",
+  "en": "Shelling's getting closer.",
+  "ko": "포격이 가까워집니다."
+ },
+ {
+  "id": "L05",
+  "start": 12.2,
+  "end": 13.8,
+  "speaker": "Sarge",
+  "delivery": "무전",
+  "en": "Command, Two. At the gate.",
+  "ko": "본부, 2분대. 철문 앞 도착."
+ },
+ {
+  "id": "L06",
+  "start": 14.3,
+  "end": 15.6,
+  "speaker": "Command",
+  "delivery": "무전",
+  "en": "Copy, Two. Open it up.",
+  "ko": "확인, 2분대. 길을 열어라."
+ },
+ {
+  "id": "L07",
+  "start": 16.84,
+  "end": 17.29,
+  "speaker": "Sarge",
+  "delivery": "속삭임",
+  "en": "Three.",
+  "ko": "셋."
+ },
+ {
+  "id": "L08",
+  "start": 17.41,
+  "end": 17.86,
+  "speaker": "Sarge",
+  "delivery": "속삭임",
+  "en": "Two.",
+  "ko": "둘."
+ },
+ {
+  "id": "L09",
+  "start": 17.98,
+  "end": 18.43,
+  "speaker": "Sarge",
+  "delivery": "속삭임",
+  "en": "One.",
+  "ko": "하나."
+ },
+ {
+  "id": "L10",
+  "start": 18.9,
+  "end": 19.4,
+  "speaker": "Squadmate 2",
+  "delivery": "외침",
+  "en": "Go, go!",
+  "ko": "가, 가!"
+ },
+ {
+  "id": "L11",
+  "start": 19.8,
+  "end": 20.9,
+  "speaker": "Sarge",
+  "delivery": "외침",
+  "en": "Room clear! Keep pushing!",
+  "ko": "방 확보! 계속 밀어!"
+ },
+ {
+  "id": "L12",
+  "start": 21.6,
+  "end": 22.8,
+  "speaker": "Sarge",
+  "delivery": "무전",
+  "en": "Command — need armor!",
+  "ko": "본부, 기갑 지원 요청!"
+ },
+ {
+  "id": "L13",
+  "start": 23.8,
+  "end": 25.3,
+  "speaker": "Iron One",
+  "delivery": "무전",
+  "en": "Iron One. Target down. Next.",
+  "ko": "철갑 1, 명중. 다음 표적."
+ },
+ {
+  "id": "L14",
+  "start": 25.8,
+  "end": 26.6,
+  "speaker": "Sarge",
+  "delivery": "무전",
+  "en": "We need the sky!",
+  "ko": "하늘도 필요하다!"
+ },
+ {
+  "id": "L15",
+  "start": 26.9,
+  "end": 27.6,
+  "speaker": "Command",
+  "delivery": "무전",
+  "en": "Hawks inbound.",
+  "ko": "매 편대 진입."
+ },
+ {
+  "id": "L16",
+  "start": 28.4,
+  "end": 29.8,
+  "speaker": "Hawk Two",
+  "delivery": "무전",
+  "en": "Hawk Two, going low. Heads down!",
+  "ko": "매 2, 저공 진입. 머리 숙여!"
+ },
+ {
+  "id": "L17",
+  "start": 30.5,
+  "end": 31.9,
+  "speaker": "Command",
+  "delivery": "무전",
+  "en": "Fleet, stand by to fire.",
+  "ko": "함대, 화력 지원 준비."
+ },
+ {
+  "id": "L18",
+  "start": 32.9,
+  "end": 34.9,
+  "speaker": "Coral One",
+  "delivery": "무전",
+  "en": "Coral One. Main guns, firing for effect.",
+  "ko": "산호 1, 주포 효력사 개시."
+ },
+ {
+  "id": "L19",
+  "start": 35.3,
+  "end": 36.3,
+  "speaker": "Private",
+  "delivery": "근접, 놀라서",
+  "en": "…They're all coming.",
+  "ko": "…다 오고 있어."
+ },
+ {
+  "id": "L20",
+  "start": 36.8,
+  "end": 38.3,
+  "speaker": "Sarge",
+  "delivery": "무전",
+  "en": "Command, Two. Sending grid.",
+  "ko": "본부, 2분대. 좌표 보낸다."
+ },
+ {
+  "id": "L21",
+  "start": 39.3,
+  "end": 40.1,
+  "speaker": "Squadmate 1",
+  "delivery": "외침",
+  "en": "Direct hit!",
+  "ko": "명중이다!"
+ },
+ {
+  "id": "L22",
+  "start": 40.5,
+  "end": 41.9,
+  "speaker": "Sarge",
+  "delivery": "외침",
+  "en": "Sandbags! We hold here!",
+  "ko": "모래주머니 쌓아! 여기서 버틴다!"
+ },
+ {
+  "id": "L23",
+  "start": 42.8,
+  "end": 43.6,
+  "speaker": "Squadmate 2",
+  "delivery": "외침",
+  "en": "MG, left side!",
+  "ko": "기관총, 왼쪽!"
+ },
+ {
+  "id": "L24",
+  "start": 44.1,
+  "end": 44.7,
+  "speaker": "Private",
+  "delivery": "외침",
+  "en": "Reloading!",
+  "ko": "재장전!"
+ },
+ {
+  "id": "L25",
+  "start": 45.9,
+  "end": 46.5,
+  "speaker": "Squadmate 1",
+  "delivery": "슬로",
+  "en": "Sarge!",
+  "ko": "분대장님!"
+ },
+ {
+  "id": "L26",
+  "start": 46.9,
+  "end": 47.9,
+  "speaker": "Private",
+  "delivery": "슬로",
+  "en": "Stay with me, Sarge!",
+  "ko": "분대장님, 버티십시오!"
+ },
+ {
+  "id": "L27",
+  "start": 48.6,
+  "end": 49.4,
+  "speaker": "Squadmate 2",
+  "delivery": "외침",
+  "en": "APC's down!",
+  "ko": "장갑차 처리!"
+ },
+ {
+  "id": "L28",
+  "start": 53.4,
+  "end": 54.8,
+  "speaker": "Sarge",
+  "delivery": "근접, 거친 숨",
+  "en": "I'm fine… it's not over.",
+  "ko": "괜찮다… 아직 안 끝났어."
+ },
+ {
+  "id": "L29",
+  "start": 55.2,
+  "end": 56.5,
+  "speaker": "Sarge",
+  "delivery": "근접",
+  "en": "Your call now, kid.",
+  "ko": "이제 네가 불러."
+ },
+ {
+  "id": "L30",
+  "start": 57.5,
+  "end": 60.0,
+  "speaker": "Private",
+  "delivery": "무전, 떨림",
+  "en": "This is Two… any unit, any unit, do you read?",
+  "ko": "여기는 2분대… 전 부대, 들리면 응답하라."
+ },
+ {
+  "id": "L31",
+  "start": 60.3,
+  "end": 61.6,
+  "speaker": "Coxswain",
+  "delivery": "무전",
+  "en": "Ten seconds! Ramp's going down!",
+  "ko": "해안 십 초 전! 램프 내린다!"
+ },
+ {
+  "id": "L32",
+  "start": 62.3,
+  "end": 62.9,
+  "speaker": "Landing soldier",
+  "delivery": "외침",
+  "en": "Go, go, go!",
+  "ko": "가, 가, 가!"
+ },
+ {
+  "id": "L33",
+  "start": 63.2,
+  "end": 64.0,
+  "speaker": "Landing soldier",
+  "delivery": "외침",
+  "en": "Pillbox! Get down!",
+  "ko": "토치카! 엎드려!"
+ },
+ {
+  "id": "L34",
+  "start": 65.3,
+  "end": 66.2,
+  "speaker": "Coral One",
+  "delivery": "무전",
+  "en": "All guns — fire!",
+  "ko": "전 주포, 발사!"
+ },
+ {
+  "id": "L35",
+  "start": 68.6,
+  "end": 69.8,
+  "speaker": "Sub captain",
+  "delivery": "낮게",
+  "en": "Tubes one and two… fire.",
+  "ko": "1번, 2번… 발사."
+ },
+ {
+  "id": "L36",
+  "start": 71.3,
+  "end": 73.0,
+  "speaker": "Command",
+  "delivery": "무전",
+  "en": "Two's signal received! All units, answer!",
+  "ko": "2분대 신호 수신! 전 부대, 응답하라!"
+ },
+ {
+  "id": "L37",
+  "start": 73.6,
+  "end": 74.4,
+  "speaker": "Hawk Two",
+  "delivery": "무전",
+  "en": "Hawks, launching!",
+  "ko": "매 편대, 이함!"
+ },
+ {
+  "id": "L38",
+  "start": 75.9,
+  "end": 77.1,
+  "speaker": "Iron One",
+  "delivery": "무전",
+  "en": "Iron platoon, crossing the bridge!",
+  "ko": "철갑 소대, 다리 건넌다!"
+ },
+ {
+  "id": "L39",
+  "start": 78.2,
+  "end": 79.0,
+  "speaker": "Squadmate 2",
+  "delivery": "외침",
+  "en": "Gate's breached!",
+  "ko": "성문 뚫었다!"
+ },
+ {
+  "id": "L40",
+  "start": 80.5,
+  "end": 81.6,
+  "speaker": "Hawk Two",
+  "delivery": "무전",
+  "en": "Rockets away — hill's clear!",
+  "ko": "로켓 발사, 언덕 정리!"
+ },
+ {
+  "id": "L41",
+  "start": 82.7,
+  "end": 83.5,
+  "speaker": "Private",
+  "delivery": "외침",
+  "en": "Stay on that tank!",
+  "ko": "전차 따라 붙어!"
+ },
+ {
+  "id": "L42",
+  "start": 85.0,
+  "end": 85.7,
+  "speaker": "AA gunner",
+  "delivery": "외침",
+  "en": "Bandit down!",
+  "ko": "적기 격추!"
+ },
+ {
+  "id": "L43",
+  "start": 87.2,
+  "end": 88.9,
+  "speaker": "Sarge",
+  "delivery": "무전",
+  "en": "You hear that? Two is calling!",
+  "ko": "다들 들었지? 2분대가 부른다!"
+ },
+ {
+  "id": "L44",
+  "start": 90.2,
+  "end": 90.7,
+  "speaker": "Private",
+  "delivery": "정적 속, 낮게",
+  "en": "…Now.",
+  "ko": "…지금."
+ },
+ {
+  "id": "L45",
+  "start": 91.5,
+  "end": 92.6,
+  "speaker": "Private",
+  "delivery": "외침",
+  "en": "Two — on me!",
+  "ko": "2분대, 나를 따르라!"
+ },
+ {
+  "id": "L46",
+  "start": 93.8,
+  "end": 94.4,
+  "speaker": "Squadmate 1",
+  "delivery": "외침",
+  "en": "Move up!",
+  "ko": "따라붙어!"
+ },
+ {
+  "id": "L47",
+  "start": 95.2,
+  "end": 96.0,
+  "speaker": "Squadmate 2",
+  "delivery": "외침",
+  "en": "Contact, corner!",
+  "ko": "모퉁이, 적이다!"
+ },
+ {
+  "id": "L48",
+  "start": 97.0,
+  "end": 98.4,
+  "speaker": "Iron One",
+  "delivery": "무전",
+  "en": "Iron One joining. Mark your target!",
+  "ko": "철갑 1 합류! 표적 지정하라!"
+ },
+ {
+  "id": "L49",
+  "start": 98.6,
+  "end": 99.5,
+  "speaker": "Private",
+  "delivery": "외침",
+  "en": "MG nest, dead ahead!",
+  "ko": "기관총 진지, 정면!"
+ },
+ {
+  "id": "L50",
+  "start": 101.0,
+  "end": 102.3,
+  "speaker": "Hawk Two",
+  "delivery": "무전",
+  "en": "Hawk Two, rooftop level!",
+  "ko": "매 2, 지붕 높이로 간다!"
+ },
+ {
+  "id": "L51",
+  "start": 102.6,
+  "end": 103.8,
+  "speaker": "Sarge",
+  "delivery": "외침",
+  "en": "Up the stairs! Take the point!",
+  "ko": "계단 위로! 거점 잡아!"
+ },
+ {
+  "id": "L52",
+  "start": 104.3,
+  "end": 104.8,
+  "speaker": "Private",
+  "delivery": "외침",
+  "en": "Frag out!",
+  "ko": "수류탄!"
+ },
+ {
+  "id": "L53",
+  "start": 106.3,
+  "end": 107.9,
+  "speaker": "Command",
+  "delivery": "무전",
+  "en": "Bravo secured. Good work, Two.",
+  "ko": "B 거점 확보. 잘했다, 2분대."
+ },
+ {
+  "id": "L54",
+  "start": 108.3,
+  "end": 109.7,
+  "speaker": "Squadmate 1",
+  "delivery": "외침",
+  "en": "They're falling back! They're running!",
+  "ko": "물러난다! 놈들이 물러난다!"
+ },
+ {
+  "id": "L55",
+  "start": 110.5,
+  "end": 111.4,
+  "speaker": "Squadmate 2",
+  "delivery": "근접, 숨 고르며",
+  "en": "It's… it's over.",
+  "ko": "끝났… 끝났다."
+ },
+ {
+  "id": "L56",
+  "start": 112.4,
+  "end": 112.9,
+  "speaker": "Sarge",
+  "delivery": "근접",
+  "en": "Good work.",
+  "ko": "잘했다."
+ },
+ {
+  "id": "L57",
+  "start": 113.3,
+  "end": 114.8,
+  "speaker": "Sarge",
+  "delivery": "근접",
+  "en": "Next call's yours, kid.",
+  "ko": "다음 부름은… 네 차례다."
+ },
+ {
+  "id": "L58",
+  "start": 115.0,
+  "end": 115.4,
+  "speaker": "Private",
+  "delivery": "근접",
+  "en": "…Yes, Sarge.",
+  "ko": "…예."
+ },
+ {
+  "id": "L59",
+  "start": 126.6,
+  "end": 127.6,
+  "speaker": "Command",
+  "delivery": "무전",
+  "en": "All units, stand by.",
+  "ko": "모든 부대, 대기하라."
+ },
+ {
+  "id": "L60",
+  "start": 134.6,
+  "end": 136.1,
+  "speaker": "Private",
+  "delivery": "무전, 차분하게",
+  "en": "This is Two. Respond.",
+  "ko": "여기는 2분대. 응답하라."
+ }
+]

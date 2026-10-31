@@ -1,6 +1,6 @@
 """GlitchedSpell studio logo (owner, 2026-10-31: "make the logo yourself").
 
-Writes public/brand/glitchedspell-{emblem,logo,stacked}.svg: an emblem (a
+Writes public/brand/glitchedspell-{emblem,logo,stacked,wordmark}.svg: an emblem (a
 four-point spell spark inside a broken ring) and the wordmark in Barlow
 Condensed Bold (OFL, no reserved name; outlines turned into paths, so the SVGs
 need no font), both cut by a few glitch bands that slide sideways with cyan /
@@ -112,6 +112,11 @@ def main():
     mark = f'<path fill-rule="evenodd" d="{ring} {hole}"/><path d="{words}"/>'
     with open(os.path.join(OUT, 'glitchedspell-logo.svg'), 'w') as f:
         f.write(svg('logo', width, 200, mark, [(58, 7, 10), (110, 6, -12)], False))
+
+    # Wordmark alone (the trailer's opening reveals it under the emblem; no glitch bands, the animation adds them).
+    words, w = wordmark('GLITCHEDSPELL', 10, 70, 58, 9)
+    with open(os.path.join(OUT, 'glitchedspell-wordmark.svg'), 'w') as f:
+        f.write(svg('wordmark', int(w + 20), 80, f'<path d="{words}"/>', [], False))
 
     # Stacked (the trailer's opening card): emblem over the wordmark.
     words, w = wordmark('GLITCHEDSPELL', 0, 0, 58, 9)

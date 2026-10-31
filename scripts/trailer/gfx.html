@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<!--
+  The launch trailer's graphics (docs/design/trailer-production.md): render.mjs opens this
+  page and calls window.draw(kind, params, frame) once a frame, then takes a screenshot.
+  Every look is a pure function of the frame number, so a render is always the same.
+-->
+<style>
+  @font-face { font-family: 'Pretendard'; src: url('../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2'); font-weight: 100 900; }
+  @font-face { font-family: 'Barlow Condensed'; src: url('../../public/assets/fonts/BarlowCondensed-600.woff2') format('woff2'); font-weight: 600; }
+  @font-face { font-family: 'Barlow Condensed'; src: url('../../public/assets/fonts/BarlowCondensed-700.woff2') format('woff2'); font-weight: 700; }
+  :root { --ink: #f2efe8; --amber: #e8a33a; --cyan: #22e4ff; --magenta: #ff2e88; }
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: transparent; }
+  body.opaque { background: #0b0c0e; }
+  #stage { position: absolute; inset: 0; }
+  .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  .layer { position: absolute; inset: 0; }
+  .layer svg { position: absolute; }
+  .card { font-family: 'Pretendard', sans-serif; font-weight: 800; font-size: 104px; color: var(--ink); letter-spacing: 0.04em; white-space: nowrap; }
+  .card small { display: block; margin-top: 18px; font-size: 40px; font-weight: 600; letter-spacing: 0.08em; color: rgba(242, 239, 232, 0.72); text-align: center; }
+  .rule { position: absolute; left: 50%; height: 3px; background: var(--amber); transform: translateX(-50%); }
+  .title { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-style: italic; font-size: 300px; letter-spacing: 0.02em; color: var(--ink); text-shadow: 0 0 40px rgba(232, 163, 58, 0.35); white-space: nowrap; }
+  .sub { position: absolute; left: 0; right: 0; bottom: 86px; text-align: center; font-family: 'Pretendard', sans-serif; font-weight: 600; font-size: 46px; color: #fff; letter-spacing: 0.01em;
+    text-shadow: 0 2px 3px rgba(0, 0, 0, 0.95), 0 0 18px rgba(0, 0, 0, 0.75), 0 0 2px #000; }
+  .presents { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 34px; letter-spacing: 0.6em; color: rgba(242, 239, 232, 0.8); padding-left: 0.6em; }
+  .promo { position: absolute; right: 180px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 36px; font-family: 'Pretendard', sans-serif; font-weight: 800; font-size: 64px; color: var(--ink);
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8); }
+  .placeholder { font-family: 'Pretendard', sans-serif; color: #fff; font-size: 52px; font-weight: 700; text-align: center; line-height: 1.35; text-shadow: 0 2px 6px #000; }
+  .placeholder small { display: block; font-size: 30px; font-weight: 500; opacity: 0.85; max-width: 1500px; margin: 16px auto 0; white-space: normal; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+  const FPS = 30;
+  const stage = document.getElementById('stage');
+  const svgs = {};
+  /** render.mjs hands over the logo SVGs (as text) before drawing. */
+  window.setSvgs = (m) => Object.assign(svgs, m);
+
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
+  /** A seeded number 0..1 for (frame, salt): glitches look random but render the same every time. */
+  const rnd = (f, s) => { const x = Math.sin(f * 127.1 + s * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+  /** A logo drawn three times (cyan, magenta, ink) with sliding glitch bands while `amount` > 0. */
+  function glitchy(svgText, w, x, y, f, amount, opacity = 1) {
+    const out = [];
+    const bands = amount > 0 ? 3 + Math.floor(rnd(f, 1) * 3) : 0;
+    const make = (color, dx, clip, op) => {
+      const d = document.createElement('div');
+      d.className = 'layer';
+      d.innerHTML = svgText.replace(/fill="#F2EFE8"/g, `fill="${color}"`);
+      const s = d.firstElementChild;
+      s.setAttribute('width', w); s.removeAttribute('height');
+      s.style.left = `${x + dx}px`; s.style.top = `${y}px`; s.style.opacity = op;
+      if (clip) d.style.clipPath = clip;
+      out.push(d);
+    };
+    make('#F2EFE8', 0, null, opacity);
+    for (let i = 0; i < bands; i++) {
+      const top = rnd(f, 10 + i) * 90, h = 2 + rnd(f, 20 + i) * 9, dx = (rnd(f, 30 + i) - 0.5) * 70 * amount;
+      const clip = `inset(${top}% 0 ${100 - top - h}% 0)`;
+      make('#22E4FF', dx - 8 * amount, clip, 0.85 * opacity);
+      make('#FF2E88', dx + 8 * amount, clip, 0.85 * opacity);
+      make('#F2EFE8', dx, clip, opacity);
+    }
+    return out;
+  }
+
+  const draws = {
+    /** The GlitchedSpell opening (shots O1-O6, 0-5 s): stamp on the 0.33 s hit, glitch on the 0.54 s hit, the name, PRESENTS, out. */
+    opening(p, f) {
+      document.body.className = 'opaque';
+      if (f < 10) return;
+      const k = ease((f - 10) / 4);
+      const scale = 1.14 - 0.14 * k;
+      const shake = f < 13 ? (rnd(f, 5) - 0.5) * 14 : 0;
+      const fade = f >= 140 ? clamp(1 - (f - 140) / 10) : 1;
+      let g = 0;
+      if (f >= 16 && f < 21) g = 1 - (f - 16) / 6;
+      if (f >= 53 && f < 56) g = 0.6;
+      if (f >= 136 && f < 141) g = 0.9;
+      const W = 360 * scale;
+      for (const d of glitchy(svgs.emblem, W, 960 - W / 2 + shake, 300 - (W - 360) / 2, f, g, fade)) stage.appendChild(d);
+      if (f >= 53) {
+        const r = clamp((f - 53) / 20);
+        const pieces = glitchy(svgs.wordmark, 900, 510, 690, f, f < 60 ? 0.8 : g, fade);
+        for (const d of pieces) { d.style.clipPath = d.style.clipPath || `inset(0 ${100 - r * 100}% 0 0)`; stage.appendChild(d); }
+      }
+      if (f >= 90) {
+        const t = document.createElement('div');
+        t.className = 'presents center';
+        t.style.top = '860px';
+        t.style.opacity = String(clamp((f - 90) / 15) * fade);
+        t.textContent = 'PRESENTS';
+        stage.appendChild(t);
+      }
+    },
+    /** A card: one line (and an optional small line) on black, in quickly, out quickly. */
+    card(p, f, n) {
+      document.body.className = 'opaque';
+      const a = Math.min(clamp(f / 4), clamp((n - 1 - f) / 3));
+      const t = document.createElement('div');
+      t.className = 'card center';
+      t.style.opacity = String(a);
+      t.style.transform = `translate(-50%, -50%) scale(${1.04 - 0.04 * ease(f / 8)})`;
+      t.textContent = p.text;
+      if (p.small) { const s = document.createElement('small'); s.textContent = p.small; t.appendChild(s); }
+      stage.appendChild(t);
+      const r = document.createElement('div');
+      r.className = 'rule';
+      r.style.top = '612px';
+      r.style.width = `${ease(f / 10) * 220}px`;
+      r.style.opacity = String(a);
+      stage.appendChild(r);
+    },
+    /** STRIKEGY on the 128.15 s hit: slams in with a flash, then pushes in slowly. */
+    title(p, f, n) {
+      document.body.className = 'opaque';
+      const slam = ease(f / 4);
+      const s = 1.3 - 0.3 * slam + 0.04 * (f / n);
+      const t = document.createElement('div');
+      t.className = 'title center';
+      t.style.transform = `translate(-50%, -50%) scale(${s})`;
+      t.style.opacity = String(Math.min(1, slam * 1.5) * clamp((n - 1 - f) / 4));
+      t.textContent = 'STRIKEGY';
+      stage.appendChild(t);
+      if (f < 3) { const fl = document.createElement('div'); fl.className = 'layer'; fl.style.background = `rgba(255,255,255,${0.5 - f * 0.16})`; stage.appendChild(fl); }
+    },
+    /** End slate: STRIKEGY, 지금 플레이, the address, the studio. */
+    endslate(p, f, n) {
+      document.body.className = 'opaque';
+      const a = clamp(f / 8) * clamp((n - 1 - f) / 30);
+      const box = document.createElement('div');
+      box.className = 'center';
+      box.style.textAlign = 'center';
+      box.style.opacity = String(a);
+      box.innerHTML = `<div class="title" style="font-size:190px;line-height:1">STRIKEGY</div>
+        <div class="card" style="font-size:58px;margin-top:10px">지금 플레이</div>
+        <div class="card" style="font-size:40px;font-weight:600;margin-top:22px;color:rgba(242,239,232,0.75);letter-spacing:0.06em">strikegy.xyz</div>`;
+      stage.appendChild(box);
+      for (const d of glitchy(svgs.logo, 300, 810, 900, f, 0, a * 0.8)) stage.appendChild(d);
+    },
+    /** 일병 진급: the private's bar becomes two (transparent, laid over S53). */
+    promo(p, f, n) {
+      document.body.className = '';
+      const a = Math.min(clamp(f / 4), clamp((n - 1 - f) / 4));
+      const bars = f < 8 ? 1 : 2;
+      const pop = f >= 8 && f < 12 ? 1 + 0.15 * (1 - (f - 8) / 4) : 1;
+      const box = document.createElement('div');
+      box.className = 'promo';
+      box.style.opacity = String(a);
+      const bar = (y) => `<rect x="0" y="${y}" width="120" height="22" rx="3" fill="#E8A33A"/>`;
+      box.innerHTML = `<svg width="120" height="70" style="transform:scale(${pop})">${bar(bars === 1 ? 24 : 6)}${bars === 2 ? bar(42) : ''}</svg><span>일병 진급</span>`;
+      stage.appendChild(box);
+    },
+    /** One Korean subtitle line (transparent, bottom centre). */
+    sub(p) {
+      document.body.className = '';
+      const t = document.createElement('div');
+      t.className = 'sub';
+      t.textContent = p.text;
+      stage.appendChild(t);
+    },
+    /** A stand-in for footage not shot yet: the shot's id, kind and what goes there. */
+    placeholder(p) {
+      document.body.className = '';
+      stage.style.background = p.bg;
+      const t = document.createElement('div');
+      t.className = 'placeholder center';
+      t.innerHTML = `${p.id} · ${p.type}<small></small>`;
+      t.querySelector('small').textContent = p.desc;
+      stage.appendChild(t);
+    },
+  };
+
+  window.draw = (kind, params, frame, frames) => {
+    stage.replaceChildren();
+    stage.style.background = '';
+    draws[kind](params, frame, frames);
+  };
+</script>
+</body>
+</html>
