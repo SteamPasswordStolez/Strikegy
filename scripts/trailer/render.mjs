@@ -110,7 +110,21 @@ for (const s of shots.filter((x) => x.type === 'card')) {
     if (want('endslate')) await clip(`card_${s.id}`, 'endslate', {}, n);
   } else if (s.desc.startsWith('STRIKEGY')) {
     if (want('title')) await clip(`card_${s.id}`, 'title', {}, n);
-  } else if (want('cards')) await clip(`card_${s.id}`, 'card', { text: s.desc.split(' (')[0] }, n);
+  } else if (want('cards')) {
+    // The four arms are numbered 01-04; a tagline splits into two lines ("A. B." or "small — big").
+    const text = s.desc.split(' (')[0];
+    const arm = ['보병', '기갑', '항공', '해군'].indexOf(text) + 1;
+    const dash = text.split(' — ');
+    const dots = text.split('. ');
+    const params = arm
+      ? { text, index: arm }
+      : dash.length === 2
+        ? { lines: dash, lead: true }
+        : dots.length === 2
+          ? { lines: [dots[0] + '.', dots[1]] }
+          : { text, index: 0 };
+    await clip(`card_${s.id}`, 'card', params, n);
+  }
 }
 
 // 일병 진급 over S53, 114.8-115.5 s (docs/design/trailer.md, cards table).

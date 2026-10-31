@@ -18,17 +18,24 @@
   .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
   .layer { position: absolute; inset: 0; }
   .layer svg { position: absolute; }
-  .card { font-family: 'Pretendard', sans-serif; font-weight: 800; font-size: 104px; color: var(--ink); letter-spacing: 0.04em; white-space: nowrap; }
-  .card small { display: block; margin-top: 18px; font-size: 40px; font-weight: 600; letter-spacing: 0.08em; color: rgba(242, 239, 232, 0.72); text-align: center; }
-  .rule { position: absolute; left: 50%; height: 3px; background: var(--amber); transform: translateX(-50%); }
-  .title { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-style: italic; font-size: 300px; letter-spacing: 0.02em; color: var(--ink); text-shadow: 0 0 40px rgba(232, 163, 58, 0.35); white-space: nowrap; }
-  .sub { position: absolute; left: 0; right: 0; bottom: 86px; text-align: center; font-family: 'Pretendard', sans-serif; font-weight: 600; font-size: 46px; color: #fff; letter-spacing: 0.01em;
-    text-shadow: 0 2px 3px rgba(0, 0, 0, 0.95), 0 0 18px rgba(0, 0, 0, 0.75), 0 0 2px #000; }
   .presents { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 34px; letter-spacing: 0.6em; color: rgba(242, 239, 232, 0.8); padding-left: 0.6em; }
-  .promo { position: absolute; right: 180px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 36px; font-family: 'Pretendard', sans-serif; font-weight: 800; font-size: 64px; color: var(--ink);
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8); }
-  .placeholder { font-family: 'Pretendard', sans-serif; color: #fff; font-size: 52px; font-weight: 700; text-align: center; line-height: 1.35; text-shadow: 0 2px 6px #000; }
-  .placeholder small { display: block; font-size: 30px; font-weight: 500; opacity: 0.85; max-width: 1500px; margin: 16px auto 0; white-space: normal; }
+  /* Type: Pretendard for Korean (800 display, 600 text), Barlow Condensed for numbers and the logo; warm white, amber accents. */
+  .abs { position: absolute; left: 0; right: 0; text-align: center; white-space: nowrap; }
+  .kicker { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 28px; letter-spacing: 0.5em; padding-left: 0.5em; color: var(--amber); }
+  .kicker .dim { color: rgba(242, 239, 232, 0.38); }
+  .kicker .hair { display: inline-block; width: 72px; height: 2px; margin: 0 22px 0 0; vertical-align: middle; background: rgba(232, 163, 58, 0.6); }
+  .word { font-family: 'Pretendard', sans-serif; font-weight: 800; color: var(--ink); }
+  .lineK { font-family: 'Pretendard', sans-serif; font-weight: 600; color: rgba(242, 239, 232, 0.6); letter-spacing: 0.32em; padding-left: 0.32em; }
+  .hairline { position: absolute; left: 50%; height: 1px; transform: translateX(-50%); background: linear-gradient(90deg, transparent, rgba(242, 239, 232, 0.45), transparent); }
+  .title { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-style: italic; letter-spacing: 0.03em; color: var(--ink); white-space: nowrap; }
+  .play { display: inline-block; font-family: 'Pretendard', sans-serif; font-weight: 700; font-size: 40px; letter-spacing: 0.3em; padding: 16px 40px 16px calc(40px + 0.3em); color: #121315; background: var(--amber); }
+  .url { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 34px; letter-spacing: 0.32em; padding-left: 0.32em; color: rgba(242, 239, 232, 0.7); }
+  .sub { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center; font-family: 'Pretendard', sans-serif; font-weight: 600; font-size: 42px; color: #fff; letter-spacing: 0.005em;
+    text-shadow: 0 2px 3px rgba(0, 0, 0, 0.95), 0 0 16px rgba(0, 0, 0, 0.7), 0 0 2px #000; }
+  .ph-tag { position: absolute; left: 72px; top: 60px; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 34px; letter-spacing: 0.2em; color: rgba(255, 255, 255, 0.85); }
+  .ph-tag b { color: var(--amber); margin-right: 18px; }
+  .ph-desc { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 1300px; text-align: center; font-family: 'Pretendard', sans-serif; font-weight: 600; font-size: 44px; line-height: 1.5; color: rgba(255, 255, 255, 0.92); word-break: keep-all; }
+  .ph-note { position: absolute; right: 72px; top: 64px; font-family: 'Pretendard', sans-serif; font-weight: 600; font-size: 26px; letter-spacing: 0.2em; color: rgba(255, 255, 255, 0.5); }
 </style>
 </head>
 <body>
@@ -44,31 +51,6 @@
   const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
   /** A seeded number 0..1 for (frame, salt): glitches look random but render the same every time. */
   const rnd = (f, s) => { const x = Math.sin(f * 127.1 + s * 311.7) * 43758.5453; return x - Math.floor(x); };
-
-  /** A logo drawn three times (cyan, magenta, ink) with sliding glitch bands while `amount` > 0. */
-  function glitchy(svgText, w, x, y, f, amount, opacity = 1) {
-    const out = [];
-    const bands = amount > 0 ? 3 + Math.floor(rnd(f, 1) * 3) : 0;
-    const make = (color, dx, clip, op) => {
-      const d = document.createElement('div');
-      d.className = 'layer';
-      d.innerHTML = svgText.replace(/fill="#F2EFE8"/g, `fill="${color}"`);
-      const s = d.firstElementChild;
-      s.setAttribute('width', w); s.removeAttribute('height');
-      s.style.left = `${x + dx}px`; s.style.top = `${y}px`; s.style.opacity = op;
-      if (clip) d.style.clipPath = clip;
-      out.push(d);
-    };
-    make('#F2EFE8', 0, null, opacity);
-    for (let i = 0; i < bands; i++) {
-      const top = rnd(f, 10 + i) * 90, h = 2 + rnd(f, 20 + i) * 9, dx = (rnd(f, 30 + i) - 0.5) * 70 * amount;
-      const clip = `inset(${top}% 0 ${100 - top - h}% 0)`;
-      make('#22E4FF', dx - 8 * amount, clip, 0.85 * opacity);
-      make('#FF2E88', dx + 8 * amount, clip, 0.85 * opacity);
-      make('#F2EFE8', dx, clip, opacity);
-    }
-    return out;
-  }
 
   /** The bare mark inside one of the brand SVGs (no baked glitch bands) and its viewBox size. */
   const markOf = (svgText, id) => svgText.match(new RegExp(`<g id="${id}">([\\s\\S]*?)</g>`))[1];
@@ -93,6 +75,44 @@
     }
     ctx.putImageData(img, 0, 0);
     return c;
+  }
+
+  /** An element with a class and text. */
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  /** The cards' backdrop (the opening's): near black, a faint warm light, vignette, grain. */
+  function backdrop(f) {
+    document.body.className = 'opaque';
+    stage.style.background = 'radial-gradient(ellipse 1100px 600px at 50% 50%, rgba(232, 163, 58, 0.06), transparent 70%), #08090b';
+    const vig = el('div', 'layer');
+    vig.style.background = 'radial-gradient(ellipse at 50% 48%, transparent 45%, rgba(0, 0, 0, 0.6) 100%)';
+    stage.append(vig, grain(f));
+  }
+  /** Rises into place from `dist` px down, `delay` frames late; `out` fades it at the end. */
+  function rise(e, f, delay, out, dist = 18) {
+    const k = ease((f - delay) / 7);
+    e.style.opacity = String(k * out);
+    e.style.transform = `translateY(${dist * (1 - k)}px)`;
+  }
+  /** The studio's horizontal lockup (bare marks, no glitch bands): emblem `h` px tall, centred at y. */
+  function lockup(h, y) {
+    const EM = markOf(svgs.emblem, 'gs-emblem');
+    const WM = markOf(svgs.wordmark, 'gs-wordmark');
+    const [ew] = boxOf(svgs.emblem);
+    const [ww] = boxOf(svgs.wordmark);
+    const se = h / ew;
+    const sw = (h * 0.4) / 58;
+    const gap = h * 0.32;
+    const W = h + gap * 2 + 1 + ww * sw;
+    const x0 = 960 - W / 2;
+    return `<svg width="1920" height="1080" style="position:absolute;left:0;top:0" fill="#ebe7df">
+      <g transform="translate(${x0},${y - h / 2}) scale(${se})">${EM}</g>
+      <rect x="${x0 + h + gap}" y="${y - h * 0.3}" width="1" height="${h * 0.6}" opacity="0.4"/>
+      <g transform="translate(${x0 + h + gap * 2 + 1},${y - 41 * sw}) scale(${sw})">${WM}</g></svg>`;
   }
 
   const draws = {
@@ -190,81 +210,141 @@
       stage.appendChild(vig);
       stage.appendChild(grain(f));
     },
-    /** A card: one line (and an optional small line) on black, in quickly, out quickly. */
+    /**
+     * A card on the dark backdrop. `index` (1-4): the four arms, a numbered kicker over one wide-tracked
+     * word and a hairline; `lines` (two): a tagline, the second line in amber; with `lead` a small
+     * tracked line over a big one instead.
+     */
     card(p, f, n) {
-      document.body.className = 'opaque';
-      const a = Math.min(clamp(f / 4), clamp((n - 1 - f) / 3));
-      const t = document.createElement('div');
-      t.className = 'card center';
-      t.style.opacity = String(a);
-      t.style.transform = `translate(-50%, -50%) scale(${1.04 - 0.04 * ease(f / 8)})`;
-      t.textContent = p.text;
-      if (p.small) { const s = document.createElement('small'); s.textContent = p.small; t.appendChild(s); }
-      stage.appendChild(t);
-      const r = document.createElement('div');
-      r.className = 'rule';
-      r.style.top = '612px';
-      r.style.width = `${ease(f / 10) * 220}px`;
-      r.style.opacity = String(a);
-      stage.appendChild(r);
-    },
-    /** STRIKEGY on the 128.15 s hit: slams in with a flash, then pushes in slowly. */
-    title(p, f, n) {
-      document.body.className = 'opaque';
-      const slam = ease(f / 4);
-      const s = 1.3 - 0.3 * slam + 0.04 * (f / n);
-      const t = document.createElement('div');
-      t.className = 'title center';
-      t.style.transform = `translate(-50%, -50%) scale(${s})`;
-      t.style.opacity = String(Math.min(1, slam * 1.5) * clamp((n - 1 - f) / 4));
-      t.textContent = 'STRIKEGY';
-      stage.appendChild(t);
-      if (f < 3) { const fl = document.createElement('div'); fl.className = 'layer'; fl.style.background = `rgba(255,255,255,${0.5 - f * 0.16})`; stage.appendChild(fl); }
-    },
-    /** End slate: STRIKEGY, 지금 플레이, the address, the studio. */
-    endslate(p, f, n) {
-      document.body.className = 'opaque';
-      const a = clamp(f / 8) * clamp((n - 1 - f) / 30);
-      const box = document.createElement('div');
-      box.className = 'center';
-      box.style.textAlign = 'center';
-      box.style.opacity = String(a);
-      box.innerHTML = `<div class="title" style="font-size:190px;line-height:1">STRIKEGY</div>
-        <div class="card" style="font-size:58px;margin-top:10px">지금 플레이</div>
-        <div class="card" style="font-size:40px;font-weight:600;margin-top:22px;color:rgba(242,239,232,0.75);letter-spacing:0.06em">strikegy.xyz</div>`;
+      backdrop(f);
+      const out = clamp((n - 1 - f) / 4);
+      const box = el('div', 'layer');
+      box.style.transform = `scale(${1 + 0.035 * (f / n)})`;
       stage.appendChild(box);
-      for (const d of glitchy(svgs.logo, 300, 810, 770, f, 0, a * 0.8)) stage.appendChild(d);
+      if (p.lines) {
+        const [a, b] = p.lines;
+        if (p.lead) {
+          const l1 = el('div', 'abs lineK', a);
+          Object.assign(l1.style, { top: '400px', fontSize: '38px' });
+          rise(l1, f, 0, out);
+          const l2 = el('div', 'abs word', b);
+          Object.assign(l2.style, { top: '466px', fontSize: '132px', lineHeight: '1', letterSpacing: '0.12em', paddingLeft: '0.12em' });
+          rise(l2, f, 2, out);
+          box.append(l1, l2);
+          return;
+        }
+        const l1 = el('div', 'abs word', a);
+        Object.assign(l1.style, { top: '372px', fontSize: '112px', lineHeight: '1', letterSpacing: '0.06em' });
+        rise(l1, f, 0, out);
+        const l2 = el('div', 'abs word', b);
+        Object.assign(l2.style, { top: '522px', fontSize: '112px', lineHeight: '1', letterSpacing: '0.06em', color: 'var(--amber)' });
+        rise(l2, f, 5, out);
+        box.append(l1, l2);
+        return;
+      }
+      const reveal = ease(f / 7);
+      const k = el('div', 'abs kicker');
+      k.innerHTML = `0${p.index}<span class="hair" style="margin-left:22px"></span><span class="dim">04</span>`;
+      Object.assign(k.style, { top: '392px', opacity: String(clamp(f / 5) * out) });
+      const w = el('div', 'abs word', p.text);
+      const track = 0.62 - 0.14 * ease(f / 14);
+      Object.assign(w.style, {
+        top: '452px',
+        fontSize: '168px',
+        lineHeight: '1',
+        letterSpacing: `${track}em`,
+        paddingLeft: `${track}em`,
+        clipPath: `inset(0 ${50 - 50 * reveal}% 0 ${50 - 50 * reveal}%)`,
+        opacity: String(out),
+      });
+      const r = el('div', 'hairline');
+      Object.assign(r.style, { top: '676px', width: `${640 * ease((f - 3) / 12)}px`, opacity: String(out) });
+      box.append(k, w, r);
     },
-    /** 일병 진급: the private's bar becomes two (transparent, laid over S53). */
+    /** STRIKEGY on the 128.15 s hit: slams in with a flash and a short colour tear, then pushes in slowly. */
+    title(p, f, n) {
+      backdrop(f);
+      const slam = ease(f / 4);
+      const s = 1.22 - 0.22 * slam + 0.05 * (f / n);
+      const a = Math.min(1, slam * 1.5) * clamp((n - 1 - f) / 4);
+      const tear = f < 5 ? 1 - f / 5 : 0;
+      const make = (color, dx, op) => {
+        const t = el('div', 'title center', 'STRIKEGY');
+        Object.assign(t.style, { fontSize: '280px', color, opacity: String(op), transform: `translate(calc(-50% + ${dx}px), -54%) scale(${s})` });
+        if (dx === 0) t.style.textShadow = '0 0 60px rgba(232, 163, 58, 0.28)';
+        stage.appendChild(t);
+      };
+      if (tear > 0) {
+        make('#22E4FF', -14 * tear, 0.7 * tear * a);
+        make('#FF2E88', 14 * tear, 0.7 * tear * a);
+      }
+      make('var(--ink)', 0, a);
+      const r = el('div', 'hairline');
+      Object.assign(r.style, {
+        top: '700px',
+        height: '2px',
+        width: `${900 * ease((f - 4) / 18)}px`,
+        opacity: String(a),
+        background: 'linear-gradient(90deg, transparent, rgba(232, 163, 58, 0.85), transparent)',
+      });
+      stage.appendChild(r);
+      if (f < 3) {
+        const fl = el('div', 'layer');
+        fl.style.background = `rgba(255,255,255,${0.45 - f * 0.15})`;
+        stage.appendChild(fl);
+      }
+    },
+    /** End slate: STRIKEGY, the call to action, the address, the studio, all clear of the last line's subtitle. */
+    endslate(p, f, n) {
+      backdrop(f);
+      const fade = clamp((n - 1 - f) / 30);
+      const t = el('div', 'title abs', 'STRIKEGY');
+      Object.assign(t.style, { top: '290px', fontSize: '210px', lineHeight: '1', textShadow: '0 0 50px rgba(232, 163, 58, 0.22)' });
+      rise(t, f, 0, fade, 30);
+      const play = el('div', 'abs');
+      play.style.top = '548px';
+      play.innerHTML = '<span class="play">지금 플레이</span>';
+      rise(play, f, 5, fade);
+      const url = el('div', 'abs url', 'strikegy.xyz');
+      url.style.top = '658px';
+      rise(url, f, 9, fade);
+      const studio = el('div', 'layer');
+      studio.innerHTML = lockup(64, 800);
+      studio.style.opacity = String(0.75 * clamp((f - 14) / 10) * fade);
+      stage.append(t, play, url, studio);
+    },
+    /** 일병 진급 (transparent, over S53): high in the frame, the private's bar becomes two and the rank's name changes. */
     promo(p, f, n) {
       document.body.className = '';
-      const a = Math.min(clamp(f / 4), clamp((n - 1 - f) / 4));
-      const bars = f < 8 ? 1 : 2;
-      const pop = f >= 8 && f < 12 ? 1 + 0.15 * (1 - (f - 8) / 4) : 1;
-      const box = document.createElement('div');
-      box.className = 'promo';
-      box.style.opacity = String(a);
-      const bar = (y) => `<rect x="0" y="${y}" width="120" height="22" rx="3" fill="#E8A33A"/>`;
-      box.innerHTML = `<svg width="120" height="70" style="transform:scale(${pop})">${bar(bars === 1 ? 24 : 6)}${bars === 2 ? bar(42) : ''}</svg><span>일병 진급</span>`;
-      stage.appendChild(box);
+      const a = Math.min(clamp(f / 3), clamp((n - 1 - f) / 4));
+      const shade = el('div', 'layer');
+      shade.style.background = `radial-gradient(ellipse 560px 280px at 50% 250px, rgba(0,0,0,${0.55 * a}), transparent)`;
+      stage.appendChild(shade);
+      const two = f >= 7;
+      const pop = two && f < 11 ? 1 + 0.18 * (1 - (f - 7) / 4) : 1;
+      const bar = (y, op) => `<rect x="0" y="${y}" width="112" height="20" rx="2" fill="#E8A33A" opacity="${op}"/>`;
+      const ins = el('div', 'abs');
+      ins.style.top = '140px';
+      ins.style.opacity = String(a);
+      ins.innerHTML = `<svg width="112" height="62" style="transform:scale(${pop})">${two ? bar(6, 1) + bar(36, clamp((f - 7) / 2)) : bar(21, 1)}</svg>`;
+      const k = el('div', 'abs kicker', '진급');
+      Object.assign(k.style, { top: '226px', fontFamily: "'Pretendard', sans-serif", fontSize: '24px', opacity: String(a) });
+      const w = el('div', 'abs word', two ? '일병' : '이병');
+      Object.assign(w.style, { top: '262px', fontSize: '76px', letterSpacing: '0.24em', paddingLeft: '0.24em', opacity: String(a), textShadow: '0 2px 12px rgba(0,0,0,0.7)' });
+      stage.append(ins, k, w);
     },
     /** One Korean subtitle line (transparent, bottom centre). */
     sub(p) {
       document.body.className = '';
-      const t = document.createElement('div');
-      t.className = 'sub';
-      t.textContent = p.text;
-      stage.appendChild(t);
+      stage.appendChild(el('div', 'sub', p.text));
     },
-    /** A stand-in for footage not shot yet: the shot's id, kind and what goes there. */
+    /** A stand-in for footage not shot yet: the shot's id and kind, what goes there. */
     placeholder(p) {
       document.body.className = '';
-      stage.style.background = p.bg;
-      const t = document.createElement('div');
-      t.className = 'placeholder center';
-      t.innerHTML = `${p.id} · ${p.type}<small></small>`;
-      t.querySelector('small').textContent = p.desc;
-      stage.appendChild(t);
+      stage.style.background = `radial-gradient(ellipse at 50% 45%, ${p.bg}, #0b0c0e 120%)`;
+      const tag = el('div', 'ph-tag');
+      tag.append(el('b', '', p.id), el('span', '', p.type));
+      stage.append(tag, el('div', 'ph-note', '촬영 예정'), el('div', 'ph-desc', p.desc));
     },
   };
 
