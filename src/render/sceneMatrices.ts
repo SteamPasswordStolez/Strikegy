@@ -41,8 +41,33 @@ export function updateShownMatrices(scene: THREE.Object3D): void {
       topMasks.set(o, 0);
       continue;
     }
+    // Frozen scenery: its matrices were set once and never change; not walked at all.
+    const frozen = o.userData.frozenMask as number | undefined;
+    if (frozen !== undefined && !force) {
+      topMasks.set(o, frozen);
+      continue;
+    }
     topMasks.set(o, visit(scene, o, force));
   }
+}
+
+/**
+ * Marks a top-level group that never moves (the map, props, scenery, rivers,
+ * ground cover): its world matrices are worked out now, once, and the
+ * per-frame update skips the whole subtree (2026-10-31: ~400 shown nodes of
+ * static map recomputed every frame for nothing, ~0.5 ms CPU). Visibility and
+ * LOD switching still work as before (they don't touch matrices). Nothing may
+ * be moved or added under it afterwards; call it again after such a change.
+ */
+export function freezeStatic(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true);
+  let mask = 0;
+  root.traverse((o) => {
+    o.matrixAutoUpdate = false;
+    o.matrixWorldNeedsUpdate = false;
+    mask |= ownLayers(o);
+  });
+  root.userData.frozenMask = mask;
 }
 
 /** Updates one shown object and what is under it; returns the layers drawn there. */

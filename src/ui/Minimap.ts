@@ -95,7 +95,15 @@ export class Minimap {
     g.scale(m, m);
     g.translate(-u, -v);
     g.globalAlpha = 0.9;
-    g.drawImage(this.image.canvas, 0, 0);
+    // Only the image round the player (whatever the turn): the same pixels, without
+    // transforming the whole 2048 px map picture every redraw.
+    const reach = Math.ceil((R * Math.SQRT2) / m) + 2;
+    const im = this.image.canvas;
+    const sx = Math.max(0, Math.floor(u - reach));
+    const sy = Math.max(0, Math.floor(v - reach));
+    const sw = Math.min(im.width, Math.ceil(u + reach)) - sx;
+    const sh = Math.min(im.height, Math.ceil(v + reach)) - sy;
+    if (sw > 0 && sh > 0) g.drawImage(im, sx, sy, sw, sh, sx, sy, sw, sh);
     g.globalAlpha = 1;
     g.setTransform(1, 0, 0, 1, 0, 0);
 

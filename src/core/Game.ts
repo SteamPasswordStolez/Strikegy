@@ -8,6 +8,7 @@ import { MATCH, foes, friends, setMatchFlags } from '@/modes/matchFlags';
 import { SIMPLE, simplifyInput } from '@/modes/simple';
 import { loadCore } from '@/wasm/core';
 import * as THREE from 'three';
+import { freezeStatic } from '@/render/sceneMatrices';
 import { EventBus } from './EventBus';
 import type { DamageCause, GameEvents, GrenadeOwner, HitPart } from './events';
 import { FixedStepLoop } from './FixedStepLoop';
@@ -232,6 +233,9 @@ const FLINCH = { perDamage: 0.0005, max: 0.025, ads: 0.6 } as const;
 const MUSIC = { briefing: 45, afterDeploy: 20, briefingFade: 6, hit: 1, hurt: 1.2, kill: 2, cool: 0.2, start: 3, calm: 1, quietFor: 15, minPlay: 40, combatFade: 4, again: 45, first: 10 } as const;
 /** Camera shake by blast size (big shells shake from further off). */
 const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1.1, shell: 1.4, heavy: 1.8 };
+
+/** Top-level scenery groups that never move after loading (see freezeStatic). */
+const FROZEN_GROUPS = /^(map:|props$|scanDressing$|rivers$|forest$|ground-cover$|backdrop$)/;
 
 export class Game {
   readonly bus = new EventBus<GameEvents>();
@@ -1038,6 +1042,8 @@ export class Game {
     }
     r.render();
     for (const m of temp) r.scene.remove(m);
+    // The map's scenery never moves: its matrices once, then skipped every frame.
+    for (const o of r.scene.children) if (FROZEN_GROUPS.test(o.name)) freezeStatic(o);
     r.requestShadowUpdate();
     this.effects.update(0.1);
   }

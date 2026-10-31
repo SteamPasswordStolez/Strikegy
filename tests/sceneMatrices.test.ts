@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { hideOffLayers, updateShownMatrices } from '@/render/sceneMatrices';
+import { freezeStatic, hideOffLayers, updateShownMatrices } from '@/render/sceneMatrices';
 
 describe('updateShownMatrices', () => {
   it('matches three.js for shown objects, skips hidden ones and catches them up when shown', () => {
@@ -66,5 +66,25 @@ describe('updateShownMatrices', () => {
     const late = new THREE.Group();
     scene.add(late);
     expect(shownDuring(1 << 2)).toEqual([sun, late]);
+  });
+
+  it('frozen scenery keeps its world matrices and is still culled by layer', () => {
+    const scene = new THREE.Scene();
+    const map = new THREE.Group();
+    map.position.set(5, 0, 0);
+    const wall = new THREE.Mesh();
+    wall.position.set(0, 2, 0);
+    map.add(wall);
+    const fx = new THREE.Group();
+    const spark = new THREE.Mesh();
+    spark.layers.set(1);
+    fx.add(spark);
+    scene.add(map, fx);
+    freezeStatic(map);
+    updateShownMatrices(scene);
+    expect(new THREE.Vector3().setFromMatrixPosition(wall.matrixWorld).toArray()).toEqual([5, 2, 0]);
+    let shown: THREE.Object3D[] = [];
+    hideOffLayers(scene, 1 << 1, () => (shown = scene.children.filter((o) => o.visible)));
+    expect(shown).toEqual([fx]);
   });
 });

@@ -3,7 +3,7 @@ import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
-import { installNearShadow, onlyMovingCasters, withoutMovingCasters } from './nearShadow';
+import { drawShadowPass, installNearShadow } from './nearShadow';
 import { hideOffLayers, updateShownMatrices } from './sceneMatrices';
 
 installGradeToneMapping();
@@ -274,7 +274,6 @@ export class Renderer {
   render(): boolean {
     this.frameIndex++;
     let shadow = false;
-    let near = false;
     if (this.quality.shadows) {
       // The first frame must render shadows: materials sample the shadow map from the start.
       const due = this.frameIndex === 1 || this.frameIndex % this.quality.shadowInterval === 0;
@@ -291,7 +290,6 @@ export class Renderer {
       if (this.nearLight && !shadow && !due) {
         this.gl.shadowMap.needsUpdate = true;
         this.nearLight.shadow.needsUpdate = true;
-        near = true;
       }
     }
     // World matrices once per frame, shown objects only; the passes below
@@ -299,10 +297,7 @@ export class Renderer {
     updateShownMatrices(this.scene);
     this.scene.matrixWorldAutoUpdate = false;
     if (this.postfx) {
-      const draw = () => this.postfx!.render();
-      if (shadow) withoutMovingCasters(this.scene, draw);
-      else if (near) onlyMovingCasters(this.scene, draw);
-      else draw();
+      drawShadowPass(this.scene, shadow, !!this.nearLight, () => this.postfx!.render());
     } else {
       // World first, then scenery: walls fill depth so the forest behind them is rejected early.
       const cam = this.camera;
@@ -311,9 +306,7 @@ export class Renderer {
         this.gl.clear();
         cam.layers.disable(LAYER_BACKDROP);
         const draw = () => hideOffLayers(this.scene, cam.layers.mask, () => this.gl.render(this.scene, cam));
-        if (shadow) withoutMovingCasters(this.scene, draw);
-        else if (near) onlyMovingCasters(this.scene, draw);
-        else draw();
+        drawShadowPass(this.scene, shadow, !!this.nearLight, draw);
       });
       this.section('scenery', () => {
         cam.layers.set(LAYER_BACKDROP);

@@ -39,6 +39,42 @@ export function installNearShadow(): void {
   );
 }
 
+/**
+ * Which casters each shadow pass sees. With a near map (high / medium), static
+ * scenery casts only while the static map is redrawn (rare: at the start and
+ * when fortifications change): between those, its `castShadow` stays off, so
+ * the near map (redrawn every other frame) sees only what moves without any
+ * per-frame walk over the scene (that walk cost ~0.27 ms CPU). Moving casters
+ * stay out of a static redraw. Without a near map nothing is switched.
+ */
+export function drawShadowPass(scene: THREE.Object3D, staticRedraw: boolean, nearMap: boolean, draw: () => void): void {
+  if (!staticRedraw) {
+    draw();
+    return;
+  }
+  const statics: THREE.Object3D[] = [];
+  const moving: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    // Meshes, lines and points only: a light's castShadow is whether it has a shadow map at all.
+    const r = o as THREE.Mesh & { isLine?: boolean; isPoints?: boolean };
+    if (!r.isMesh && !r.isLine && !r.isPoints) return;
+    if (o.userData.dynShadow) {
+      if (o.castShadow) moving.push(o);
+    } else if (o.castShadow || o.userData.staticCaster) statics.push(o);
+  });
+  for (const o of statics) {
+    o.castShadow = true;
+    o.userData.staticCaster = true;
+  }
+  for (const o of moving) o.castShadow = false;
+  try {
+    draw();
+  } finally {
+    for (const o of moving) o.castShadow = true;
+    if (nearMap) for (const o of statics) o.castShadow = false;
+  }
+}
+
 /** Marks a mesh (or every mesh under an object) as moving: it casts into the near shadow map only. */
 export function castsMovingShadow(obj: THREE.Object3D): void {
   obj.traverse((o) => {
@@ -47,39 +83,4 @@ export function castsMovingShadow(obj: THREE.Object3D): void {
       o.userData.dynShadow = true;
     }
   });
-}
-
-/**
- * Runs `draw` with moving casters kept out of the shadow pass (the static map
- * is being redrawn: a soldier's shadow would stay behind in it).
- */
-export function withoutMovingCasters(scene: THREE.Object3D, draw: () => void): void {
-  const off: THREE.Object3D[] = [];
-  scene.traverse((o) => {
-    if (o.userData.dynShadow && o.castShadow) {
-      o.castShadow = false;
-      off.push(o);
-    }
-  });
-  try {
-    draw();
-  } finally {
-    for (const o of off) o.castShadow = true;
-  }
-}
-
-/** Runs `draw` with only moving casters in the shadow pass (the near map is being redrawn). */
-export function onlyMovingCasters(scene: THREE.Object3D, draw: () => void): void {
-  const off: THREE.Object3D[] = [];
-  scene.traverse((o) => {
-    if (o.castShadow && !o.userData.dynShadow && !(o as THREE.Light).isLight) {
-      o.castShadow = false;
-      off.push(o);
-    }
-  });
-  try {
-    draw();
-  } finally {
-    for (const o of off) o.castShadow = true;
-  }
 }
