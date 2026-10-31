@@ -61,6 +61,13 @@
 .mset-modes .ds-row-side {
   text-align: right;
 }
+/* On another map: pickable, it moves there (the side line names it). */
+.mset-modes .ds-row.other .ds-row-main {
+  color: var(--ink-2);
+}
+.mset-modes .ds-row.other .ds-row-side {
+  color: var(--accent);
+}
 
 .mset-map {
   display: flex;
@@ -102,6 +109,26 @@
 }
 .mset-strip .ds-card {
   padding: var(--s2);
+}
+/* Maps without the picked mode (picking one changes the mode). */
+.mset-strip .ds-card.lacks {
+  opacity: 0.45;
+}
+.mset-strip .ds-card.lacks:hover {
+  opacity: 0.8;
+}
+.mset-random {
+  --h: calc(var(--u) * 2.25);
+  position: absolute;
+  top: var(--s3);
+  right: var(--s3);
+  gap: var(--s2);
+  background: rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+.mset-random:hover {
+  background: rgb(0 0 0 / 0.65);
 }
 .mset-strip .ds-card-name {
   overflow: hidden;
@@ -191,6 +218,24 @@
   flex-basis: 100%;
   font-size: var(--fs-sm);
 }
+/* Back to the map's own team size. */
+.mset-reset {
+  --h: calc(var(--u) * 2);
+  flex-basis: 100%;
+  justify-content: flex-end;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+}
+.mset-reset:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+.mset-summary {
+  flex: none;
+  font-size: var(--fs-sm);
+  text-align: center;
+}
 .mset-start {
   flex: none;
   width: 100%;
@@ -216,7 +261,9 @@
   .mset-map-name {
     font-size: var(--fs-xl);
   }
-  .mset-mode-tag {
+  .mset-mode-tag,
+  .mset-modes .ds-row:not(.other) .ds-row-side,
+  .mset-random .ds-kbd {
     display: none;
   }
   /* The whole column scrolls (open rules would squeeze the settings), the start button sticks to its foot. */

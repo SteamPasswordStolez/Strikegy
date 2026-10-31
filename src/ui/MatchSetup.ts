@@ -23,6 +23,12 @@ import './matchSetup.css';
  *   stays in sight while the settings scroll.
  *
  * Keys (handled by the menu): Q / E group, ↑ ↓ mode, ← → map, Enter start.
+ *
+ * Where the caller can switch maps for a mode (`mapFor`, the solo setup;
+ * owner, 2026-10-31: "make it convenient"), a mode the picked map lacks is
+ * still picked, naming the map it moves to; maps without the picked mode are
+ * marked in the strip; a random-map button, the team size's suggested-size
+ * button and a one-line summary over the start button.
  */
 
 export type ModeGroupId = 'objective' | 'attack' | 'team' | 'solo' | 'practice';
@@ -52,10 +58,12 @@ export interface SetupMap {
   /** Its own team size (players a side it is made for). */
   team: number;
   blurb: string;
+  /** The modes it offers, once loaded (the strip marks maps without the picked mode). */
+  modes?: readonly LobbyMode[];
 }
 
 export type SetupField =
-  | { kind: 'stepper'; id: string; label: string; value: string; note?: string; warn?: boolean; change(d: number): void }
+  | { kind: 'stepper'; id: string; label: string; value: string; note?: string; warn?: boolean; change(d: number): void; reset?: { label: string; apply(): void } }
   | { kind: 'choice'; id: string; label: string; note?: string; options: { value: string; label: string }[]; value: string; pick(v: string): void }
   | { kind: 'text'; id: string; label: string; value: string; secret?: boolean; placeholder?: string; set(v: string): void };
 
@@ -102,9 +110,13 @@ export interface SetupView {
   maps: SetupMap[];
   fields: SetupField[];
   start: string;
-  /** What will happen (kept for the callers; the page no longer prints it). */
+  /** What will happen, one line over the start button. */
   summary?: string;
   touch: boolean;
+  /** The map picking `m` would move to when the picked one lacks it (null: none has it); without it such modes are greyed. */
+  mapFor?(m: LobbyMode): string | null;
+  /** A random map (shown as a button over the map card). */
+  onRandom?(): void;
   onMode(m: LobbyMode): void;
   onMap(id: string): void;
   onStart(): void;
@@ -131,8 +143,9 @@ export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
 
   // Mode groups.
   const tabs = el('div', 'ds-tabs mset-tabs', body);
+  const elsewhere = (m: LobbyMode): string | null => (v.offered.includes(m) ? null : (v.mapFor?.(m) ?? null));
   for (const g of MODE_GROUPS) {
-    const first = g.modes.find((m) => v.offered.includes(m));
+    const first = g.modes.find((m) => v.offered.includes(m)) ?? g.modes.find((m) => elsewhere(m));
     const tab = el('button', `ds-tab${g.id === group ? ' sel' : ''}${first ? '' : ' off'}`, tabs, t(`modeGroup.${g.id}` as MessageKey));
     if (!first) tab.disabled = true;
     else if (g.id !== group) {
@@ -148,10 +161,12 @@ export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
   const modes = el('div', 'mset-modes', body);
   for (const m of MODE_GROUPS.find((g) => g.id === group)?.modes ?? []) {
     const ok = v.offered.includes(m);
-    const row = el('button', `ds-row${m === v.mode ? ' sel' : ''}${ok ? '' : ' off'}`, modes);
+    const other = elsewhere(m);
+    const row = el('button', `ds-row${m === v.mode ? ' sel' : ''}${ok ? '' : other ? ' other' : ' off'}`, modes);
     el('span', 'ds-row-main', row, modeName(m));
-    el('span', 'ds-row-side', row, ok ? t(`modeTag.${m}` as MessageKey) : t('lobby.notOnMap'));
-    if (!ok) row.disabled = true;
+    const otherName = other ? (v.maps.find((x) => x.id === other)?.name ?? other) : '';
+    el('span', 'ds-row-side', row, ok ? t(`modeTag.${m}` as MessageKey) : other ? t('lobby.onMap').replace('{map}', otherName) : t('lobby.notOnMap'));
+    if (!ok && !other) row.disabled = true;
     else if (m !== v.mode) {
       hover(row);
       row.addEventListener('click', () => {
@@ -179,11 +194,24 @@ export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
     if (cur.zones !== undefined) fact(t('lobby.factZones'), String(cur.zones));
     if (cur.size) fact(t('lobby.factSize'), `${cur.size[0]} × ${cur.size[1]} m`);
     fact(t('lobby.factFor'), `${cur.team} vs ${cur.team}`);
+    if (v.onRandom) {
+      const dice = el('button', 'ds-btn ghost mset-random', card);
+      dice.innerHTML = icon('refresh');
+      el('span', '', dice, t('lobby.random'));
+      if (!v.touch) el('span', 'ds-kbd', dice, 'R');
+      hover(dice);
+      dice.addEventListener('click', () => {
+        uiSound('select');
+        v.onRandom!();
+      });
+    }
   }
   const strip = el('div', 'mset-strip', mapCol);
   for (const m of v.maps) {
-    const b = el('button', `ds-card${m.id === v.map ? ' sel' : ''}`, strip);
+    const lacks = !!m.modes && !m.modes.includes(v.mode);
+    const b = el('button', `ds-card${m.id === v.map ? ' sel' : ''}${lacks ? ' lacks' : ''}`, strip);
     if (m.picture) b.style.backgroundImage = `url(${picture(m.picture, 320)})`;
+    if (lacks) b.title = t('lobby.noMode').replace('{mode}', modeName(v.mode));
     el('span', 'ds-card-name', b, m.name);
     if (m.id !== v.map) {
       hover(b);
@@ -237,6 +265,14 @@ export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
           f.change(d);
         });
       }
+      if (f.reset) {
+        const r = el('button', 'ds-btn ghost mset-reset', row, f.reset.label);
+        hover(r);
+        r.addEventListener('click', () => {
+          uiSound('select');
+          f.reset!.apply();
+        });
+      }
     } else if (f.kind === 'choice') {
       const seg = el('div', 'ds-seg', row);
       for (const o of f.options) {
@@ -262,6 +298,7 @@ export function renderMatchSetup(body: HTMLElement, v: SetupView): void {
   requestAnimationFrame(() => (fields.scrollTop = fieldsScroll));
   fields.addEventListener('scroll', () => (fieldsScroll = fields.scrollTop), { passive: true });
 
+  if (v.summary) el('div', 'mset-summary ds-dim', side, v.summary);
   const go = el('button', 'ds-btn primary mset-start', side);
   el('span', '', go, v.start);
   if (!v.touch) el('span', 'ds-kbd', go, 'ENTER');

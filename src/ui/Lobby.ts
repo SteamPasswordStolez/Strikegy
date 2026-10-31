@@ -285,8 +285,11 @@ export class Lobby {
     if (this.screen === 'multi' && this.multi?.key(key)) return;
     if (this.screen !== 'play') return;
     // The setup page: Q / E mode group, ↑ ↓ mode, ← → map, Enter start.
-    const offered = modesOf(this.maps.get(this.pick.map));
-    if (key === 'KeyQ' || key === 'KeyE') {
+    const offered = this.anyModes();
+    if (key === 'KeyR') {
+      uiSound('select');
+      this.randomMap();
+    } else if (key === 'KeyQ' || key === 'KeyE') {
       uiSound('move');
       this.setMode(stepGroup(this.pick.mode, offered, key === 'KeyQ' ? -1 : 1));
     } else if (key === 'ArrowUp' || key === 'ArrowDown') {
@@ -427,6 +430,7 @@ export class Lobby {
       hint(['Q', 'E'], t('lobby.modeKind'));
       hint(['↑', '↓'], t('lobby.mode'));
       hint(['←', '→'], t('lobby.map'));
+      if (this.screen === 'play') hint(['R'], t('lobby.random'));
       hint(['ENTER'], t(this.screen === 'play' ? 'lobby.start' : this.multi!.setupStart));
     } else if (this.screen === 'settings' || this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') hint(['Q', 'E'], t('lobby.category'));
     else if (this.screen === 'multi') for (const [keys, what] of this.multi!.hints) hint(keys, what);
@@ -590,6 +594,7 @@ export class Lobby {
 
   private renderPlay(body: HTMLElement): void {
     const p = this.pick;
+    const own = MAPS.find((m) => m.id === p.map)?.team ?? 12;
     const fields: SetupField[] = [
       {
         kind: 'stepper',
@@ -597,12 +602,23 @@ export class Lobby {
         label: t('lobby.team'),
         value: `${p.team} vs ${p.team}`,
         warn: p.team >= BIG_TEAM,
-        note: p.team >= BIG_TEAM ? t('lobby.bigTeam') : t('lobby.teamHint').replace('{n}', String(MAPS.find((m) => m.id === p.map)?.team ?? 12)),
+        note: p.team >= BIG_TEAM ? t('lobby.bigTeam') : t('lobby.teamHint').replace('{n}', String(own)),
         change: (d) => {
           const i = TEAM_SIZES.indexOf(p.team as (typeof TEAM_SIZES)[number]);
           p.team = TEAM_SIZES[Math.max(0, Math.min(TEAM_SIZES.length - 1, i + d))]!;
           this.saveAndRender();
         },
+        // Back to the size the map is made for.
+        reset:
+          p.team !== own
+            ? {
+                label: t('lobby.suggested').replace('{n}', String(own)),
+                apply: () => {
+                  p.team = own;
+                  this.saveAndRender();
+                },
+              }
+            : undefined,
       },
     ];
     // Free-for-all has no sides to pick.
@@ -651,6 +667,8 @@ export class Lobby {
         .replaceAll('{n}', String(p.team))
         .replace('{diff}', t(`lobby.diff.${p.difficulty}` as MessageKey)),
       touch: this.touch,
+      mapFor: (m) => this.mapFor(m),
+      onRandom: () => this.randomMap(),
       onMode: (m) => this.setMode(m),
       onMap: (id) => this.setMap(id),
       onStart: () => this.finish(this.pick),
@@ -670,13 +688,43 @@ export class Lobby {
         size: def ? mapSize(def) : undefined,
         team: m.team,
         blurb: t(`mapDesc.${m.id}` as MessageKey),
+        modes: def ? modesOf(def) : undefined,
       };
     });
   }
 
+  /** Picks a mode; when the picked map lacks it, moves to a map that has it (`mapFor`). */
   private setMode(m: LobbyMode): void {
-    this.pick.mode = m;
+    const p = this.pick;
+    if (!modesOf(this.maps.get(p.map)).includes(m)) {
+      const id = this.mapFor(m);
+      if (!id) return;
+      p.map = id;
+      p.team = MAPS.find((x) => x.id === id)!.team;
+    }
+    p.mode = m;
     this.saveAndRender();
+  }
+
+  /** The map a mode moves to from one that lacks it: first one whose own mode it is, else the first that has it (loaded maps only). */
+  private mapFor(m: LobbyMode): string | null {
+    const has = MAPS.filter((x) => this.maps.has(x.id) && modesOf(this.maps.get(x.id)).includes(m));
+    return (has.find((x) => this.maps.get(x.id)!.modes?.default === m) ?? has[0])?.id ?? null;
+  }
+
+  /** Every mode some (loaded) map offers: ↑ ↓ and Q / E move through these, switching maps as needed. */
+  private anyModes(): LobbyMode[] {
+    const out = new Set<LobbyMode>(modesOf(this.maps.get(this.pick.map)));
+    for (const x of MAPS) if (this.maps.has(x.id)) for (const m of modesOf(this.maps.get(x.id))) out.add(m);
+    return [...out];
+  }
+
+  /** Another map at random, one with the picked mode where there is one. */
+  private randomMap(): void {
+    const others = MAPS.filter((x) => x.id !== this.pick.map);
+    const keep = others.filter((x) => this.maps.has(x.id) && modesOf(this.maps.get(x.id)).includes(this.pick.mode));
+    const from = keep.length ? keep : others;
+    if (from.length) this.setMap(from[Math.floor(Math.random() * from.length)]!.id);
   }
 
   private setMap(id: string): void {
