@@ -17,9 +17,10 @@
 // voice file is left out: the trailer always builds, so timing can be checked at any stage.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const T = path.join(ROOT, 'assets-src', 'trailer');
 const GFX = path.join(T, 'gfx');
 const OUT = path.join(T, 'out');

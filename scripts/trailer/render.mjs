@@ -10,13 +10,14 @@
 // (build.mjs uses it where a shot has no footage yet).
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT = path.join(ROOT, 'assets-src', 'trailer', 'gfx');
 const FPS = 30;
 const shots = JSON.parse(
@@ -35,7 +36,7 @@ export const frames = (a, b) => Math.round(b * FPS) - Math.round(a * FPS);
 fs.mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-await page.goto('file://' + path.join(ROOT, 'scripts/trailer/gfx.html'));
+await page.goto(pathToFileURL(path.join(ROOT, 'scripts/trailer/gfx.html')).href);
 const svg = (n) => fs.readFileSync(path.join(ROOT, `public/brand/glitchedspell-${n}.svg`), 'utf8');
 await page.evaluate((m) => window.setSvgs(m), {
   emblem: svg('emblem'),
@@ -44,9 +45,19 @@ await page.evaluate((m) => window.setSvgs(m), {
 });
 await page.evaluate(() => document.fonts.ready);
 
+/**
+ * Empties and removes a flat folder of frames. Not fs.rmSync: on Windows it crashes Node
+ * natively under this repo's Korean path (STATUS_STACK_BUFFER_OVERRUN; build-voice.mjs too).
+ */
+function rmFrames(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const f of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, f));
+  fs.rmdirSync(dir);
+}
+
 /** Draws `n` frames of `kind` into dir/0000.png...; transparent when `alpha`. */
 async function frameSeq(dir, kind, params, n, alpha) {
-  fs.rmSync(dir, { recursive: true, force: true });
+  rmFrames(dir);
   fs.mkdirSync(dir, { recursive: true });
   for (let f = 0; f < n; f++) {
     await page.evaluate(([k, p, i, total]) => window.draw(k, p, i, total), [kind, params, f, n]);
@@ -79,7 +90,7 @@ function encode(dir, file) {
     String(FPS),
     file,
   ]);
-  fs.rmSync(dir, { recursive: true, force: true });
+  rmFrames(dir);
 }
 
 async function clip(name, kind, params, n) {

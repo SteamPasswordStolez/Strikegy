@@ -226,6 +226,12 @@ node scripts/trailer/build.mjs
     - 슬로모션(speed 0.5), 자막과 진급 그래픽 얹기, SRT, 덕킹, 음량
     - 끝 화면의 마지막 자막이 로고와 겹치던 것을 고침
   - `peek.mjs`
-- **실제로 돌려 보지 못한 것:** `voices.mjs`의 API 호출(키 없음), 실제 촬영 영상, 오너 PC의 ffmpeg 빌드 차이.
+- **오너 PC에서 확인한 것 (2026-10-31 로컬 세션):** `render.mjs --placeholders` 전부(1분 3초). 처음엔 Windows에서 돌지 않았다. 고친 것:
+  - 네 스크립트의 저장소 경로가 `new URL(import.meta.url).pathname`이라 `C:\C:\...%EC%A3%BC...`가 됐다 → `fileURLToPath`
+  - `voices.mjs`의 직접 실행 확인도 같은 이유로 늘 거짓이었다
+  - gfx.html을 `'file://' + 경로`로 열었다 → `pathToFileURL`
+  - **`fs.rmSync`가 한글 경로에서 Node를 네이티브로 죽인다**(0xC0000409, 출력 없이 끝남; `build-voice.mjs`와 같은 문제). 트레일러 스크립트에서는 쓰지 말 것: 파일은 `unlinkSync`, 빈 폴더는 `rmdirSync`
+  - playwright가 없었다 → devDependency `playwright` 1.60.0 고정(이 PC에 이미 있는 Chromium 1223과 맞는 판이라 브라우저를 따로 받지 않는다; 올리면 `npx playwright install chromium`이 필요하다)
+- **실제로 돌려 보지 못한 것:** `voices.mjs`의 API 호출, 오너 PC에서의 `build.mjs` / `peek.mjs`, 실제 촬영 영상.
 - **drawtext:** `peek.mjs`의 시간 표시는 ffmpeg의 drawtext와 TTF 글꼴이 필요하다. 없으면 시간 표시 없이 그린다(시간 = from + k × every).
 - **장면 세팅 도구가 없다** (위 ⑥).

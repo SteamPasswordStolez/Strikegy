@@ -13,9 +13,10 @@
 // The report says which lines run longer than their slot in the music (move or shorten them).
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIR = path.join(ROOT, 'assets-src', 'trailer', 'voice');
 const API = 'https://openrouter.ai/api/v1';
 const MODEL = 'elevenlabs/eleven-v4';
@@ -179,4 +180,4 @@ async function main() {
   console.table(report);
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) await main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
