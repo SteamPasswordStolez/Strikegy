@@ -5,6 +5,10 @@
 // in edit.json (in-point 0).
 //
 //   node scripts/trailer/film.mjs <group> [shot ids...] [--url http://localhost:5173] [--keep]
+//                                 [--software [--size 960x540]]
+//
+// --software (cloud sessions only, never on the owner's PC): playwright's own Chromium on SwiftShader, for
+// checking a shot's script where there is no GPU; slow (seconds a frame). The real take is filmed on the GPU.
 //
 // A group is scripts/trailer/shots/<group>.mjs: { query, warm?, shots: { S15: { frames, sim?, setup, frame } } }.
 // `query` is the match (map, bots, at, side, mode); setup(d) and frame(d, i) run in the page with the
@@ -33,9 +37,11 @@ const args = process.argv.slice(2);
 const opt = (k, def) => (args.includes(k) ? args[args.indexOf(k) + 1] : def);
 const BASE = opt('--url', 'http://localhost:5173');
 const keepFrames = args.includes('--keep');
+const software = args.includes('--software');
+const [VW, VH] = opt('--size', '1920x1080').split('x').map(Number);
 /** FILM_DEBUG=1: say each step as it starts (to find where a run stops). */
 const debug = (...a) => process.env.FILM_DEBUG && console.log('[debug]', ...a);
-const positional = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--url');
+const positional = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--url' && args[i - 1] !== '--size');
 const [groupName, ...only] = positional;
 if (!groupName) {
   console.log('usage: node scripts/trailer/film.mjs <group> [shot ids...]');
@@ -120,22 +126,31 @@ process.on('uncaughtException', (e) => {
 });
 try {
   browser = await chromium.launch({
-    executablePath: EDGE,
+    ...(software ? {} : { executablePath: EDGE }),
     headless: true,
-    args: [
-      '--ignore-gpu-blocklist',
-      '--use-angle=d3d11',
-      '--force_high_performance_gpu',
-      '--enable-gpu-rasterization',
-      '--disable-gpu-sandbox',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-      '--mute-audio',
-      '--autoplay-policy=no-user-gesture-required',
-    ],
+    args: software
+      ? [
+          '--use-angle=swiftshader',
+          '--enable-unsafe-swiftshader',
+          '--ignore-gpu-blocklist',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--mute-audio',
+        ]
+      : [
+          '--ignore-gpu-blocklist',
+          '--use-angle=d3d11',
+          '--force_high_performance_gpu',
+          '--enable-gpu-rasterization',
+          '--disable-gpu-sandbox',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--mute-audio',
+          '--autoplay-policy=no-user-gesture-required',
+        ],
   });
   pid = browser.process?.()?.pid ?? 0;
-  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+  const ctx = await browser.newContext({ viewport: { width: VW, height: VH }, deviceScaleFactor: 1 });
   await ctx.addInitScript(() => {
     const k = 'strikegy.settings.v1';
     let s = {};
@@ -222,7 +237,11 @@ try {
     return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : 'unknown';
   });
   console.log(`GPU: ${gpu}`);
-  if (/swiftshader|llvmpipe|software/i.test(gpu)) throw new Error('software rendering: refusing to film on the CPU');
+  if (!software && /swiftshader|llvmpipe|software/i.test(gpu)) throw new Error('software rendering: refusing to film on the CPU');
+  if (software)
+    await page.evaluate(() => {
+      window.__filmSoftware = true;
+    });
   await page.addScriptTag({ path: path.join(ROOT, 'scripts/trailer/director.js') });
   // start() returns the director (and the whole game behind it): nothing comes back to Node.
   await page.evaluate(() => {

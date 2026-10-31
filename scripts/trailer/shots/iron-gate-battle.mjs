@@ -504,5 +504,99 @@ export default {
         d.pose(d.cast.sarge, { yaw: Math.PI / 2 + 0.08 - 0.9 * k, aimYaw: Math.PI / 2 + 0.08 - 0.9 * k });
       },
     },
+    // Finale, on the 123.23 hit: the enemy tank at the square's east side cooks off, the biggest blast of
+    // the trailer (d.inferno). The camera, low in the square's west mouth, is shaken, holds a beat, then
+    // pulls back down the west street and climbs over the roofs to a wide of the whole town burning:
+    // black smoke over every zone, wrecks, shells landing all over, two fighters going in under the camera.
+    S56: {
+      setup(d) {
+        d.mood('dusk');
+        d.particles(9000, 2400);
+        d.g.weapons.setLoadout(['ar4'], true);
+        d.battle({
+          ...d.square,
+          wrecks: [...d.square.wrecks, ['tank', -72, 14, 0.8], ['apc', 90, -2, 2.4], ['jeep', 10, 54, 1.9], ['tank', 4, -46, 2.8]],
+          shells: { every: 12, near: [8, 0], min: 14, max: 34 },
+        });
+        d.put(-40, 4, 30, 90, 0);
+        // The tank settles on its tracks before the shot (it hung over the ground on frame 0).
+        const tank = d.vehicle('tank', d.at(16, 1.5), Math.PI / 2, 'red');
+        // Nothing in the warm-up's fight may wreck it first.
+        tank.health = 1e9;
+        // Burning columns over the zones and the town, already tall when the shot opens.
+        // None near the camera's way out (west street, then up over x -50..-150, z 5..80).
+        const plumes = [
+          [-80, -14, 1.3],
+          [90, -2, 1.4],
+          [4, -46, 1.2],
+          [10, 54, 1.1],
+          [-40, -34, 0.9],
+          [46, 40, 1],
+          [120, -40, 1.2],
+          [-24, 84, 1.3],
+          [60, -70, 0.9],
+        ].map(([x, z, k]) => [d.at(x, z), k]);
+        for (let f = 0; f < 330; f++) {
+          for (const [p, k] of plumes) d.plume(p, f, k);
+          d.warm(1 / 30);
+        }
+        const at = tank.model.root.position.clone();
+        const y0 = d.ground(-14, 6);
+        // Two fighters from behind the camera's last place, low, into the town.
+        const a = d.vehicle('fighter', d.v(-260, 32, 150), -1.05, 'blue');
+        const b = d.vehicle('fighter', d.v(-280, 37, 166), -1.05, 'blue');
+        // A fixed run of the barrage over the town (the same every take).
+        let seed = 11;
+        const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+        const zones = [
+          [-78, 8],
+          [84, -8],
+          [-2, -52],
+          [4, 60],
+        ];
+        const hits = [];
+        for (let f = 24; f < 150; f += 5) {
+          const z = zones[hits.length % zones.length];
+          hits.push([f, z[0] + (rnd() - 0.5) * 70, z[1] + (rnd() - 0.5) * 50, rnd() < 0.5 ? 'artillery' : 'howitzer']);
+        }
+        d.s = { tank, at, a, b, hits, plumes, f: 330, fog: d.g.renderer.scene.fog.density };
+        const P0 = d.v(-14, y0 + 1.6, 6);
+        const P1 = d.v(-52, y0 + 5, 4);
+        const P2 = d.v(-150, 62, 78);
+        const L0 = at.clone().setY(at.y + 9);
+        const L1 = d.v(30, 10, -16);
+        d.cam((t, cam, dd) => {
+          const u = dd.smooth((t - 0.3) / 4.6);
+          const w = 1 - u;
+          const pos = d.v(0, 0, 0).addScaledVector(P0, w * w).addScaledVector(P1, 2 * u * w).addScaledVector(P2, u * u);
+          // The blast's shove: a hard shake that dies out in a second.
+          const sh = Math.exp(-t * 3.2);
+          pos.add(d.v(Math.sin(t * 47) * 0.35 * sh, Math.sin(t * 61 + 1) * 0.25 * sh, Math.sin(t * 53 + 2) * 0.3 * sh));
+          dd.place(cam, pos, dd.mix(L0, L1, dd.smooth(u * 1.15)), dd.lerp(48, 58, u), Math.sin(t * 39) * 0.02 * sh);
+          dd.g.renderer.scene.fog.density = dd.lerp(dd.s.fog, 0.0028, u);
+        });
+      },
+      frame(d, i) {
+        const s = d.s;
+        if (i === 0) {
+          d.blast('bigNaval', s.at, 'blue');
+          s.tank.health = 1;
+          d.wreck(s.tank);
+        }
+        d.inferno(s.at, i, 1.3);
+        // The wreck goes on burning under the fireball's smoke: one more column, rising till the end.
+        if (i > 20) d.plume(s.at, i, 1.6);
+        for (const [p, k] of s.plumes) d.plume(p, s.f + i, k);
+        if (i === 7) d.blast('artillery', d.at(24, -8), 'blue');
+        if (i === 13) d.blast('howitzer', d.at(28, 10), 'blue');
+        for (const [f, x, z, kind] of s.hits) if (f === i) d.blast(kind, d.at(x, z), f % 2 ? 'red' : 'blue');
+        // The fighters (125 m/s, east-south-east), passing under the camera from about frame 95.
+        const k = Math.max(0, i - 60);
+        const vel = d.v(108, -2, -62);
+        d.drive(s.a, d.v(-260 + k * 3.6, 32 - k * 0.07, 150 - k * 2.07), -1.05, 0, 0.1, vel);
+        d.drive(s.b, d.v(-280 + k * 3.6, 37 - k * 0.07, 166 - k * 2.07), -1.05, 0, 0.06, vel);
+        d.battleTick(i);
+      },
+    },
   },
 };

@@ -146,11 +146,22 @@
     /** Runs the sim for `seconds` without filming (warm-up: bots get into the fight, dust settles). */
     warm(seconds, sim = 1 / 30) {
       const n = Math.round(seconds / sim);
-      for (let i = 0; i < n; i++) {
-        d.now += sim * 1000;
-        g.showcaseAt = -1e9;
-        for (const [b, p] of posed) d.holdPose(b, p, sim);
-        g.frame(d.now);
+      // On SwiftShader (film.mjs --software) nothing is drawn while warming: the draws only run at the next
+      // grab, and a few hundred of them queued up ran the browser out of memory. Same filmed frames.
+      const r = g.renderer;
+      const own = Object.prototype.hasOwnProperty.call(r, 'render');
+      const render = r.render;
+      if (window.__filmSoftware) r.render = () => false;
+      try {
+        for (let i = 0; i < n; i++) {
+          d.now += sim * 1000;
+          g.showcaseAt = -1e9;
+          for (const [b, p] of posed) d.holdPose(b, p, sim);
+          g.frame(d.now);
+        }
+      } finally {
+        if (own) r.render = render;
+        else delete r.render;
       }
     },
 
@@ -317,6 +328,147 @@
     /** A fireball and smoke at `p` only (no damage, no sound): muzzle blasts of big guns. */
     flash(p) {
       g.effects.explosion(p);
+    },
+    /**
+     * Bigger particle pools from now on (the game's 1,200 smoke / 600 glow wrap round and wipe a long plume
+     * when a barrage lands on top of it). Same layers, more slots; the page keeps them until it reloads.
+     */
+    particles(soft = 5000, glow = 2000) {
+      const fx = g.effects;
+      for (const [key, cap] of [
+        ['soft', soft],
+        ['glow', glow],
+      ]) {
+        const old = fx[key];
+        if (old.capacity >= cap) continue;
+        const scene = old.mesh.parent;
+        old.mesh.removeFromParent();
+        fx[key] = new old.constructor(scene, cap, key === 'glow');
+      }
+    },
+    /**
+     * The trailer's biggest blast (S56), `i` frames after it went off (call it every frame): a white flash,
+     * a fireball tumbling out and up, sparks arcing down, a dust ring running over the ground, then a column
+     * of fire for a second and black smoke boiling up for four. `k` scales it (1: some 40 m high). No damage:
+     * pair it with blast() for the sound, the scorch and the soldiers knocked over.
+     */
+    inferno(p, i, k = 1) {
+      const fx = g.effects;
+      const R = (a, b) => a + Math.random() * (b - a);
+      const dir = () => {
+        const u = R(-1, 1);
+        const a = R(0, Math.PI * 2);
+        const s = Math.sqrt(1 - u * u);
+        return v(Math.cos(a) * s, u, Math.sin(a) * s);
+      };
+      const flat = () => dir().setY(0).normalize();
+      const up = v(0, 1, 0);
+      if (i === 0) {
+        fx.flashLight(p.clone().setY(p.y + 4), 6000 * k, 0.9, 0xffa050, 120 * k);
+        fx.glow.spawn({ pos: p.clone().setY(p.y + 3 * k), life: 0.3, size: 26 * k, endSize: 40 * k, color: 0xfff4dc });
+        for (let n = 0; n < 70; n++)
+          fx.glow.spawn({
+            pos: p.clone().addScaledVector(dir(), R(0, 3) * k).setY(p.y + R(1, 5) * k),
+            vel: dir().multiplyScalar(R(5, 16) * k).addScaledVector(up, R(4, 12) * k),
+            life: R(0.7, 1.5),
+            size: R(4, 7) * k,
+            endSize: R(9, 15) * k,
+            color: [0xffd890, 0xff8a3a, 0xff5a1e][n % 3],
+            alpha: 0.9,
+            drag: 2.2,
+          });
+        for (let n = 0; n < 90; n++)
+          fx.glow.spawn({
+            pos: p.clone().setY(p.y + 1.5),
+            vel: flat().multiplyScalar(R(8, 26) * k).addScaledVector(up, R(10, 30) * k),
+            life: R(1.2, 2.6),
+            size: R(0.15, 0.35),
+            endSize: 0.06,
+            color: 0xffc070,
+            gravity: 9.8,
+            floorY: p.y,
+          });
+        for (let n = 0; n < 48; n++) {
+          const a = (n / 48) * Math.PI * 2;
+          fx.soft.spawn({
+            pos: p.clone().setY(p.y + 0.8),
+            vel: v(Math.cos(a), 0.05, Math.sin(a)).multiplyScalar(R(16, 28) * k),
+            life: R(1.6, 2.8),
+            size: R(2, 3) * k,
+            endSize: R(7, 11) * k,
+            color: 0x8a7964,
+            alpha: 0.55,
+            fadeIn: 0.05,
+            drag: 1.8,
+          });
+        }
+        for (let n = 0; n < 60; n++)
+          fx.soft.spawn({
+            pos: p.clone().setY(p.y + 1),
+            vel: flat().multiplyScalar(R(4, 14) * k).addScaledVector(up, R(10, 24) * k),
+            life: R(2, 3.2),
+            size: R(0.15, 0.4),
+            color: 0x221c15,
+            gravity: 11,
+            floorY: p.y,
+          });
+      }
+      if (i < 30)
+        for (let n = 0; n < 4; n++)
+          fx.glow.spawn({
+            pos: p.clone().add(v(R(-3, 3) * k, (R(2, 6) + i * 0.5) * k, R(-3, 3) * k)),
+            vel: v(R(-2, 2), R(10, 18) * k * (1 - i / 40), R(-2, 2)),
+            life: R(0.6, 1.1),
+            size: R(4, 7) * k,
+            endSize: R(8, 12) * k,
+            color: n % 2 ? 0xff9a40 : 0xff6a20,
+            alpha: 0.8 * (1 - i / 34),
+            drag: 1.5,
+          });
+      if (i < 120 && i % 2 === 0)
+        for (let n = 0; n < 5; n++)
+          fx.soft.spawn({
+            pos: p.clone().add(v(R(-4, 4) * k, R(3, 8) * k, R(-4, 4) * k)),
+            vel: v(R(-2, 2) + 1.2, R(8, 15) * k * Math.max(0.35, 1 - i / 60), R(-2, 2) - 0.6),
+            life: R(6, 9),
+            size: R(5, 8) * k,
+            endSize: R(16, 26) * k,
+            color: n % 3 ? 0x2b2622 : 0x48403a,
+            alpha: 0.85,
+            fadeIn: 0.2,
+            drag: 0.5,
+            rotSpeed: R(-0.3, 0.3),
+          });
+    },
+    /**
+     * A burning building's or wreck's column of black smoke over fire at `p` (call it every frame; `k` scales
+     * it, 1: some 50 m high, leaning downwind; ~400 smoke puffs alive each, so see particles()). Seen from far off, unlike smoke grenades' white puffs.
+     */
+    plume(p, i, k = 1) {
+      const fx = g.effects;
+      const R = (a, b) => a + Math.random() * (b - a);
+      fx.soft.spawn({
+        pos: p.clone().add(v(R(-1.5, 1.5) * k, R(1, 3) * k, R(-1.5, 1.5) * k)),
+        vel: v(R(0.4, 1.2), R(5, 9) * k, R(-0.9, -0.1)),
+        life: R(10, 14),
+        size: R(3, 4.5) * k,
+        endSize: R(14, 20) * k,
+        color: i % 2 ? 0x2b2622 : 0x3e3631,
+        alpha: 0.6,
+        fadeIn: 0.5,
+        drag: 0.08,
+        rotSpeed: R(-0.2, 0.2),
+      });
+      if (i % 2 === 0)
+        fx.glow.spawn({
+          pos: p.clone().add(v(R(-1.5, 1.5) * k, R(0.5, 2) * k, R(-1.5, 1.5) * k)),
+          vel: v(0, R(2, 4), 0),
+          life: R(0.4, 0.7),
+          size: R(2, 3.5) * k,
+          endSize: R(1, 2) * k,
+          color: 0xff7a2a,
+          alpha: 0.7,
+        });
     },
     /** A big gun's muzzle blast: fireballs along the line it fires, `len` m out. */
     muzzleBlast(veh, seat, at, len = 14) {
