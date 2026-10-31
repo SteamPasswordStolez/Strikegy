@@ -1171,7 +1171,9 @@
     translate: 0 calc(var(--u) * -0.4);
   }
 }
-.overlay-up .tut {
+.overlay-up .tut,
+/* Touch, aboard: the vehicle panel sits where the card does (its steps are all on foot). */
+.is-touch:has(.hud.in-vehicle) .tut {
   display: none;
 }
 .tut.at-deploy {
