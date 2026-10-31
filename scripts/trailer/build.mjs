@@ -36,6 +36,13 @@ const editFile = path.join(T, 'edit.json');
 const edit = fs.existsSync(editFile) ? JSON.parse(fs.readFileSync(editFile, 'utf8')) : {};
 const args = process.argv.slice(2);
 const draft = args.includes('--draft');
+/**
+ * The trailer's grade on every filmed cut (not the graphics): a little more contrast, less saturation, warm
+ * highlights over cool shadows, a vignette (owner, 2026-10-31: the raw game frames read crude). --nograde: off.
+ */
+const GRADE = args.includes('--nograde')
+  ? ''
+  : 'eq=contrast=1.12:saturation=0.88:gamma=0.96,colorbalance=rs=-0.04:gs=-0.01:bs=0.05:rh=0.06:gh=0.02:bh=-0.05,vignette=angle=PI/4.5,';
 /** The promo overlay's time (docs/design/trailer.md, cards table). */
 const PROMO = [114.8, 115.5];
 
@@ -192,7 +199,7 @@ function renderSegment(s, file) {
   } else {
     // Footage: from its in-point, slowed down when speed < 1 (slow-motion shots), its own sound at `gain` dB.
     const sp = src.speed;
-    const vf = `${sp !== 1 ? `setpts=PTS/${sp},` : ''}${fit}`;
+    const vf = `${sp !== 1 ? `setpts=PTS/${sp},` : ''}${GRADE}${fit}`;
     const af = `${sp !== 1 ? `atempo=${Math.max(0.5, sp)},` : ''}volume=${src.gain}dB,aresample=48000,apad`;
     const hasAudio =
       execFileSync('ffprobe', [
@@ -323,6 +330,7 @@ function main() {
     const key = JSON.stringify({
       // Bumped when renderSegment's output changes (3: every segment limited-range yuv420p, tagged tv).
       v: 3,
+      grade: GRADE,
       src,
       frames: s.frames,
       draft,

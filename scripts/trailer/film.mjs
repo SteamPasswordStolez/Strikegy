@@ -148,10 +148,64 @@ try {
     localStorage.setItem(k, JSON.stringify(s));
     localStorage.setItem('strikegy.tutorial.v1', JSON.stringify({ basics: true, match: true }));
   });
+  // FILM_GLCHECK=1, from the first draw of the page on (loading included): after each draw call the GL
+  // error is read; on an error, every sampler of the current program is listed with what its texture
+  // unit holds (a shadow sampler on a texture without compare mode, or the other way round).
+  if (process.env.FILM_GLCHECK)
+    await ctx.addInitScript(() => {
+      const hits = (window.__glDrawHits = {});
+      const P = WebGL2RenderingContext.prototype;
+      for (const fn of ['drawElements', 'drawArrays', 'drawElementsInstanced', 'drawArraysInstanced']) {
+        const orig = P[fn];
+        P[fn] = function (...a) {
+          orig.apply(this, a);
+          check(this, fn);
+        };
+      }
+      function check(gl, fn) {
+        {
+          const e = gl.getError();
+          if (e === gl.NO_ERROR) return;
+          const prog = gl.getParameter(gl.CURRENT_PROGRAM);
+          const active = gl.getParameter(gl.ACTIVE_TEXTURE);
+          const bad = [];
+          const n = prog ? gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS) : 0;
+          for (let i = 0; i < n; i++) {
+            const u = gl.getActiveUniform(prog, i);
+            const shadow = u.type === gl.SAMPLER_2D_SHADOW;
+            if (u.type !== gl.SAMPLER_2D && !shadow) continue;
+            const loc = gl.getUniformLocation(prog, u.name);
+            for (let k = 0; k < u.size; k++) {
+              const l = u.size > 1 ? gl.getUniformLocation(prog, u.name.replace('[0]', `[${k}]`)) : loc;
+              const unit = gl.getUniform(prog, l);
+              gl.activeTexture(gl.TEXTURE0 + unit);
+              const tex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+              const cmp = tex ? gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE) !== gl.NONE : false;
+              if (shadow !== cmp) bad.push(`${u.name.replace('[0]', `[${k}]`)}:${shadow ? 'shadow' : '2d'}@${unit} tex=${tex ? (cmp ? 'cmp' : 'plain') : 'none'}`);
+            }
+          }
+          gl.activeTexture(active);
+          const key = `${fn} ${e} ${bad.join(' ') || '(no sampler mismatch found)'}`;
+          hits[key] = (hits[key] ?? 0) + 1;
+        };
+      }
+    });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('page error:', e.message));
+  // WebGL's own warnings (GL_INVALID_..., "too many errors") are counted and the first kept: a
+  // "texture format / sampler type" flood was seen once on Coral Reach (2026-10-31) and not again.
+  const glWarn = { count: 0, first: '' };
   page.on('console', (m) => {
-    if (m.type() === 'error') console.log('console:', m.text().slice(0, 300));
+    const text = m.text();
+    if (/GL_INVALID|too many errors/.test(text)) {
+      glWarn.count++;
+      glWarn.first ||= text.slice(0, 200);
+      return;
+    }
+    if (m.type() === 'error') console.log('console:', text.slice(0, 300));
+  });
+  process.on('exit', () => {
+    if (glWarn.count) console.log(`WebGL warnings: ${glWarn.count} (first: ${glWarn.first})`);
   });
 
   const sep = group.query.includes('?') ? '&' : '?';
@@ -174,6 +228,31 @@ try {
   await page.evaluate(() => {
     window.__director.start();
   });
+  // FILM_GLCHECK=1: every draw checked with gl.getError(); the failing materials / objects are listed at the end.
+  if (process.env.FILM_GLCHECK) {
+    await page.evaluate(() => {
+      const R = window.__strikegy.renderer.gl;
+      const gl = R.getContext();
+      const hits = (window.__glHits = {});
+      const orig = R.renderBufferDirect.bind(R);
+      R.renderBufferDirect = (camera, scene, geometry, material, object, group) => {
+        orig(camera, scene, geometry, material, object, group);
+        const e = gl.getError();
+        if (e === gl.NO_ERROR) return;
+        const names = [];
+        for (let o = object; o && names.length < 4; o = o.parent) names.push(o.name || o.type);
+        // The textures the drawn material and the object's own material carry (type / format / compare).
+        const tex = (m) =>
+          Object.entries(m ?? {})
+            .filter(([, t]) => t && t.isTexture)
+            .map(([k, t]) => `${k}=${t.constructor.name}/t${t.type}/f${t.format}${t.compareFunction ? '/cmp' : ''}`)
+            .join(',');
+        const own = Array.isArray(object.material) ? object.material[0] : object.material;
+        const key = `${material.type}:${material.name || ''} [${tex(material)}] own=${own?.type}[${tex(own)}] skinned=${!!object.isSkinnedMesh} ${names.join(' < ')} (${e})`;
+        hits[key] = (hits[key] ?? 0) + 1;
+      };
+    });
+  }
   debug('group setup');
   if (group.setup) await page.evaluate(`(${src(group.setup)})(window.__director)`);
   if (group.warm) await page.evaluate((s) => window.__director.warm(s), group.warm);
@@ -232,6 +311,8 @@ try {
     console.log(`${id}: ${n} frames in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   }
   fs.writeFileSync(path.join(T, 'edit.json'), JSON.stringify(edit, null, 2) + '\n');
+  if (process.env.FILM_GLCHECK) console.log('GL errors by draw:', JSON.stringify(await page.evaluate(() => window.__glHits), null, 1));
+  if (process.env.FILM_GLCHECK) console.log('GL errors at the WebGL level:', JSON.stringify(await page.evaluate(() => window.__glDrawHits), null, 1));
 } finally {
   await browser?.close().catch(() => {});
   if (pid && process.platform === 'win32') {

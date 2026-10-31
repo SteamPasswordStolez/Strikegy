@@ -6,8 +6,9 @@
 //   node scripts/trailer/voices.mjs                  every line not made yet
 //   node scripts/trailer/voices.mjs --only L05,L19 --force [--voice Sarge=bill]
 //   node scripts/trailer/voices.mjs --fx-only        redo the effects on the raw files only (no API)
+//   add --fit to set each line's end in lines.json to the recording's length (subtitle timing)
 //
-// Each line: speech (elevenlabs/eleven-v4) -> assets-src/trailer/voice/raw/Lnn.mp3, checked by
+// Each line: speech (elevenlabs/eleven-v4-turbo) -> assets-src/trailer/voice/raw/Lnn.mp3, checked by
 // transcribing it back (Claude can't listen; a transcript far from the text is reported),
 // then the delivery's effect (radio / slow-motion / near) -> assets-src/trailer/voice/Lnn.wav.
 // The report says which lines run longer than their slot in the music (move or shorten them).
@@ -19,7 +20,8 @@ import { execFileSync } from 'node:child_process';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIR = path.join(ROOT, 'assets-src', 'trailer', 'voice');
 const API = 'https://openrouter.ai/api/v1';
-const MODEL = 'elevenlabs/eleven-v4';
+// Turbo (owner, 2026-10-31). No delivery tags in the text: turbo models may read them out loud.
+const MODEL = 'elevenlabs/eleven-v4-turbo';
 const lines = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'scripts/trailer/data/lines.json'), 'utf8'),
 );
@@ -30,18 +32,18 @@ const lines = JSON.parse(
  * river, roger, will). Picked from ElevenLabs' own descriptions; listen and swap with --voice.
  */
 export const VOICES = {
-  Sarge: 'adam', // firm, rough-edged
+  Sarge: 'adam', // firm, low
   Private: 'liam', // young, earnest
-  'Squadmate 1': 'charlie',
-  'Squadmate 2': 'callum',
-  Command: 'brian', // the briefing's HQ voice
-  'Iron One': 'bill',
-  'Hawk Two': 'eric',
-  'Coral One': 'daniel',
-  'Sub captain': 'george',
+  'Squadmate 1': 'chris', // young American, casual
+  'Squadmate 2': 'will', // young American
+  Command: 'brian', // deep (the briefing's HQ voice)
+  'Iron One': 'bill', // older, crisp
+  'Hawk Two': 'eric', // smooth
+  'Coral One': 'daniel', // British, commanding
+  'Sub captain': 'george', // low, raspy
   Coxswain: 'roger',
-  'Landing soldier': 'harry',
-  'AA gunner': 'will',
+  'Landing soldier': 'harry', // fierce
+  'AA gunner': 'charlie', // energetic
 };
 
 /** The effect a delivery takes (the Korean delivery words in lines.json). */
@@ -59,15 +61,30 @@ const FX = {
   near: '[0:a]highpass=f=80,acompressor=threshold=-20dB:ratio=3:attack=10:release=120,alimiter=limit=0.89[o]',
 };
 
-export function applyFx(raw, out, fx) {
+/**
+ * The dialogue is dense (owner, 2026-10-31: no long pauses): silence before and after a line is cut,
+ * pauses inside it over 0.3 s are squeezed to 0.12 s.
+ */
+const TIGHT =
+  'silenceremove=start_periods=1:start_threshold=-48dB:start_silence=0.02:stop_periods=-1:stop_duration=0.3:stop_threshold=-48dB:stop_silence=0.12';
+
+/**
+ * Raw speech -> the delivery's effect, tightened; a line still longer than `slot` (s) is sped up
+ * to fit, at most 1.2x (beyond that it sounds hurried: move or shorten the line instead).
+ */
+export function applyFx(raw, out, fx, slot = Infinity) {
+  const tight = out.replace(/\.wav$/, '.tight.wav');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', raw, '-af', TIGHT, '-ar', '48000', '-ac', '1', tight]);
+  const tempo = Math.min(1.2, Math.max(1, duration(tight) / slot));
+  const chain = FX[fx].replace('[0:a]', tempo > 1.001 ? `[0:a]atempo=${tempo.toFixed(3)},` : '[0:a]');
   execFileSync('ffmpeg', [
     '-v',
     'error',
     '-y',
     '-i',
-    raw,
+    tight,
     '-filter_complex',
-    FX[fx],
+    chain,
     '-map',
     '[o]',
     '-ar',
@@ -76,6 +93,8 @@ export function applyFx(raw, out, fx) {
     '1',
     out,
   ]);
+  fs.unlinkSync(tight);
+  return tempo;
 }
 
 export function duration(file) {
@@ -163,21 +182,35 @@ async function main() {
       heard = String(tr.text ?? '');
     }
     if (!fs.existsSync(raw)) continue;
-    applyFx(raw, out, effectOf(l.delivery));
+    // Room until the next line starts (0.1 s apart); the last line has the end slate.
+    const next = lines.find((x) => x.start > l.start + 0.01);
+    // …and before the next heaviest hit or silence (a line meant for the silence excepted).
+    const clear = l.delivery.startsWith('정적') ? Infinity : Math.min(...[38.6, 66.42, 69.9, 70.89, 89.75, 128.15].filter((t) => t > l.start + 0.3));
+    const slot = Math.min(next ? next.start : l.start + 2.5, clear) - l.start - 0.1;
+    const tempo = applyFx(raw, out, effectOf(l.delivery), slot);
     const dur = duration(out);
-    const slot = l.end - l.start;
     const like = heard ? likeness(l.en, heard) : null;
     report.push({
       id: l.id,
       who: l.speaker,
       dur: dur.toFixed(2),
       slot: slot.toFixed(2),
+      tempo: tempo > 1.001 ? tempo.toFixed(2) : '',
       over: dur > slot + 0.3 ? 'LONG' : '',
       heard:
         like === null ? '' : `${(like * 100).toFixed(0)}%${like < 0.8 ? ' RETAKE: ' + heard : ''}`,
     });
   }
   console.table(report);
+  // --fit: subtitles follow the recordings (each line's end = its start + its length).
+  if (args.includes('--fit')) {
+    for (const l of lines) {
+      const f = path.join(DIR, `${l.id}.wav`);
+      if (fs.existsSync(f)) l.end = Math.round((l.start + duration(f)) * 100) / 100;
+    }
+    fs.writeFileSync(path.join(ROOT, 'scripts/trailer/data/lines.json'), JSON.stringify(lines, null, 2) + '\n');
+    console.log('lines.json: ends set from the recordings');
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

@@ -40,7 +40,7 @@ import type { Sea } from '@/world/waves';
 import { SeaView } from '@/world/seaView';
 import { Snowfall } from '@/render/snowfall';
 import { placeProps } from '@/world/placeProps';
-import type { MapDef, SpawnPoint } from '@/world/mapTypes';
+import type { MapDef, SpawnPoint, VisualProfileId } from '@/world/mapTypes';
 import { consumePulses, createInputState, resetFrameInput, type InputSource, type InputState } from '@/input/InputState';
 import { KeyboardMouse } from '@/input/KeyboardMouse';
 import { actionKey, type Action } from '@/input/bindings';
@@ -645,6 +645,9 @@ export class Game {
       throw err;
     }
     this.showLoadingInfo(map);
+    // `?profile=overcast` (dev): another sky and light for the map (the launch trailer's dusty battle shots).
+    const profile = import.meta.env.DEV ? new URLSearchParams(location.search).get('profile') : null;
+    if (profile && ['outdoor_day', 'overcast', 'winter', 'desert', 'tropical'].includes(profile)) map.world.visualProfile = profile as VisualProfileId;
     const outdoor = map.world.visualProfile !== 'indoor';
     // `?procsky` (dev): the procedural sky instead of the photographed one, for comparing.
     const procSky = import.meta.env.DEV && new URLSearchParams(location.search).has('procsky');

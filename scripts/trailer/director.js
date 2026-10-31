@@ -117,6 +117,8 @@
       if (g.me.downed) g.me.revive('', 100);
       if (g.ride) g.leaveVehicle();
       for (const veh of d.spawned.splice(0)) g.vehicles.remove(veh);
+      d.bt = null;
+      d.unmood();
       if (g.buildMode) g.buildMode = false;
       if (g.gadgetOut) input.gadget = true;
       if (g.player.crouchToggled) input.crouchToggle = true;
@@ -367,6 +369,118 @@
       const list = (g.vehicles?.vehicles ?? []).filter((x) => !x.wrecked && (!kind || x.kind === kind));
       if (p) list.sort((a, b) => a.model.root.position.distanceTo(p) - b.model.root.position.distanceTo(p));
       return list;
+    },
+
+    /**
+     * The air of a shot: 'dust' = a grey-brown battle haze, a softer warm sun (on the overcast
+     * profile, ?profile=overcast). Restored by reset().
+     */
+    mood(kind) {
+      const r = g.renderer;
+      let sun = null;
+      let hemi = null;
+      r.scene.traverse((o) => {
+        if (o.isDirectionalLight && o.intensity > 0.5) sun = o;
+        if (o.isHemisphereLight) hemi = o;
+      });
+      d.moodWas ??= { fog: r.scene.fog.color.getHex(), density: r.scene.fog.density, sun: sun?.intensity, sunColor: sun?.color.getHex(), hemi: hemi?.intensity, exposure: r.gl.toneMappingExposure, sunRef: sun, hemiRef: hemi, sunDir: g.atmosphere.sunDir.clone() };
+      if (kind === 'dusk') {
+        // A low warm sun from the south-southwest (long shadows across the square), warm haze.
+        g.atmosphere.sunDir.set(-0.32, 0.27, 0.91).normalize();
+        r.requestShadowUpdate();
+        r.scene.fog.color.setHex(0xc4ab8e);
+        r.scene.fog.density = 0.0035;
+        if (sun) {
+          sun.intensity = 3.2;
+          sun.color.setHex(0xffc890);
+        }
+        if (hemi) hemi.intensity = 0.2;
+        r.gl.toneMappingExposure = 0.58;
+      }
+      if (kind === 'dust') {
+        r.scene.fog.color.setHex(0x8e8a82);
+        r.scene.fog.density = 0.0062;
+        if (sun) {
+          sun.intensity = 1.9;
+          sun.color.setHex(0xffe2c4);
+        }
+        if (hemi) hemi.intensity = 0.4;
+        r.gl.toneMappingExposure = 0.52;
+      }
+    },
+    unmood() {
+      const w = d.moodWas;
+      if (!w) return;
+      const r = g.renderer;
+      r.scene.fog.color.setHex(w.fog);
+      r.scene.fog.density = w.density;
+      if (w.sunRef) {
+        w.sunRef.intensity = w.sun;
+        w.sunRef.color.setHex(w.sunColor);
+      }
+      if (w.hemiRef) w.hemiRef.intensity = w.hemi;
+      r.gl.toneMappingExposure = w.exposure;
+      if (!g.atmosphere.sunDir.equals(w.sunDir)) {
+        g.atmosphere.sunDir.copy(w.sunDir);
+        r.requestShadowUpdate();
+      }
+      d.moodWas = null;
+    },
+
+    /**
+     * A battle round the camera (set up once in a shot's setup, then battleTick(i) every frame):
+     *   smoke: [[x, z, radius]] columns that last; wrecks: [[kind, x, z, yaw]] burning hulks;
+     *   friends / foes: [[x, z, yaw, crouch]] posed soldiers (blue / red) trading fire;
+     *   shells: { every: frames, near: [x, z], min, max } shells landing round `near`.
+     * Everyone in it is untouchable (deaths in a shot are staged with down()).
+     */
+    battle(cfg) {
+      const b = { cfg, friends: [], foes: [], seed: 7 };
+      for (const [x, z, rad] of cfg.smoke ?? []) d.smoke(d.at(x, z), 90, rad ?? 8);
+      for (const [kind, x, z, yaw] of cfg.wrecks ?? []) {
+        const veh = d.vehicle(kind, d.at(x, z), yaw ?? 0, 'red');
+        d.wreck(veh);
+      }
+      const take = (side, list, out) => {
+        const pool = d.team(side).filter((x) => !posed.has(x) && !Object.values(d.cast ?? {}).includes(x));
+        list.forEach(([x, z, yaw, crouch], k) => {
+          const bot = pool[k];
+          if (!bot) return;
+          d.pose(bot, { pos: d.at(x, z), yaw: yaw ?? 0, crouch: !!crouch, god: true });
+          out.push(bot);
+        });
+      };
+      take('blue', cfg.friends ?? [], b.friends);
+      take('red', cfg.foes ?? [], b.foes);
+      d.bt = b;
+    },
+    battleTick(i) {
+      const b = d.bt;
+      if (!b) return;
+      const rnd = (k) => {
+        const x = Math.sin((i + 1) * 12.9898 + k * 78.233) * 43758.5453;
+        return x - Math.floor(x);
+      };
+      const aimAt = (shooter, list) => {
+        const t = list[(i + shooter.id) % Math.max(1, list.length)];
+        return t ? t.feet.clone().setY(t.feet.y + 1.2 + (rnd(shooter.id) - 0.5)) : null;
+      };
+      // Bursts: each shooter fires 3-4 frames in every 9-14, offset by its id.
+      const burst = (bot) => (i + bot.id * 5) % (9 + (bot.id % 6)) < 3;
+      for (const f of b.friends) {
+        const at = aimAt(f, b.foes) ?? d.v(f.feet.x - Math.sin(f.yaw) * 60, f.feet.y + 1.5, f.feet.z - Math.cos(f.yaw) * 60);
+        if (burst(f)) d.fire(f, at, 0.05);
+      }
+      for (const e of b.foes) {
+        const at = aimAt(e, b.friends) ?? d.v(e.feet.x - Math.sin(e.yaw) * 60, e.feet.y + 1.5, e.feet.z - Math.cos(e.yaw) * 60);
+        if (burst(e)) d.fire(e, at, 0.07);
+      }
+      const s = b.cfg.shells;
+      if (s && i % s.every === Math.floor(s.every / 2)) {
+        const a = rnd(3) * Math.PI * 2;
+        const r = s.min + rnd(4) * (s.max - s.min);
+        d.blast(rnd(5) < 0.5 ? 'mortar' : 'artillery', d.at(s.near[0] + Math.cos(a) * r, s.near[1] + Math.sin(a) * r), 'red');
+      }
     },
 
     /** Linear / smooth interpolation helpers for camera paths. */
