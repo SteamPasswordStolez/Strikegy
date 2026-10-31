@@ -278,6 +278,7 @@
   "touch.throttleUp": "출력↑",
   "touch.throttleDown": "출력↓",
   "touch.view": "시점",
+  "touch.dive": "심도",
   "touch.seat": "좌석",
   "touch.alt": "보조",
   "vehicle.view": "{k:view} 시점 전환",

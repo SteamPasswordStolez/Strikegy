@@ -352,6 +352,19 @@ export function deckSpawn(v: Vehicle, rand: () => number, isBot?: (id: number) =
 }
 
 /**
+ * A submarine is boarded straight into a station, not onto its deck (the deck
+ * is awash, under water once dived): the seat to take, free ones first (the
+ * helm first), else one a bot holds (`isBot`: it gives way to people); -1 if none.
+ */
+export function subStation(v: Vehicle, isBot?: (id: number) => boolean): number {
+  if (!v.spec.ship?.sub || v.wrecked) return -1;
+  const n = v.spec.seats.length;
+  for (let i = 0; i < n; i++) if (!v.seats[i]) return i;
+  if (isBot) for (let i = 0; i < n; i++) if (isBot(v.seats[i]!.id)) return i;
+  return -1;
+}
+
+/**
  * Finding ships (2026-10-19, plan section 3): a dived submarine can't be
  * seen, only heard. Each manned station looks or listens once a second and
  * marks what it finds for its side for `hold` s:

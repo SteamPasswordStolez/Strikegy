@@ -62,7 +62,7 @@ import { SupportWorld } from '@/modes/supportWorld';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type Walker } from '@/vehicles/VehicleWorld';
 import { vehicleWorldFor, viewDir } from '@/sim/vehicles';
 import type { DriveInput, Mount, Vehicle } from '@/vehicles/Vehicle';
-import { contacts, deckSpawn, fleetShip, fleetState, layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
+import { contacts, deckSpawn, fleetShip, subStation, fleetState, layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
 import { CARRIER_PLANES, DECK, PLANE_COST, isCarrierPlane, launchBlock, planeCap } from '@/vehicles/carrierPlanes';
 import { SoldierModel } from '@/ai/SoldierModel';
 import { botGuns } from '@/ai/personality';
@@ -554,7 +554,7 @@ export class Game {
     this.renderer.setRenderScale(this.settings.renderScale);
     this.hud = new HUD(container);
     this.vehicleView = new VehicleView(this.hud.root);
-    this.vehicleHud = new VehicleHud(this.hud.root, (i) => (this.seatTap = i));
+    this.vehicleHud = new VehicleHud(this.hud.top, (i) => (this.seatTap = i));
     this.perf = new PerfPanel(container, this.renderer.gl, gpuName() || 'GPU: unknown');
     this.renderer.instrument(this.perf.section);
     this.overlay = new Overlay(container);
@@ -746,7 +746,7 @@ export class Game {
     }, Math.random, this.registry);
     r.scene.add(this.support.group);
     r.scene.add(this.airMarkers.group);
-    this.supportMenu = new SupportMenu(this.hud.root, (id) => this.pickSupport(id));
+    this.supportMenu = new SupportMenu(this.hud.top, (id) => this.pickSupport(id));
     // What this match allows (free-for-all: no sides, squads or vehicles), before the soldiers and bots are made.
     const asked = this.options.mode ?? 'auto';
     const zoned = asked !== 'skirmish' && (asked !== 'auto' || !!this.options.bots) && (map.zones?.length ?? 0) > 0;
@@ -2327,8 +2327,9 @@ export class Game {
     // A seat picked on the panel (a click or a tap) counts like its number key.
     const want = this.seatTap >= 0 ? this.seatTap : input.weaponSlot;
     this.seatTap = -1;
-    // A warship's stations are walked up to (the number keys pick a plane at flight control instead).
-    if (v.ship) {
+    // A warship's stations are walked up to (the number keys pick a plane at flight control instead);
+    // a submarine's are changed from inside, like a vehicle's seats.
+    if (v.ship && !v.spec.ship?.sub) {
       if (v.spec.seats[r.seat]!.station?.kind === 'flight') this.flightStation(v, input);
     } else if (want >= 0 && want < v.seats.length && free(want)) this.enterSeat(v, want);
     else if (input.weaponCycle !== 0) {
@@ -2634,14 +2635,15 @@ export class Game {
     // Seats: who sits where (warships: a crew count instead of sixteen slots).
     let seats: VehicleHudSeat[] | null = null;
     let crew: string | null = null;
-    if (ship) {
+    const sub = !!v.spec.ship?.sub;
+    if (ship && !sub) {
       const aboard = v.seats.filter((o) => o).length;
       crew = t('vh.crew').replace('{n}', String(aboard)).replace('{m}', String(v.seats.length));
     } else if (v.seats.length > 1) {
       seats = v.spec.seats.map((sp, i) => {
         const o = v.seats[i];
         return {
-          label: t(`seat.${sp.role}` as MessageKey),
+          label: t((sp.station ? `station.${sp.station.kind}` : `seat.${sp.role}`) as MessageKey),
           who: o ? (o.id === this.myId ? t('vh.you') : (this.scores.get(o.id)?.name ?? '?')) : null,
           me: i === seat,
           key: touch || i > 8 ? '' : actionKey(`slot${i + 1}` as Action),
@@ -3507,6 +3509,13 @@ export class Game {
       const v = this.spawnJet(key.slice(4) as VehicleKind, this.myTeam);
       if (v) this.enterSeat(v, 0);
     }
+    // A submarine: straight into a station, not onto its awash deck.
+    if (key.startsWith('ship:') && this.vehicles && !this.net) {
+      const v = this.vehicles.get(Number(key.slice(5)));
+      const seat = v ? subStation(v, this.botYields) : -1;
+      const held = seat >= 0 ? v!.seats[seat] : null;
+      if (v && seat >= 0 && (!held || this.bots?.yieldSeat(held.id))) this.enterSeat(v, seat);
+    }
   }
 
   private updateCamera(alpha: number, dt: number, adsFov: number): void {
@@ -4166,6 +4175,7 @@ export class Game {
       // Call-ins are picked on foot only (see simStep), so the button goes while aboard.
       support: supportState && !this.ride ? this.supportMenu.open || !!this.supportAim : null,
       ride: this.ride ? (this.ride.v.spec.seats[this.ride.seat]!.role === 'driver' ? (this.ride.v.flight ? 'fly' : 'drive') : 'seat') : null,
+      dive: !!this.ride && this.ride.seat === 0 && !!this.ride.v.spec.ship?.sub,
       simple: MATCH.simple,
       melee: MATCH.melee,
     });

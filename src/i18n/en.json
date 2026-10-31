@@ -278,6 +278,7 @@
   "touch.throttleUp": "Thr ↑",
   "touch.throttleDown": "Thr ↓",
   "touch.view": "View",
+  "touch.dive": "Depth",
   "touch.seat": "Seat",
   "touch.alt": "Alt",
   "vehicle.view": "{k:view} switch view",

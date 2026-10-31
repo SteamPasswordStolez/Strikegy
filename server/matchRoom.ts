@@ -402,7 +402,7 @@ export class MatchRoom {
     seat.progress?.setClass(kit.cls);
     seat.events.push({ k: 'spawn', id: s.id, pos: [at.pos.x, at.pos.y, at.pos.z], yaw: at.yaw, seed: at.seed, kit });
     // Into a vehicle after the spawn (its browser takes the seat after the new life).
-    if (ok && /^(tank|jet|veh):/.test(key)) this.sim.vehicles?.board(s, key);
+    if (ok && /^(tank|jet|veh|ship):/.test(key)) this.sim.vehicles?.board(s, key);
   }
 
   /** A binary frame from a player (inputs). */

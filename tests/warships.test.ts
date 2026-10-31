@@ -449,4 +449,36 @@ describe('warships on the wire', () => {
     expect(nv.ship!.helm >> 2).toBe(4);
     expect(nv.seats[0]!.id).toBe(1000);
   }, 60000);
+
+  it('deploying aboard a submarine seats one at a station (a bot gives its up), and the seat key moves between them', async () => {
+    const room = await MatchRoom.create({ room: 'n3', map: 'naval_test', mode: 'zone', lineup: 'usersBots', size: 16, botShare: false });
+    const sim = room.sim;
+    room.join({ uid: 'ua', name: 'alpha' }, { text: () => {}, binary: () => {} });
+    room.ready('ua');
+    room.tick();
+    const ss = sim.vehicles!.world.vehicles.find((v) => v.kind === 'ss' && v.home === 'blue')!;
+    expect(ss).toBeTruthy();
+    // Every station held by bots: one gives way.
+    for (let i = 0; i < ss.seats.length; i++) {
+      if (ss.seats[i]) continue;
+      const bot = sim.bots!.bots.find((b) => b.team === 'blue' && !b.benched && !b.riding);
+      if (bot) sim.bots!.seatBot(bot, ss, i);
+    }
+    room.deploy('ua', `ship:${ss.id}`, { cls: 'assault' });
+    room.tick();
+    const s = sim.soldiers.get(1000)!;
+    expect(s.ride?.v).toBe(ss);
+    const first = s.ride!.seat;
+    expect(ss.seats[first]?.id).toBe(1000);
+    // A free station, then the seat key (the wheel / touch seat button) moves there.
+    const other = ss.seats.findIndex((o, i) => i !== first && !!o);
+    expect(sim.bots!.yieldSeat(ss.seats[other]!.id)).toBe(true);
+    const e = createInputState();
+    e.weaponCycle = 1;
+    room.binary('ua', encodeInputs([packInput(e, 1, sim.tick, 0, 0, 0, 0)]));
+    room.tick();
+    expect(s.ride?.v).toBe(ss);
+    expect(s.ride?.seat).not.toBe(first);
+    room.dispose();
+  }, 60000);
 });

@@ -292,7 +292,8 @@ body {
 .touch-melee,
 .touch-gadget,
 .touch-gas,
-.touch-brake {
+.touch-brake,
+.touch-dive {
   --rad: var(--r1);
   right: calc(var(--cx) - cos(var(--a)) * var(--rad) - var(--B) / 2);
   bottom: calc(var(--cy) + sin(var(--a)) * var(--rad) - var(--B) / 2);
@@ -350,6 +351,17 @@ body {
 .touch-layer.riding .touch-btn.touch-inspect,
 .touch-layer.driving .touch-btn.touch-fire2 {
   display: none;
+}
+/* A submarine's helm: depth steps, where melee sits on foot (clear of the seat panel top right). */
+.touch-dive {
+  --a: 172deg;
+  --rad: var(--r2);
+  display: none;
+  border-color: rgba(120, 200, 255, 0.75);
+}
+.touch-layer.diving .touch-dive,
+.touch-layer.editing .touch-dive {
+  display: flex;
 }
 /* Class gadget: outer arc above the grenade, only for classes that carry one. */
 .touch-gadget {

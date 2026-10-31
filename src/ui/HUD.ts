@@ -137,6 +137,11 @@ const FEED_MAX = 5;
 /** DOM heads-up display. Only touches the DOM when values change. */
 export class HUD {
   readonly root: HTMLDivElement;
+  /**
+   * Panels that take taps (call-in menu, vehicle seats): over the touch
+   * controls, whose full-screen look / stick layer otherwise swallows them.
+   */
+  readonly top: HTMLDivElement;
   private crosshair: HTMLDivElement;
   private aimName: HTMLDivElement;
   private hitmarker: HTMLDivElement;
@@ -193,6 +198,8 @@ export class HUD {
     // On the design system (hud.css, BFV theme): the HUD is its own `ds-root`.
     this.root = el('div', 'hud ds-root', parent);
     this.root.dataset.dsTheme = 'bfv';
+    this.top = el('div', 'hud hud-top ds-root', parent);
+    this.top.dataset.dsTheme = 'bfv';
     this.hurt = el('div', 'hud-hurt', this.root);
     this.scope = el('div', 'scope', this.root);
     const lens = el('div', 'scope-lens', this.scope);
@@ -465,6 +472,7 @@ export class HUD {
     this.set('death', deathText, () => {
       this.deathText.textContent = deathText;
       this.death.classList.toggle('on', gone);
+      this.top.classList.toggle('dead', gone);
     });
     this.updateDown(f.down, killer);
     const kitKey = f.medkit ? `${f.medkit.text}|${f.medkit.ready}|${bindingsVersion()}` : '';

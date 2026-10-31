@@ -64,7 +64,8 @@ type ButtonAction =
   | 'breath'
   | 'support'
   | 'gas'
-  | 'brake';
+  | 'brake'
+  | 'dive';
 
 /** Button icons: 24x24 stroked paths (currentColor), drawn above the short label. */
 const ICONS: Partial<Record<ButtonAction, string>> = {
@@ -87,6 +88,7 @@ const ICONS: Partial<Record<ButtonAction, string>> = {
   breath: '<path d="M3 9h11a3 3 0 1 0-3-3M3 13h15a3 3 0 1 1-3 3M3 17h7"/>',
   gas: '<path d="M6 15l6-6 6 6"/><path d="M6 20l6-6 6 6"/>',
   brake: '<path d="M6 4l6 6 6-6"/><path d="M6 9l6 6 6-6"/>',
+  dive: '<path d="M3 8c3-2 6 2 9 0s6-2 9 0"/><path d="M12 11v9M8.5 16.5L12 20l3.5-3.5"/>',
 };
 
 const svg = (paths: string) =>
@@ -180,6 +182,8 @@ export class TouchControls implements InputSource {
       // Pedals, shown in the driver's / pilot's seat (the stick then steers).
       ['gas', 'touch.gas'],
       ['brake', 'touch.brake'],
+      // A submarine's helm: the next depth step (the brake key on a keyboard).
+      ['dive', 'touch.dive'],
       // Invisible, over the ammo counter (top right): tap it to inspect the weapon.
       ['inspect', null],
       // Invisible, over the zone / ticket bar (top center): tap to open or close the scoreboard.
@@ -429,6 +433,8 @@ export class TouchControls implements InputSource {
       s.sprint ||= this.stickSprint;
     }
     if (this.ride) s.ads ||= this.adsHeld > 0;
+    // The helm takes a depth step on the brake key's press.
+    s.jumpHeld ||= this.pulses.has('dive');
     const scale = LOOK_RAD_PER_PX * this.getSensitivity();
     s.lookYaw += -this.lookDx * scale;
     s.lookPitch += -this.lookDy * scale;
@@ -484,11 +490,14 @@ export class TouchControls implements InputSource {
     support?: boolean | null;
     /** In a vehicle: the driver's seat, a plane's pilot seat, any other seat; null on foot. */
     ride?: 'drive' | 'fly' | 'seat' | null;
+    /** At a submarine's helm: show the depth button. */
+    dive?: boolean;
     /** Simplified controls (`MATCH.simple`): no medkit or inspect buttons; melee only where the mode keeps it. */
     simple?: boolean;
     melee?: boolean;
   }): void {
     this.setRide(c.ride ?? null);
+    this.root.classList.toggle('diving', !!c.dive);
     this.root.classList.toggle('simple', !!c.simple);
     this.root.classList.toggle('no-melee', c.melee === false);
     const sup = this.buttons.get('support')!;

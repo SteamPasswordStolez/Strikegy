@@ -22,6 +22,10 @@
   line-height: 1.2;
   text-shadow: var(--sh);
 }
+/* Over the touch controls (z-index 5), under the deploy screen and chat. */
+.hud-top {
+  z-index: 6;
+}
 .hud .ds-kbd {
   min-width: calc(var(--u) * 1.625);
   height: calc(var(--u) * 1.625);
@@ -1266,7 +1270,6 @@
   padding: var(--s3);
   background: linear-gradient(180deg, rgb(12 12 11 / 0.32), rgb(12 12 11 / 0.58));
   border-top: var(--bar-w) solid var(--accent);
-  pointer-events: auto;
 }
 .vh.on {
   display: flex;
@@ -1414,7 +1417,9 @@
   flex-wrap: wrap;
   gap: var(--s1);
 }
+/* Only the seats take taps: the rest of the panel lets them through to the touch controls under it. */
 .vh-slot {
+  pointer-events: auto;
   flex: 1 1 calc(var(--u) * 4.5);
   display: grid;
   grid-template-columns: auto auto;
@@ -1535,8 +1540,8 @@
 .is-touch .vh-alerts {
   top: 22%;
 }
-.hud:has(.hud-death.on) .vh,
-.hud:has(.hud-death.on) .vh-alerts {
+.hud-top.dead .vh,
+.hud-top.dead .vh-alerts {
   display: none;
 }
 /* Keys that work in the mode in hand (build, gadget, call-in aim), under the prompt. */

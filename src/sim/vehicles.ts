@@ -20,7 +20,7 @@ import type { GadgetOwner } from '@/modes/gadgetWorld';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { DriveInput, Vehicle } from '@/vehicles/Vehicle';
 import { PostKeeper, postPlaces } from '@/vehicles/posts';
-import { layGun, lookPoint, seaDamagePoints, seaRp } from '@/vehicles/ship';
+import { layGun, lookPoint, seaDamagePoints, seaRp, subStation } from '@/vehicles/ship';
 import { CARRIER_PLANES, PLANE_COST, isCarrierPlane, launchBlock, planeCap, type CarrierPlaneKind } from '@/vehicles/carrierPlanes';
 import { VehicleWorld, callInSpot, mapVehicleSpots, planVehicleSpots, type VehicleHooks, type Walker } from '@/vehicles/VehicleWorld';
 import { AIRSPACE, JET_KINDS, TANK_KINDS, VEHICLE_GUNS, type VehicleGunId, type VehicleKind } from '@/vehicles/vehicleData';
@@ -318,6 +318,16 @@ export class MatchVehicles {
       const v = this.world.get(Number(ref));
       const seat = v ? this.deploySeat(v, s.team, s.id) : -1;
       if (v && seat >= 0) this.seat(s, v, seat);
+    } else if (kind === 'ship') {
+      // A submarine: straight into a station (see `subStation`).
+      const v = this.world.get(Number(ref));
+      if (!v?.ship || (v.team ?? v.home) !== s.team) return;
+      const bots = this.sim.bots;
+      const seat = subStation(v, bots ? (id) => bots.yields(id) : undefined);
+      if (seat < 0) return;
+      const held = v.seats[seat];
+      if (held && !bots?.yieldSeat(held.id)) return;
+      this.seat(s, v, seat);
     }
   }
 
@@ -390,8 +400,9 @@ export class MatchVehicles {
     }
     const free = (i: number): boolean => !v.seats[i] && (i > 0 || v.driverOnly === null || v.driverOnly === s.id);
     const want = input.weaponSlot;
-    // A warship's stations are walked up to (the number keys pick a plane at flight control instead).
-    if (v.ship) {
+    // A warship's stations are walked up to (the number keys pick a plane at flight control instead);
+    // a submarine's are changed from inside, like a vehicle's seats.
+    if (v.ship && !v.spec.ship?.sub) {
       if (v.spec.seats[r.seat]!.station?.kind === 'flight') this.flightStation(s, v, input);
     } else if (want >= 0 && want < v.seats.length && free(want)) this.seat(s, v, want);
     else if (input.weaponCycle !== 0) {
