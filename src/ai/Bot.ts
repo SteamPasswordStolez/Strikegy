@@ -1269,7 +1269,11 @@ export class Bot implements Damageable, Combatant {
 
   private updateWork(dt: number, s: BotServices): void {
     if (!this.job || !this.atWork) return;
-    if (!s.doWork(this, this.job, dt)) this.dropJob(s);
+    if (!s.doWork(this, this.job, dt)) {
+      this.dropJob(s);
+      // Not straight back to the same blocked spot.
+      this.nextJobLook = s.time + 15;
+    }
   }
 
   private dropJob(s: BotServices): void {

@@ -647,7 +647,10 @@ export class Game {
       shadows: q.shadows,
       shadowMapSize: q.shadowMapSize,
       shadowExtent: q.shadowExtent,
+      nearShadow: q.nearShadow,
+      nearExtent: q.nearExtent,
     }, photoSky);
+    r.setShadowLights(this.atmosphere.sun, this.atmosphere.nearSun);
     this.atmosphere.setViewRange(r.scene, r.camera, map.world.view?.far ?? 0);
     const t0 = performance.now();
     // Load-time breakdown (dev console): where the seconds go on big maps.
@@ -1469,7 +1472,9 @@ export class Game {
         this.drawContract();
       }
     }
-    if (this.throwables.castersChanged || this.targets.some((tg) => tg.moved)) this.renderer.requestShadowUpdate();
+    // Grenades and targets cast into the near map, redrawn every frame anyway; without it the whole
+    // static map was redrawn for every grenade thrown.
+    if (!this.renderer.nearShadows && (this.throwables.castersChanged || this.targets.some((tg) => tg.moved))) this.renderer.requestShadowUpdate();
     this.throwables.sync();
     this.updateViewModel(dt, lookYaw, lookPitch);
     this.viewModel.muzzleWorld(this.renderer.camera, this.tmpMuzzle);
@@ -3574,6 +3579,7 @@ export class Game {
   /** Sky, shadows, trees, clutter, grass and snow around wherever the camera is. */
   private sceneFollowsCamera(at: THREE.Vector3): void {
     if (this.atmosphere.update(at, this.elapsed)) this.renderer.requestShadowUpdate();
+    this.atmosphere.updateNear(at);
     if (this.forest?.update(at)) this.renderer.requestShadowUpdate();
     // Scenery clutter near the camera only, and the outer tree line's 3D / impostor switch.
     if (this.backdrop) cullBackdropDetail(this.backdrop, at);

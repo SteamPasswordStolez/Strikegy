@@ -3,9 +3,11 @@ import type { QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
+import { installNearShadow, onlyMovingCasters, withoutMovingCasters } from './nearShadow';
 import { hideOffLayers, updateShownMatrices } from './sceneMatrices';
 
 installGradeToneMapping();
+installNearShadow();
 
 export interface QualityConfig {
   /** Upper bound on device pixel ratio before dynamic resolution. */
@@ -32,6 +34,9 @@ export interface QualityConfig {
   pixelBudget: number;
   /** Detail of scenery outside the playable area. */
   backdropDetail: 'low' | 'high';
+  /** Near shadow map round the camera (nearShadow.ts): size in texels (0: none) and half-width (m). */
+  nearShadow: number;
+  nearExtent: number;
 }
 
 export const QUALITY: Record<QualityPreset, QualityConfig> = {
@@ -50,6 +55,8 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     bloom: false,
     dynamicLights: 0,
     backdropDetail: 'low',
+    nearShadow: 0,
+    nearExtent: 0,
   },
   medium: {
     pixelRatioCap: 1,
@@ -68,6 +75,8 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     bloom: false,
     dynamicLights: 0,
     backdropDetail: 'low',
+    nearShadow: 1536,
+    nearExtent: 20,
   },
   high: {
     pixelRatioCap: 1.25,
@@ -84,6 +93,8 @@ export const QUALITY: Record<QualityPreset, QualityConfig> = {
     bloom: true,
     dynamicLights: 1,
     backdropDetail: 'high',
+    nearShadow: 2048,
+    nearExtent: 26,
   },
 };
 
@@ -111,6 +122,9 @@ export class Renderer {
   /** Optional GPU timing hook (F3 panel). */
   private section: (label: string, fn: () => void) => void = (_l, fn) => fn();
   private shadowDirty = true;
+  /** The sun and the near light (nearShadow.ts), when shadows are on. */
+  private sunLight: THREE.DirectionalLight | null = null;
+  private nearLight: THREE.DirectionalLight | null = null;
   /** Render resolution as a share of the screen's (settings, 0.5..1; fixed: no automatic changes). */
   private scale = 0.9;
 
@@ -218,6 +232,18 @@ export class Renderer {
     this.postfx?.instrument(section);
   }
 
+  /** The lights whose shadow maps this renderer redraws (each on its own schedule). */
+  setShadowLights(sun: THREE.DirectionalLight | null, near: THREE.DirectionalLight | null): void {
+    this.sunLight = sun;
+    this.nearLight = near;
+    for (const l of [sun, near]) if (l) l.shadow.autoUpdate = false;
+  }
+
+  /** A near shadow map is drawn every frame: moving casters show without redrawing the static map. */
+  get nearShadows(): boolean {
+    return !!this.nearLight;
+  }
+
   /** Something that casts shadows moved: re-render the (static) shadow map soon. */
   requestShadowUpdate(): void {
     this.shadowDirty = true;
@@ -248,14 +274,24 @@ export class Renderer {
   render(): boolean {
     this.frameIndex++;
     let shadow = false;
+    let near = false;
     if (this.quality.shadows) {
       // The first frame must render shadows: materials sample the shadow map from the start.
       const due = this.frameIndex === 1 || this.frameIndex % this.quality.shadowInterval === 0;
-      // Redrawn only when something asks (the frustum moved, scenery changed): only static scenery casts shadows.
+      // Redrawn only when something asks (the frustum moved, scenery changed): only static scenery casts into it.
       if (this.shadowDirty && due) {
         this.gl.shadowMap.needsUpdate = true;
+        if (this.sunLight) this.sunLight.shadow.needsUpdate = true;
         this.shadowDirty = false;
         shadow = true;
+      }
+      // The near map on the frames between (30 times a second at 60 fps; its matrix is taken when it is
+      // drawn, so it never slides against the picture, moving shadows are one frame late at most). Never
+      // on a frame redrawing the static map: moving casters are kept out of that frame's shadow pass.
+      if (this.nearLight && !shadow && !due) {
+        this.gl.shadowMap.needsUpdate = true;
+        this.nearLight.shadow.needsUpdate = true;
+        near = true;
       }
     }
     // World matrices once per frame, shown objects only; the passes below
@@ -263,7 +299,10 @@ export class Renderer {
     updateShownMatrices(this.scene);
     this.scene.matrixWorldAutoUpdate = false;
     if (this.postfx) {
-      this.postfx.render();
+      const draw = () => this.postfx!.render();
+      if (shadow) withoutMovingCasters(this.scene, draw);
+      else if (near) onlyMovingCasters(this.scene, draw);
+      else draw();
     } else {
       // World first, then scenery: walls fill depth so the forest behind them is rejected early.
       const cam = this.camera;
@@ -271,7 +310,10 @@ export class Renderer {
       this.section('world', () => {
         this.gl.clear();
         cam.layers.disable(LAYER_BACKDROP);
-        hideOffLayers(this.scene, cam.layers.mask, () => this.gl.render(this.scene, cam));
+        const draw = () => hideOffLayers(this.scene, cam.layers.mask, () => this.gl.render(this.scene, cam));
+        if (shadow) withoutMovingCasters(this.scene, draw);
+        else if (near) onlyMovingCasters(this.scene, draw);
+        else draw();
       });
       this.section('scenery', () => {
         cam.layers.set(LAYER_BACKDROP);

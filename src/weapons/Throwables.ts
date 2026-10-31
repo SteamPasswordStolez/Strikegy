@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { castsMovingShadow } from '@/render/nearShadow';
 import { GRENADE_COUNT } from '@/data/classes';
 import { Layer, RAPIER, groups, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { GameBus, GrenadeOwner } from '@/core/events';
@@ -93,7 +94,7 @@ export class Throwables {
       body,
     );
     const mesh = new THREE.Mesh(this.geometry, this.materials.get(type)!);
-    mesh.castShadow = true;
+    castsMovingShadow(mesh);
     mesh.position.copy(origin);
     this.scene.add(mesh);
     this.live.push({ id: this.nextId++ & 0xffff, type, owner, body, mesh, fuse: Math.max(0.6, spec.fuse - cook), lastVel: vel.clone(), bounceCooldown: 0 });
@@ -161,7 +162,7 @@ export class Throwables {
   warmupMeshes(): THREE.Mesh[] {
     return [...this.materials.values()].map((m) => {
       const mesh = new THREE.Mesh(this.geometry, m);
-      mesh.castShadow = true;
+      castsMovingShadow(mesh);
       return mesh;
     });
   }

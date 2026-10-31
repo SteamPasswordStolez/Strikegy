@@ -26,7 +26,9 @@ const clamp = THREE.MathUtils.clamp;
 const WALK = 4.5;
 
 /**
- * The gun's movement feel, after Call of Duty (owner, 2026-10-30): a figure-
+ * The gun's movement feel, between Call of Duty and Battlefield (owner,
+ * 2026-10-30 CoD-like, 2026-10-31 toned down toward BF: smaller bob, a
+ * heavier, slower lag with less overshoot): a figure-
  * eight bob in step with the feet (a dip at each footfall, side to side
  * across the stride), much larger and swinging while sprinting; the gun
  * lagging behind the view when it turns and swinging a little past when it
@@ -41,13 +43,13 @@ export class ViewMotion {
   /** Stride phase (one cycle = two steps). */
   private phase = 0;
   private stride = 0;
-  private readonly yawLag = new LagSpring(15, 0.42);
-  private readonly pitchLag = new LagSpring(15, 0.42);
+  private readonly yawLag = new LagSpring(11, 0.62);
+  private readonly pitchLag = new LagSpring(11, 0.62);
   private readonly side = new LagSpring(9, 0.55);
   private readonly lean = new LagSpring(8, 0.6);
   private readonly fore = new LagSpring(8, 0.6);
-  private readonly lift = new LagSpring(11, 0.38);
-  private readonly cant = new LagSpring(10, 0.45);
+  private readonly lift = new LagSpring(10, 0.5);
+  private readonly cant = new LagSpring(9, 0.55);
   private wasCrouching = false;
 
   /** Landing: the gun drops and springs back (impact speed m/s). */
@@ -71,22 +73,22 @@ export class ViewMotion {
     const amp = this.stride * (f.crouching ? 0.6 : 1) * keep;
     const sp = f.sprintBlend;
     // Walk: small figure eight; sprint: the gun swings across the body.
-    const bx = s * (0.009 + 0.024 * sp) * amp;
-    const by = -dip * (0.011 + 0.018 * sp) * amp;
-    const roll = s * (0.022 + 0.08 * sp) * amp;
-    const yaw = -s * (0.012 + 0.05 * sp) * amp;
-    const pitch = (dip - 0.5) * (0.012 + 0.035 * sp) * amp;
+    const bx = s * (0.006 + 0.016 * sp) * amp;
+    const by = -dip * (0.008 + 0.012 * sp) * amp;
+    const roll = s * (0.014 + 0.05 * sp) * amp;
+    const yaw = -s * (0.008 + 0.032 * sp) * amp;
+    const pitch = (dip - 0.5) * (0.008 + 0.024 * sp) * amp;
 
     // Turning: the gun lags behind the view and swings past when it stops (rad/s in, rad out).
     const yawRate = f.lookDYaw / dt;
     const pitchRate = f.lookDPitch / dt;
     const lagScale = 1 - 0.75 * ads;
-    const ly = this.yawLag.step(clamp(yawRate * 0.007, -0.05, 0.05) * lagScale, dt);
-    const lp = this.pitchLag.step(clamp(pitchRate * 0.007, -0.04, 0.04) * lagScale, dt);
+    const ly = this.yawLag.step(clamp(yawRate * 0.0055, -0.04, 0.04) * lagScale, dt);
+    const lp = this.pitchLag.step(clamp(pitchRate * 0.0055, -0.032, 0.032) * lagScale, dt);
 
     // Moving: trails a step behind sideways, leans into the strafe, pulled in a little going forward.
-    const sideX = this.side.step(-f.strafe * 0.0028 * keep, dt);
-    const leanZ = this.lean.step(-f.strafe * 0.011 * keep, dt);
+    const sideX = this.side.step(-f.strafe * 0.002 * keep, dt);
+    const leanZ = this.lean.step(-f.strafe * 0.008 * keep, dt);
     const foreZ = this.fore.step(clamp(f.forward, -6, 7) * 0.0016 * keep, dt);
 
     // In the air the gun trails the body: low going up, high coming down.

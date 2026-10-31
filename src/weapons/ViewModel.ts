@@ -717,7 +717,7 @@ export class ViewModel {
     this.root.rotation.set(
       this.rise.x - this.adsSettle.x * 0.01 + mo.rot.x + rp.rot[0] * this.reloadBlend - this.sprintBlend * 0.14 - throwDip * 0.5 - this.toolBlend * 0.9 + extraRot.x,
       this.turn.x + mo.rot.y + rp.rot[1] * this.reloadBlend + this.sprintBlend * 0.55 + HIP_TURN * (1 - f.adsBlend) - throwDip * 0.3 + extraRot.y,
-      this.roll.x + mo.rot.z + rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.42 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
+      this.roll.x + mo.rot.z + rp.rot[2] * this.reloadBlend + this.sprintBlend * 0.32 + stroke * (this.pump ? 0.05 : 0.22) + extraRot.z,
     );
 
     this.flashTimer -= dt;

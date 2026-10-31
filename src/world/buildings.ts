@@ -23,7 +23,7 @@ import {
   type SideFrame,
   type Stair,
 } from './buildingParts';
-import { depotExtras, factoryExtras, gasShopExtras, hospitalExtras, hotelExtras, innExtras, millExtras, officeExtras, towerExtras } from './buildingExtras';
+import { band, depotExtras, factoryExtras, gasShopExtras, hospitalExtras, hotelExtras, innExtras, millExtras, officeExtras, towerExtras } from './buildingExtras';
 
 /**
  * Turns a BuildingDef into blockout boxes: outer walls split into bays with
@@ -374,6 +374,7 @@ export function buildBuilding(b: BuildingDef, baseY: number, opts: BuildOptions 
     }
   }
   if (layout) layRooms(ctx, layout, spec);
+  facadeTrim(ctx, spec);
   spec.extras?.(ctx);
   roof(spec, ctx);
   const doorsOut: BuildingDoor[] = [];
@@ -482,7 +483,9 @@ function outerWall(c: Ctx, spec: StyleSpec, side: SideFrame, stairs: Stair[], la
         sideBox(side, box, s0, fill, bottom, top - bottom);
         sideBox(side, box, s0 + owMax - fill, fill, bottom, top - bottom);
       }
-      if (spec.arch && o.height > 1.6) archCorners(side, box, mid - o.width / 2, o.width, Math.min(lintel, top), Math.min(o.width / 2, o.height * 0.3));
+      const arched = !!spec.arch && o.height > 1.6;
+      if (arched) archCorners(side, box, mid - o.width / 2, o.width, Math.min(lintel, top), Math.min(o.width / 2, o.height * 0.3));
+      openingTrim(c, spec, side, mid, o, Math.min(lintel, top), arched);
       if (o.sill > 0) {
         // Sill outside, a firing spot inside when it is low enough.
         sideBox(side, deco, mid - o.width / 2 - 0.1, o.width + 0.2, o.sill - 0.08, 0.08, WALL / 2 + 0.06, 0.18, 'prop', trim, 'concrete');
@@ -498,6 +501,78 @@ function outerWall(c: Ctx, spec: StyleSpec, side: SideFrame, stairs: Stair[], la
   }
   for (const [a0, a1] of mergeSpans(piers)) sideBox(side, box, a0, a1 - a0, -PLINTH, H + PLINTH);
   c.columns[side.id] = cols;
+}
+
+/**
+ * What a real opening has round it (2026-10-31, owner: buildings still look
+ * like boxes): a frame set into the reveal, and on the face a casing of jambs
+ * and a head (a heavier lintel on brick and stone, plain boards on timber).
+ * Decor only: no colliders, the opening stays as open as before. Metal sheds
+ * get the frame alone.
+ */
+function openingTrim(c: Ctx, spec: StyleSpec, side: SideFrame, mid: number, o: Opening, lintel: number, arched: boolean): void {
+  const w = o.width;
+  const h = lintel - o.sill;
+  if (w < 0.5 || h < 0.5) return;
+  const u0 = mid - w / 2;
+  const door = o.sill <= 0;
+  const bottom = door ? GROUND_TOP : o.sill;
+  const sheet = spec.material === 'metal';
+  const timber = spec.material === 'wood';
+  // Frame in the reveal, a little in from the face: dark painted wood / steel.
+  const fc = sheet ? '#3a3f43' : timber ? shade(c.color, 0.62) : door ? '#3d342c' : '#ece7dc';
+  const fm: SurfaceMaterial = sheet ? 'metal' : 'wood';
+  const fd = WALL / 2 - 0.07;
+  const ft = 0.07;
+  sideBox(side, c.deco, u0, ft, bottom, h - (arched ? h * 0.25 : 0), fd, 0.07, 'prop', fc, fm);
+  sideBox(side, c.deco, u0 + w - ft, ft, bottom, h - (arched ? h * 0.25 : 0), fd, 0.07, 'prop', fc, fm);
+  if (!arched) sideBox(side, c.deco, u0, w, lintel - ft, ft, fd, 0.07, 'prop', fc, fm);
+  if (!door) sideBox(side, c.deco, u0, w, o.sill, 0.06, fd, 0.07, 'prop', fc, fm);
+  if (sheet) return;
+  // Casing on the face.
+  const masonry = spec.material === 'brick' || spec.material === 'brick_old' || spec.material === 'concrete';
+  const cc = timber ? shade(c.color, 0.78) : masonry ? '#b9b1a3' : shade(c.color, 1.14);
+  const cm: SurfaceMaterial = timber ? 'wood' : 'concrete';
+  const jw = timber ? 0.1 : 0.12;
+  if (!masonry || door) {
+    sideBox(side, c.deco, u0 - jw, jw, bottom, h, WALL / 2 + 0.03, 0.06, 'prop', cc, cm);
+    sideBox(side, c.deco, u0 + w, jw, bottom, h, WALL / 2 + 0.03, 0.06, 'prop', cc, cm);
+  }
+  if (arched) return;
+  // Head: a lintel block on masonry, a board with a drip cap otherwise.
+  const hh = masonry ? 0.22 : 0.13;
+  const over = masonry ? 0.18 : jw + 0.04;
+  sideBox(side, c.deco, u0 - over, w + 2 * over, lintel, hh, WALL / 2 + 0.05, 0.1, 'prop', cc, cm);
+  if (!masonry) sideBox(side, c.deco, u0 - over - 0.03, w + 2 * over + 0.06, lintel + hh, 0.04, WALL / 2 + 0.08, 0.14, 'prop', shade(cc, 0.85), cm);
+}
+
+/**
+ * Plain styles (no style details of their own): a darker plinth at the foot,
+ * a string course at each upper floor and a cornice under the roof, so the
+ * walls stop reading as bare boxes.
+ */
+function facadeTrim(c: Ctx, spec: StyleSpec): void {
+  if (spec.extras || c.solid) return;
+  const timber = spec.material === 'wood';
+  const sheet = spec.material === 'metal';
+  const base = sheet ? '#4d5256' : '#77736b';
+  band(c, -PLINTH, PLINTH + (sheet ? 0.25 : 0.45), 0.03, 0.06, base, 'concrete');
+  if (sheet) {
+    // Eave flashing along the top of the cladding.
+    band(c, c.H - 0.18, 0.22, 0.04, 0.06, shade(c.color, 0.7), 'metal');
+    return;
+  }
+  const cc = timber ? shade(c.color, 0.72) : shade(c.trim, 1.08);
+  const cm: SurfaceMaterial = timber ? 'wood' : 'concrete';
+  for (let f = 1; f < c.floors; f++) band(c, f * c.storey - 0.16, 0.18, 0.04, 0.08, cc, cm);
+  if (spec.roof === 'pitched') {
+    // Eaves board under the roof's edge.
+    band(c, c.H - 0.22, 0.22, 0.05, 0.08, cc, cm);
+  } else if (spec.roof === 'flat' || spec.roof === 'parapet') {
+    // A two-step cornice where the wall meets the roof.
+    band(c, c.H - 0.38, 0.14, 0.05, 0.1, cc, cm);
+    band(c, c.H - 0.24, 0.24, 0.1, 0.16, cc, cm);
+  }
 }
 
 /** Stepped corners rounding off the top of an opening (u0..u0+w along the side, top at `lintel`). */

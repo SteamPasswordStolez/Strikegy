@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { castsMovingShadow } from '@/render/nearShadow';
 import { Layer, RAPIER, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { HitPart } from '@/core/events';
 import type { Damageable, HitboxRegistry } from './Hitboxes';
@@ -43,7 +44,7 @@ export class TargetDummy implements Damageable {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, y, z);
       mesh.rotation.z = rz;
-      mesh.castShadow = true;
+      castsMovingShadow(mesh);
       this.pivot.add(mesh);
       return mesh;
     };

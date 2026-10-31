@@ -18,7 +18,7 @@ const TIMBER = '#3f2d21';
 const QUOIN = '#c8c0b0';
 
 /** A band round the building at height y (h tall), standing `out` proud of the walls. */
-function band(c: Ctx, y: number, h: number, out: number, t: number, col: string, mat: Parameters<Ctx['box']>[8] = 'concrete'): void {
+export function band(c: Ctx, y: number, h: number, out: number, t: number, col: string, mat: Parameters<Ctx['box']>[8] = 'concrete'): void {
   const wrap = out + t / 2;
   for (const s of c.sides) {
     const ns = s.id === 'n' || s.id === 's';

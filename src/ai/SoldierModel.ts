@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { castsMovingShadow } from '@/render/nearShadow';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Team } from '@/world/mapTypes';
@@ -406,14 +407,14 @@ export class SoldierModel {
       const mid = new THREE.SkinnedMesh(asset.mid, asset.midMaterial);
       mid.bind(skeleton, this.mesh.bindMatrix);
       mid.frustumCulled = false;
-      mid.castShadow = false;
+      castsMovingShadow(mid);
       this.lod = new THREE.LOD();
       this.lod.addLevel(this.mesh, 0);
       this.lod.addLevel(mid, MID_FROM);
       gunMaterial ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2 });
       const gun = gunMeshFor(def);
       const gunMesh = new THREE.Mesh(gun.geo, gunMaterial);
-      gunMesh.castShadow = false;
+      castsMovingShadow(gunMesh);
       this.bones[B.Aim]!.add(gunMesh);
       this.muzzleAim = gun.muzzle;
       const J = this.joints;
@@ -439,9 +440,8 @@ export class SoldierModel {
       this.mesh.add(this.bones[B.Root]!);
       this.mesh.bind(new THREE.Skeleton(this.bones));
     }
-    // Shadows are static (rendered once for the map), so moving soldiers would
-    // leave frozen shadows behind; BotManager draws blob shadows instead.
-    this.mesh.castShadow = false;
+    // Into the near shadow map only (nearShadow.ts); the static map would keep a frozen shadow.
+    castsMovingShadow(this.mesh);
     // Bones move the vertices outside the bind-pose bounds (crouch, death).
     this.mesh.frustumCulled = false;
     this.root.add(this.lod ?? this.mesh);

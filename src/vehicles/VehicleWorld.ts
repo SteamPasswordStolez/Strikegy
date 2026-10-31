@@ -1,5 +1,6 @@
 import { disposeTree } from '@/render/dispose';
 import * as THREE from 'three';
+import { castsMovingShadow } from '@/render/nearShadow';
 import type { DamageSource, HitboxRegistry } from '@/combat/Hitboxes';
 import { Layer, type PhysicsWorld } from '@/physics/PhysicsWorld';
 import type { MapDef, Team } from '@/world/mapTypes';
@@ -180,6 +181,7 @@ export class VehicleWorld {
       this.byHandle.set(c.handle, v);
       this.registry.register(c.handle, v, 'body');
     }
+    castsMovingShadow(v.model.root);
     this.group.add(v.model.root);
     return v;
   }

@@ -102,6 +102,8 @@ const squadKey = (team: Team, squad: number): string => `${team}:${squad}`;
 
 /** Whoever a question is about: a combatant, or a whole side (no id). */
 type Side = { readonly id?: number; readonly team: Team };
+/** A builder waits this long (s) for someone to step out of a finished structure's place, then leaves it. */
+const WORK_BLOCKED_GIVE_UP = 3;
 /** Closest a bot walks up to a person (feet to feet, m): two capsule radii and a hair. */
 const PERSON_GAP = MOVE.radius * 2 + 0.06;
 /** Neighbour grid cell (m); at least the separation radius. */
@@ -846,14 +848,34 @@ export class BotManager implements BotServices {
     for (const [key, b] of this.workers) if (b === bot) this.workers.delete(key);
   }
 
+  /** Seconds each builder has waited on a finished structure someone stands in. */
+  private readonly workBlocked = new Map<Bot, number>();
+
   doWork(bot: Bot, job: FortJob, dt: number): boolean {
     const fort = this.fort;
     if (!fort) return false;
     if (job.type === 'build') {
-      if (job.slot.built) return false;
+      if (job.slot.built) {
+        this.workBlocked.delete(bot);
+        return false;
+      }
       const r = fort.work(job.slot, dt, bot.cls, this.fortBlocked ?? (() => false));
       fort.onPoints?.(bot.id, r.points, 'build');
-      return !r.done;
+      if (r.done) {
+        this.workBlocked.delete(bot);
+        return false;
+      }
+      // Fully worked but someone stands where it goes: it can't finish. Waiting on
+      // forever froze builders for minutes (Ashfall, 2026-10-31); give up after a while.
+      if (r.points === 0) {
+        const t = (this.workBlocked.get(bot) ?? 0) + dt;
+        this.workBlocked.set(bot, t);
+        if (t > WORK_BLOCKED_GIVE_UP) {
+          this.workBlocked.delete(bot);
+          return false;
+        }
+      } else this.workBlocked.delete(bot);
+      return true;
     }
     const st = job.station;
     if (this.zoneOwner?.(st.zone, bot.team) !== bot.team) return false;

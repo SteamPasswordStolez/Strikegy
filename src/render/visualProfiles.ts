@@ -36,10 +36,12 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     sky: { turbidity: 2.5, rayleigh: 1.1, mieCoefficient: 0.004, mieDirectionalG: 0.8, cloudCoverage: 0.3, cloudDensity: 0.35 },
     photo: 'clear',
     photoHorizon: 1.4,
-    sun: { elevation: 38, azimuth: -35, color: 0xfff1de, intensity: 2.4 },
+    // Sun against sky light nearer a real clear day (2026-10-31: shadows read pale and blue,
+    // the scene flat): more sun, less sky fill, so shapes model and shadows hold.
+    sun: { elevation: 38, azimuth: -35, color: 0xfff1de, intensity: 3.1 },
     fog: { color: 0xa9bccd, density: 0.0016 },
-    hemi: { sky: 0xcfe0ff, ground: 0x6b5a45, intensity: 0.25 },
-    envIntensity: 0.85,
+    hemi: { sky: 0xcfe0ff, ground: 0x6b5a45, intensity: 0.18 },
+    envIntensity: 0.6,
     exposure: 0.46,
   },
   overcast: {
@@ -79,10 +81,10 @@ const PROFILES: Record<VisualProfileId, VisualProfile> = {
     sky: { turbidity: 4, rayleigh: 1.6, mieCoefficient: 0.006, mieDirectionalG: 0.82, cloudCoverage: 0.38, cloudDensity: 0.45 },
     photo: 'clear',
     photoHorizon: 1.5,
-    sun: { elevation: 62, azimuth: 20, color: 0xfff6e8, intensity: 2.6 },
+    sun: { elevation: 62, azimuth: 20, color: 0xfff6e8, intensity: 3.3 },
     fog: { color: 0xb8cbd8, density: 0.0018 },
-    hemi: { sky: 0xd4e6ff, ground: 0x4c5a38, intensity: 0.3 },
-    envIntensity: 0.85,
+    hemi: { sky: 0xd4e6ff, ground: 0x4c5a38, intensity: 0.22 },
+    envIntensity: 0.62,
     exposure: 0.44,
   },
   indoor: {
@@ -188,6 +190,9 @@ export interface AtmosphereOptions {
   shadowMapSize: number;
   /** Half-size of the sun's shadow frustum in meters (follows the camera). */
   shadowExtent: number;
+  /** Near shadow map size (texels, 0: none) and half-width (m); see nearShadow.ts. */
+  nearShadow?: number;
+  nearExtent?: number;
 }
 
 /**
@@ -196,6 +201,11 @@ export interface AtmosphereOptions {
  */
 export class Atmosphere {
   readonly sun: THREE.DirectionalLight | null = null;
+  /** Black light carrying the near shadow map round the camera (nearShadow.ts). */
+  readonly nearSun: THREE.DirectionalLight | null = null;
+  private nearTexel = 0;
+  private readonly nearView = new THREE.Matrix4();
+  private readonly nearInv = new THREE.Matrix4();
   private readonly sky: Sky | null = null;
   private readonly photoSky: THREE.Mesh | null = null;
   private readonly sunDir = new THREE.Vector3();
@@ -296,8 +306,49 @@ export class Atmosphere {
       sun.shadow.radius = 2;
       scene.add(sun, sun.target);
       this.sun = sun;
+      const nearSize = opts.shadows ? (opts.nearShadow ?? 0) : 0;
+      if (nearSize > 0) {
+        // Added after the sun: the shader pairs them by that order.
+        const near = new THREE.DirectionalLight(0x000000, 0);
+        near.castShadow = true;
+        near.shadow.mapSize.set(nearSize, nearSize);
+        const ext = opts.nearExtent ?? 24;
+        const nc = near.shadow.camera;
+        nc.left = nc.bottom = -ext;
+        nc.right = nc.top = ext;
+        nc.near = 1;
+        nc.far = 300;
+        this.nearTexel = (ext * 2) / nearSize;
+        near.shadow.bias = -0.0004;
+        near.shadow.normalBias = Math.max(0.02, this.nearTexel * 1.2);
+        near.shadow.radius = 1.5;
+        scene.add(near, near.target);
+        this.nearSun = near;
+        // Sun's view (looking down its direction), for snapping the near map to whole texels.
+        this.nearView.lookAt(this.sunDir, new THREE.Vector3(), THREE.Object3D.DEFAULT_UP);
+        this.nearInv.copy(this.nearView).invert();
+      }
     }
   }
+
+  /**
+   * Centres the near shadow map on `focus` (the camera), snapped to whole
+   * texels across the sun's view so its edges don't crawl as one moves.
+   */
+  updateNear(focus: THREE.Vector3): void {
+    const near = this.nearSun;
+    if (!near) return;
+    const p = this.tmpNear.copy(focus).applyMatrix4(this.nearInv);
+    const t = this.nearTexel;
+    p.x = Math.round(p.x / t) * t;
+    p.y = Math.round(p.y / t) * t;
+    p.applyMatrix4(this.nearView);
+    near.target.position.copy(p);
+    near.position.copy(p).addScaledVector(this.sunDir, 150);
+    near.target.updateMatrixWorld();
+    near.updateMatrixWorld();
+  }
+  private readonly tmpNear = new THREE.Vector3();
 
   /**
    * How far one sees on this map (big maps, the sea; 2026-10-18): the camera's

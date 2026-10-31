@@ -211,8 +211,13 @@ const villageLot = () => ({ style: pick(['house', 'house', 'shop', 'inn']), w: b
   put({ type: 'wall', pos: [rx + 8, 9, rz - 6], size: [3, 18, 3], material: 'metal', color: '#6a6e6a', model: 'waterTower', snap: true });
   addBuilding({ pos: [rx - 22, rz + 20], size: [12, 9], style: 'barracks', doors: 'sw', material: 'concrete', color: '#9a9888' });
   addBuilding({ pos: [rx + 20, rz - 24], size: [8, 7], style: 'shed', doors: 's', material: 'concrete', color: '#8e8c80' });
+  // Keep the nests clear of the two huts (two of them stood inside or against one,
+  // and bots building there could never finish): turn a nest along the ring until clear.
+  const huts = [[rx - 22, rz + 20, 6, 4.5], [rx + 20, rz - 24, 4, 3.5]];
+  const clear = (x, z) => huts.every(([hx, hz, hw, hd]) => Math.abs(x - hx) > hw + 4 || Math.abs(z - hz) > hd + 4);
   for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2 + 0.3;
+    let a = (k / 6) * Math.PI * 2 + 0.3;
+    for (let t = 0; t < 8 && !clear(rx + Math.cos(a) * 26, rz + Math.sin(a) * 26); t++) a += 0.12;
     kit.nest(rx + Math.cos(a) * 26, rz + Math.sin(a) * 26, (-a * 180) / Math.PI + 90);
   }
   put(blockAt(rx - 22, rz - 18, 9, 4, 9, 30, 'aaGun', '#5d6252', 'metal'));
