@@ -434,5 +434,148 @@ export default {
         d.pose(d.cast.sarge, { yaw: Math.PI / 2 + 0.08 - 0.9 * k, aimYaw: Math.PI / 2 + 0.08 - 0.9 * k });
       },
     },
+    // Behind the heavy MG on the square (the post at -16, 6 faces west, ±1 rad), sweeping down the street.
+    S18: {
+      setup(d) {
+        const mg = d.vehicles('hmg', d.v(-16, 3, 6))[0];
+        d.s = { mg };
+        if (mg) d.seat(mg, 0);
+        d.warm(0.3);
+        d.face(d.v(-48, 3, 10));
+      },
+      frame(d, i) {
+        d.input.fire = true;
+        d.input.yaw += Math.sin(i * 0.15) * 0.004 - 0.002;
+      },
+    },
+    // Tracers going up from the blue base's AA gun (third person, low beside the gun).
+    S19: {
+      setup(d) {
+        const aa = d.vehicles('aagun', d.v(-119, 21, 21))[0];
+        const p = aa.model.root.position.clone();
+        d.s = { aa, p };
+        d.seat(aa, 0);
+        d.warm(0.3);
+        d.cam((t, cam) => d.place(cam, d.v(p.x + 6 - t * 0.5, p.y + 1.5, p.z + 6), d.v(p.x - 9, p.y + 8 + t * 2, p.z - 11), 52, 0.04));
+      },
+      frame(d, i) {
+        const p = d.s.p;
+        d.face(d.v(p.x - 120 + i * 3, p.y + 120, p.z - 150));
+        d.input.fire = true;
+      },
+    },
+    // From the AA gun's seat: an enemy fighter crossing, hit, going down.
+    S38: {
+      setup(d) {
+        const aa = d.vehicles('aagun', d.v(-119, 21, 21))[0];
+        const p = aa.model.root.position.clone();
+        d.seat(aa, 0);
+        d.warm(0.3);
+        const jet = d.vehicle('fighter', d.v(p.x + 260, p.y + 130, p.z - 260), Math.PI * 0.75, 'red');
+        d.s = { aa, p, jet, x: p.x + 260, z: p.z - 260 };
+      },
+      frame(d, i) {
+        const s = d.s;
+        if (!s.jet.wrecked) {
+          s.x -= 5.2;
+          s.z += 3.4;
+          d.drive(s.jet, d.v(s.x, s.p.y + 130, s.z), Math.atan2(5.2, -3.4), 0, -0.25, d.v(-156, 0, 102));
+          d.face(d.v(s.x - 20, s.p.y + 130, s.z + 13));
+        }
+        d.input.fire = i > 6 && i < 52;
+        if (i === 44) {
+          d.blast('missile', s.jet.model.root.position.clone(), 'blue');
+          d.wreck(s.jet);
+        }
+      },
+    },
+    // The canal bridge: a grenade over, then into them.
+    S39: {
+      setup(d) {
+        d.put(31, 3, -5, 90, 2);
+        const red = d.team('red').slice(4, 7);
+        d.s = { red };
+        red.forEach((b, k) => d.pose(b, { pos: d.at(46 + k * 2.5, -7 + k * 3), yaw: Math.PI / 2, crouch: k === 1 }));
+      },
+      frame(d, i) {
+        const r = d.s.red;
+        if (i === 1) d.input.throwGrenade = true;
+        d.input.moveY = i > 8 && i < 26 ? 0.6 : 0;
+        if (i >= 18) d.lookAt(r[0].feet.clone().setY(r[0].feet.y + 1.2), 0.1);
+        d.input.fire = i >= 22;
+        if (i === 24) d.down(r[0], d.g.player.feet);
+      },
+    },
+    // A headshot down the sights.
+    S40: {
+      setup(d) {
+        d.put(-22, 3, 1, 90, 0);
+        const e = d.team('red')[8];
+        d.s = { e };
+        d.pose(e, { pos: d.at(-4, -1.5), yaw: -Math.PI / 2 + 0.3 });
+        d.input.ads = true;
+        d.warm(0.5);
+      },
+      frame(d, i) {
+        const e = d.s.e;
+        if (e.alive) d.face(e.feet.clone().setY(e.feet.y + 1.66));
+        d.input.ads = true;
+        d.input.fire = i === 10;
+        if (i === 13 && e.alive) e.applyDamage(1000, 'head', { pos: d.g.player.feet.clone(), name: '', team: 'blue', weapon: 'M4A1', id: d.g.myId });
+      },
+    },
+    // A friendly tank rolls into the street beside the squad (third person, low at the kerb).
+    S46: {
+      setup(d) {
+        const y = d.ground(-34, 0);
+        const tank = d.vehicle('tank', d.v(-34, y, -0.5), -Math.PI / 2, 'blue');
+        d.s = { tank, x: -34, y };
+        const c = d.cast;
+        d.pose(c.sarge, { pos: d.at(-24, 3.4), yaw: -Math.PI / 2, crouch: true, god: true });
+        d.pose(c.mate1, { pos: d.at(-26.5, 3.6), yaw: -Math.PI / 2, crouch: true, god: true });
+        d.cam((t, cam) => d.place(cam, d.v(-19 - t * 0.5, y + 0.7, 5.2), d.v(-30 + t * 3, y + 1.6, -0.4), 44));
+      },
+      frame(d) {
+        const s = d.s;
+        s.x += 0.16;
+        d.drive(s.tank, d.v(s.x, s.y, -0.5), -Math.PI / 2, 0, 0, d.v(4.8, 0, 0));
+      },
+    },
+    // The tank beside the private fires; the MG nest ahead goes up.
+    S47: {
+      setup(d) {
+        d.put(-22, 3, 2.5, 92, 0);
+        const y = d.ground(-24, -3);
+        const tank = d.vehicle('tank', d.v(-24.5, y, -3), -Math.PI / 2, 'blue');
+        const red = d.team('red').slice(9, 12);
+        d.s = { tank, red, nest: d.at(16, -3) };
+        red.forEach((b, k) => d.pose(b, { pos: d.at(15 + k, -4 + k * 1.5), yaw: Math.PI / 2, crouch: true }));
+      },
+      frame(d, i) {
+        const s = d.s;
+        d.face(s.nest.clone().setY(s.nest.y + 1.2));
+        d.mountFire(s.tank, 0, s.nest.clone().setY(s.nest.y + 0.8), 'blue');
+        if (i === 14) {
+          d.blast('shell', s.nest.clone().setY(s.nest.y + 0.5), 'blue');
+          s.red.forEach((b) => d.down(b, s.tank.model.root.position));
+        }
+      },
+    },
+    // Looking up from the square: two of our fighters across the rooftops.
+    S48: {
+      setup(d) {
+        d.put(-6, 4, 6, 90, 48);
+        const a = d.vehicle('fighter', d.v(-160, 48, -4), -Math.PI / 2, 'blue');
+        const b = d.vehicle('fighter', d.v(-178, 52, 10), -Math.PI / 2, 'blue');
+        d.s = { a, b, x: -160 };
+      },
+      frame(d, i) {
+        const s = d.s;
+        s.x += 6.2;
+        d.drive(s.a, d.v(s.x, 48, -4), -Math.PI / 2, 0, 0.15, d.v(186, 0, 0));
+        d.drive(s.b, d.v(s.x - 18, 52, 10), -Math.PI / 2, 0, 0.1, d.v(186, 0, 0));
+        d.face(d.v(s.x - 10, 48, 2));
+      },
+    },
   },
 };

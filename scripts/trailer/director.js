@@ -115,6 +115,8 @@
     /** Before every shot: back on one's feet, standing, gun out, no build mode, every bot free again. */
     reset() {
       if (g.me.downed) g.me.revive('', 100);
+      if (g.ride) g.leaveVehicle();
+      for (const veh of d.spawned.splice(0)) g.vehicles.remove(veh);
       if (g.buildMode) g.buildMode = false;
       if (g.gadgetOut) input.gadget = true;
       if (g.player.crouchToggled) input.crouchToggle = true;
@@ -312,8 +314,12 @@
 
     /** A vehicle of `kind` at `pos` facing `yaw`, for `team`. */
     vehicle(kind, pos, yaw, team = 'blue') {
-      return g.vehicles.spawn(kind, pos, yaw, team);
+      const veh = g.vehicles.spawn(kind, pos, yaw, team);
+      d.spawned.push(veh);
+      return veh;
     },
+    /** Vehicles the shots put down (gone again before the next shot). */
+    spawned: [],
     /** Moves a vehicle by script (kinematic from then on): to `pos`, heading `yaw`, pitched / banked. */
     drive(veh, pos, yaw, pitch = 0, roll = 0, vel = null) {
       veh.setRemote(true);
@@ -323,6 +329,16 @@
       const r = q.clone().setFromAxisAngle(v(0, 0, 1), roll);
       e.multiply(p).multiply(r);
       veh.place(pos, e, vel ?? v());
+    },
+    /** A vehicle's seat gun fires at `at` (the gun turned there first, as far as it reaches). */
+    mountFire(veh, seat, at, team = 'blue', alt = false) {
+      const mz = veh.muzzleOf(seat, v());
+      veh.aimMount(seat, Math.atan2(-(at.x - mz.x), -(at.z - mz.z)), Math.atan2(at.y - mz.y, Math.hypot(at.x - mz.x, at.z - mz.z)));
+      g.fireMount(veh, seat, { id: -902, name: '', team, squad: null }, at, alt);
+    },
+    /** Wrecks a vehicle outright (a kill the script decides on). */
+    wreck(veh) {
+      veh.applyDamage(1e6, 'body', undefined, 'at');
     },
     /** The player into a vehicle seat. */
     seat(veh, seat = 0) {
