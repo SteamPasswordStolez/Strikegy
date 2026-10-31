@@ -70,34 +70,125 @@
     return out;
   }
 
+  /** The bare mark inside one of the brand SVGs (no baked glitch bands) and its viewBox size. */
+  const markOf = (svgText, id) => svgText.match(new RegExp(`<g id="${id}">([\\s\\S]*?)</g>`))[1];
+  const boxOf = (svgText) => svgText.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/).slice(1).map(Number);
+  const easeIO = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+  /** Film grain, the same for the same frame (mulberry32 seeded by it). */
+  function grain(f) {
+    const c = document.createElement('canvas');
+    c.width = 960; c.height = 540;
+    c.className = 'layer';
+    Object.assign(c.style, { width: '1920px', height: '1080px', opacity: '0.05', mixBlendMode: 'screen' });
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(960, 540);
+    let s = (f * 9973 + 17) >>> 0;
+    for (let i = 0; i < img.data.length; i += 4) {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      const v = ((t ^ (t >>> 14)) >>> 0) % 256;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
   const draws = {
-    /** The GlitchedSpell opening (shots O1-O6, 0-5 s): stamp on the 0.33 s hit, glitch on the 0.54 s hit, the name, PRESENTS, out. */
+    /**
+     * The GlitchedSpell opening (shots O1-O6, 0-5 s), a horizontal lockup: the emblem stamps in on the
+     * 0.33 s hit with a shock ring, a short RGB tear on the 0.54 s hit, a hairline divider draws, the
+     * wordmark wipes in from behind it with a soft edge, a light sweeps across, PRESENTS, then a last
+     * tear and the picture folds shut like an old screen. One SVG a frame, page coordinates.
+     */
     opening(p, f) {
       document.body.className = 'opaque';
+      stage.style.background = '#060708';
       if (f < 10) return;
-      const k = ease((f - 10) / 4);
-      const scale = 1.14 - 0.14 * k;
-      const shake = f < 13 ? (rnd(f, 5) - 0.5) * 14 : 0;
-      const fade = f >= 140 ? clamp(1 - (f - 140) / 10) : 1;
+      const T = (a, b) => clamp((f - a) / (b - a));
+      const EM = markOf(svgs.emblem, 'gs-emblem'), WM = markOf(svgs.wordmark, 'gs-wordmark');
+      const [ew] = boxOf(svgs.emblem), [ww] = boxOf(svgs.wordmark);
+      // Layout: emblem 230 px, divider, wordmark with a 76 px cap height (its box: baseline 70, cap 58).
+      const E = 230, GAP = 54, se = E / ew, sw = 76 / 58, W = ww * sw;
+      const total = E + GAP * 2 + 2 + W;
+      const x0 = 960 - total / 2, cy = 520;
+      const ecx = x0 + E / 2, dvx = x0 + E + GAP, wx = dvx + 2 + GAP;
+      const INK = '#ebe7df';
+
+      const stamp = ease(T(10, 16));
+      const es = 1.1 - 0.1 * stamp;
+      const shake = f < 13 ? (rnd(f, 5) - 0.5) * 8 : 0;
+      const slide = -34 * (1 - ease(T(22, 54)));
+      const reveal = wx - 60 + (W + 160) * easeIO(T(22, 50));
       let g = 0;
-      if (f >= 16 && f < 21) g = 1 - (f - 16) / 6;
-      if (f >= 53 && f < 56) g = 0.6;
-      if (f >= 136 && f < 141) g = 0.9;
-      const W = 360 * scale;
-      for (const d of glitchy(svgs.emblem, W, 960 - W / 2 + shake, 300 - (W - 360) / 2, f, g, fade)) stage.appendChild(d);
-      if (f >= 53) {
-        const r = clamp((f - 53) / 20);
-        const pieces = glitchy(svgs.wordmark, 900, 510, 690, f, f < 60 ? 0.8 : g, fade);
-        for (const d of pieces) { d.style.clipPath = d.style.clipPath || `inset(0 ${100 - r * 100}% 0 0)`; stage.appendChild(d); }
+      if (f >= 16 && f < 21) g = 1 - (f - 16) / 5;
+      if (f >= 51 && f < 54) g = 0.35;
+      if (f >= 133 && f < 140) g = 0.55 + 0.45 * rnd(f, 9);
+      const fold = easeIO(T(139, 146));
+      const push = 1 + 0.03 * (f / 150);
+      const sheenX = x0 - 320 + (total + 640) * easeIO(T(70, 104));
+
+      const bands = [];
+      const nb = g > 0 ? 3 + Math.floor(rnd(f, 1) * 3) : 0;
+      for (let i = 0; i < nb; i++) {
+        const y = cy - 130 + rnd(f, 10 + i) * 260, h = 3 + rnd(f, 20 + i) * 16;
+        bands.push({ y, h, dx: (rnd(f, 30 + i) - 0.5) * 90 * g });
       }
-      if (f >= 90) {
+      const keep = `M0,0H1920V1080H0Z ${bands.map((b) => `M0,${b.y}H1920V${b.y + b.h}H0Z`).join(' ')}`;
+
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" style="position:absolute;left:0;top:0">
+        <defs>
+          <linearGradient id="rv" gradientUnits="userSpaceOnUse" x1="${reveal - 70}" y1="0" x2="${reveal}" y2="0">
+            <stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
+          <mask id="rvm" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080"><rect width="1920" height="1080" fill="url(#rv)"/></mask>
+          <g id="em"><g transform="translate(${ecx + shake},${cy}) scale(${se * es}) translate(${-ew / 2},${-ew / 2})">${EM}</g></g>
+          <g id="wm" mask="url(#rvm)"><g transform="translate(${wx + slide},${cy - 41 * sw}) scale(${sw})">${WM}</g></g>
+          <g id="all"><use href="#em"/><use href="#wm"/><rect x="${dvx}" y="${cy - 60 * ease(T(18, 34))}" width="2" height="${120 * ease(T(18, 34))}" opacity="0.32"/></g>
+          <mask id="lk" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080"><use href="#em" fill="#fff"/><use href="#wm" fill="#fff"/></mask>
+          <linearGradient id="sh" gradientUnits="userSpaceOnUse" x1="${sheenX - 150}" y1="${cy - 90}" x2="${sheenX + 150}" y2="${cy + 90}">
+            <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.5" stop-color="#fff" stop-opacity="0.95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+          <radialGradient id="back" cx="${ecx + total * 0.3}" cy="${cy}" r="${total * 0.75}" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#e8a33a" stop-opacity="0.075"/><stop offset="1" stop-color="#e8a33a" stop-opacity="0"/></radialGradient>
+          <radialGradient id="bloom"><stop offset="0" stop-color="#fff" stop-opacity="0.55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+          <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="7"/></filter>
+          <clipPath id="keep"><path fill-rule="evenodd" d="${keep}"/></clipPath>
+          ${bands.map((b, i) => `<clipPath id="b${i}"><rect x="0" y="${b.y}" width="1920" height="${b.h}"/></clipPath>`).join('')}
+        </defs>
+        <rect width="1920" height="1080" fill="url(#back)" opacity="${ease(T(10, 30))}"/>
+        <g transform="translate(960 ${cy}) scale(${push * (1 + 0.14 * fold)} ${push * (1 - 0.992 * fold)}) translate(-960 ${-cy})">
+          <circle cx="${ecx}" cy="${cy}" r="230" fill="url(#bloom)" opacity="${1 - T(10, 19)}"/>
+          <circle cx="${ecx}" cy="${cy}" r="${122 + 190 * ease(T(10, 32))}" fill="none" stroke="${INK}" stroke-width="1.5" opacity="${0.45 * (1 - T(10, 32))}"/>
+          ${g > 0.25 ? `<g style="mix-blend-mode:screen" opacity="${0.7 * g}"><use href="#all" fill="#22E4FF" transform="translate(${-9 * g},0)"/><use href="#all" fill="#FF2E88" transform="translate(${9 * g},0)"/></g>` : ''}
+          <g clip-path="url(#keep)" opacity="${Math.min(1, (f - 10) / 2)}"><use href="#all" fill="${fold > 0 ? '#fff' : INK}"/></g>
+          ${bands.map((b, i) => `<g clip-path="url(#b${i})"><use href="#all" fill="#22E4FF" opacity="0.9" transform="translate(${b.dx - 6},0)"/><use href="#all" fill="#FF2E88" opacity="0.9" transform="translate(${b.dx + 6},0)"/><use href="#all" fill="${INK}" transform="translate(${b.dx},0)"/></g>`).join('')}
+          <g mask="url(#lk)"><rect width="1920" height="1080" fill="url(#sh)"/></g>
+          <g mask="url(#lk)" filter="url(#soft)" opacity="0.5"><rect width="1920" height="1080" fill="url(#sh)"/></g>
+        </g>
+        ${f >= 146 ? `<rect x="${960 - total * 0.6 * (1 - T(146, 149))}" y="${cy - 1}" width="${total * 1.2 * (1 - T(146, 149))}" height="2" fill="#fff" opacity="${1 - T(146, 149)}"/>` : ''}
+      </svg>`;
+      const holder = document.createElement('div');
+      holder.className = 'layer';
+      holder.innerHTML = svg;
+      stage.appendChild(holder);
+
+      if (f >= 86 && f < 142) {
         const t = document.createElement('div');
         t.className = 'presents center';
-        t.style.top = '860px';
-        t.style.opacity = String(clamp((f - 90) / 15) * fade);
+        t.style.top = `${cy + 150}px`;
+        t.style.fontSize = '27px';
+        const k = ease(T(86, 112));
+        t.style.letterSpacing = `${0.95 - 0.4 * k}em`;
+        t.style.paddingLeft = `${0.95 - 0.4 * k}em`;
+        t.style.opacity = String(0.72 * T(86, 100) * (1 - T(134, 140)));
         t.textContent = 'PRESENTS';
         stage.appendChild(t);
       }
+      const vig = document.createElement('div');
+      vig.className = 'layer';
+      vig.style.background = 'radial-gradient(ellipse at 50% 48%, transparent 45%, rgba(0,0,0,0.65) 100%)';
+      stage.appendChild(vig);
+      stage.appendChild(grain(f));
     },
     /** A card: one line (and an optional small line) on black, in quickly, out quickly. */
     card(p, f, n) {

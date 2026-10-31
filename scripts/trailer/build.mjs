@@ -379,8 +379,11 @@ function main() {
     g.push(
       `[duck][fx]${voiced.length ? '[vomix]' : ''}amix=inputs=${voiced.length ? 3 : 2}:normalize=0:duration=first,loudnorm=I=-14:TP=-1:LRA=11[aout]`,
     );
-    // Picture: the 일병 진급 overlay, then the subtitles.
-    let v = '[0:v]';
+    // Picture: the 일병 진급 overlay, then the subtitles. The concatenated picture starts at
+    // ~0.021 s (the segments' AAC priming), which made -r 30 repeat the first frame and land
+    // every cut one frame late; it is put back to 0 first.
+    g.push('[0:v]setpts=PTS-STARTPTS[v0]');
+    let v = '[v0]';
     const promoDir = path.join(GFX, 'promo');
     if (fs.existsSync(promoDir)) {
       inputs.push('-framerate', String(FPS), '-i', path.join(promoDir, '%04d.png'));
