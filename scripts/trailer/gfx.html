@@ -28,6 +28,7 @@
   .lineK { font-family: 'Pretendard', sans-serif; font-weight: 600; color: rgba(242, 239, 232, 0.6); letter-spacing: 0.32em; padding-left: 0.32em; }
   .hairline { position: absolute; left: 50%; height: 1px; transform: translateX(-50%); background: linear-gradient(90deg, transparent, rgba(242, 239, 232, 0.45), transparent); }
   .title { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-style: italic; letter-spacing: 0.03em; color: var(--ink); white-space: nowrap; }
+  .free { display: inline-block; font-family: 'Pretendard', sans-serif; font-weight: 700; font-size: 40px; letter-spacing: 0.3em; padding: 14px 38px 14px calc(38px + 0.3em); margin-right: 28px; color: var(--amber); border: 2px solid var(--amber); }
   .play { display: inline-block; font-family: 'Pretendard', sans-serif; font-weight: 700; font-size: 40px; letter-spacing: 0.3em; padding: 16px 40px 16px calc(40px + 0.3em); color: #121315; background: var(--amber); }
   .url { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 34px; letter-spacing: 0.32em; padding-left: 0.32em; color: rgba(242, 239, 232, 0.7); }
   .sub { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center; font-family: 'Pretendard', sans-serif; font-weight: 600; font-size: 42px; color: #fff; letter-spacing: 0.005em;
@@ -303,7 +304,7 @@
       rise(t, f, 0, fade, 30);
       const play = el('div', 'abs');
       play.style.top = '548px';
-      play.innerHTML = '<span class="play">지금 플레이</span>';
+      play.innerHTML = '<span class="free">무료 플레이</span><span class="play">지금 플레이</span>';
       rise(play, f, 5, fade);
       const url = el('div', 'abs url', 'strikegy.xyz');
       url.style.top = '658px';

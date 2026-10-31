@@ -27,7 +27,6 @@
 | 제작 | **전부 로컬 세션에서** (촬영, 녹음, 편집) |
 
 **아직 안 정한 것** (trailer.md 7장):
-- 끝 화면에 "무료 플레이"를 넣을지
 - 연출 컷용 장면 세팅 도구를 만들지
 
 정해지지 않은 것은 오너에게 묻는다.
@@ -37,6 +36,7 @@
 | 경로 | 무엇 | git |
 |---|---|---|
 | `docs/design/trailer.md` | 이야기, 대사표, 장면표, 촬영 위치표 (사람이 읽는 원본) | O |
+| `docs/design/trailer-legacy.md` | 지난 판: 처음 대사표, 중복으로 남아 있던 옛 장면표 (참고용, 기준 아님) | O |
 | `scripts/trailer/data/shots.json` | 컷 67개: id, start, end(초), type, desc. **조립의 기준** | O |
 | `scripts/trailer/data/lines.json` | 대사 60줄: id(L01–L60), start, end, speaker, delivery, en, ko | O |
 | `scripts/trailer/gfx.html` | 그래픽 그리는 페이지 (오프닝, 카드, 타이틀, 끝 화면, 진급, 자막, 대체 화면) | O |
