@@ -145,6 +145,30 @@ export interface ViewModelFrame {
   reloadEmpty?: boolean;
 }
 
+/** A muzzle flash: a soft round glow with a few rays (a plain plane read as a flat orange square). */
+function flashTexture(): THREE.DataTexture {
+  const size = 64;
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = ((x + 0.5) / size) * 2 - 1;
+      const dy = ((y + 0.5) / size) * 2 - 1;
+      const d = Math.min(1, Math.hypot(dx, dy));
+      const glow = (1 - d) ** 2.4;
+      const rays = Math.abs(Math.cos(Math.atan2(dy, dx) * 3)) ** 14 * (1 - d) ** 1.1;
+      const p = (y * size + x) * 4;
+      data[p] = data[p + 1] = data[p + 2] = 255;
+      data[p + 3] = Math.min(255, (glow + rays * 0.8) * 255);
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 /** Procedural first-person gun with bob, sway, recoil kick and reload/draw poses. */
 export class ViewModel {
   private root = new THREE.Group();
@@ -220,12 +244,15 @@ export class ViewModel {
     this.root.add(this.gun);
     const flashMat = new THREE.MeshBasicMaterial({
       color: 0xffd27a,
+      map: flashTexture(),
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
+      side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     });
-    this.flash = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.12), flashMat);
+    // Bigger than the old plain square: the light fades out well inside its edges.
+    this.flash = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), flashMat);
     this.flash.visible = false;
   }
 
