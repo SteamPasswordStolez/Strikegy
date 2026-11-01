@@ -92,8 +92,8 @@ export class Matches implements MatchHost {
     this.rooms.get(room)?.detach(uid);
   }
 
-  leave(room: string, uid: string): void {
-    this.rooms.get(room)?.leave(uid);
+  leave(room: string, uid: string, keep = false): void {
+    this.rooms.get(room)?.leave(uid, keep);
   }
 
   stop(room: string): void {

@@ -11,7 +11,7 @@ import {
   boostsLeft,
   buyBooster,
   buyBox,
-  buyPass,
+  buyLeaves, useLeave,
   claimMail,
   craft,
   drawRarity,
@@ -327,13 +327,23 @@ describe('shop', () => {
     for (const b of BUNDLES) for (const id of b.items) expect(item(id)?.source).toBe('weekly');
   });
 
-  it('sells two leave passes a day', () => {
+  it('sells reward leaves without a limit: for later, cheaper in a pack, dearer on the way out', () => {
     const p = rich(10_000);
-    expect(buyPass(p, MON)).toBeNull();
-    expect(buyPass(p, MON)).toBeNull();
-    expect(buyPass(p, MON)).toBe('limit');
-    expect(buyPass(p, MON + DAY)).toBeNull();
-    expect(econOf(p).tickets).toBe(10_000 - 3 * ECON.pass.price);
+    for (let i = 0; i < 5; i++) expect(buyLeaves(p, false)).toBeNull();
+    expect(buyLeaves(p, true)).toBeNull();
+    expect(econOf(p).leaves).toBe(5 + ECON.leave.pack.count);
+    expect(econOf(p).tickets).toBe(10_000 - 5 * ECON.leave.price - ECON.leave.pack.price);
+    // One on hand goes first, for nothing more.
+    const before = econOf(p).tickets;
+    expect(runShopOp(p, { op: 'pass' }, Math.random, MON).error).toBeUndefined();
+    expect(econOf(p).leaves).toBe(4 + ECON.leave.pack.count);
+    expect(econOf(p).tickets).toBe(before);
+    // None on hand: bought on the spot, while the tickets last.
+    const q = rich(ECON.leave.instant);
+    expect(useLeave(q)).toBeNull();
+    expect(econOf(q).tickets).toBe(0);
+    expect(useLeave(q)).toBe('funds');
+    expect(parseShopOp({ op: 'leaves', pack: true })).toEqual({ op: 'leaves', pack: true });
   });
 
   it('checks requests from outside', () => {

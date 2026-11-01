@@ -109,7 +109,6 @@ import { item } from '@/progression/catalog';
 import { KillEffects } from '@/render/killEffects';
 import { applyVehicleSkin } from '@/vehicles/vehicleLooks';
 import { ECON, type Econ, type MatchEcon } from '@/progression/economy';
-import { dayKey } from '@/progression/calendar';
 import { ContractPanel } from '@/ui/ContractPanel';
 import type { RankId } from '@/progression/levels';
 import { Briefing } from '@/audio/briefing/Briefing';
@@ -5772,11 +5771,16 @@ export class Game {
     if (this.net && signedIn() && !this.matchOver) {
       let people = 0;
       for (const s of this.net.roster.values()) if (!s.bot) people++;
-      this.overlay.show(t('pause.leaveTitle'), t(people >= ProgressTracker.KEEP_AT ? 'pause.leaveKeep' : 'pause.leaveNet'), 'info');
-      this.overlay.setActions([
+      const kept = people >= ProgressTracker.KEEP_AT;
+      this.overlay.show(t('pause.leaveTitle'), t(kept ? 'pause.leaveKeep' : 'pause.leaveNet'), 'info');
+      const out: OverlayAction[] = [
         { label: t('pause.leaveGo'), primary: true, onClick: () => this.quit() },
         { label: t('pause.leaveStay'), onClick: () => this.pause() },
-      ]);
+      ];
+      // The server takes the leave from the account as the seat goes.
+      const label = kept ? null : this.leaveLabel();
+      if (label) out.push({ label, onClick: () => this.quit(true) });
+      this.overlay.setActions(out);
       return;
     }
     if (!tr || this.matchOver) return this.quit();
@@ -5788,15 +5792,17 @@ export class Game {
       { label: t('pause.leaveGo'), primary: true, onClick: () => this.quit() },
       { label: t('pause.leaveStay'), onClick: () => this.pause() },
     ];
-    // A leave pass (외출증, progression step 5): what rose is kept, for supply tickets, two a day.
-    const e = econOf(currentProfile());
-    const passes = ECON.pass.perDay - (e.day.key === dayKey(Date.now()) ? e.day.passes : 0);
-    if (cost.undone && cost.xp > 0 && passes > 0 && e.tickets >= ECON.pass.price)
-      actions.push({
-        label: t('pause.leavePass').replace('{p}', String(ECON.pass.price)).replace('{n}', String(passes)),
-        onClick: () => void this.leaveWithPass(),
-      });
+    // Reward leave: what rose is kept.
+    const label = cost.undone && cost.xp > 0 ? this.leaveLabel() : null;
+    if (label) actions.push({ label, onClick: () => void this.leaveWithPass() });
     this.overlay.setActions(actions);
+  }
+
+  /** The way out with a reward leave: one on hand, or bought on the spot; null with neither. */
+  private leaveLabel(): string | null {
+    const e = econOf(currentProfile());
+    if (e.leaves > 0) return t('pause.leaveUse').replace('{n}', String(e.leaves));
+    return e.tickets >= ECON.leave.instant ? t('pause.leaveBuy').replace('{p}', String(ECON.leave.instant)) : null;
   }
 
   private async leaveWithPass(): Promise<void> {
@@ -5816,9 +5822,9 @@ export class Game {
   }
 
   /** Out of the match to the main menu (the room is left first, so the seat isn't kept). */
-  private quit(): void {
+  private quit(leave = false): void {
     if (this.net) {
-      this.net.link.send({ t: 'leave' });
+      this.net.link.send(leave ? { t: 'leave', pass: true } : { t: 'leave' });
       this.net.link.close();
     }
     toLobby();

@@ -390,7 +390,7 @@ export type ClientMsg =
   /** The admin page: the server's admin key, then its operations. */
   | { t: 'adminAuth'; key: string }
   | { t: 'adm'; op: AdminOp }
-  | { t: 'leave' }
+  | { t: 'leave'; pass?: boolean }
   | { t: 'settings'; settings: RoomSettings }
   | { t: 'start' }
   | { t: 'end' }
@@ -673,8 +673,9 @@ export function parseClientMsg(text: string): ClientMsg | null {
         : null;
     case 'ready':
       return { t: 'ready', hostBots: raw.hostBots === true };
-    case 'list':
     case 'leave':
+      return raw.pass === true ? { t: 'leave', pass: true } : { t: 'leave' };
+    case 'list':
     case 'start':
     case 'end':
       return { t: raw.t };

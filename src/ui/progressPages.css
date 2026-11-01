@@ -1657,3 +1657,18 @@ img.cos-skin.cos-wait {
   opacity: 0.35;
   cursor: default;
 }
+.pp-boost-desc {
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.pp-logindlg .login-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  margin-top: var(--s3);
+}
+.pp-login-privacy {
+  display: block;
+  margin-top: var(--s4);
+  font-size: var(--fs-sm);
+}

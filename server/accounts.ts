@@ -318,6 +318,12 @@ export class Accounts {
     return { profile: p, ...out };
   }
 
+  /** A reward leave for leaving a room (one on hand, else bought at the instant price). */
+  useLeave(userId: string): boolean {
+    const out = this.shop(userId, { op: 'pass' });
+    return !!out && !out.error;
+  }
+
   /** A match the server watched (multiplayer): added as it is. */
   apply(userId: string, s: MatchSummary): Applied {
     const applied = applySummary(this.profile(userId), s, this.now());

@@ -26,7 +26,7 @@ import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
 import { accountConfig, onAccountChange, refreshAccount, setAccountName, settleLeft, settledProfile, signedIn } from '@/net/account';
 import { econOf } from '@/progression/economy';
-import { missionsCard, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
+import { missionsCard, openLogin, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
 import { renderServiceRecord } from './ServiceRecord';
 import { glossaryList } from './glossary';
@@ -504,6 +504,17 @@ export class Lobby {
     // The player's card: rank, level and the XP bar; it opens the service record.
     const prof0 = settledProfile();
     const at = levelOf(prof0.xp);
+    // Guests see signing in first thing (owner, 2026-11-01): the way to multiplayer and to keeping their progress.
+    if (!signedIn()) {
+      const login = el('button', 'ds-btn primary mm-lang mm-login', corner);
+      login.textContent = t('acct.title');
+      login.title = t('acct.needLogin');
+      login.addEventListener('pointerenter', () => uiSound('hover'));
+      login.addEventListener('click', () => {
+        uiSound('open');
+        openLogin(this.root, () => this.render());
+      });
+    }
     const prof = el('button', 'mm-profile mm-card', corner);
     prof.title = t('menu.recordDesc');
     el('span', 'mm-card-pic', prof).innerHTML = insigniaAt(at.level);

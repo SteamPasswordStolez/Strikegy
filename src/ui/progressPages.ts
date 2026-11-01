@@ -12,6 +12,7 @@
  * Mail opens as a dialog from the main menu. Everything goes through
  * `shopAction` (the server for an account, this browser for a guest).
  */
+import { loginButtons } from './loginButtons';
 import { t, type MessageKey } from '@/i18n';
 import { uiSound } from '@/audio/uiSounds';
 import { cachedAccount, settledProfile, shopAction, staffTickets } from '@/net/account';
@@ -502,6 +503,25 @@ function renderBoosters(main: HTMLElement, p: Profile, o: PageOptions): void {
       el('span', '', buy, n(price!));
       buy.addEventListener('click', () => confirmBuy(o, { title: `${t(`pp.boost.${kind}` as MessageKey)} · ${t('pp.minutes').replace('{n}', min)}`, sub: t('pp.boostersNote'), price: price! }, { op: 'booster', item: id }));
     }
+  }
+  // Reward leave: leaving a match keeps what rose.
+  const leave = el('div', 'pp-boost k-leave', boosts);
+  const top = el('div', 'pp-boost-top', leave);
+  top.innerHTML = icon('check');
+  el('div', 'pp-boost-name', top, t('pp.leave'));
+  el('div', `pp-boost-state${e.leaves > 0 ? ' on' : ''}`, leave, t('pp.leaveOwned').replace('{n}', String(e.leaves)));
+  el('div', 'pp-boost-desc ds-dim', leave, t('pp.leaveDesc').replace('{p}', n(ECON.leave.instant)));
+  const offers: [string, number, boolean][] = [
+    [t('pp.leaveOne'), ECON.leave.price, false],
+    [t('pp.leavePack').replace('{n}', String(ECON.leave.pack.count)), ECON.leave.pack.price, true],
+  ];
+  for (const [label, price, pack] of offers) {
+    const row = el('div', 'pp-boost-row', leave);
+    el('span', 'pp-boost-min', row, label);
+    const buy = el('button', `ds-btn${price > ticketsOnHand ? ' short' : ''}`, row);
+    buy.innerHTML = icon('star');
+    el('span', '', buy, n(price));
+    buy.addEventListener('click', () => confirmBuy(o, { title: `${t('pp.leave')} · ${label}`, sub: t('pp.leaveDesc').replace('{p}', n(ECON.leave.instant)), price }, { op: 'leaves', pack }));
   }
 }
 
@@ -1032,6 +1052,32 @@ function missionRow(parent: HTMLElement, name: string, prog: number, need: numbe
 // The main menu's mail and missions.
 
 /** The mailbox as a dialog (salary, attendance, gifts). */
+/** Sign in, from the main menu: why, the providers' buttons, the privacy page. `after` on signing in or closing. */
+export function openLogin(root: HTMLElement, after: () => void): void {
+  const shade = el('div', 'dlg-shade ds-root pp-detail-shade', root);
+  shade.dataset.dsTheme = 'bfv';
+  const box = el('div', 'pp-maildlg pp-logindlg', shade);
+  const close = escToClose(shade, () => {
+    shade.remove();
+    after();
+  });
+  shade.addEventListener('click', (ev) => ev.target === shade && close());
+  const head = el('div', 'pp-maildlg-head', box);
+  el('h2', '', head, t('acct.title'));
+  const x = el('button', 'pp-detail-x', head);
+  x.innerHTML = icon('close');
+  x.addEventListener('click', close);
+  el('div', 'pp-note', box, t('acct.guestNote'));
+  const failed = el('div', 'pp-note', box);
+  loginButtons(box, close, (text) => {
+    failed.textContent = text;
+  });
+  const link = el('a', 'pp-login-privacy ds-dim', box, t('acct.privacy')) as HTMLAnchorElement;
+  link.href = `${import.meta.env.BASE_URL}privacy/`;
+  link.target = '_blank';
+  link.rel = 'noopener';
+}
+
 export function openMail(root: HTMLElement, after: () => void): void {
   const shade = el('div', 'dlg-shade ds-root pp-detail-shade', root);
   shade.dataset.dsTheme = 'bfv';

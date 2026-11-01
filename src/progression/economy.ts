@@ -44,7 +44,8 @@ export const ECON = {
   odds: { common: 0.55, uncommon: 0.27, rare: 0.12, epic: 0.05, legendary: 0.01 } as Record<Rarity, number>,
   pity: { epic: 20, legendary: 80 },
   partsPack: { price: 300, parts: 100 },
-  pass: { price: 300, perDay: 2 },
+  /** Reward leave (포상휴가): from the shop, 5 at 20 % off, or bought on the way out (owner, 2026-11-01: no limit a day). */
+  leave: { price: 500, pack: { count: 5, price: 2000 }, instant: 700 },
   attendance: [earn(50), earn(50), earn(100), earn(100), earn(150), earn(150), 0] as const,
   attendanceBoxes: 2,
   month: { days: 20, tickets: earn(1000) },
@@ -87,7 +88,9 @@ export interface Econ {
   camo: Record<string, CamoState>;
   /** Level rewards given up to here. */
   rewardedLevel: number;
-  day: { key: string; matches: number; wins: number; passes: number; rerolls: number };
+  day: { key: string; matches: number; wins: number; rerolls: number };
+  /** Reward leaves on hand. */
+  leaves: number;
   week: { key: string; matches: number; modes: string[] };
   att: { lastDay: string; cycle: number; month: string; days: number; monthPaid: boolean };
   missions: { day: string; daily: MissionState[]; week: string; weekly: MissionState[]; weeklyBonus: boolean };
@@ -105,7 +108,8 @@ export function emptyEcon(): Econ {
     equip: { camo: {}, skin: {}, charm: {}, kfx: {}, vskin: {} },
     camo: {},
     rewardedLevel: 1,
-    day: { key: '', matches: 0, wins: 0, passes: 0, rerolls: 0 },
+    day: { key: '', matches: 0, wins: 0, rerolls: 0 },
+    leaves: 0,
     week: { key: '', matches: 0, modes: [] },
     att: { lastDay: '', cycle: 0, month: '', days: 0, monthPaid: false },
     missions: { day: '', daily: [], week: '', weekly: [], weeklyBonus: false },
@@ -144,7 +148,8 @@ export function cleanEcon(raw: unknown): Econ {
   }
   e.rewardedLevel = Math.max(1, Math.floor(n0(o.rewardedLevel)) || 1);
   const day = o0(o.day);
-  e.day = { key: s0(day.key, 10), matches: n0(day.matches), wins: n0(day.wins), passes: n0(day.passes), rerolls: n0(day.rerolls) };
+  e.day = { key: s0(day.key, 10), matches: n0(day.matches), wins: n0(day.wins), rerolls: n0(day.rerolls) };
+  e.leaves = Math.floor(n0(o.leaves));
   const wk = o0(o.week);
   e.week = { key: s0(wk.key, 10), matches: n0(wk.matches), modes: (Array.isArray(wk.modes) ? wk.modes : []).filter(id0).slice(0, 20) };
   const att = o0(o.att);
@@ -209,7 +214,7 @@ export function settleCalendar(p: Profile, now: number): void {
   const e = econOf(p);
   const today = dayKey(now);
   if (e.day.key !== today) {
-    e.day = { key: today, matches: 0, wins: 0, passes: 0, rerolls: 0 };
+    e.day = { key: today, matches: 0, wins: 0, rerolls: 0 };
   }
   if (e.missions.day !== today) {
     e.missions.day = today;
@@ -715,14 +720,25 @@ export function rerollMission(p: Profile, index: number, now: number): ShopError
   return null;
 }
 
-/** A leave pass (외출증, 300, two a day): leaving a solo match or a small room keeps what rose. */
-export function buyPass(p: Profile, now: number): ShopError | null {
-  settleCalendar(p, now);
+/** Reward leaves for later, one or the pack. */
+export function buyLeaves(p: Profile, pack: boolean): ShopError | null {
   const e = econOf(p);
-  if (e.day.passes >= ECON.pass.perDay) return 'limit';
-  if (e.tickets < ECON.pass.price) return 'funds';
-  e.tickets -= ECON.pass.price;
-  e.day.passes++;
+  const price = pack ? ECON.leave.pack.price : ECON.leave.price;
+  if (e.tickets < price) return 'funds';
+  e.tickets -= price;
+  e.leaves += pack ? ECON.leave.pack.count : 1;
+  return null;
+}
+
+/** Takes a reward leave for leaving a match now (a solo match or a small room keeps what rose): one on hand, else bought at the instant price. */
+export function useLeave(p: Profile): ShopError | null {
+  const e = econOf(p);
+  if (e.leaves > 0) {
+    e.leaves--;
+    return null;
+  }
+  if (e.tickets < ECON.leave.instant) return 'funds';
+  e.tickets -= ECON.leave.instant;
   return null;
 }
 
@@ -797,6 +813,7 @@ export type ShopOp =
   | { op: 'parts' }
   | { op: 'reroll'; index: number }
   | { op: 'pass' }
+  | { op: 'leaves'; pack: boolean }
   | { op: 'contract' }
   | { op: 'claim'; id?: string }
   | { op: 'equip'; slot: EquipSlot; value?: string; weapon?: string }
@@ -819,6 +836,8 @@ export function parseShopOp(raw: unknown): ShopOp | null {
     case 'pass':
     case 'contract':
       return { op: o.op };
+    case 'leaves':
+      return { op: 'leaves', pack: o.pack === true };
     case 'craft':
       return str(o.item) ? { op: 'craft', item: o.item as string } : null;
     case 'reroll':
@@ -859,7 +878,9 @@ export function runShopOp(p: Profile, op: ShopOp, rand: () => number, now: numbe
     case 'reroll':
       return wrap(rerollMission(p, op.index, now));
     case 'pass':
-      return wrap(buyPass(p, now));
+      return wrap(useLeave(p));
+    case 'leaves':
+      return wrap(buyLeaves(p, op.pack));
     case 'contract':
       return wrap(payContractRoll(p));
     case 'claim':

@@ -312,12 +312,12 @@ export class MatchRoom {
   }
 
   /** Gone for good: the soldier leaves the field. */
-  leave(uid: string): void {
+  leave(uid: string, keep = false): void {
     const seat = this.seats.get(uid);
     if (!seat) return;
     // Left before the end: undone with two people or fewer, kept without the bonuses with more (the anticheat's kick: undone).
     const tr = seat.progress;
-    if (tr && !tr.done) this.opts.progress?.(uid, tr.leave(this.seats.size, seat.kicked));
+    if (tr && !tr.done) this.opts.progress?.(uid, tr.leave(this.seats.size, seat.kicked, keep));
     this.releaseAll(seat);
     this.sim.removeSoldier(seat.soldier.id);
     this.seats.delete(uid);

@@ -177,9 +177,9 @@ export class WorkerMatches implements MatchHost {
     this.post(room, { t: 'detach', uid });
   }
 
-  leave(room: string, uid: string): void {
+  leave(room: string, uid: string, keep = false): void {
     this.rooms.get(room)?.lines.delete(uid);
-    this.post(room, { t: 'leave', uid });
+    this.post(room, { t: 'leave', uid, keep });
   }
 
   stop(room: string): void {

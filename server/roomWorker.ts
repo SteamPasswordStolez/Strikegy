@@ -14,7 +14,7 @@ import type { MatchSummary } from '../src/progression/profile.ts';
 export type ToRoom =
   | { t: 'join'; player: MatchPlayer }
   | { t: 'detach'; uid: string }
-  | { t: 'leave'; uid: string }
+  | { t: 'leave'; uid: string; keep?: boolean }
   | { t: 'msg'; uid: string; msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }> }
   | { t: 'bin'; uid: string; data: Uint8Array }
   /** Being taken down without a winner: settle everyone's progress, then say `settled`. */
@@ -71,7 +71,7 @@ function handle(m: ToRoom): void {
     case 'detach':
       return r.detach(m.uid);
     case 'leave':
-      return r.leave(m.uid);
+      return r.leave(m.uid, m.keep);
     case 'msg':
       if (m.msg.t === 'ready') return r.ready(m.uid, m.msg.hostBots === true);
       if (m.msg.t === 'deploy') return r.deploy(m.uid, m.msg.key, m.msg.kit);

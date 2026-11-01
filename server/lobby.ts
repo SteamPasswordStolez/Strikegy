@@ -113,7 +113,7 @@ export interface MatchHost {
   /** Their connection dropped: the seat stays. */
   detach(room: string, uid: string): void;
   /** Gone for good. */
-  leave(room: string, uid: string): void;
+  leave(room: string, uid: string, keep?: boolean): void;
   /** The match is over or called off. */
   stop(room: string): void;
   message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void;
@@ -154,6 +154,8 @@ export interface AccountHost {
   /** Supply tickets into an account; its tickets after, or null. */
   giveTickets(userId: string, n: number): number | null;
   find(query: string): AdminAccount[];
+  /** Takes a reward leave from the account (one on hand, else bought); false when it can't. */
+  useLeave(userId: string): boolean;
   reset(userId: string): void;
   revoke(userId: string): void;
   readonly count: number;
@@ -690,13 +692,13 @@ export class LobbyCore {
     if (r.owner === id || this.clients.get(r.owner)?.awayUntil != null) r.owner = here;
   }
 
-  private leaveRoom(c: Client, reason: 'leave' | 'kicked' | 'closed'): void {
+  private leaveRoom(c: Client, reason: 'leave' | 'kicked' | 'closed', pass = false): void {
     const r = c.room ? this.rooms.get(c.room) : undefined;
     c.room = null;
     c.team = null;
     if (!r) return;
     if (reason !== 'closed') this.send(c, { t: 'left', reason });
-    if (r.state === 'playing') this.matches?.leave(r.id, c.uid);
+    if (r.state === 'playing') this.matches?.leave(r.id, c.uid, pass && !!c.account && !!this.accounts?.useLeave(c.account));
     const owner = r.owner;
     this.removeMember(r, c.id);
     if (!this.rooms.has(r.id)) return;
@@ -979,7 +981,7 @@ export class LobbyCore {
       }
       case 'leave':
         if (!r) return this.fail(c, 'notInRoom');
-        return this.leaveRoom(c, 'leave');
+        return this.leaveRoom(c, 'leave', msg.pass === true);
       case 'settings': {
         if (!r) return this.fail(c, 'notInRoom');
         if (r.owner !== c.id) return this.fail(c, 'notOwner');

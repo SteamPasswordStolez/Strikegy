@@ -235,6 +235,15 @@ describe('progress in a room on the server', () => {
       // The guest went first: two people remain, so 'a' leaving undoes everything.
       room.leave('a');
       expect(got[0]).toMatchObject({ uid: 'a', s: { result: 'left', xp: 0 } });
+      // A reward leave keeps it, even alone in the room.
+      const small = await MatchRoom.create({ room: 'r-leave', map: 'persia', mode: 'zone', lineup: 'users', size: 8 });
+      const kept: MatchSummary[] = [];
+      (small as unknown as { opts: { progress: (uid: string, s: MatchSummary) => void } }).opts.progress = (_uid, s) => kept.push(s);
+      small.join({ uid: 'e', name: 'e', xp: 0 }, conn);
+      small.sim.scores.objective(small.sim.scores.table(null).map((r) => r.id), 'capture');
+      small.leave('e', true);
+      small.dispose();
+      expect(kept[0]).toMatchObject({ result: 'left', xp: 1500 });
       room.join({ uid: 'c', name: 'c', xp: 0 }, conn);
       room.join({ uid: 'd', name: 'd', xp: 0 }, conn);
       room.leave('b');
