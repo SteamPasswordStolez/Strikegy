@@ -301,6 +301,14 @@
   .mm-side {
     width: calc(var(--u) * 21);
   }
+  /* The side column ran up over the player card and off the screen's edge (owner, 2026-11-01): on
+     short screens only the continue card, as wide as the column; missions are under 진급. */
+  .mm-missions {
+    display: none;
+  }
+  .mm-continue {
+    width: 100%;
+  }
   .mm-util {
     margin-top: var(--s3);
   }

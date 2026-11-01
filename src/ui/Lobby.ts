@@ -534,7 +534,9 @@ export class Lobby {
     });
     for (const b of [lang, prof]) b.addEventListener('pointerenter', () => uiSound('hover'));
 
-    eventBanner(body);
+    // In the top row between the wordmark and the corner (it lay over the entries on short screens).
+    const evb = eventBanner(top);
+    if (evb) top.insertBefore(evb, corner);
     const menu = el('div', 'ds-menu mm-menu', body);
     ENTRIES.forEach((id, i) => {
       const size = id === 'play' ? ' hero' : BIG_ENTRIES.includes(id) ? '' : ' small';

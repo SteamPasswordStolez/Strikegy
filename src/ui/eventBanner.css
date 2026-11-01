@@ -40,11 +40,11 @@
     transform: translateY(-6px);
   }
 }
-/* On the main menu: under the wordmark, left. */
-.mm-body > .evb {
-  position: absolute;
-  top: calc(var(--u, 16px) * 7);
-  left: calc(var(--u, 16px) * 2.5);
-  max-width: min(92vw, calc(var(--u, 16px) * 26));
-  z-index: 2;
+/* On the main menu: in the top row after the wordmark (in the flow: it lay over the entries on phones). */
+.mm-top > .evb {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(var(--u, 16px) * 26);
+  margin-right: auto;
+  margin-left: var(--s6, 24px);
 }
