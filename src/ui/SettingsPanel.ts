@@ -92,6 +92,7 @@ export class SettingsPanel {
       this.keyRows(rows);
     } else if (this.cat === 'video') {
       this.slider(rows, 'lobby.fov', 'fov', 60, 100, 1, (v) => `${Math.round(v)}°`);
+      this.choice(rows, 'lobby.cameraBob', 'cameraBob', ['full', 'low', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.cb.${v}` as MessageKey)));
       this.slider(rows, 'lobby.renderScale', 'renderScale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       // What auto picks needs the GPU's name (a throwaway WebGL context): asked once.
       autoQuality ??= resolveQuality('auto');
@@ -178,7 +179,7 @@ export class SettingsPanel {
     });
   }
 
-  private choice<K extends 'quality' | 'locale' | 'progressNotices' | 'inputMode' | 'killFx' | 'soldierSex', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
+  private choice<K extends 'quality' | 'locale' | 'progressNotices' | 'inputMode' | 'killFx' | 'soldierSex' | 'cameraBob', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const v of values) {
       const b = el('button', v === this.s[key] ? 'sel' : '', seg);

@@ -88,6 +88,7 @@ import { BREATH, SWAY_AMP, createBreath, scopeSway, stepBreath } from '@/weapons
 import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { ambienceFor } from '@/audio/ambienceDirector';
+import { CameraMotion } from '@/player/cameraMotion';
 import { HUD, statusLine, type HudFrame, type ModeStatus, type Side, type SquadHud, type ZoneHud } from '@/ui/HUD';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { chatOf } from '@/net/chat';
@@ -245,6 +246,9 @@ const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1
 /** Top-level scenery groups that never move after loading (see freezeStatic). */
 const FROZEN_GROUPS = /^(map:|props$|scanDressing$|rivers$|forest$|ground-cover$|backdrop$)/;
 
+/** The 이동 화면 흔들림 setting as a scale on the head's motion. */
+const CAMERA_BOB = { full: 1, low: 0.5, off: 0 } as const;
+
 export class Game {
   readonly bus = new EventBus<GameEvents>();
   readonly settings: Settings;
@@ -364,6 +368,8 @@ export class Game {
   private shake = 0;
   /** The camera's punch from one's own shots (up, roll, sideways; the aim stays put). */
   private readonly punch = { pitch: new Spring(), roll: new Spring(), yaw: new Spring() };
+  /** The head moving with the body on foot: steps, landings, slides (cameraMotion.ts). */
+  private readonly camMotion = new CameraMotion();
   private deathBlend = 0;
   /** Class loadouts picked on the deploy screen (kept per class across matches). */
   private readonly loadouts = new LoadoutStore();
@@ -1136,6 +1142,7 @@ export class Game {
     bus.on('player:landed', (e) => {
       this.audio.land(e.impactSpeed, e.surface);
       this.viewModel.onLand(e.impactSpeed);
+      this.camMotion.land(e.impactSpeed, CAMERA_BOB[this.settings.cameraBob]);
       this.shake = Math.min(0.03, this.shake + e.impactSpeed * 0.0008);
     });
   }
@@ -3573,6 +3580,28 @@ export class Game {
     this.gunView = null;
     if (this.ride && p.alive) this.rideCamera(alpha, dt);
     else this.showRideModel(null);
+    // On foot: the head moves with the body (only the view; the aim is the player's look).
+    const cm = this.camMotion;
+    if (p.alive && !this.ride && !p.swimming && this.deployed) {
+      const st = this.viewModel.stride;
+      const cy = Math.cos(p.yaw);
+      const sy = Math.sin(p.yaw);
+      cm.update({
+        dt,
+        time: this.elapsed,
+        phase: st.phase,
+        stride: st.amount,
+        sprint: st.sprint,
+        ads: w.adsBlend,
+        sliding: p.sliding,
+        speed: Math.hypot(p.velocity.x, p.velocity.z),
+        strafe: p.velocity.x * cy - p.velocity.z * sy,
+        scale: CAMERA_BOB[this.settings.cameraBob],
+      });
+      cam.position.x += cy * cm.offset.x;
+      cam.position.z -= sy * cm.offset.x;
+      cam.position.y += cm.offset.y;
+    } else cm.reset();
 
     this.shake *= Math.exp(-7 * dt);
     const pu = this.punch;
@@ -3584,8 +3613,13 @@ export class Game {
     // Scope sway (breath.ts) is part of the aim, so the view follows it too.
     // (set by rideCamera above)
     const gv = this.gunView as { yaw: number; pitch: number } | null;
-    cam.rotation.set((gv ? gv.pitch : p.pitch + w.recoil.pitch + w.sway.pitch) + sx, (gv ? gv.yaw : p.yaw + w.recoil.yaw + w.sway.yaw) + sy, this.deathBlend * (gone ? 0.7 : 0.25) + this.camRoll + pu.roll.x, 'YXZ');
-    let fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend;
+    cam.rotation.set(
+      (gv ? gv.pitch : p.pitch + w.recoil.pitch + w.sway.pitch + cm.pitch) + sx,
+      (gv ? gv.yaw : p.yaw + w.recoil.yaw + w.sway.yaw + cm.yaw) + sy,
+      this.deathBlend * (gone ? 0.7 : 0.25) + this.camRoll + pu.roll.x + cm.roll,
+      'YXZ',
+    );
+    let fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend + cm.fov;
     if (this.ride && p.alive && !this.rideThird) fov = this.rideFov(this.ride.v, dt);
     if (Math.abs(cam.fov - fov) > 0.01) {
       cam.fov = fov;
@@ -3986,6 +4020,7 @@ export class Game {
       strafe: p.velocity.x * cy - p.velocity.z * sy,
       vy: p.velocity.y,
       crouching: p.crouching,
+      sliding: p.sliding,
       time: this.elapsed,
       reloadEmpty: this.vmReloadEmpty,
     });

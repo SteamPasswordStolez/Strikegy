@@ -139,6 +139,7 @@ export interface ViewModelFrame {
   strafe?: number;
   vy?: number;
   crouching?: boolean;
+  sliding?: boolean;
   time?: number;
   /** The magazine was empty when this reload began (drop it, slap the bolt catch). */
   reloadEmpty?: boolean;
@@ -556,6 +557,11 @@ export class ViewModel {
     this.motion.land(impactSpeed);
   }
 
+  /** The stride (phase, amount) and the sprint pose blend, for the camera's motion. */
+  get stride(): { phase: number; amount: number; sprint: number } {
+    return { phase: this.motion.stridePhase, amount: this.motion.strideAmount, sprint: this.sprintBlend };
+  }
+
   /**
    * A shot: each gun kicks its own way (gunplay audit, 2026-10-18). Down the
    * sights the gun stays nearer the eye, so less of it shows.
@@ -597,6 +603,7 @@ export class ViewModel {
       sprintBlend: this.sprintBlend,
       grounded: f.grounded,
       crouching: !!f.crouching,
+      sliding: !!f.sliding,
       forward: f.forward ?? f.speed,
       strafe: f.strafe ?? 0,
       vy: f.vy ?? 0,

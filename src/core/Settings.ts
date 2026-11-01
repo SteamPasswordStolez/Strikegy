@@ -40,6 +40,8 @@ export interface Settings {
   killFx: 'all' | 'mine' | 'off';
   /** The player's soldier: a man or a woman (owner, 2026-10-25; others see it in rooms). */
   soldierSex: 'm' | 'f';
+  /** The view moving with steps, landings and slides (cameraMotion.ts): normal, low or off (motion sickness). */
+  cameraBob: 'full' | 'low' | 'off';
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -61,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   progressNotices: 'all',
   killFx: 'all',
   soldierSex: 'm',
+  cameraBob: 'full',
   musicVolume: 0.5,
   marshalMusic: true,
   inputMode: 'auto',

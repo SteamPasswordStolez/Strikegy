@@ -10,6 +10,8 @@ export interface MotionInput {
   sprintBlend: number;
   grounded: boolean;
   crouching: boolean;
+  /** In a slide (no steps: the gun tucks in and canted, juddering with the ground). */
+  sliding?: boolean;
   /** Ground speed along the view (m/s, + forward) and across it (+ right). */
   forward: number;
   strafe: number;
@@ -51,6 +53,16 @@ export class ViewMotion {
   private readonly lift = new LagSpring(10, 0.5);
   private readonly cant = new LagSpring(9, 0.55);
   private wasCrouching = false;
+  /** 0..1 into the slide pose. */
+  private slide = 0;
+
+  /** The stride, for the camera to move on the same steps (cameraMotion.ts). */
+  get stridePhase(): number {
+    return this.phase;
+  }
+  get strideAmount(): number {
+    return this.stride;
+  }
 
   /** Landing: the gun drops and springs back (impact speed m/s). */
   land(impact: number): void {
@@ -65,9 +77,12 @@ export class ViewMotion {
     const speed = Math.hypot(f.forward, f.strafe);
 
     // Stride: about 2.6 steps a second walking, 3.3 sprinting; only on the ground.
-    const target = f.grounded ? clamp(speed / WALK, 0, 1.5) : 0;
-    this.stride += (target - this.stride) * (1 - Math.exp(-8 * dt));
-    if (f.grounded && speed > 0.2) this.phase += dt * Math.PI * 2 * (0.55 + 0.17 * speed);
+    // A slide has no steps (at slide speed the walking bob ran at its largest).
+    const sliding = !!f.sliding;
+    const target = f.grounded && !sliding ? clamp(speed / WALK, 0, 1.5) : 0;
+    this.stride += (target - this.stride) * (1 - Math.exp(-(sliding ? 14 : 8) * dt));
+    this.slide += ((sliding ? 1 : 0) - this.slide) * (1 - Math.exp(-(sliding ? 11 : 6) * dt));
+    if (f.grounded && !sliding && speed > 0.2) this.phase += dt * Math.PI * 2 * (0.55 + 0.17 * speed);
     const s = Math.sin(this.phase);
     const dip = (1 - Math.cos(2 * this.phase)) / 2;
     const amp = this.stride * (f.crouching ? 0.6 : 1) * keep;
@@ -108,7 +123,16 @@ export class ViewMotion {
     const breathX = Math.sin(bt * 1.1) * 0.0016 * still;
     const breathY = Math.sin(bt * 2.2 + 0.6) * 0.0012 * still;
 
-    this.pos.set(bx + sideX + ly * 0.35 + breathX, by + liftY - lp * 0.3 + breathY, foreZ);
-    this.rot.set(pitch + lp + liftY * 0.9 + breathY * 2, yaw + ly + breathX * 2, roll + leanZ + cantZ + ly * 0.4);
+    // Slide pose: tucked in low toward the body, canted, muzzle a little up, juddering with the ground.
+    const sl = this.slide * (1 - 0.8 * ads);
+    const jud = this.slide * clamp(speed / 9, 0, 1) * (1 - 0.6 * ads);
+    const jy = (Math.sin(bt * 59) * 0.0018 + Math.sin(bt * 91 + 0.7) * 0.0009) * jud;
+    const jr = Math.sin(bt * 67 + 1.9) * 0.006 * jud;
+    const slX = 0.014 * sl;
+    const slY = -0.02 * sl + jy;
+    const slZ = 0.03 * sl;
+
+    this.pos.set(bx + sideX + ly * 0.35 + breathX + slX, by + liftY - lp * 0.3 + breathY + slY, foreZ + slZ);
+    this.rot.set(pitch + lp + liftY * 0.9 + breathY * 2 + 0.05 * sl + jy * 3, yaw + ly + breathX * 2 - 0.06 * sl, roll + leanZ + cantZ + ly * 0.4 + 0.24 * sl + jr);
   }
 }
