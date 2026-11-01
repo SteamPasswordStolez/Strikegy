@@ -22,7 +22,7 @@ import { INCOME } from '../src/progression/income.ts';
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
 import { cleanName, reservedText } from '../src/net/lobbyProtocol.ts';
 import { profane } from '../src/net/wordFilter.ts';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import Database from 'better-sqlite3';
 import { betterAuth } from 'better-auth';
@@ -31,7 +31,10 @@ import { getMigrations } from 'better-auth/db/migration';
 import { toNodeHandler } from 'better-auth/node';
 import { levelOf, xpForLevel } from '../src/progression/levels.ts';
 import { applySummary, cleanProfile, cleanSummary, newProfile, type Applied, type MatchSummary, type Profile } from '../src/progression/profile.ts';
-import { econOf, parseShopOp, runShopOp, settleCalendar } from '../src/progression/economy.ts';
+import { WEAPON_CLASSES, econOf, parseShopOp, runShopOp, settleCalendar } from '../src/progression/economy.ts';
+import { MAPS } from '../src/data/maps.ts';
+import { CLASS_IDS } from '../src/data/classes.ts';
+import { MODE_KINDS } from '../src/modes/matchRules.ts';
 
 export interface AccountsOptions {
   /** The database file (':memory:' in tests). */
@@ -160,6 +163,8 @@ export class Accounts {
 
   static async open(o: AccountsOptions): Promise<Accounts> {
     const db = new Database(o.file);
+    // Sessions live here: for the server's user only (the laptop runs other services). SQLite gives its side files the same mode.
+    if (o.file !== ':memory:') for (const f of [o.file, `${o.file}-wal`, `${o.file}-shm`]) try { chmodSync(f, 0o600); } catch { /* not there yet */ }
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     const auth = makeAuth(db, o);
@@ -341,6 +346,12 @@ export class Accounts {
     if (!s) return null;
     s.kind = 'bots';
     s.seconds = Math.min(s.seconds, SOLO_SECONDS_MAX);
+    // Only what exists: this is written from a browser and kept for good, so made-up names would grow the account without end.
+    if (!MAPS.some((m) => m.id === s.map)) s.map = '';
+    if (!(MODE_KINDS as readonly string[]).includes(s.mode)) s.mode = '';
+    for (const id of Object.keys(s.weapons)) if (!Object.hasOwn(WEAPON_CLASSES, id)) delete s.weapons[id];
+    for (const id of Object.keys(s.camo ?? {})) if (!Object.hasOwn(WEAPON_CLASSES, id)) delete s.camo![id];
+    for (const id of Object.keys(s.classes)) if (!(CLASS_IDS as readonly string[]).includes(id)) delete s.classes[id];
     // A double event the staff ran during the match lifts its caps the same way.
     const ev = { xp: events.xp ?? 1, weapon: events.weapon ?? 1, tickets: events.tickets ?? 1 };
     const cap = Math.floor((s.seconds * SOLO_XP_PER_SEC + SOLO_BONUS) * ev.xp);
@@ -512,7 +523,7 @@ export async function accountsFromEnv(log: (line: string) => void): Promise<Acco
     baseURL,
     secret: keyFile('.strikegy-auth-secret', env.BETTER_AUTH_SECRET, log),
     accountKey: keyFile('.strikegy-account-key', env.STRIKEGY_ACCOUNT_KEY, log),
-    trustedOrigins: env.STRIKEGY_ORIGINS ? env.STRIKEGY_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : DEFAULT_ORIGINS,
+    trustedOrigins: env.STRIKEGY_ORIGINS ? env.STRIKEGY_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : DEFAULT_ORIGINS.filter((o) => local || !o.startsWith('http://localhost')),
     google: pair(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),
     discord: pair(env.DISCORD_CLIENT_ID, env.DISCORD_CLIENT_SECRET),
     devLogin: env.STRIKEGY_DEV_LOGIN === '1' && local,

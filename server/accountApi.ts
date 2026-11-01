@@ -25,20 +25,26 @@ import { EVENT_KINDS, EVENT_MULT, type ServerEvents } from '../src/net/lobbyProt
 const BODY_MAX = 64 * 1024;
 /** Requests one address may make to the game's routes: a bucket, refilled a second. */
 const RATE = { burst: 30, perSecond: 0.5 } as const;
+/** The same for sign-in routes on their own (each start of a sign-in writes a row to the database). */
+const AUTH_RATE = { burst: 40, perSecond: 0.5 } as const;
 
 export function accountApi(accounts: Accounts, log: (line: string) => void, events: () => ServerEvents = () => ({})): (req: IncomingMessage, res: ServerResponse, addr: string) => void {
-  const buckets = new Map<string, { tokens: number; at: number }>();
-  const take = (addr: string): boolean => {
-    const now = Date.now();
-    const b = buckets.get(addr) ?? { tokens: RATE.burst, at: now };
-    b.tokens = Math.min(RATE.burst, b.tokens + ((now - b.at) / 1000) * RATE.perSecond);
-    b.at = now;
-    buckets.set(addr, b);
-    if (buckets.size > 5000) buckets.clear();
-    if (b.tokens < 1) return false;
-    b.tokens--;
-    return true;
+  const limiter = (rate: { burst: number; perSecond: number }) => {
+    const buckets = new Map<string, { tokens: number; at: number }>();
+    return (addr: string): boolean => {
+      const now = Date.now();
+      const b = buckets.get(addr) ?? { tokens: rate.burst, at: now };
+      b.tokens = Math.min(rate.burst, b.tokens + ((now - b.at) / 1000) * rate.perSecond);
+      b.at = now;
+      buckets.set(addr, b);
+      if (buckets.size > 5000) buckets.clear();
+      if (b.tokens < 1) return false;
+      b.tokens--;
+      return true;
+    };
   };
+  const take = limiter(RATE);
+  const takeAuth = limiter(AUTH_RATE);
   const trusted = new Set(accounts.trustedOrigins);
 
   const cors = (req: IncomingMessage, res: ServerResponse): void => {
@@ -88,6 +94,7 @@ export function accountApi(accounts: Accounts, log: (line: string) => void, even
       return;
     }
     if (path.startsWith('/api/auth/')) {
+      if (!takeAuth(addr)) return json(res, 429, { error: 'rate' });
       void accounts.handler(req, res).catch((err: unknown) => {
         log(`auth: ${String(err)}`);
         if (!res.headersSent) json(res, 500, { error: 'auth' });

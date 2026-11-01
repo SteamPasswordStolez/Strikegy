@@ -122,7 +122,7 @@ export function emptyEcon(): Econ {
 const n0 = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
 const o0 = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const s0 = (v: unknown, max = 40): string => (typeof v === 'string' ? v.slice(0, max) : '');
-const id0 = (v: unknown): v is string => typeof v === 'string' && /^[\w.-]{1,48}$/.test(v);
+const id0 = (v: unknown): v is string => typeof v === 'string' && /^[\w.-]{1,48}$/.test(v) && !(v in Object.prototype);
 
 /** An economy from storage or the server, anything wrong put right. */
 export function cleanEcon(raw: unknown): Econ {
@@ -822,7 +822,8 @@ export type ShopOp =
 /** A shop action from outside, checked; null when it isn't one. */
 export function parseShopOp(raw: unknown): ShopOp | null {
   const o = o0(raw);
-  const str = (v: unknown, max = 48) => typeof v === 'string' && v.length > 0 && v.length <= max && /^[\w.:-]+$/.test(v);
+  // Never a built-in's name (`e.items['__proto__'].seen = true` wrote on every object in the server).
+  const str = (v: unknown, max = 48) => typeof v === 'string' && v.length > 0 && v.length <= max && /^[\w.:-]+$/.test(v) && !(v in Object.prototype);
   switch (o.op) {
     case 'buy':
       return str(o.key) ? { op: 'buy', key: o.key as string } : null;

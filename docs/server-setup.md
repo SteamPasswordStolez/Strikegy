@@ -165,3 +165,16 @@ DISCORD_CLIENT_SECRET=...
 오너 PC가 매일 05:00(꺼져 있었으면 다음에 켰을 때) 노트북의 백업을 `Documents\strikegy-backups`로 받아 와 30일치를 둡니다: `scripts/pull-backups.ps1`, Windows 작업 스케줄러의 "Strikegy backup pull"(2026-10-24 등록, 결과는 같은 폴더의 `pull.log`).
 
 **로컬 시험**: `.claude/launch.json`의 `strikegy-server-accounts`(`STRIKEGY_DEV_LOGIN=1`)는 제공자 없이 "테스트 계정으로 로그인"을 켭니다. 공개 주소가 localhost일 때만, 로컬 요청에만 됩니다.
+
+## 보안: 중계 서버 Caddy 설정 (2026-11-01)
+
+`/api` 요청은 Caddy에서 곧바로 터널로 내려가므로, 방문자가 만든 `CF-Connecting-IP` 헤더를 지우지 않으면 요청 제한을 피할 수 있습니다. `/etc/caddy/Caddyfile`:
+
+```
+game.strikegy.xyz {
+	reverse_proxy /play 127.0.0.1:18788
+	reverse_proxy 127.0.0.1:18787 {
+		header_up -Cf-Connecting-Ip
+	}
+}
+```

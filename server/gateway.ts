@@ -219,7 +219,11 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     ws.on('message', (data, isBinary) => {
       if (isBinary) {
         const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
-        core.binary(id, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        try {
+          core.binary(id, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        } catch (err) {
+          log(`binary from ${id}: ${String(err)}`);
+        }
         return;
       }
       const text = data.toString();
@@ -240,7 +244,8 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
         channel?.remote(set);
         return;
       }
-      void core.message(id, text);
+      // One connection's bad message must never take everyone's server down (an unhandled rejection ends the process).
+      core.message(id, text).catch((err: unknown) => log(`message from ${id}: ${String(err)}`));
     });
     ws.on('close', () => {
       channel?.close();

@@ -19,6 +19,10 @@ ExecStartPre=/usr/bin/npm run server:build
 ExecStart=/usr/bin/node dist-server/main.js
 Restart=always
 RestartSec=3
+# Should the server ever be broken into: no sudo from here, its new files private.
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

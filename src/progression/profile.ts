@@ -173,6 +173,12 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
+/**
+ * A key from outside safe to use on a plain object: `__proto__`, `constructor` and the like reach the
+ * built-ins (`table['__proto__'].matches++` wrote on every object in the server, security pass 2026-11-01).
+ */
+export const safeKey = (k: string): boolean => /^[\w-]{1,32}$/.test(k) && !(k in Object.prototype);
+
 function cleanStats(v: unknown): CareerStats {
   const o = obj(v);
   const s = emptyStats();
@@ -186,7 +192,7 @@ function cleanTable<T extends Record<string, number>>(
 ): Record<string, T> {
   const out: Record<string, T> = {};
   for (const [id, row] of Object.entries(obj(v))) {
-    if (!/^[\w-]{1,32}$/.test(id)) continue;
+    if (!safeKey(id)) continue;
     const r = obj(row);
     const t = {} as Record<keyof T, number>;
     for (const k of keys) t[k] = num(r[k as string]);
@@ -357,6 +363,7 @@ export function applySummary(prev: Profile, s: MatchSummary, now = Date.now()): 
       [p.maps, s.map],
       [p.modes, s.mode],
     ] as const) {
+      if (!id) continue;
       const r = (table[id] ??= { matches: 0, wins: 0 });
       r.matches++;
       if (s.result === 'win') r.wins++;
@@ -432,8 +439,8 @@ export function cleanSummary(raw: unknown): MatchSummary | null {
   for (const k of Object.keys(emptyStats()) as (keyof CareerStats)[]) if (k in st) stats[k] = num(st[k]);
   return {
     kind: o.kind === 'multi' ? 'multi' : 'bots',
-    map: String(o.map ?? '').slice(0, 32),
-    mode: String(o.mode ?? '').slice(0, 32),
+    map: safeKey(String(o.map ?? '')) ? String(o.map) : '',
+    mode: safeKey(String(o.mode ?? '')) ? String(o.mode) : '',
     result: o.result as MatchResult,
     seconds: num(o.seconds),
     score: num(o.score),
@@ -447,8 +454,8 @@ export function cleanSummary(raw: unknown): MatchSummary | null {
     stats,
     weapons: cleanTable<{ xp: number; kills: number; headshots: number }>(o.weapons, ['xp', 'kills', 'headshots']),
     classes: cleanTable<{ xp: number; seconds: number; kills: number }>(o.classes, ['xp', 'seconds', 'kills']),
-    counts: Object.fromEntries(Object.entries(obj(o.counts)).filter(([k]) => /^[\w.]{1,24}$/.test(k)).slice(0, 40).map(([k, v]) => [k, Math.floor(num(v))])) as MatchCounts,
-    ribbons: Object.fromEntries(Object.entries(obj(o.ribbons)).filter(([k]) => /^\w{1,16}$/.test(k)).slice(0, 20).map(([k, v]) => [k, Math.min(3, Math.floor(num(v)))])),
+    counts: Object.fromEntries(Object.entries(obj(o.counts)).filter(([k]) => /^[\w.]{1,24}$/.test(k) && !(k in Object.prototype)).slice(0, 40).map(([k, v]) => [k, Math.floor(num(v))])) as MatchCounts,
+    ribbons: Object.fromEntries(Object.entries(obj(o.ribbons)).filter(([k]) => /^\w{1,16}$/.test(k) && !(k in Object.prototype)).slice(0, 20).map(([k, v]) => [k, Math.min(3, Math.floor(num(v)))])),
     camo: cleanTable<CamoCounts & Record<string, number>>(o.camo, ['kills', 'headshots', 'triples', 'special']),
     tickets: Math.floor(num(o.tickets)),
     ticketLines: list(o.ticketLines).map((l) => ({ key: String(l.key ?? '').slice(0, 16), n: Math.floor(num(l.n)) })),
