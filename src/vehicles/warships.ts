@@ -163,9 +163,9 @@ export const BATTLESHIP: VehicleSpec = {
   seats: [
     seat('driver', 'helm', [0, BB_DECK + 18, -22], [7.5, BB_DECK, -11]),
     seat('passenger', 'fire', [0, BB_DECK + 28, -18], [-7.5, BB_DECK, -11]),
-    seat('gunner', 'main', [0, BB_DECK + 5, -66], [0, BB_DECK, -58], { gun: 'naval16in', traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.08, elevate: 0.1 }),
-    seat('gunner', 'main', [0, BB_DECK + 8.5, -46], [0, BB_DECK, -38], { gun: 'naval16in', traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.08, elevate: 0.1 }),
-    seat('gunner', 'main', [0, BB_DECK + 5, 66], [0, BB_DECK, 58], { gun: 'naval16in', facing: Math.PI, traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.08, elevate: 0.1 }),
+    seat('gunner', 'main', [0, BB_DECK + 5, -66], [0, BB_DECK, -58], { gun: 'naval16in', traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.16, elevate: 0.16 }),
+    seat('gunner', 'main', [0, BB_DECK + 8.5, -46], [0, BB_DECK, -38], { gun: 'naval16in', traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.16, elevate: 0.16 }),
+    seat('gunner', 'main', [0, BB_DECK + 5, 66], [0, BB_DECK, 58], { gun: 'naval16in', facing: Math.PI, traverse: 2.4, pitch: [-0.03, 0.75], turn: 0.16, elevate: 0.16 }),
     seat('gunner', 'secondary', [-12, BB_DECK + 3, -14], [-10, BB_DECK, -8], { gun: 'naval6in', facing: -Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
     seat('gunner', 'secondary', [-12, BB_DECK + 3, 16], [-10, BB_DECK, 22], { gun: 'naval6in', facing: -Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),
     seat('gunner', 'secondary', [12, BB_DECK + 3, -14], [10, BB_DECK, -8], { gun: 'naval6in', facing: Math.PI / 2, traverse: 1.4, pitch: [-0.05, 0.7], turn: 0.3, elevate: 0.3 }),

@@ -243,6 +243,9 @@ const MUSIC = { briefing: 45, afterDeploy: 20, briefingFade: 6, hit: 1, hurt: 1.
 /** Camera shake by blast size (big shells shake from further off). */
 const BOOM_SHAKE: Record<BoomSize, number> = { small: 0.4, grenade: 1, rocket: 1.1, shell: 1.4, heavy: 1.8 };
 
+/** How long a click waits for a warship's gun to come round (s). */
+const SHIP_SHOT_WAIT = 15;
+
 /** Top-level scenery groups that never move after loading (see freezeStatic). */
 const FROZEN_GROUPS = /^(map:|props$|scanDressing$|rivers$|forest$|ground-cover$|backdrop$)/;
 
@@ -1637,6 +1640,7 @@ export class Game {
   private simStep(dt: number): void {
     // What a simplified match doesn't have goes before anything (solo or sent to the server) sees it.
     simplifyInput(this.input);
+    this.holdShipShot(this.input, dt);
     if (this.net) return this.netStep(dt, this.net);
     const input = this.input;
     const p = this.player;
@@ -1804,7 +1808,8 @@ export class Game {
       // Laid here for the look; the server lays and fires its own (from the seat's look).
       const eye = v.seatEye(seat, new THREE.Vector3());
       const target = lookPoint(this.physics, eye, viewDir(p.yaw, p.pitch), v.mounts[seat]!.gun.range, this.gadgets.water?.(eye.x, eye.z) ?? NaN, v.body);
-      const { laid } = layGun(v, seat, target, dt);
+      const { laid, reach } = layGun(v, seat, target, dt);
+      this.gunLay = { laid, reach };
       if (!v.ship?.broken.has(seat) && v.pullTrigger(seat, input.fire && laid, this.simTime, dt)) net.mountFired(v, seat, 1);
     } else if (spec.gun) {
       v.aimMount(seat, p.yaw, p.pitch, dt);
@@ -2475,7 +2480,7 @@ export class Game {
       const cam = this.renderer.camera;
       const range = v.mounts[seat]!.gun.range;
       const target = lookPoint(this.physics, cam.position, new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion), range, this.gadgets.water?.(cam.position.x, cam.position.z) ?? NaN, v.body);
-      this.shipGun(v, seat, target, trigger, dt, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam });
+      this.gunLay = this.shipGun(v, seat, target, trigger, dt, { id: this.myId, name: playerName(t('feed.you')), team: this.myTeam });
       return;
     }
     v.aimMount(seat, p.yaw, p.pitch, dt);
@@ -2498,10 +2503,35 @@ export class Game {
   }
 
   /** A warship's gun laid on `target`, fired by `trigger` once it is laid (not a knocked-out station). */
-  private shipGun(v: Vehicle, seat: number, target: THREE.Vector3, trigger: boolean, dt: number, shooter: GrenadeOwner): void {
-    const { aim, laid } = layGun(v, seat, target, dt);
-    if (v.ship?.broken.has(seat)) return;
+  private shipGun(v: Vehicle, seat: number, target: THREE.Vector3, trigger: boolean, dt: number, shooter: GrenadeOwner): { laid: boolean; reach: boolean } {
+    const { aim, laid, reach } = layGun(v, seat, target, dt);
+    if (v.ship?.broken.has(seat)) return { laid, reach };
     if (v.pullTrigger(seat, trigger && laid, this.simTime, dt)) this.fireMount(v, seat, shooter, aim);
+    return { laid, reach };
+  }
+
+  /** The seat gun's state for the panel: laid on the look yet, and whether the look is inside its traverse. */
+  private gunLay: { laid: boolean; reach: boolean } | null = null;
+  /** A click while a warship's gun was still turning: it fires when it gets there (seconds left to wait). */
+  private gunShotWait = 0;
+
+  /**
+   * A warship's big guns take many seconds to come round and fire only once
+   * laid, so a click on the way used to do nothing: it is kept until the shot goes
+   * (or SHIP_SHOT_WAIT runs out). Works on the input itself, so a match's server gets it too.
+   */
+  private holdShipShot(input: InputState, dt: number): void {
+    const r = this.ride;
+    if (!r || !this.shipGunSeat(r.v, r.seat)) {
+      this.gunShotWait = 0;
+      return;
+    }
+    const loaded = r.v.reloadLeft(r.seat, this.simTime) <= 0;
+    if (input.firePressed && loaded) this.gunShotWait = SHIP_SHOT_WAIT;
+    else if (!loaded) this.gunShotWait = 0;
+    if (this.gunShotWait <= 0) return;
+    this.gunShotWait -= dt;
+    input.fire = true;
   }
 
   /**
@@ -2659,6 +2689,11 @@ export class Game {
       if (ship.fires.length) alerts.push({ text: t('ship.fires').replace('{n}', String(ship.fires.length)), tone: 'bad' });
       if (ship.flooding > 0.01) alerts.push({ text: t('ship.flood').replace('{p}', String(Math.round(ship.flooding * 100))), tone: 'warn' });
       if (ship.broken.has(seat)) alerts.push({ text: t('ship.out'), tone: 'bad' });
+      else if (this.shipGunSeat(v, seat) && this.gunLay) {
+        if (!this.gunLay.reach) alerts.push({ text: t('ship.noArc'), tone: 'warn' });
+        else if (!this.gunLay.laid) alerts.push({ text: t(this.gunShotWait > 0 ? 'ship.layingShot' : 'ship.laying'), tone: 'info' });
+      }
+      if (kind === 'helm' && !v.spec.ship?.sub && !v.seats.some((_, i) => ship.helmMay(i, (j) => !!v.seats[j], (k) => v.manned(k)))) info.push(t('ship.noSalvo'));
       else if (ship.broken.size) alerts.push({ text: t('ship.broken').replace('{n}', String(ship.broken.size)), tone: 'warn' });
       if (ship.dived && kind === 'helm') alerts.push({ text: t('ship.dived'), tone: 'info' });
       if (kind === 'sonar' || kind === 'periscope' || kind === 'asw') {
@@ -2717,6 +2752,7 @@ export class Game {
         if (v.spec.ship?.sub) keys.push({ key: actionKey('jump'), label: t('vh.k.depth') });
         keys.push({ key: actionKey('fire'), label: t(v.spec.ship?.sub ? 'vh.k.torpedo' : 'vh.k.salvo') });
       }
+      if (this.shipGunSeat(v, seat)) keys.push({ key: actionKey('ads'), label: t('vh.k.zoom') });
       if (station?.kind === 'flight') {
         keys.push({ key: '1–6', label: t('vh.k.pick') });
         keys.push({ key: actionKey('fire'), label: t('vh.k.launch') });
@@ -3801,8 +3837,9 @@ export class Game {
     const kind = this.rideViewKind(v, this.ride!.seat);
     const base = this.settings.fov;
     // The aim button zooms the sights (seats with a second weapon on it don't: jets fire missiles with it).
-    const zoomable = (kind === 'sight' || kind === 'mg') && !v.altMounts[this.ride!.seat];
-    const want = zoomable && this.input.ads ? (kind === 'sight' ? RIDE_ZOOM.sight : RIDE_ZOOM.mg) : 1;
+    const shipGun = this.shipGunSeat(v, this.ride!.seat);
+    const zoomable = (kind === 'sight' || kind === 'mg' || shipGun) && !v.altMounts[this.ride!.seat];
+    const want = zoomable && this.input.ads ? (kind === 'sight' || shipGun ? RIDE_ZOOM.sight : RIDE_ZOOM.mg) : 1;
     this.rideZoom += (want - this.rideZoom) * (1 - Math.exp(-12 * dt));
     if (Math.abs(this.rideZoom - want) < 0.01) this.rideZoom = want;
     let fov = zoomedFov(base, this.rideZoom);
@@ -3841,7 +3878,8 @@ export class Game {
       if (kind === 'cockpit' && v.flight) this.camRoll = v.flight.roll;
       // A driver working the main gun sees through its sight: where the gun points, which follows the look at its turn rate.
       // A gun that lays itself (field gun) follows the look instead: the view is the aim point, the barrel goes where the shell needs.
-      if (v.spec.seats[seat]!.turn && !v.spec.seats[seat]!.lay) this.gunView = v.mountAim(seat);
+      // So does a warship's: its guns are laid onto the look (the view following the gun instead left the mouse with nothing to turn).
+      if (v.spec.seats[seat]!.turn && !v.spec.seats[seat]!.lay && !v.ship) this.gunView = v.mountAim(seat);
       return;
     }
     this.rideEyeSet = false;
@@ -3876,13 +3914,19 @@ export class Game {
   }
   private readonly tmpRideEye = new THREE.Vector3();
 
+  /** A warship station whose gun turns at a rate onto the look. */
+  private shipGunSeat(v: Vehicle, seat: number): boolean {
+    return !!v.ship && !!v.spec.seats[seat]!.turn && !!v.mounts[seat]?.gun.shell;
+  }
+
   /** The seat's first-person overlay (sights, cockpit), or none. */
   private rideViewState(): VehicleViewState | null {
     const r = this.ride;
     if (!r || !this.player.alive) return null;
     if (this.rideThird && !this.orbit) return null;
     const { v, seat } = r;
-    const kind: VehicleViewKind = this.rideThird ? 'third' : this.rideViewKind(v, seat);
+    // A warship's turning gun in first person: the same marks as in third person (the look, and where the gun has got to).
+    const kind: VehicleViewKind = this.rideThird || this.shipGunSeat(v, seat) ? 'third' : this.rideViewKind(v, seat);
     if (kind === 'open') return null;
     const m = v.mounts[seat];
     const cam = this.renderer.camera;

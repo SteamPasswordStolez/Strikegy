@@ -318,10 +318,12 @@ export function lookPoint(physics: PhysicsWorld, origin: THREE.Vector3, dir: THR
 /**
  * Lays seat `seat`'s gun so its shell comes down on `target` (the bearing to
  * it, the elevation for its range), at the gun's turn rate. Returns where the
- * gun points now as a far point along it, for `fireMount`, and whether it is
- * laid on (within 1 degree).
+ * gun points now as a far point along it, for `fireMount`, whether it is laid
+ * on (within 1 degree; a target past its elevation limits counts once the gun
+ * is at the limit, or a ship could never fire at anything close under its
+ * guns), and whether the bearing is within its traverse at all.
  */
-export function layGun(v: Vehicle, seat: number, target: THREE.Vector3, dt: number): { aim: THREE.Vector3; laid: boolean } {
+export function layGun(v: Vehicle, seat: number, target: THREE.Vector3, dt: number): { aim: THREE.Vector3; laid: boolean; reach: boolean } {
   const gun = v.mounts[seat]!.gun;
   const pivot = v.seatEye(seat, new THREE.Vector3());
   const dx = target.x - pivot.x;
@@ -330,10 +332,13 @@ export function layGun(v: Vehicle, seat: number, target: THREE.Vector3, dt: numb
   const pitch = gun.shell ? ballisticPitch(pivot, target, gun.shell.speed, gun.shell.gravity) : Math.atan2(target.y - pivot.y, Math.hypot(dx, dz));
   v.aimMount(seat, yaw, pitch, dt);
   const now = v.mountAim(seat) ?? { yaw, pitch };
-  const off = Math.abs(Math.atan2(Math.sin(now.yaw - yaw), Math.cos(now.yaw - yaw))) + Math.abs(now.pitch - pitch);
+  const s = v.spec.seats[seat]!;
+  const [lo, hi] = s.pitch ?? [-0.2, 0.6];
+  const off = Math.abs(Math.atan2(Math.sin(now.yaw - yaw), Math.cos(now.yaw - yaw))) + Math.abs(now.pitch - THREE.MathUtils.clamp(pitch, lo, hi));
+  const rel = Math.atan2(Math.sin(yaw - v.yaw - (s.facing ?? 0)), Math.cos(yaw - v.yaw - (s.facing ?? 0)));
   const cp = Math.cos(now.pitch);
   const aim = pivot.addScaledVector(new THREE.Vector3(-Math.sin(now.yaw) * cp, Math.sin(now.pitch), -Math.cos(now.yaw) * cp), 1000);
-  return { aim, laid: off < 0.0175 };
+  return { aim, laid: off < 0.0175, reach: Math.abs(rel) <= (s.traverse ?? Math.PI) };
 }
 
 /**

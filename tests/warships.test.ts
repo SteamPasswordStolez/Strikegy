@@ -182,6 +182,23 @@ describe('naval gunnery', () => {
     expect(aim.pitch).toBeGreaterThan(0);
     physics.dispose();
   });
+
+  it('layGun counts a target close under the guns as laid at the elevation limit, and says when a bearing is out of the traverse', async () => {
+    const physics = await PhysicsWorld.create();
+    const v = new Vehicle(1, 'dd', physics, new THREE.Vector3(0, 0, 0), 0, null);
+    const seat = 1;
+    // Just off the bow and far below the gun's -0.05 rad: before, never laid and never fired.
+    const close = new THREE.Vector3(0, -30, -60);
+    let r = layGun(v, seat, close, DT);
+    for (let n = 0; !r.laid && n < 60 * 5; n++) r = layGun(v, seat, close, DT);
+    expect(r.laid).toBe(true);
+    expect(r.reach).toBe(true);
+    // Within the 1 degree that counts as laid of its limit.
+    expect(v.mountAim(seat)!.pitch).toBeLessThan(-0.03);
+    // Dead astern of a forward gun (traverse 2.6 rad either way).
+    expect(layGun(v, seat, new THREE.Vector3(0, 0, 1500), DT).reach).toBe(false);
+    physics.dispose();
+  });
 });
 
 describe('warships afloat', () => {
