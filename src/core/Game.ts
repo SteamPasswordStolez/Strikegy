@@ -695,6 +695,7 @@ export class Game {
     this.sea = sea;
     lap('world');
     const props = placeProps(map, r.scene, this.models);
+    r.instanceCull.add(props);
     // Scanned rocks over rock walls, manholes on wide asphalt (render only; see scanDress).
     this.scanDress = buildScanDressing(map, terrain, this.models);
     r.scene.add(this.scanDress);
@@ -727,6 +728,7 @@ export class Game {
     await this.loadStep(0.56, 'load.scenery');
     this.fitShadows(map, terrain, built.root, props);
     if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: q.fewEdgeTrees, ash: map.world.shore?.ash });
+    if (this.seaView) for (const o of r.scene.children) if (o === built.root || o.name === 'backdrop') this.seaView.hideBed(o);
     lap('backdrop');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
@@ -1037,7 +1039,7 @@ export class Game {
     this.forest?.update(cam.position);
     if (this.backdrop) cullBackdropDetail(this.backdrop, cam.position);
 
-    const temp = this.throwables.warmupMeshes();
+    const temp: THREE.Object3D[] = [...this.throwables.warmupMeshes(), ...this.gadgets.warmupModels()];
     temp.forEach((m, i) => {
       m.position.copy(cam.position).addScaledVector(fwd, 2).setX(m.position.x + i * 0.2);
       r.scene.add(m);

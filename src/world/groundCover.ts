@@ -9,6 +9,8 @@ import { makeRng } from '@/render/noise';
  * (on the bare terrain only: not on roads, floors or in water) and kept in
  * cells; each frame only the cells around the camera go into one instanced
  * mesh, so a whole meadow costs one draw call and a few hundred instances.
+ * Cells are filled as the camera comes near, never for the whole map: a big map
+ * has hundreds of thousands of cells nobody will stand in (Coral Reach: open sea).
  */
 
 export interface GroundCoverStyle {
@@ -31,8 +33,11 @@ export const GROUND_COVER: Partial<Record<string, GroundCoverStyle>> = {
 /** Cell side (m) and how far around the camera tufts are drawn (m). */
 const CELL = 12;
 const RANGE = 38;
-/** Time per frame spent finding tuft spots until the map is covered (ms). */
+/** Time per frame spent finding tuft spots while cells round the camera are missing (ms). */
 const FILL_BUDGET_MS = 2.5;
+/** Cells filled this far past the drawn ones, so walking never outruns them. */
+const FILL_AHEAD = 2;
+const DOWN = { x: 0, y: -1, z: 0 };
 
 function bladeTexture(base: THREE.Color, tip: THREE.Color): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -98,11 +103,17 @@ export class GroundCover {
   readonly mesh: THREE.InstancedMesh;
   /** Tuft transforms (16 floats each) by cell key. */
   private readonly cells = new Map<number, Float32Array>();
+  /** Cells already looked at (most have no tufts). */
+  private readonly filled = new Set<number>();
+  /** Cell offsets round the camera, nearest first, and how many of them are drawn. */
+  private readonly around: { x: number; z: number; drawn: boolean }[] = [];
+  /** The camera cell all of `around` is filled for. */
+  private readyAt = Number.NaN;
+  private readonly cellBounds: [number, number, number, number];
+  private readonly physics: PhysicsWorld;
   private readonly time = { value: 0 };
   private lastCell = Number.NaN;
   private readonly capacity: number;
-  /** Cells still to fill, nearest the camera first once known; filled a few at a time (see update). */
-  private todo: { x: number; z: number }[] | null = null;
   private readonly fill: (cx: number, cz: number) => void;
 
   constructor(
@@ -116,10 +127,8 @@ export class GroundCover {
     alphaToCoverage: boolean,
   ) {
     const [minX, minZ, maxX, maxZ] = bounds;
-    this.todo = [];
-    for (let cx = Math.floor(minX / CELL); cx <= Math.floor(maxX / CELL); cx++)
-      for (let cz = Math.floor(minZ / CELL); cz <= Math.floor(maxZ / CELL); cz++)
-        this.todo.push({ x: cx, z: cz });
+    this.cellBounds = [Math.floor(minX / CELL), Math.floor(minZ / CELL), Math.floor(maxX / CELL), Math.floor(maxZ / CELL)];
+    this.physics = physics;
     this.fill = (cx, cz) =>
       this.fillCell(
         cx,
@@ -134,6 +143,10 @@ export class GroundCover {
       );
     // Enough for the busiest neighbourhood of cells.
     const reach = Math.ceil(RANGE / CELL);
+    const far = reach + FILL_AHEAD;
+    for (let x = -far; x <= far; x++)
+      for (let z = -far; z <= far; z++) this.around.push({ x, z, drawn: Math.abs(x) <= reach && Math.abs(z) <= reach });
+    this.around.sort((a, b) => a.x * a.x + a.z * a.z - (b.x * b.x + b.z * b.z));
     this.capacity = Math.ceil((2 * reach + 1) ** 2 * CELL * CELL * style.density * 1.3);
     this.mesh = new THREE.InstancedMesh(
       tuftGeometry(),
@@ -173,12 +186,11 @@ export class GroundCover {
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
-    const down = { x: 0, y: -1, z: 0 };
     for (let x = x0; x < x0 + CELL; x += step) {
       for (let z = z0; z < z0 + CELL; z += step) {
         const px = x + rng() * step;
         const pz = z + rng() * step;
-        const hit = physics.raycast({ x: px, y: 400, z: pz }, down, 800, Layer.WORLD);
+        const hit = physics.raycast({ x: px, y: 400, z: pz }, DOWN, 800, Layer.WORLD);
         if (!hit || hit.collider.handle !== groundHandle) continue;
         if (near && impacts.get(groundHandle, { x: px, z: pz }) !== groundSurface) continue;
         const y = hit.point.y;
@@ -200,28 +212,40 @@ export class GroundCover {
     return n;
   }
 
+  /**
+   * Fills the cells round the camera, nearest first, a few milliseconds' worth;
+   * says whether a drawn cell got tufts. Nothing with no ground in reach below
+   * the eye (aircraft, a ship's bridge over deep water would only find the sea bed).
+   */
+  private fillAround(camera: THREE.Vector3): boolean {
+    if (!this.physics.raycast(camera, DOWN, RANGE, Layer.WORLD)) return false;
+    const [minX, minZ, maxX, maxZ] = this.cellBounds;
+    const cx = Math.floor(camera.x / CELL);
+    const cz = Math.floor(camera.z / CELL);
+    const t0 = performance.now();
+    let changed = false;
+    for (const c of this.around) {
+      const x = cx + c.x;
+      const z = cz + c.z;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      const k = (x + 32768) * 65536 + (z + 32768);
+      if (this.filled.has(k)) continue;
+      if (performance.now() - t0 >= FILL_BUDGET_MS) return changed;
+      this.filled.add(k);
+      this.fill(x, z);
+      if (c.drawn && this.cells.has(k)) changed = true;
+    }
+    this.readyAt = cellKey(camera.x, camera.z);
+    return changed;
+  }
+
   /** Refills the instances from the cells around the camera when it moves to another cell. */
   update(camera: THREE.Vector3, time: number): void {
     this.time.value = time;
-    if (this.todo) {
-      // Fill cells nearest the camera first, a few milliseconds' worth a frame.
-      if (!this.todo.length) this.todo = null;
-      else {
-        const cx = camera.x / CELL - 0.5;
-        const cz = camera.z / CELL - 0.5;
-        this.todo.sort(
-          (a, b) => (b.x - cx) ** 2 + (b.z - cz) ** 2 - ((a.x - cx) ** 2 + (a.z - cz) ** 2),
-        );
-        const t0 = performance.now();
-        while (this.todo.length && performance.now() - t0 < FILL_BUDGET_MS) {
-          const c = this.todo.pop()!;
-          this.fill(c.x, c.z);
-        }
-        this.lastCell = Number.NaN;
-      }
-    }
     const key = cellKey(camera.x, camera.z);
-    if (key === this.lastCell) return;
+    let changed = key !== this.lastCell;
+    if (key !== this.readyAt && this.fillAround(camera)) changed = true;
+    if (!changed) return;
     this.lastCell = key;
     const arr = this.mesh.instanceMatrix.array as Float32Array;
     const reach = Math.ceil(RANGE / CELL);

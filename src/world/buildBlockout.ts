@@ -1,6 +1,7 @@
 import { dressGeometry, dressKind } from './boxDress';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { weld } from '@/render/geometryIndex';
 import { worldScaleBoxUVs, type SurfaceLibrary } from '@/render/textures';
 import type { PhysicsWorld } from '@/physics/PhysicsWorld';
 import { SURFACE_FROM_MATERIAL, type SurfaceRegistry } from '@/physics/surfaces';
@@ -262,11 +263,14 @@ export function buildBlockout(
     const cells = splitByCell(b.geometries, b.inside || b.dress ? 0 : CELL.minVertices);
     for (const idx of cells) {
       const part = idx.map((i) => b.geometries[i]!);
-      const merged = mergeGeometries(part);
+      // Welded: kits and box pieces are triangle soups, and the vertex shader runs per stored corner.
+      const soup = mergeGeometries(part);
+      const merged = soup && weld(soup);
       for (const g of part) g.dispose();
       // Kits' far look, only where the batch was cut into cells (a cell's distance means something).
       const farParts = b.far && (cells.length > 1 || b.dress) ? idx.map((i) => b.far![i]).filter((g): g is THREE.BufferGeometry => !!g) : [];
-      const farMerged = farParts.length ? mergeGeometries(farParts) : null;
+      const farSoup = farParts.length ? mergeGeometries(farParts) : null;
+      const farMerged = farSoup && weld(farSoup);
       if (b.far) for (const i of idx) b.far[i]?.dispose();
       if (!merged) continue;
       merged.computeBoundingSphere();

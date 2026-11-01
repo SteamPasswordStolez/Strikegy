@@ -23,7 +23,11 @@ export function installNearShadow(): void {
   const line =
     'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;';
   if (!chunk.includes(line) || chunk.includes('NEAR_SUN_SHADOW')) return;
-  THREE.ShaderChunk.lights_fragment_begin = chunk.replace(
+  // Light 1 has no light of its own: its lighting sum (a whole BRDF, per pixel, times black) is left out.
+  const direct = 'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );';
+  const at = chunk.indexOf(direct, chunk.indexOf(line));
+  const skipBlack = at >= 0 ? `${chunk.slice(0, at)}#if !( ( UNROLLED_LOOP_INDEX == 1 ) && ( NUM_DIR_LIGHT_SHADOWS > 1 ) )\n\t\t${direct}\n\t\t#endif${chunk.slice(at + direct.length)}` : chunk;
+  THREE.ShaderChunk.lights_fragment_begin = skipBlack.replace(
     line,
     /* glsl */ `// NEAR_SUN_SHADOW: the sun (light 0) also takes the near map's shadow; light 1 is black, no lookup.
 		#if ( UNROLLED_LOOP_INDEX == 0 ) && ( NUM_DIR_LIGHT_SHADOWS > 1 )

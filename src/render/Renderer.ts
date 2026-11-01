@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { gfxFor, type GfxOptions, type QualityPreset } from '@/core/Settings';
+import { InstanceCuller } from './instanceCull';
 import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
@@ -139,6 +140,8 @@ export class Renderer {
   readonly quality: QualityConfig;
   /** Some graphics items were set apart from the preset (F3 shows the preset with a *). */
   readonly custom: boolean;
+  /** Scattered instanced models, drawn only as far as they are in view (instanceCull.ts). */
+  readonly instanceCull = new InstanceCuller();
   private postfx: PostFX | null = null;
   private readonly vignette: HTMLDivElement;
   private frameIndex = 0;
@@ -330,6 +333,7 @@ export class Renderer {
         this.nearLight.shadow.needsUpdate = true;
       }
     }
+    this.instanceCull.update(this.camera, shadow);
     // World matrices once per frame, shown objects only; the passes below
     // (two in direct rendering, more in the post chain) would each redo all of them.
     updateShownMatrices(this.scene);

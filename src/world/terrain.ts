@@ -461,6 +461,10 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
       (Math.max(sx, sz) > 1000 ? [...LOD_DISTANCES, ...FAR_LODS] : LOD_DISTANCES).forEach((d, level) => {
         const step = Math.min(CHUNK_CELLS / 2, base << level);
         const geo = chunk(c0, c1, r0, r1, step);
+        if (level === 0) {
+          geo.computeBoundingBox();
+          lod.userData.groundTop = geo.boundingBox!.max.y;
+        }
         geo.translate(-lod.position.x, 0, -lod.position.z);
         const mesh = new THREE.Mesh(geo, material);
         mesh.receiveShadow = true;

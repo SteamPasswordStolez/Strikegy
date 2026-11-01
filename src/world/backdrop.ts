@@ -192,11 +192,13 @@ export function buildBackdrop(scene: THREE.Scene, terrain: Terrain, opts: Backdr
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
+  geo.computeBoundingBox();
   const ground = new THREE.Mesh(
     geo,
     new THREE.MeshLambertMaterial({ vertexColors: true, map: detailTexture(EXTENT / 7) }),
   );
   ground.receiveShadow = false;
+  ground.userData.groundTop = geo.boundingBox!.max.y;
   group.add(ground);
 
   // --- Trees ---------------------------------------------------------------

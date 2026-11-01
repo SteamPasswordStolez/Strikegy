@@ -171,6 +171,12 @@ export class GadgetWorld {
     for (const m of this.mines) yield { id: m.id, kind: 'mine', pos: m.pos };
   }
 
+  /** One of each model, for the load's shader warm-up: the first beacon put down stalled a frame compiling its light's shader (339 ms on a UHD 630). */
+  warmupModels(): THREE.Object3D[] {
+    const m = this.models;
+    return [m.rocket, m.rifleGrenade, m.beacon, m.mine, m.shell].map((o) => o.clone());
+  }
+
   /** Puts a beacon down (replacing the owner's earlier one). */
   placeBeacon(pos: THREE.Vector3, yaw: number, owner: GadgetOwner): Beacon {
     for (const b of this.beacons.filter((b) => b.owner.id === owner.id)) this.removeBeacon(b);

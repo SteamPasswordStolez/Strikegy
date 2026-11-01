@@ -27,6 +27,8 @@ export class SeaView {
   readonly mesh: THREE.Mesh;
   private readonly uniforms: Record<string, THREE.IUniform>;
   private savedFog: { color: THREE.Color; density: number } | null = null;
+  /** Ground wholly under the lowest trough (see hideBed). */
+  private readonly bed: THREE.Object3D[] = [];
   /** The eye is below the surface (last `update`). */
   under = false;
 
@@ -167,6 +169,21 @@ roughnessFactor = mix(roughnessFactor, 0.7, seaFoam);`,
     this.mesh.matrixAutoUpdate = false;
   }
 
+  /**
+   * Terrain chunks and scenery ground wholly under the lowest trough: the sea
+   * over them is opaque, so from above they only cost their draws and vertices
+   * (Coral Reach: ~100 of a view's 450 draws). Shown again while the eye is under water.
+   */
+  hideBed(root: THREE.Object3D): void {
+    const floor = this.sea.level - this.sea.swell;
+    root.traverse((o) => {
+      const top = o.userData.groundTop as number | undefined;
+      if (top === undefined || top >= floor) return;
+      this.bed.push(o);
+      o.visible = this.under;
+    });
+  }
+
   /** Keeps the disc under the eye (snapped to 1 m so its vertices don't slide over the waves) and the waves at `time`. */
   update(eye: THREE.Vector3, time: number, scene: THREE.Scene): void {
     this.mesh.position.set(Math.round(eye.x), this.sea.level, Math.round(eye.z));
@@ -176,6 +193,7 @@ roughnessFactor = mix(roughnessFactor, 0.7, seaFoam);`,
     const under = eye.y < this.sea.heightAt(eye.x, eye.z, time);
     if (under === this.under) return;
     this.under = under;
+    for (const o of this.bed) o.visible = under;
     const fog = scene.fog as THREE.FogExp2 | null;
     if (!fog) return;
     if (under) {
