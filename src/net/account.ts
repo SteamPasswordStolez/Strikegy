@@ -15,6 +15,9 @@ import { applySummary, cleanProfile, loadProfile, newProfile, saveProfile, settl
 import { runShopOp, settleCalendar, type MatchEcon, type ShopOp } from '@/progression/economy';
 import type { RankId } from '@/progression/levels';
 
+/** Session storage: open the sign-in dialog on reaching the main menu (a result screen's button). */
+export const LOGIN_ASK = 'strikegy.loginAsk';
+
 export type Provider = 'google' | 'discord';
 
 export interface AccountView {

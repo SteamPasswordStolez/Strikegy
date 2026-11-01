@@ -30,6 +30,13 @@ describe('tutorial (chapters, owner 2026-11-01)', () => {
     expect([...new Set(chapters)]).toEqual(['move', 'fire', 'kit']);
   });
 
+  it('a first match keeps to the few steps needed to play, once', () => {
+    const ctx = { deployFlow: true, zones: true, fort: true, support: true, gadget: true };
+    expect(stepsFor(false, {}, ctx)).toEqual(['deploy', 'move', 'sprint', 'shoot', 'aim', 'reload', 'capture']);
+    // The menu's tutorial still has everything.
+    expect(stepsFor(true, {}, { ...ctx, deployFlow: false }).length).toBeGreaterThan(10);
+  });
+
   it('a first match adds the battlefield steps; simplified controls drop the gadget and medkit', () => {
     const steps = stepsFor(false, { basics: true }, { deployFlow: true, zones: true, fort: true, support: true, gadget: true });
     expect(steps).toEqual(['deploy', 'capture', 'interact', 'build', 'support', 'scoreboard']);

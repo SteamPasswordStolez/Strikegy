@@ -15,6 +15,8 @@ import { renderHint } from './Overlay';
 import { SettingsPanel } from './SettingsPanel';
 import { MultiplayerMenu } from './MultiplayerMenu';
 import { askName } from './NameDialog';
+import { showWelcome } from './Welcome';
+import { LOGIN_ASK } from '@/net/account';
 import { installState, onInstallChange, promptInstall } from './install';
 import './dialogs.css';
 import { loadIdentity } from '@/net/identity';
@@ -39,6 +41,20 @@ const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
  * promotions and the shop (owner, 2026-10-25: the list was too full); the tutorial, controls, settings
  * and credits sit as icons under it, the service record opens from the player card, mail top right.
  */
+/** Players a side in the match the first visit's button starts. */
+const FIRST_MATCH_TEAM = 8;
+
+/** Whether a result screen asked for the sign-in dialog on the way back here. */
+function takeLoginAsk(): boolean {
+  try {
+    const asked = sessionStorage.getItem(LOGIN_ASK) === '1';
+    sessionStorage.removeItem(LOGIN_ASK);
+    return asked;
+  } catch {
+    return false;
+  }
+}
+
 const ALL_ENTRIES = ['play', 'multi', 'range', 'armory', 'ranks', 'shop'] as const;
 const UTIL_ENTRIES = [
   ['tutorial', 'tutorial'],
@@ -152,6 +168,8 @@ export class Lobby {
     for (const ev of ['pointerdown', 'keydown'] as const) document.addEventListener(ev, () => void loadUiSounds(), { once: true });
     this.render();
     for (const m of [...MAPS.map((e) => e.id), RANGE_ID]) void this.load(m);
+    // From a result screen's sign-in button.
+    if (takeLoginAsk()) openLogin(this.root, () => this.render());
     // A bot match left unfinished (the menu, a closed tab): its progress is gone; say so once.
     if (settleLeft()) this.note(t('note.cancelled'));
     // Signed in: the account's progress fresh from the server; redrawn when it (or the sign-in) changes.
@@ -164,10 +182,38 @@ export class Lobby {
     onServerEvents(() => {
       if (this.screen === 'main') this.render();
     });
-    // First visit: a name before anything else.
-    if (!this.playerName) this.editName(true);
+    // First visit: what the game is and one button into a match.
+    if (!this.playerName) this.welcome();
     // Back from a match (or reloaded in one): straight to the multiplayer pages.
     else if (inRoom() || new URLSearchParams(location.search).has('multi')) this.go('multi');
+  }
+
+  /** Up on the first visit (keys wait for it). */
+  private welcoming = false;
+
+  private welcome(): void {
+    this.welcoming = true;
+    this.frame.style.visibility = 'hidden';
+    // The game's code starts downloading while they read.
+    this.prefetch();
+    const done = (name: string): void => {
+      this.welcoming = false;
+      this.frame.style.visibility = '';
+      this.playerName = name;
+    };
+    showWelcome(this.root, {
+      start: (name) => {
+        done(name);
+        // Easy bots and fewer of them, on the map every tutorial line was written for.
+        this.pick = { ...this.pick, map: MAPS[0]!.id, mode: 'zone', team: FIRST_MATCH_TEAM, difficulty: 'easy', side: 'random', simple: false };
+        this.finish(this.pick);
+      },
+      browse: (name) => {
+        done(name);
+        this.render();
+      },
+      switchLanguage: () => this.toggleLocale(),
+    });
   }
 
   private editName(required: boolean): void {
@@ -264,6 +310,7 @@ export class Lobby {
   }
 
   private onKey = (e: KeyboardEvent): void => {
+    if (this.welcoming) return;
     if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
     const key = e.code;
     if (key.startsWith('Arrow') || key === 'Enter') e.preventDefault();
@@ -274,7 +321,7 @@ export class Lobby {
         if (i !== this.entry) uiSound('move');
         this.select(i);
       } else if (key === 'Enter') this.activate(ENTRIES[this.entry]!);
-      else if (key === 'KeyF') this.finish(this.pick);
+      else if (key === 'KeyF' && this.continuePic) this.finish(this.pick);
       return;
     }
     if (key === 'Escape' || key === 'Backspace') return this.back();
@@ -576,8 +623,26 @@ export class Lobby {
       b.addEventListener('click', () => this.activate(id));
     }
 
-    // Right: today's missions, then the last setup one press away.
+    // Right: today's missions, then the last setup one press away (nothing to continue before a first match).
     const side = el('div', 'mm-side', body);
+    const played = Object.keys(prof0.maps).length > 0;
+    this.continuePic = null;
+    if (played) this.renderSide(side);
+    const foot = el('div', 'mm-foot', body);
+    if (!this.touch) {
+      const hint = (keys: string[], what: string) => {
+        const h = el('span', 'ds-hint', foot);
+        for (const k of keys) el('span', 'ds-kbd', h).textContent = k;
+        el('span', '', h).textContent = what;
+      };
+      hint(['↑', '↓'], t('lobby.hint.select'));
+      hint(['ENTER'], t('lobby.hint.ok'));
+      if (played) hint(['F'], t('menu.continue'));
+    }
+    el('span', 'mm-version ds-label', foot).textContent = t('menu.version');
+  }
+
+  private renderSide(side: HTMLElement): void {
     missionsCard(side, () => this.go('ranks'));
     const p = this.pick;
     const card = el('button', 'ds-card mm-continue', side);
@@ -591,19 +656,6 @@ export class Lobby {
     card.addEventListener('pointerenter', () => uiSound('hover'));
     card.addEventListener('click', () => this.finish(this.pick));
     this.paintContinue();
-
-    const foot = el('div', 'mm-foot', body);
-    if (!this.touch) {
-      const hint = (keys: string[], what: string) => {
-        const h = el('span', 'ds-hint', foot);
-        for (const k of keys) el('span', 'ds-kbd', h).textContent = k;
-        el('span', '', h).textContent = what;
-      };
-      hint(['↑', '↓'], t('lobby.hint.select'));
-      hint(['ENTER'], t('lobby.hint.ok'));
-      hint(['F'], t('menu.continue'));
-    }
-    el('span', 'mm-version ds-label', foot).textContent = t('menu.version');
   }
 
   /** The continue card's picture: the picked map from above. */

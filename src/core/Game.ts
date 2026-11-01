@@ -101,7 +101,7 @@ import { ACCESS, setAccess } from '@/progression/access';
 import { weaponsOpenedAt } from '@/progression/unlocks';
 import { RANGE_ID } from '@/data/maps';
 import { beginLiveMatch, endLiveMatch, grantXp, loadProfile, saveProfile, type MatchSummary } from '@/progression/profile';
-import { commitMatch, currentProfile, noteServerProgress, settleLeft, shopAction, signedIn } from '@/net/account';
+import { LOGIN_ASK, commitMatch, currentProfile, noteServerProgress, settleLeft, shopAction, signedIn } from '@/net/account';
 import { CONTRACT_REROLL, contractOffer } from '@/progression/contracts';
 import { RIBBONS } from '@/progression/ribbons';
 import { kfxFor, vehicleClassOf, wornOf } from '@/progression/worn';
@@ -810,8 +810,10 @@ export class Game {
     this.player.water = water;
     this.playerSpawns = map.spawns.filter(ownSpawn);
     this.mapSpawns = map.spawns;
-    this.mapName = map.meta.name;
     this.mapId = map.meta.id;
+    // In the player's language (the map file has one name); test maps have none.
+    const nameKey = `map.${map.meta.id}` as MessageKey;
+    this.mapName = t(nameKey) === nameKey ? map.meta.name : t(nameKey);
 
     const botOpts = this.options.bots ?? null;
     if (!botOpts) {
@@ -1319,10 +1321,28 @@ export class Game {
   // First-play tutorial (core/tutorial.ts): the basics on the first match or
   // range visit and from the menu, the match steps on the first match.
 
+  /** Toward the nearest zone the player's side doesn't hold. */
+  private facingFight(from: THREE.Vector3, otherwise: number): number {
+    let best: { x: number; z: number } | null = null;
+    let bestD = Infinity;
+    for (const z of this.zoneMode?.zones ?? []) {
+      const d = Math.hypot(z.x - from.x, z.z - from.z);
+      if (z.owner !== this.myTeam && !z.hidden && d < bestD) {
+        bestD = d;
+        best = z;
+      }
+    }
+    return best ? Math.atan2(-(best.x - from.x), -(best.z - from.z)) : otherwise;
+  }
+
+  /** The player's first bot match: fewer choices on the deploy screen, facing the fight on coming in. */
+  private newcomer = false;
+
   private startTutorial(): void {
     if (this.tutorial || this.tutorialPanel) return;
     const guided = !!this.options.tutorial;
     const seen = loadSeen();
+    this.newcomer = !guided && !this.net && this.deployFlow && !seen.basics && !seen.match;
     // The menu's tutorial shows the match tips again on the next match.
     if (guided && seen.match) saveSeen({ ...seen, match: false });
     const steps = stepsFor(guided, guided ? {} : seen, {
@@ -3604,7 +3624,7 @@ export class Game {
     this.touch?.reset();
     this.flashLeft = 0;
     this.breath = createBreath();
-    this.me.spawn(at.pos, at.yaw, kit, this.options.sandbox ? this.options.loadout : null);
+    this.me.spawn(at.pos, this.newcomer ? this.facingFight(at.pos, at.yaw) : at.yaw, kit, this.options.sandbox ? this.options.loadout : null);
     // Gun game: the step's gun, nothing else.
     const gg = this.zoneMode?.match;
     if (gg instanceof GunGameRules) armForLevel(this.weapons, gg.scoreOf(this.myId));
@@ -4706,7 +4726,7 @@ export class Game {
   /** The contract panel, where the match pays progress (a solo bot match, a room while signed in). */
   private drawContract(): void {
     const ds = this.deployScreen;
-    if (!ds || !(this.progress || (this.net && signedIn()))) return;
+    if (!ds || this.newcomer || !(this.progress || (this.net && signedIn()))) return;
     const c = this.contract;
     if (!this.contractPanel) {
       c.seed = `${currentProfile().created}:${this.mapId}:${Date.now()}`;
@@ -4990,7 +5010,7 @@ export class Game {
     }
     // Tanks: start in one at the base, while the side is under its limit.
     const vw = this.vehicles;
-    if (vw && vw.tankSpots.some((s) => s.team === this.myTeam)) {
+    if (!this.newcomer && vw && vw.tankSpots.some((s) => s.team === this.myTeam)) {
       const full = vw.tanks(this.myTeam) >= vw.tankLimit();
       const spot = vw.freeTankSpot(this.myTeam);
       for (const kind of TANK_KINDS) {
@@ -5005,7 +5025,7 @@ export class Game {
         });
       }
     }
-    if (vw && vw.jetLimit() > 0) {
+    if (!this.newcomer && vw && vw.jetLimit() > 0) {
       const full = vw.jets(this.myTeam) >= vw.jetLimit();
       for (const kind of JET_KINDS) {
         out.push({
@@ -5495,6 +5515,22 @@ export class Game {
           : [
               { label: t('lobby.again'), onClick: () => location.reload() },
               { label: t('lobby.back'), onClick: toLobby },
+              // After a match is the time to ask: it is what signing in would have kept.
+              ...(signedIn()
+                ? []
+                : [
+                    {
+                      label: t('result.signIn'),
+                      onClick: () => {
+                        try {
+                          sessionStorage.setItem(LOGIN_ASK, '1');
+                        } catch {
+                          /* no storage: the menu has the button too */
+                        }
+                        toLobby();
+                      },
+                    },
+                  ]),
             ],
       });
     }, 2500);

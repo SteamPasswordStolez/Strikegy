@@ -1,0 +1,85 @@
+/* The first visit's screen over the menu's film (Welcome.ts). */
+.wc {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  padding: calc(var(--u) * 3) calc(var(--u) * 5);
+  background: linear-gradient(90deg, rgb(8 9 11 / 0.82), rgb(8 9 11 / 0.35) 55%, rgb(8 9 11 / 0.05));
+}
+.wc-lang {
+  position: absolute;
+  top: calc(var(--u) * 1.5);
+  right: calc(var(--u) * 2);
+  --h: calc(var(--u) * 2.75);
+  font-size: var(--fs-sm);
+}
+.wc-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s4);
+  width: min(100%, calc(var(--u) * 30));
+}
+.wc-mark {
+  margin: 0;
+  font: 700 calc(var(--u) * 5.5) / 1 var(--font-display);
+  letter-spacing: 0.06em;
+  color: var(--text, #fff);
+}
+.wc-tag {
+  margin: 0 0 var(--s3);
+  font-size: var(--fs-lg);
+  line-height: 1.45;
+  word-break: keep-all;
+}
+.wc-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+}
+.wc-name .ds-input {
+  flex: 1;
+  min-width: 0;
+}
+.wc-note {
+  min-height: 1.4em;
+  font-size: var(--fs-sm);
+  opacity: 0.75;
+  word-break: keep-all;
+}
+.wc-note.warn {
+  color: var(--bad, #ff6b5e);
+  opacity: 1;
+}
+.wc-start {
+  --h: calc(var(--u) * 4);
+  width: 100%;
+  justify-content: center;
+  font-size: var(--fs-lg);
+}
+.wc-browse {
+  align-self: center;
+  font-size: var(--fs-sm);
+}
+/* Phones on their side: everything in view without scrolling. */
+@media (max-height: 460px) {
+  .wc {
+    padding: var(--s3) var(--s5);
+  }
+  .wc-main {
+    gap: var(--s2);
+  }
+  .wc-mark {
+    font-size: calc(var(--u) * 3.2);
+  }
+  .wc-tag {
+    margin: 0;
+    font-size: var(--fs-sm);
+  }
+  .wc-start {
+    --h: calc(var(--u) * 3);
+  }
+}

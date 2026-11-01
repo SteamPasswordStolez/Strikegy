@@ -110,6 +110,8 @@ export const STEPS: readonly StepDef[] = [
   { id: 'scoreboard', chapter: 'field', keys: ['scoreboard'], basic: false, amount: (p) => pulse(!!p.scoreboard), need: 1, timeout: 20 },
 ];
 
+const FIRST_MATCH: readonly StepId[] = ['deploy', 'move', 'sprint', 'shoot', 'aim', 'reload', 'capture'];
+
 const STORE = 'strikegy.tutorial.v1';
 
 /** What the player has been through: the basics, the match steps. */
@@ -133,8 +135,11 @@ export function saveSeen(s: TutorialSeen): void {
  */
 export function stepsFor(guided: boolean, seen: TutorialSeen, ctx: TutorialCtx): StepId[] {
   const out: StepId[] = [];
+  // A first match: the few things needed to play; the rest is the menu's tutorial (21 steps under fire was too many).
+  const first = !guided && ctx.deployFlow && !seen.basics && !seen.match;
   for (const s of STEPS) {
     if (s.avail && !s.avail(ctx)) continue;
+    if (first && !FIRST_MATCH.includes(s.id)) continue;
     if (s.basic ? guided || !seen.basics : !guided && ctx.deployFlow && !seen.match) out.push(s.id);
   }
   return out;
