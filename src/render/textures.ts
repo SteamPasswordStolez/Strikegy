@@ -190,6 +190,16 @@ export const SURFACE_KINDS: SurfaceMaterial[] = ['ground', 'concrete', 'concrete
 /** Kinds drawn from procedural recipes only (rasterized in workers while the map loads). */
 export const PROCEDURAL_KINDS: SurfaceMaterial[] = ['grass', 'sand', 'paint', 'canvas', 'rubber', 'straw'];
 
+/** A texture image drawn down to `size` px square (lower texture quality). */
+function shrink(img: HTMLImageElement | ImageBitmap, size: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, size, size);
+  return c;
+}
+
 /** Provides PBR materials for blockout surfaces: scanned textures when available, procedural otherwise. */
 export class SurfaceLibrary {
   private cache = new Map<SurfaceMaterial, THREE.MeshStandardMaterial>();
@@ -200,6 +210,8 @@ export class SurfaceLibrary {
   constructor(
     private readonly resolution: number,
     private readonly maxAnisotropy: number,
+    /** Scanned sets (1024 px files) are drawn at most this size (texture quality 낮음: 512, a quarter of the memory). */
+    private readonly scannedSize = 1024,
   ) {}
 
   /**
@@ -208,7 +220,7 @@ export class SurfaceLibrary {
    */
   async preload(kinds: SurfaceMaterial[], baseUrl: string): Promise<void> {
     const loader = new THREE.TextureLoader();
-    const aniso = Math.min(8, this.maxAnisotropy);
+    const aniso = this.maxAnisotropy;
     await Promise.all(
       kinds.map(async (kind) => {
         const dir = `${baseUrl}textures/${SCANNED_SOURCE[kind] ?? kind}/`;
@@ -218,6 +230,8 @@ export class SurfaceLibrary {
           );
           map!.colorSpace = THREE.SRGBColorSpace;
           for (const t of [map!, normalMap!, arm!]) {
+            const img = t.image as HTMLImageElement | ImageBitmap | undefined;
+            if (img && typeof document !== 'undefined' && img.width > this.scannedSize) (t as THREE.Texture<HTMLCanvasElement | HTMLImageElement | ImageBitmap>).image = shrink(img, this.scannedSize);
             t.wrapS = t.wrapT = THREE.RepeatWrapping;
             t.anisotropy = aniso;
           }
@@ -280,7 +294,7 @@ export class SurfaceLibrary {
       const recipe = createRecipe(kind);
       const img = this.baked.get(kind) ?? rasterize(recipe, this.resolution);
       this.baked.delete(kind);
-      const aniso = Math.min(8, this.maxAnisotropy);
+      const aniso = this.maxAnisotropy;
       map = dataTexture(img.albedo, img.size, true, aniso);
       normalMap = dataTexture(img.normal, img.size, false, aniso);
       orm = dataTexture(img.orm, img.size, false, aniso);

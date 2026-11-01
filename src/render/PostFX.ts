@@ -61,7 +61,11 @@ class HalfResGTAOPass extends GTAOPass {
 
 export interface PostFXOptions {
   ao: boolean;
+  /** GTAO samples (8; 12 on ultra). */
+  aoSamples?: number;
   bloom: boolean;
+  /** FXAA as the last pass (graphics item 안티앨리어싱; off: the tone-mapped frame goes straight to the screen). */
+  fxaa?: boolean;
 }
 
 /**
@@ -71,14 +75,14 @@ export interface PostFXOptions {
  */
 export class PostFX {
   readonly composer: EffectComposer;
-  private readonly fxaa: ShaderPass;
+  private readonly fxaa: ShaderPass | null;
   /**
    * The tone-mapped frame (display values, sRGB) on its way to FXAA: 8 bits a
    * channel, what the screen gets anyway. In the half-float ping-pong buffer
    * the two passes moved twice the bytes (2026-10-19: tone map + FXAA
    * 1.4 -> see CLAUDE.md, Iris Xe 1152x648).
    */
-  private readonly ldr: THREE.WebGLRenderTarget;
+  private readonly ldr: THREE.WebGLRenderTarget | null;
   private readonly labels = new Map<Pass, string>();
 
   constructor(
@@ -110,7 +114,7 @@ export class PostFX {
       // Read the world pass's depth (normals rebuilt from it) instead of drawing
       // the whole scene again at half size for a depth / normal buffer.
       ao.setGBuffer(target.depthTexture!, undefined);
-      ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 8 });
+      ao.updateGtaoMaterial({ radius: 0.5, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: opts.aoSamples ?? 8 });
       ao.updatePdMaterial({ samples: 5, rings: 2, radius: 6 });
       ao.blendIntensity = 0.85;
       this.add('ao', ao);
@@ -129,17 +133,25 @@ export class PostFX {
     const bloom = opts.bloom ? new BloomPass(1.6) : null;
     if (bloom) this.add('bloom', bloom);
     const final = new FinalPass(bloom, 0.075);
-    this.ldr = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.UnsignedByteType, depthBuffer: false });
-    const ldr = this.ldr;
+    if (opts.fxaa === false) {
+      // No anti-aliasing: tone mapping is the last pass and draws to the screen.
+      this.ldr = null;
+      this.fxaa = null;
+      this.add('tonemap', final);
+      return;
+    }
+    const ldr = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.UnsignedByteType, depthBuffer: false });
+    this.ldr = ldr;
     const finalRender = final.render.bind(final);
     final.render = (renderer, _write, read, delta, mask) => finalRender(renderer, ldr, read, delta, mask);
     final.needsSwap = false;
     this.add('tonemap', final);
-    this.fxaa = new ShaderPass(FXAAShader);
+    const fxaa = new ShaderPass(FXAAShader);
     // Reads the 8-bit frame, not the composer's buffer.
-    this.fxaa.textureID = '';
-    this.fxaa.uniforms.tDiffuse!.value = ldr.texture;
-    this.add('fxaa', this.fxaa);
+    fxaa.textureID = '';
+    fxaa.uniforms.tDiffuse!.value = ldr.texture;
+    this.fxaa = fxaa;
+    this.add('fxaa', fxaa);
   }
 
   private add(label: string, pass: Pass): void {
@@ -150,8 +162,8 @@ export class PostFX {
   setSize(w: number, h: number, pixelRatio: number): void {
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(w, h);
-    this.ldr.setSize(w * pixelRatio, h * pixelRatio);
-    this.fxaa.material.uniforms.resolution!.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
+    this.ldr?.setSize(w * pixelRatio, h * pixelRatio);
+    this.fxaa?.material.uniforms.resolution!.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
   }
 
   render(): void {
@@ -168,7 +180,7 @@ export class PostFX {
   }
 
   dispose(): void {
-    this.ldr.dispose();
+    this.ldr?.dispose();
     this.composer.dispose();
   }
 }

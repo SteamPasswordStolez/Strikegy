@@ -197,3 +197,20 @@
     font-size: var(--fs-sm);
   }
 }
+
+/* 그래픽: the preset row's 사용자 지정 chip only says that details were set apart (not a button to press). */
+.sp-custom {
+  pointer-events: none;
+}
+/* 그래픽: up to six choices in a row (preset + 사용자 지정, shadow levels) stay on one line. */
+.sp-gfx .sp-ctl {
+  width: min(calc(var(--u) * 30), 74%);
+}
+.sp-gfx .sp-seg {
+  flex-wrap: nowrap;
+}
+.sp-gfx .sp-seg button {
+  min-width: calc(var(--u) * 3.2);
+  padding: 0 var(--s2);
+  white-space: nowrap;
+}

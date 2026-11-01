@@ -564,7 +564,7 @@ export class Game {
     this.settings = loadSettings();
     setLocale(this.settings.locale);
     const quality = resolveQuality(this.settings.quality);
-    this.renderer = new Renderer(container, quality, this.settings.fov);
+    this.renderer = new Renderer(container, quality, this.settings.fov, this.settings.gfx);
     this.renderer.setRenderScale(this.settings.renderScale);
     this.hud = new HUD(container);
     this.vehicleView = new VehicleView(this.hud.root);
@@ -629,7 +629,7 @@ export class Game {
     let map: MapDef;
     const r = this.renderer;
     const q = r.quality;
-    this.surfaces = new SurfaceLibrary(q.textureSize, Math.min(r.maxAnisotropy, q.anisotropy));
+    this.surfaces = new SurfaceLibrary(q.textureSize, Math.min(r.maxAnisotropy, q.anisotropy), q.scannedSize);
     // Art loads in parallel with physics/map; any asset that fails falls back gracefully.
     const art = Promise.all([
       this.surfaces.preload(SURFACE_KINDS, ASSET_BASE),
@@ -686,7 +686,7 @@ export class Game {
     };
     await this.loadStep(0.36, 'load.buildings');
     // Ground, colliders and map data as the game server builds them, plus the looks.
-    const { terrain, shaped, water, sea, built } = buildWorld(map, this.physics, this.impacts, { scene: r.scene, surfaces: this.surfaces, terrainStep: r.preset === 'low' ? 2 : 1 });
+    const { terrain, shaped, water, sea, built } = buildWorld(map, this.physics, this.impacts, { scene: r.scene, surfaces: this.surfaces, terrainStep: q.terrainStep });
     this.navExtra = built.navExtra;
     this.navBig = built.navBig;
     this.landingTeam = map.world.landing ?? null;
@@ -706,17 +706,17 @@ export class Game {
     const winter = map.world.visualProfile === 'winter';
     const shore = map.world.shore ?? null;
     if (winter) {
-      this.snowfall = new Snowfall(r.preset === 'low' ? 1200 : r.preset === 'medium' ? 2500 : 4000);
+      this.snowfall = new Snowfall(q.snow);
       r.scene.add(this.snowfall.points);
     }
     const kit = outdoor ? createConiferKit(q.msaa, winter, map.world.flora) : null;
     if (kit && map.trees?.length) {
       // Low quality (phones): 3D trees only close by, impostors beyond.
-      this.forest = Forest.ofMap(map.trees, terrain, kit, r.gl, r.scene, r.preset === 'low' ? 55 : undefined);
+      this.forest = Forest.ofMap(map.trees, terrain, kit, r.gl, r.scene, q.treeNear);
       r.scene.add(this.forest.group);
     }
     const coverStyle = GROUND_COVER[map.world.groundMaterial ?? 'ground'];
-    if (coverStyle && shaped && built.groundHandle !== null && r.preset !== 'low') {
+    if (coverStyle && shaped && built.groundHandle !== null && q.groundCover) {
       const kind = map.world.groundMaterial ?? 'ground';
       this.groundCover = new GroundCover(coverStyle, terrain.bounds(), this.physics, this.impacts, built.groundHandle, SURFACE_FROM_MATERIAL[kind], (x, y, z) => (!!water && (water.depthAt(x, y + 0.3, z) > 0 || (!!sea && water.seaAt(x, z) && y < sea.level + sea.swell / 2 + 0.3))) || (!!shore && y < shore.top + 0.4), q.msaa);
       r.scene.add(this.groundCover.mesh);
@@ -724,7 +724,7 @@ export class Game {
     lap('water+forest');
     await this.loadStep(0.56, 'load.scenery');
     this.fitShadows(map, terrain, built.root, props);
-    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: r.preset === 'low', ash: map.world.shore?.ash });
+    if (kit) this.backdrop = buildBackdrop(r.scene, terrain, { lowDetail: q.backdropDetail === 'low', gl: r.gl, models: this.models, msaa: q.msaa, mapHasTerrain: shaped, kit, winter, desert: map.world.visualProfile === 'desert', phone: q.fewEdgeTrees, ash: map.world.shore?.ash });
     lap('backdrop');
     if (import.meta.env.DEV) console.info(`[strikegy] world built in ${Math.round(performance.now() - t0)} ms (${steps.join(', ')})`);
 
@@ -949,6 +949,7 @@ export class Game {
         e.preventDefault();
         const i = QUALITY_ORDER.indexOf(this.renderer.preset);
         this.settings.quality = QUALITY_ORDER[(i + 1) % QUALITY_ORDER.length]!;
+        this.settings.gfx = {};
         saveSettings(this.settings);
         location.reload();
       }
@@ -1528,7 +1529,7 @@ export class Game {
     const tEnd = performance.now();
     perf.record(
       { frameMs, simMs, updateMs: tDraw - tStart - simMs, renderMs: tEnd - tDraw },
-      `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}${this.netLabel()} · ${this.audio.stats()}`,
+      `${this.renderer.preset.toUpperCase()}${this.renderer.custom ? '*' : ''} ×${this.renderer.renderScale.toFixed(2)} (F4) · ${this.renderer.canvas.width}×${this.renderer.canvas.height}${this.netLabel()} · ${this.audio.stats()}`,
     );
   };
 
@@ -4304,7 +4305,7 @@ export class Game {
         aimAt: this.aimAtFor(dt),
         fps: this.settings.showFps ? this.fps : null,
         debug: this.settings.showFps
-          ? `${this.renderer.preset.toUpperCase()} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)} · ${Math.round(((((-this.player.yaw * 180) / Math.PI) % 360) + 360) % 360)}°`
+          ? `${this.renderer.preset.toUpperCase()}${this.renderer.custom ? '*' : ''} ×${this.renderer.renderScale.toFixed(1)} (F4) · ${pf.x.toFixed(1)}, ${pf.y.toFixed(1)}, ${pf.z.toFixed(1)} · ${Math.round(((((-this.player.yaw * 180) / Math.PI) % 360) + 360) % 360)}°`
           : null,
       },
       dt,

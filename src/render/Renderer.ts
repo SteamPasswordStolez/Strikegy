@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { QualityPreset } from '@/core/Settings';
+import { gfxFor, type GfxOptions, type QualityPreset } from '@/core/Settings';
 import { PostFX } from './PostFX';
 import { LAYER_BACKDROP, LAYER_FX } from './layers';
 import { installGradeToneMapping } from './grade';
@@ -17,16 +17,23 @@ export interface QualityConfig {
   shadowExtent: number;
   /** Re-render the shadow map every N frames (static-heavy scenes don't need 60 Hz). */
   shadowInterval: number;
+  /** Procedural surfaces' size (px); scanned sets are drawn at most `scannedSize`. */
   textureSize: number;
+  scannedSize: number;
   /**
    * Anisotropic filtering of the surface textures: 8x cost ~1.4 ms a frame over 4x on an
    * integrated GPU (Ardennes, 1152x648, 2026-10-10), mostly on the terrain.
    */
   anisotropy: number;
+  /** The post chain (AO, bloom, FXAA); without it the frame is drawn straight to the canvas. */
   postfx: boolean;
-  /** Hardware MSAA on the canvas (direct rendering only; the post chain uses FXAA). */
+  /** MSAA in use (on the canvas: direct rendering only; foliage then uses alpha to coverage). */
   msaa: boolean;
+  /** FXAA at the end of the post chain. */
+  fxaa: boolean;
   ao: boolean;
+  /** GTAO samples (8; 12 on ultra). */
+  aoSamples: number;
   bloom: boolean;
   /** Point lights for muzzle flashes / explosions (each costs every lit pixel). */
   dynamicLights: number;
@@ -37,65 +44,84 @@ export interface QualityConfig {
   /** Near shadow map round the camera (nearShadow.ts): size in texels (0: none) and half-width (m). */
   nearShadow: number;
   nearExtent: number;
+  /** Terrain mesh: every grid line (1) or every second (2). */
+  terrainStep: number;
+  /** Grass tufts round the camera (groundCover.ts). */
+  groundCover: boolean;
+  /** In-map 3D trees within this many metres (impostors beyond). */
+  treeNear: number;
+  /** Fewer 3D trees along the map's edge (weakest devices). */
+  fewEdgeTrees: boolean;
+  /** Falling snow flakes on winter maps. */
+  snow: number;
 }
 
+/** The parts of a preset that are not player items (resolution caps). */
+const PRESET_BASE: Record<QualityPreset, { pixelRatioCap: number; pixelBudget: number; shadowExtent: number; aoSamples: number }> = {
+  low: { pixelRatioCap: 1, pixelBudget: 0.9, shadowExtent: 30, aoSamples: 8 },
+  medium: { pixelRatioCap: 1, pixelBudget: 1.5, shadowExtent: 35, aoSamples: 8 },
+  high: { pixelRatioCap: 1.25, pixelBudget: Infinity, shadowExtent: 40, aoSamples: 8 },
+  ultra: { pixelRatioCap: 1.5, pixelBudget: Infinity, shadowExtent: 40, aoSamples: 12 },
+};
+
+const SHADOWS: Record<GfxOptions['shadows'], { on: boolean; map: number; near: number; nearExtent: number }> = {
+  off: { on: false, map: 1024, near: 0, nearExtent: 0 },
+  low: { on: true, map: 1024, near: 0, nearExtent: 0 },
+  medium: { on: true, map: 2048, near: 1536, nearExtent: 20 },
+  high: { on: true, map: 3072, near: 2048, nearExtent: 26 },
+  ultra: { on: true, map: 4096, near: 3072, nearExtent: 30 },
+};
+
+const EFFECTS: Record<GfxOptions['effects'], { lights: number; snow: number }> = {
+  low: { lights: 0, snow: 1200 },
+  medium: { lights: 0, snow: 2500 },
+  high: { lights: 1, snow: 4000 },
+  ultra: { lights: 2, snow: 5000 },
+};
+
+/** A preset with the player's own picks over it, as the renderer's numbers. */
+export function qualityConfig(preset: QualityPreset, overrides: Partial<GfxOptions> = {}): QualityConfig {
+  const g = gfxFor(preset, overrides);
+  const base = PRESET_BASE[preset];
+  const sh = SHADOWS[g.shadows];
+  const fx = EFFECTS[g.effects];
+  // AO and bloom need the post chain; FXAA is its last pass. MSAA works on the canvas only:
+  // the chain's targets share one depth texture, which multisampled targets can't.
+  const postfx = g.ao || g.bloom || g.antialias === 'fxaa';
+  return {
+    pixelRatioCap: base.pixelRatioCap,
+    pixelBudget: base.pixelBudget,
+    shadows: sh.on,
+    shadowMapSize: sh.map,
+    shadowExtent: base.shadowExtent,
+    shadowInterval: 2,
+    nearShadow: sh.near,
+    nearExtent: sh.nearExtent,
+    textureSize: g.textures === 'low' ? 256 : g.textures === 'medium' ? 512 : 1024,
+    scannedSize: g.textures === 'low' ? 512 : 1024,
+    anisotropy: g.filtering,
+    postfx,
+    msaa: !postfx && g.antialias === 'msaa',
+    fxaa: postfx && g.antialias !== 'off',
+    ao: g.ao,
+    aoSamples: base.aoSamples,
+    bloom: g.bloom,
+    dynamicLights: fx.lights,
+    snow: fx.snow,
+    backdropDetail: g.scenery,
+    terrainStep: g.terrain === 'low' ? 2 : 1,
+    groundCover: g.grass,
+    treeNear: g.trees === 'near' ? 55 : g.trees === 'far' ? 150 : 95,
+    fewEdgeTrees: g.trees === 'near',
+  };
+}
+
+/** The presets as they are (no player picks). */
 export const QUALITY: Record<QualityPreset, QualityConfig> = {
-  low: {
-    pixelRatioCap: 1,
-    shadows: false,
-    shadowMapSize: 1024,
-    shadowExtent: 30,
-    shadowInterval: 2,
-    textureSize: 256,
-    anisotropy: 2,
-    postfx: false,
-    msaa: false,
-    pixelBudget: 0.9,
-    ao: false,
-    bloom: false,
-    dynamicLights: 0,
-    backdropDetail: 'low',
-    nearShadow: 0,
-    nearExtent: 0,
-  },
-  medium: {
-    pixelRatioCap: 1,
-    shadows: true,
-    shadowMapSize: 2048,
-    shadowExtent: 35,
-    shadowInterval: 2,
-    textureSize: 512,
-    anisotropy: 4,
-    // Without AO/bloom the post chain only added full-screen passes (~10 ms at
-    // 1080p on integrated GPUs); direct rendering with MSAA looks the same.
-    postfx: false,
-    msaa: true,
-    pixelBudget: 1.5,
-    ao: false,
-    bloom: false,
-    dynamicLights: 0,
-    backdropDetail: 'low',
-    nearShadow: 1536,
-    nearExtent: 20,
-  },
-  high: {
-    pixelRatioCap: 1.25,
-    shadows: true,
-    shadowMapSize: 3072,
-    shadowExtent: 40,
-    shadowInterval: 2,
-    textureSize: 512,
-    anisotropy: 8,
-    postfx: true,
-    msaa: false,
-    pixelBudget: Infinity,
-    ao: true,
-    bloom: true,
-    dynamicLights: 1,
-    backdropDetail: 'high',
-    nearShadow: 2048,
-    nearExtent: 26,
-  },
+  low: qualityConfig('low'),
+  medium: qualityConfig('medium'),
+  high: qualityConfig('high'),
+  ultra: qualityConfig('ultra'),
 };
 
 /**
@@ -111,6 +137,8 @@ export class Renderer {
   /** Viewmodel camera: fixed FOV that does not change with ADS zoom. */
   readonly fpCamera: THREE.PerspectiveCamera;
   readonly quality: QualityConfig;
+  /** Some graphics items were set apart from the preset (F3 shows the preset with a *). */
+  readonly custom: boolean;
   private postfx: PostFX | null = null;
   private readonly vignette: HTMLDivElement;
   private frameIndex = 0;
@@ -132,8 +160,10 @@ export class Renderer {
     container: HTMLElement,
     readonly preset: QualityPreset,
     fov: number,
+    gfx: Partial<GfxOptions> = {},
   ) {
-    this.quality = QUALITY[preset];
+    this.quality = qualityConfig(preset, gfx);
+    this.custom = Object.keys(gfx).length > 0;
     this.gl = new THREE.WebGLRenderer({
       antialias: this.quality.msaa,
       powerPreference: 'high-performance',
@@ -174,7 +204,9 @@ export class Renderer {
     if (this.quality.postfx) {
       this.postfx = new PostFX(this.gl, this.scene, this.camera, this.fpScene, this.fpCamera, {
         ao: this.quality.ao,
+        aoSamples: this.quality.aoSamples,
         bloom: this.quality.bloom,
+        fxaa: this.quality.fxaa,
       });
     } else {
       // Direct rendering draws effects with the world; the post chain splits them (see layers.ts).

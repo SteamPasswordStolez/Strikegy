@@ -1,7 +1,26 @@
 import { loadJSON, saveJSON } from './storage';
 import type { Locale } from '@/i18n';
 
-export type QualityPreset = 'low' | 'medium' | 'high';
+export type QualityPreset = 'low' | 'medium' | 'high' | 'ultra';
+
+/**
+ * The graphics items one by one (owner, 2026-11-01: "split the graphics options like other games"):
+ * a preset sets them all, any of them can be set on its own (`Settings.gfx`, then the preset reads
+ * 사용자 지정). Applied when a match loads (render/quality.ts turns them into the renderer's numbers).
+ */
+export interface GfxOptions {
+  shadows: 'off' | 'low' | 'medium' | 'high' | 'ultra';
+  textures: 'low' | 'medium' | 'high';
+  filtering: 2 | 4 | 8 | 16;
+  antialias: 'off' | 'fxaa' | 'msaa';
+  ao: boolean;
+  bloom: boolean;
+  effects: 'low' | 'medium' | 'high' | 'ultra';
+  terrain: 'low' | 'high';
+  grass: boolean;
+  trees: 'near' | 'normal' | 'far';
+  scenery: 'low' | 'high';
+}
 
 export interface Settings {
   /** Multiplier on the base mouse sensitivity. */
@@ -12,6 +31,8 @@ export interface Settings {
   /** Horizontal-ish base FOV in degrees (vertical FOV used by three.js). */
   fov: number;
   quality: QualityPreset | 'auto';
+  /** Graphics items set apart from the preset (empty: all as the preset says). */
+  gfx: Partial<GfxOptions>;
   locale: Locale;
   showFps: boolean;
   masterVolume: number;
@@ -52,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   invertY: false,
   fov: 78,
   quality: 'auto',
+  gfx: {},
   locale: 'ko',
   showFps: false,
   masterVolume: 0.8,
@@ -128,4 +150,21 @@ export function resolveQuality(q: Settings['quality']): QualityPreset {
   return INTEGRATED_GPU.test(gpuName()) ? 'medium' : 'high';
 }
 
-export const QUALITY_ORDER: QualityPreset[] = ['low', 'medium', 'high'];
+export const QUALITY_ORDER: QualityPreset[] = ['low', 'medium', 'high', 'ultra'];
+
+/** What each preset sets every graphics item to (Settings → 그래픽). */
+export const PRESET_GFX: Record<QualityPreset, GfxOptions> = {
+  low: { shadows: 'off', textures: 'low', filtering: 2, antialias: 'off', ao: false, bloom: false, effects: 'low', terrain: 'low', grass: false, trees: 'near', scenery: 'low' },
+  // Without AO / bloom the post chain only added full-screen passes (~10 ms at 1080p on
+  // integrated GPUs); direct rendering with MSAA looks the same.
+  medium: { shadows: 'medium', textures: 'medium', filtering: 4, antialias: 'msaa', ao: false, bloom: false, effects: 'medium', terrain: 'high', grass: true, trees: 'normal', scenery: 'low' },
+  high: { shadows: 'high', textures: 'medium', filtering: 8, antialias: 'fxaa', ao: true, bloom: true, effects: 'high', terrain: 'high', grass: true, trees: 'normal', scenery: 'high' },
+  // Strong GPUs (owner, 2026-11-01: better quality where there is room): larger and sharper shadows,
+  // a wider near shadow, full-size procedural surfaces, 16x filtering, more AO samples, two flash lights.
+  ultra: { shadows: 'ultra', textures: 'high', filtering: 16, antialias: 'fxaa', ao: true, bloom: true, effects: 'ultra', terrain: 'high', grass: true, trees: 'far', scenery: 'high' },
+};
+
+/** The items a preset and the player's own picks come to. */
+export function gfxFor(preset: QualityPreset, overrides: Partial<GfxOptions> = {}): GfxOptions {
+  return { ...PRESET_GFX[preset], ...overrides };
+}

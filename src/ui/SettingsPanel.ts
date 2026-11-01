@@ -2,12 +2,13 @@ import { currentProfile } from '@/net/account';
 import { levelOf } from '@/progression/levels';
 import { MARSHAL_MUSIC_LEVEL } from '@/progression/unlocks';
 import { setLocale, t, type MessageKey } from '@/i18n';
-import { resolveQuality, saveSettings, type Settings, detectTouch } from '@/core/Settings';
+import { PRESET_GFX, gfxFor, resolveQuality, saveSettings, type GfxOptions, type Settings, detectTouch } from '@/core/Settings';
 import { RESERVED, bind, bindings, commitBindings, conflicts, keyName, resetBindings, type Action } from '@/input/bindings';
 import { uiSound } from '@/audio/uiSounds';
 import './settingsPanel.css';
 
-type Category = 'controls' | 'keys' | 'video' | 'audio';
+type Category = 'controls' | 'keys' | 'video' | 'graphics' | 'audio';
+type GfxPresetKey = keyof typeof PRESET_GFX;
 
 /** The key rows, in groups. */
 const KEY_GROUPS: [MessageKey, Action[]][] = [
@@ -33,7 +34,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: 
 
 let autoQuality: string | null = null;
 
-const CATEGORIES: readonly Category[] = ['controls', 'keys', 'video', 'audio'];
+const CATEGORIES: readonly Category[] = ['controls', 'keys', 'video', 'graphics', 'audio'];
 const catName = (c: Category): MessageKey => (c === 'audio' ? 'lobby.audioLang' : (`lobby.${c}` as MessageKey));
 
 /**
@@ -93,16 +94,14 @@ export class SettingsPanel {
     } else if (this.cat === 'video') {
       this.slider(rows, 'lobby.fov', 'fov', 60, 100, 1, (v) => `${Math.round(v)}°`);
       this.choice(rows, 'lobby.cameraBob', 'cameraBob', ['full', 'low', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.cb.${v}` as MessageKey)));
-      this.slider(rows, 'lobby.renderScale', 'renderScale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
-      // What auto picks needs the GPU's name (a throwaway WebGL context): asked once.
-      autoQuality ??= resolveQuality('auto');
-      const auto = t(`lobby.q.${autoQuality}` as MessageKey);
-      this.choice(rows, 'lobby.quality', 'quality', ['auto', 'low', 'medium', 'high'] as const, (v) => (v === 'auto' ? `${t('lobby.q.auto')} (${auto})` : t(`lobby.q.${v}` as MessageKey)));
       this.toggle(rows, 'lobby.showFps', 'showFps');
       this.choice(rows, 'lobby.progressNotices', 'progressNotices', ['all', 'levels', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.pn.${v}` as MessageKey)));
       this.choice(rows, 'lobby.killFx', 'killFx', ['all', 'mine', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.kfx.${v}` as MessageKey)));
       this.choice(rows, 'lobby.soldierSex', 'soldierSex', ['m', 'f'] as const, (v) => t(`lobby.sex.${v}` as MessageKey));
       if (!this.opts.live) this.toggle(rows, 'lobby.menuScene', 'menuScene');
+    } else if (this.cat === 'graphics') {
+      rows.classList.add('sp-gfx');
+      this.graphicsRows(rows);
     } else {
       this.slider(rows, 'lobby.volume', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
       this.slider(rows, 'lobby.voiceVolume', 'voiceVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
@@ -179,7 +178,7 @@ export class SettingsPanel {
     });
   }
 
-  private choice<K extends 'quality' | 'locale' | 'progressNotices' | 'inputMode' | 'killFx' | 'soldierSex' | 'cameraBob', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
+  private choice<K extends 'locale' | 'progressNotices' | 'inputMode' | 'killFx' | 'soldierSex' | 'cameraBob', V extends Settings[K]>(parent: HTMLElement, label: MessageKey, key: K, values: readonly V[], name: (v: V) => string): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const v of values) {
       const b = el('button', v === this.s[key] ? 'sel' : '', seg);
@@ -189,6 +188,73 @@ export class SettingsPanel {
         if (v !== this.s[key]) uiSound('select');
         this.set(key, v);
         if (key === 'locale' && !this.opts.live) return; // the lobby redraws itself in the new language
+        this.render();
+      });
+    }
+  }
+
+  /**
+   * 그래픽 (owner, 2026-11-01: split like other games): the preset, the resolution, then every item
+   * on its own. A preset sets them all; an item set apart makes the preset read 사용자 지정. In a match
+   * they apply from the next load (the resolution at once).
+   */
+  private graphicsRows(rows: HTMLElement): void {
+    // What auto picks needs the GPU's name (a throwaway WebGL context): asked once.
+    autoQuality ??= resolveQuality('auto');
+    const preset = resolveQuality(this.s.quality);
+    const custom = Object.keys(this.s.gfx ?? {}).length > 0;
+    const seg = el('div', 'ds-seg sp-seg', this.row(rows, 'lobby.quality', 'quality'));
+    for (const v of ['auto', 'low', 'medium', 'high', 'ultra'] as const) {
+      const b = el('button', !custom && v === this.s.quality ? 'sel' : '', seg);
+      b.type = 'button';
+      b.textContent = v === 'auto' ? `${t('lobby.q.auto')} (${t(`lobby.q.${autoQuality}` as MessageKey)})` : t(`lobby.q.${v}` as MessageKey);
+      b.addEventListener('click', () => {
+        if (v !== this.s.quality || custom) uiSound('select');
+        this.s.gfx = {};
+        this.set('quality', v);
+        this.render();
+      });
+    }
+    if (custom) el('button', 'sel sp-custom', seg).textContent = t('lobby.q.custom');
+    this.slider(rows, 'lobby.renderScale', 'renderScale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
+    el('div', 'ds-label sp-group', rows).textContent = t('gfx.details');
+    const lv = (v: string): string => t(v === 'off' ? 'lobby.off' : (`lobby.q.${v}` as MessageKey));
+    const onOff = (v: boolean): string => t(v ? 'lobby.on' : 'lobby.off');
+    this.gfxItem(rows, preset, 'shadows', ['off', 'low', 'medium', 'high', 'ultra'] as const, lv);
+    this.gfxItem(rows, preset, 'textures', ['low', 'medium', 'high'] as const, lv);
+    this.gfxItem(rows, preset, 'filtering', [2, 4, 8, 16] as const, (v) => `${v}x`);
+    this.gfxItem(rows, preset, 'antialias', ['off', 'fxaa', 'msaa'] as const, (v) => (v === 'off' ? t('lobby.off') : v.toUpperCase()));
+    this.gfxItem(rows, preset, 'ao', [false, true] as const, onOff);
+    this.gfxItem(rows, preset, 'bloom', [false, true] as const, onOff);
+    this.gfxItem(rows, preset, 'effects', ['low', 'medium', 'high', 'ultra'] as const, lv);
+    this.gfxItem(rows, preset, 'terrain', ['low', 'high'] as const, lv);
+    this.gfxItem(rows, preset, 'grass', [false, true] as const, onOff);
+    this.gfxItem(rows, preset, 'trees', ['near', 'normal', 'far'] as const, (v) => t(`gfx.trees.${v}` as MessageKey));
+    this.gfxItem(rows, preset, 'scenery', ['low', 'high'] as const, lv);
+  }
+
+  /** One graphics item: the preset's value unless the player set it apart (picking the preset's value again drops that). */
+  private gfxItem<K extends keyof GfxOptions>(rows: HTMLElement, preset: GfxPresetKey, key: K, values: readonly GfxOptions[K][], name: (v: GfxOptions[K]) => string): void {
+    const r = el('div', 'sp-row', rows);
+    const label = t(`gfx.${key}` as MessageKey);
+    el('div', 'sp-label', r).textContent = label;
+    const ctl = el('div', 'sp-ctl', r);
+    const text = t(`gfxDesc.${key}` as MessageKey) + (this.opts.live ? ` ${t('settings.nextMatch')}` : '');
+    r.addEventListener('pointerenter', () => this.describe(label, text));
+    if (this.opts.live) r.classList.add('later');
+    const now = gfxFor(preset, this.s.gfx)[key];
+    const seg = el('div', 'ds-seg sp-seg', ctl);
+    for (const v of values) {
+      const b = el('button', v === now ? 'sel' : '', seg);
+      b.type = 'button';
+      b.textContent = name(v);
+      b.addEventListener('click', () => {
+        if (v === now) return;
+        uiSound('select');
+        const g: Partial<GfxOptions> = { ...this.s.gfx };
+        if (v === PRESET_GFX[preset][key]) delete g[key];
+        else g[key] = v;
+        this.set('gfx', g);
         this.render();
       });
     }
