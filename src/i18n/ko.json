@@ -1,5 +1,5 @@
 {
-  "fleet.status": "함선 {us} : {them} · 남은 시간 {t}",
+  "fleet.status": "함선 {us} : {them}",
   "fleet.points": "함대 체력",
   "title": "STRIKEGY",
   "start.hint": "{k:forward}{k:left}{k:back}{k:right} 이동 · {k:sprint} 달리기 · {k:crouch} 앉기(토글)·달리며 슬라이딩 · {k:jump} 점프 · {k:fire} 사격 · {k:ads} 조준 · {k:reload} 재장전 · {k:slot1}·{k:slot2}·{k:slot3}/휠 무기 · {k:grenade} 투척 · {k:medkit} 구급통 · {k:interact}(길게) 부활·보급 · {k:build} 건설 모드 · {k:support} 전장 지원 · {k:melee} 근접 공격 · {k:breath}(누르고 있기) 숨 참기 · {k:scoreboard}(누르고 있기) 점수판 · {k:inspect} 총기 점검 · F3 FPS",
@@ -413,7 +413,8 @@
   "match.winnerIs": "1위 {name}",
   "score.ranks": "{a}–{b}위",
   "spawn.anywhere": "무작위 위치(적에게서 먼 곳)",
-  "mode.hillMoves": "거점 {z} · 이동까지 {t}",
+  "mode.hill": "거점 {z}",
+  "mode.moves": "이동까지",
   "mode.hillMoved": "거점이 {z}(으)로 옮겨 갔습니다",
   "points.confirm": "킬 확인",
   "points.deny": "킬 막음",

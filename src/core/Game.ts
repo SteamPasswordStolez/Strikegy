@@ -88,7 +88,7 @@ import { BREATH, SWAY_AMP, createBreath, scopeSway, stepBreath } from '@/weapons
 import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { ambienceFor } from '@/audio/ambienceDirector';
-import { HUD } from '@/ui/HUD';
+import { HUD, statusLine, type HudFrame, type ModeStatus, type Side, type SquadHud, type ZoneHud } from '@/ui/HUD';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { chatOf } from '@/net/chat';
 import { PerfPanel } from '@/ui/PerfPanel';
@@ -128,7 +128,6 @@ import { ChargeVisuals } from '@/modes/chargeVisuals';
 import { TagVisuals } from '@/modes/tagVisuals';
 import { ZoneRules } from '@/modes/zoneRules';
 import { ZoneVisuals } from '@/modes/zoneVisuals';
-import type { HudFrame, Side, SquadHud, ZoneHud } from '@/ui/HUD';
 import { DeployScreen, type DeployOption, type DeployState } from '@/ui/DeployScreen';
 import { paintMap, paintMapCard, type MapImage } from '@/ui/mapPainter';
 import { Minimap, type MinimapFrame } from '@/ui/Minimap';
@@ -5107,94 +5106,93 @@ export class Game {
     return tk === null ? null : `${t('hud.tickets')} ${tk}`;
   }
 
-  /** The mode line under the zone bar: target, attack timer, sector. */
-  private modeStatus(): ZoneHud['status'] {
+  /**
+   * The status strip under the zone bar: the facts that matter now, timers in their own boxes. The mode's
+   * name is left out (it is on the loading and deploy screens and the scoreboard).
+   */
+  private modeStatus(): ModeStatus | null {
     const m = this.zoneMode!.match;
-    const mode = t(`mode.${m.kind}`);
+    // A text whose time is drawn in a box beside it: the "{t}" part goes.
+    const label = (key: Parameters<typeof t>[0]): string => t(key).replace('{t}', '').trim();
+    const side = (ours: boolean): Side => (ours ? 'ally' : 'enemy');
     const target = t('mode.target').replace('{n}', String(m instanceof PointsRules ? m.target : 0));
+    const clock = (s: number, hot = false): ModeStatus['clocks'][number] => ({ label: null, time: clockText(s), hot });
     if (m instanceof LastStandRules) {
       const out = this.player.alive && this.zoneMode!.stormDps(this.player.feet) > 0;
-      const phase = m.phase === 'shrink' ? t('lms.shrinking') : m.next.r < m.circle.r - 0.5 || m.circle.r > 13 ? t('lms.nextShrink').replace('{t}', clockText(m.phaseLeft)) : t('lms.final');
-      const text = `${mode} · ${t('lms.alive').replace('{n}', String(m.aliveCount))} · ${phase} · ${t('lms.kills').replace('{n}', String(m.scoreOf(this.myId)))}${out ? ` · ${t('lms.outside')}` : ''}`;
-      return { text, tone: out ? 'enemy' : 'neutral', urgent: out || m.phase === 'shrink' };
+      const items = [t('lms.alive').replace('{n}', String(m.aliveCount)), t('lms.kills').replace('{n}', String(m.scoreOf(this.myId)))];
+      const clocks: ModeStatus['clocks'] = [];
+      if (m.phase === 'shrink') items.push(t('lms.shrinking'));
+      else if (m.next.r < m.circle.r - 0.5 || m.circle.r > 13) clocks.push({ label: label('lms.nextShrink'), time: clockText(m.phaseLeft), hot: m.phaseLeft < 10 });
+      else items.push(t('lms.final'));
+      return { items, clocks, alert: out ? t('lms.outside') : undefined, tone: out ? 'enemy' : 'neutral' };
     }
     if (m instanceof SoloRules) {
       const s = this.soloScores(m);
-      const clock = t('mode.clock').replace('{t}', clockText(m.timeLeft));
       const place = t('mode.place').replace('{n}', String(s.place)).replace('{total}', String(s.total));
       const tone = s.place === 1 ? 'ally' : 'enemy';
       if (m instanceof GunGameRules) {
         const w = GunGameRules.weaponAt(s.mine);
         const gun = w ? WEAPONS[w].name : t('weapon.melee');
         const step = t('mode.step').replace('{n}', String(s.mine + 1)).replace('{total}', String(GUN_GAME_STEPS.length + 1));
-        return { text: `${mode} · ${step} ${gun} · ${place} · ${clock}`, tone, urgent: !w };
+        return { items: [`${step} ${gun}`, place], clocks: [clock(m.timeLeft, m.timeLeft < 60)], tone };
       }
-      const target = t('mode.killTarget').replace('{n}', String(m.target));
-      return { text: `${mode} · ${place} · ${target} · ${clock}`, tone, urgent: m.timeLeft < 60 };
+      return { items: [place, t('mode.killTarget').replace('{n}', String(m.target))], clocks: [clock(m.timeLeft, m.timeLeft < 60)], tone };
     }
     if (m instanceof EscortRules) {
       const ours = m.attacker === this.myTeam;
       const cp = t('escort.cp').replace('{n}', String(Math.min(m.passed + 1, m.checkpoints.length))).replace('{total}', String(m.checkpoints.length));
-      if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${cp}`, tone: 'neutral', urgent: false };
+      if (m.setupLeft > 0) return { items: [cp], clocks: [{ label: t('mode.setup'), time: clockText(m.setupLeft) }], tone: 'neutral' };
       const left = Math.max(0, (m.at[m.passed] ?? m.length) - m.progress);
       const state = t(m.moving ? 'escort.moving' : m.contested ? 'escort.contested' : 'escort.stopped');
-      return {
-        text: `${t(ours ? 'mode.attack' : 'mode.defend')} · ${cp} ${Math.round(left)} m · ${state} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`,
-        tone: ours ? 'ally' : 'enemy',
-        urgent: m.timeLeft < 60,
-      };
+      return { items: [t(ours ? 'mode.attack' : 'mode.defend'), `${cp} · ${Math.round(left)} m`, state], clocks: [clock(m.timeLeft, m.timeLeft < 60)], tone: side(ours) };
     }
     if (m instanceof FortressRules && m.building) {
-      return { text: `${mode} · ${t('fortress.build')} ${clockText(m.buildLeft)} · ${t('mode.target').replace('{n}', String(m.target))}`, tone: 'neutral', urgent: m.buildLeft < 15 };
+      return { items: [t('mode.target').replace('{n}', String(m.target))], clocks: [{ label: t('fortress.build'), time: clockText(m.buildLeft), hot: m.buildLeft < 15 }], tone: 'neutral' };
     }
     if (m instanceof RushRules) {
       const ours = m.attacker === this.myTeam;
       const sector = t('mode.sector').replace('{n}', String(Math.min(m.active + 1, m.sectors.length))).replace('{total}', String(m.sectors.length));
-      if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${sector}`, tone: 'neutral', urgent: false };
+      if (m.setupLeft > 0) return { items: [sector], clocks: [{ label: t('mode.setup'), time: clockText(m.setupLeft) }], tone: 'neutral' };
       const armed = m.charges.filter((c) => c.state === 'armed');
-      const fuse = armed.length ? ` · ${t('charge.armedLine').replace('{t}', clockText(Math.min(...armed.map((c) => c.fuse))))}` : '';
-      return { text: `${mode} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${sector}${fuse}`, tone: ours ? 'ally' : 'enemy', urgent: armed.length > 0 };
+      const clocks = armed.length ? [{ label: label('charge.armedLine'), time: clockText(Math.min(...armed.map((c) => c.fuse))), hot: true }] : [];
+      return { items: [t(ours ? 'mode.attack' : 'mode.defend'), sector], clocks, tone: side(ours) };
     }
     if (m instanceof SearchDestroyRules) {
       const ours = m.attacker === this.myTeam;
       const round = t('snd.round').replace('{n}', String(m.round));
       const armed = m.charges.find((c) => c.state === 'armed');
-      const clock =
-        m.phase === 'pre' ? `${t('snd.pre')} ${clockText(m.phaseLeft)}`
-        : m.phase === 'post' ? t('snd.next').replace('{t}', clockText(m.phaseLeft))
-        : armed ? t('charge.armedLine').replace('{t}', clockText(armed.fuse))
-        : t('mode.clock').replace('{t}', clockText(m.phaseLeft));
-      return { text: `${mode} · ${round} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${clock}`, tone: ours ? 'ally' : 'enemy', urgent: !!armed || (m.phase === 'live' && m.phaseLeft < 30) };
+      const timer =
+        m.phase === 'pre' ? { label: t('snd.pre'), time: clockText(m.phaseLeft) }
+        : m.phase === 'post' ? { label: label('snd.next'), time: clockText(m.phaseLeft) }
+        : armed ? { label: label('charge.armedLine'), time: clockText(armed.fuse), hot: true }
+        : clock(m.phaseLeft, m.phaseLeft < 30);
+      return { items: [round, t(ours ? 'mode.attack' : 'mode.defend')], clocks: [timer], tone: side(ours) };
     }
     if (m instanceof HardpointRules) {
-      const moves = t('mode.hillMoves').replace('{z}', m.zoneId).replace('{t}', clockText(m.moveIn));
-      const tone = m.holder ? (m.holder === this.myTeam ? 'ally' : 'enemy') : 'neutral';
-      return { text: `${mode} · ${moves} · ${target} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`, tone, urgent: m.moveIn < 10 };
+      const tone = m.holder ? side(m.holder === this.myTeam) : 'neutral';
+      return {
+        items: [t('mode.hill').replace('{z}', m.zoneId), target],
+        clocks: [{ label: t('mode.moves'), time: clockText(m.moveIn), hot: m.moveIn < 10 }, clock(m.timeLeft, m.timeLeft < 60)],
+        tone,
+      };
     }
     if (m instanceof FleetRules) {
       const us = this.myTeam;
-      const text = t('fleet.status').replace('{us}', String(m.afloat[us])).replace('{them}', String(m.afloat[otherTeam(us)])).replace('{t}', clockText(m.timeLeft));
-      return { text: `${mode} · ${text}`, tone: m.afloat[us] < m.afloat[otherTeam(us)] ? 'enemy' : 'neutral', urgent: m.timeLeft < 60 || m.afloat[us] <= 1 };
+      const items = [t('fleet.status').replace('{us}', String(m.afloat[us])).replace('{them}', String(m.afloat[otherTeam(us)]))];
+      return { items, clocks: [clock(m.timeLeft, m.timeLeft < 60)], tone: m.afloat[us] < m.afloat[otherTeam(us)] ? 'enemy' : 'neutral' };
     }
-    if (m instanceof PointsRules && Number.isFinite(m.timeLimit)) {
-      return { text: `${mode} · ${target} · ${t('mode.clock').replace('{t}', clockText(m.timeLeft))}`, tone: 'neutral', urgent: m.timeLeft < 60 };
-    }
-    if (m instanceof PointsRules) return { text: `${mode} · ${target}`, tone: 'neutral', urgent: false };
+    if (m instanceof PointsRules && Number.isFinite(m.timeLimit)) return { items: [target], clocks: [clock(m.timeLeft, m.timeLeft < 60)], tone: 'neutral' };
+    if (m instanceof PointsRules) return { items: [target], clocks: [], tone: 'neutral' };
     if (m instanceof FrontlineRules) {
-      const clock = t('mode.clock').replace('{t}', clockText(m.clock));
-      if (!m.attacker) return { text: `${mode} · ${t('mode.opening')} ${clockText(m.timeLeft)} · ${clock}`, tone: 'neutral', urgent: false };
+      if (!m.attacker) return { items: [], clocks: [{ label: t('mode.opening'), time: clockText(m.timeLeft) }, clock(m.clock)], tone: 'neutral' };
       const ours = m.attacker === this.myTeam;
-      return {
-        text: `${t(ours ? 'mode.attack' : 'mode.defend')} ${clockText(m.timeLeft)} · ${clock}`,
-        tone: ours ? 'ally' : 'enemy',
-        urgent: m.timeLeft < 30,
-      };
+      return { items: [], clocks: [{ label: t(ours ? 'mode.attack' : 'mode.defend'), time: clockText(m.timeLeft), hot: m.timeLeft < 30 }, clock(m.clock)], tone: side(ours) };
     }
     if (m instanceof ConquestRules) {
       const ours = m.attacker === this.myTeam;
       const sector = t('mode.sector').replace('{n}', String(Math.min(m.active + 1, m.sectors.length))).replace('{total}', String(m.sectors.length));
-      if (m.setupLeft > 0) return { text: `${mode} · ${t('mode.setup')} ${clockText(m.setupLeft)} · ${sector}`, tone: 'neutral', urgent: false };
-      return { text: `${mode} · ${t(ours ? 'mode.attack' : 'mode.defend')} · ${sector}`, tone: ours ? 'ally' : 'enemy', urgent: false };
+      if (m.setupLeft > 0) return { items: [sector], clocks: [{ label: t('mode.setup'), time: clockText(m.setupLeft) }], tone: 'neutral' };
+      return { items: [t(ours ? 'mode.attack' : 'mode.defend'), sector], clocks: [], tone: side(ours) };
     }
     return null;
   }
@@ -5202,9 +5200,10 @@ export class Game {
   /** The deploy screen's line: mode and score both sides. */
   private deployMatchLine(): string {
     const s = this.modeStatus();
-    if (this.zoneMode?.match instanceof SoloRules) return s?.text ?? '';
+    const line = s ? [t(`mode.${this.zoneMode!.match.kind}`), statusLine(s)].filter(Boolean).join(' · ') : '';
+    if (this.zoneMode?.match instanceof SoloRules) return line;
     const score = `${t('hud.allies')} ${this.modeScore(this.myTeam)}  ·  ${this.modeScore(otherTeam(this.myTeam))} ${t('hud.enemies')}`;
-    return s ? `${s.text}  ·  ${score}` : score;
+    return line ? `${line}  ·  ${score}` : score;
   }
 
   /** Mode news on screen, and bots re-plan when the fight moves. */

@@ -8,6 +8,7 @@ import type { ZoneMode } from './ZoneMode';
 import {
   ConquestRules,
   EscortRules,
+  FleetRules,
   FortressRules,
   FreeForAllRules,
   FrontlineRules,
@@ -240,8 +241,15 @@ export class BriefingDirector {
         this.say(side === 'us' ? 'lead.gained' : 'lead.lost', side === 'us' ? 'good' : 'bad');
         this.lead.said = side;
       }
-      if (m.points[us] >= m.target * 0.9) this.onceSay('win.near', 'good');
-      if (m.points[them] >= m.target * 0.9) this.onceSay('lose.near', 'bad');
+      // A fleet battle's points are health left (both start full, at the target): near the end is a
+      // fleet down to its last tenth (it called "victory near" the moment the match began).
+      if (m instanceof FleetRules) {
+        if (m.points[them] <= 10) this.onceSay('win.near', 'good');
+        if (m.points[us] <= 10) this.onceSay('lose.near', 'bad');
+      } else {
+        if (m.points[us] >= m.target * 0.9) this.onceSay('win.near', 'good');
+        if (m.points[them] >= m.target * 0.9) this.onceSay('lose.near', 'bad');
+      }
     }
 
     // Tickets: against the most each side has had.

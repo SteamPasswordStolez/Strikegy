@@ -543,29 +543,66 @@
   font: 700 var(--fs-lg) / 1 var(--font-display);
   color: #fff;
 }
+/* The status strip under the bar (owner, 2026-11-01: the bare sentence over the sky was hard to read
+   and caught the eye): a dark band, facts as segments, timers in display numerals, the side the
+   situation favours as a stripe at the start. Nothing blinks; a timer running out turns amber. */
 .zb-status {
   position: absolute;
   top: calc(100% + var(--s2));
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: stretch;
   white-space: nowrap;
-  font-size: var(--fs-md);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  border-left: 3px solid rgb(239 235 226 / 0.35);
+  background: rgb(12 12 11 / 0.66);
+  color: var(--ink);
+  font: 600 var(--fs-md) / 1 var(--font-ui);
 }
 .zb-status.tone-ally {
-  color: var(--ally-text);
+  border-left-color: var(--ally);
 }
 .zb-status.tone-enemy {
-  color: var(--enemy-text);
+  border-left-color: var(--enemy);
 }
-.zb-status.urgent {
-  animation: zb-urgent 0.5s ease-in-out infinite alternate;
+.zs-item,
+.zs-clock,
+.zs-alert {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: calc(var(--u) * 0.35) var(--s3);
 }
-@keyframes zb-urgent {
-  to {
-    color: var(--accent);
-  }
+.zs-item + .zs-item,
+.zs-item + .zs-clock,
+.zs-clock + .zs-clock,
+.zb-status > * + .zs-alert {
+  border-left: 1px solid rgb(239 235 226 / 0.16);
+}
+.zs-label {
+  color: var(--ink-2);
+}
+.zs-icon {
+  display: flex;
+  color: var(--ink-2);
+}
+.zs-icon svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+.zs-time {
+  min-width: 2.6em;
+  font: 700 var(--fs-lg) / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.zs-clock.hot .zs-time {
+  color: var(--accent);
+}
+.zs-alert {
+  background: color-mix(in srgb, var(--enemy) 70%, #000);
+  color: #fff;
+  font-weight: 700;
 }
 /* No zones (team deathmatch on the range...): the two kill counts. */
 .hud-score {
@@ -586,12 +623,14 @@
   transform: translateX(-50%);
   display: none;
   width: calc(var(--u) * 16);
+  padding: calc(var(--u) * 0.4) var(--s3) var(--s2);
+  background: rgb(12 12 11 / 0.6);
   text-align: center;
   font-size: var(--fs-md);
   font-weight: 700;
 }
 .has-zone-status .zone-here {
-  top: calc(var(--u) * 5.75);
+  top: calc(var(--u) * 6.5);
 }
 .zone-here.on {
   display: block;
@@ -1073,7 +1112,15 @@
   min-width: calc(var(--u) * 3.5);
 }
 .is-touch .zb-status {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
+}
+.is-touch .zs-item,
+.is-touch .zs-clock,
+.is-touch .zs-alert {
+  padding: 2px var(--s2);
+}
+.is-touch .zs-time {
+  font-size: var(--fs-md);
 }
 .is-touch .killfeed {
   top: calc(var(--u) * 3.5);
@@ -1096,7 +1143,8 @@
 .is-touch .zone-here {
   top: calc(var(--u) * 7.5);
   width: calc(var(--u) * 15);
-  font-size: var(--fs-xs);
+  padding: 2px var(--s2) var(--s1);
+  font-size: var(--fs-sm);
 }
 .is-touch .has-zone-status .zone-here {
   top: calc(var(--u) * 8.75);

@@ -1,5 +1,5 @@
 {
-  "fleet.status": "Ships {us} : {them} · {t} left",
+  "fleet.status": "Ships {us} : {them}",
   "fleet.points": "Fleet health",
   "title": "STRIKEGY",
   "start.hint": "{k:forward}{k:left}{k:back}{k:right} move · {k:sprint} sprint · {k:crouch} crouch (toggle, slide from a sprint) · {k:jump} jump · {k:fire} fire · {k:ads} aim · {k:reload} reload · {k:slot1}/{k:slot2}/{k:slot3}/Wheel weapons · {k:grenade} throw · {k:medkit} medkit · {k:interact} (hold) revive / resupply · {k:build} build mode · {k:support} call-ins · {k:melee} melee · {k:breath} (hold) hold breath · {k:scoreboard} (hold) scoreboard · {k:inspect} inspect · F3 FPS",
@@ -413,7 +413,8 @@
   "match.winnerIs": "Winner {name}",
   "score.ranks": "Places {a}–{b}",
   "spawn.anywhere": "Anywhere (away from everyone)",
-  "mode.hillMoves": "Point {z} · moves in {t}",
+  "mode.hill": "Point {z}",
+  "mode.moves": "Moves in",
   "mode.hillMoved": "The point moved to {z}",
   "points.confirm": "Kill confirmed",
   "points.deny": "Kill denied",

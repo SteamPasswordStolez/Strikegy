@@ -277,8 +277,14 @@ export class Renderer {
     if (this.quality.shadows) {
       // The first frame must render shadows: materials sample the shadow map from the start.
       const due = this.frameIndex === 1 || this.frameIndex % this.quality.shadowInterval === 0;
+      // A light whose shadow map isn't made yet gets it on this frame. Until then three binds a stand-in,
+      // and in the shader's light array that stand-in has no depth compare, so every lit draw failed
+      // (GL_INVALID_OPERATION: sampler type mismatch; the draw is dropped): the near map was first drawn
+      // on frame 2, and a load (Coral Reach's most) logged hundreds of them.
+      const sunMissing = !!this.sunLight && !this.sunLight.shadow.map;
+      const nearMissing = !!this.nearLight && !this.nearLight.shadow.map;
       // Redrawn only when something asks (the frustum moved, scenery changed): only static scenery casts into it.
-      if (this.shadowDirty && due) {
+      if ((this.shadowDirty && due) || sunMissing) {
         this.gl.shadowMap.needsUpdate = true;
         if (this.sunLight) this.sunLight.shadow.needsUpdate = true;
         this.shadowDirty = false;
@@ -287,7 +293,7 @@ export class Renderer {
       // The near map on the frames between (30 times a second at 60 fps; its matrix is taken when it is
       // drawn, so it never slides against the picture, moving shadows are one frame late at most). Never
       // on a frame redrawing the static map: moving casters are kept out of that frame's shadow pass.
-      if (this.nearLight && !shadow && !due) {
+      if (this.nearLight && ((!shadow && !due) || nearMissing)) {
         this.gl.shadowMap.needsUpdate = true;
         this.nearLight.shadow.needsUpdate = true;
       }

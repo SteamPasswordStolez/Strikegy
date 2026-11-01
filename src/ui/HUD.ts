@@ -68,13 +68,30 @@ export interface HudFrame {
 
 export type Side = 'ally' | 'enemy';
 
+/** The objective bar's status strip (see `ZoneHud.status`). */
+export interface ModeStatus {
+  items: string[];
+  clocks: { label: string | null; time: string; hot?: boolean }[];
+  alert?: string;
+  tone: Side | 'neutral';
+}
+
+/** A status as one line of text (the deploy screen's line). */
+export function statusLine(s: ModeStatus): string {
+  return [...s.items, ...s.clocks.map((c) => (c.label ? `${c.label} ${c.time}` : c.time)), ...(s.alert ? [s.alert] : [])].join(' · ');
+}
+
 export interface ZoneHud {
   /** Beside the bar: domination points or tickets ('∞' for a side without), and how full each side's gauge is (0..1). */
   score: { allies: string; enemies: string; fill: { allies: number; enemies: number } };
   /** Our side of the map first; locked zones can't be taken right now. */
   zones: { id: string; owner: Side | null; progress: number; pushing: Side | null; contested: boolean; locked: boolean }[];
-  /** Under the bar: the mode, its target or attack timer. */
-  status: { text: string; tone: Side | 'neutral'; urgent: boolean } | null;
+  /**
+   * Under the bar (owner, 2026-11-01: the old one-line sentence was hard to read and in the way): short
+   * facts (target, sector, place...), timers each in a box with an optional label (`hot`: running out),
+   * and an alert in the enemy's colour; `tone` is the side the situation favours (a stripe at the start).
+   */
+  status: ModeStatus | null;
   /** The zone the player stands in, with a status line. */
   here: { id: string; text: string; progress: number; tone: Side | 'neutral' } | null;
 }
@@ -553,7 +570,7 @@ export class HUD {
   private updateZone(z: ZoneHud | null, dead: boolean): void {
     const st = z?.status ?? null;
     const barKey = z
-      ? `${z.score.allies}|${z.score.enemies}|${Math.round(z.score.fill.allies * 100)}|${Math.round(z.score.fill.enemies * 100)}|${st ? `${st.text}${st.tone}${st.urgent}` : ''}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${s.locked}${Math.round(s.progress * 20)}`).join()}`
+      ? `${z.score.allies}|${z.score.enemies}|${Math.round(z.score.fill.allies * 100)}|${Math.round(z.score.fill.enemies * 100)}|${st ? JSON.stringify(st) : ''}|${z.zones.map((s) => `${s.id}${s.owner}${s.pushing}${s.contested}${s.locked}${Math.round(s.progress * 20)}`).join()}`
       : '';
     this.set('zoneBar', barKey, () => {
       this.zoneBar.style.display = z ? 'flex' : 'none';
@@ -575,7 +592,18 @@ export class HUD {
         el('span', 'zb-id', cell).textContent = s.id;
       }
       score('enemy', z.score.enemies, z.score.fill.enemies);
-      if (st) el('div', `zb-status tone-${st.tone}${st.urgent ? ' urgent' : ''}`, this.zoneBar).textContent = st.text;
+      if (st) {
+        const strip = el('div', `zb-status tone-${st.tone}`, this.zoneBar);
+        for (const item of st.items) el('span', 'zs-item', strip).textContent = item;
+        for (const c of st.clocks) {
+          const box = el('span', `zs-clock${c.hot ? ' hot' : ''}`, strip);
+          // A timer without a label is the match clock: the clock icon says so.
+          if (c.label) el('span', 'zs-label', box).textContent = c.label;
+          else el('span', 'zs-icon', box).innerHTML = icon('clock');
+          el('span', 'zs-time', box).textContent = c.time;
+        }
+        if (st.alert) el('span', 'zs-alert', strip).textContent = st.alert;
+      }
     });
     const here = z?.here && !dead ? z.here : null;
     const hereKey = here ? `${here.id}|${here.text}|${here.tone}|${Math.round(here.progress * 100)}` : '';
