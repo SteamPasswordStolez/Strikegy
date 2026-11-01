@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- The bands round the game picture in a Short, drawn over its blurred copy.
-     build.mjs takes a transparent 1080x1920 picture of this page. The game sits
-     at y 656-1264; nothing here reaches into it. Colours are the menus' BFV theme.
+     build.mjs takes a transparent 1080x1920 picture of this page and tells it where
+     the game sits (y 656-1264 at 16:9); nothing here reaches into it. Colours are
+     the menus' BFV theme.
      YouTube's own buttons cover about the top 130 px, the bottom 400 px and the
      right 150 px of the lower half, so the text stays out of those. -->
 <html lang="ko">
@@ -88,7 +89,12 @@
     </div>
     <script>
       /** Fills in the texts; a long title shrinks until it fits between the margins. */
-      window.setup = async ({ title, sub }) => {
+      window.setup = async ({ title, sub, gameY, gameH }) => {
+        const top = document.querySelector('.top');
+        const bottom = document.querySelector('.bottom');
+        top.style.height = `${gameY}px`;
+        bottom.style.top = `${gameY + gameH}px`;
+        bottom.style.height = `${gameY}px`;
         const titleEl = document.getElementById('title');
         const subEl = document.getElementById('sub');
         titleEl.textContent = title;
