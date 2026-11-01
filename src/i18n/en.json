@@ -652,6 +652,7 @@
   "lobby.hint.back": "Back",
   "pause.resume": "Resume",
   "pause.settings": "Settings",
+  "pause.redeploy": "Redeploy",
   "pause.quit": "Quit to main menu",
   "settings.hint": "Point at a setting to see what it does.",
   "settings.nextMatch": "(applies from the next match)",

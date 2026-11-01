@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MAPS, RANGE_ID, TEAM_SIZES, matchQuery, snapTeam } from '@/data/maps';
-import { browserLocale } from '@/core/Settings';
+import { regionLocale } from '@/core/Settings';
 import ko from '@/i18n/ko.json';
 import en from '@/i18n/en.json';
 
@@ -23,12 +23,14 @@ describe('lobby', () => {
     expect(new URLSearchParams(matchQuery(pick, () => 0.7)).get('side')).toBe('red');
   });
 
-  it('starts in English unless the browser asks for Korean first', () => {
-    expect(browserLocale(['ko-KR', 'en-US'])).toBe('ko');
-    expect(browserLocale(['ko'])).toBe('ko');
-    expect(browserLocale(['en-US', 'ko'])).toBe('en');
-    expect(browserLocale(['ja-JP'])).toBe('en');
-    expect(browserLocale([])).toBe('ko');
+  it('starts in Korean in Korea and in English elsewhere, by the time zone', () => {
+    expect(regionLocale('Asia/Seoul', ['en-US'])).toBe('ko');
+    expect(regionLocale('Asia/Tokyo', ['ko-KR'])).toBe('en');
+    expect(regionLocale('America/New_York', ['en-US'])).toBe('en');
+    // Without a time zone: the browser's first language.
+    expect(regionLocale('', ['ko-KR', 'en-US'])).toBe('ko');
+    expect(regionLocale('', ['en-US', 'ko'])).toBe('en');
+    expect(regionLocale('', [])).toBe('ko');
   });
 
   it('snaps team sizes to the list and offers up to 150 a side', () => {

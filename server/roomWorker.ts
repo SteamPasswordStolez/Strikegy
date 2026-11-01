@@ -15,7 +15,7 @@ export type ToRoom =
   | { t: 'join'; player: MatchPlayer }
   | { t: 'detach'; uid: string }
   | { t: 'leave'; uid: string; keep?: boolean }
-  | { t: 'msg'; uid: string; msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }> }
+  | { t: 'msg'; uid: string; msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' | 'redeploy' }> }
   | { t: 'bin'; uid: string; data: Uint8Array }
   /** Being taken down without a winner: settle everyone's progress, then say `settled`. */
   | { t: 'stop' };
@@ -75,6 +75,7 @@ function handle(m: ToRoom): void {
     case 'msg':
       if (m.msg.t === 'ready') return r.ready(m.uid, m.msg.hostBots === true);
       if (m.msg.t === 'deploy') return r.deploy(m.uid, m.msg.key, m.msg.kit);
+      if (m.msg.t === 'redeploy') return r.redeploy(m.uid);
       return r.callIn(m.uid, m.msg.kind, m.msg.point);
     case 'bin':
       return r.binary(m.uid, m.data);

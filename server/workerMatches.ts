@@ -195,7 +195,7 @@ export class WorkerMatches implements MatchHost {
     } else void t.worker.terminate();
   }
 
-  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void {
+  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' | 'redeploy' }>): void {
     this.post(room, { t: 'msg', uid, msg });
   }
 

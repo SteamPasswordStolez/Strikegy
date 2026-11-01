@@ -142,6 +142,7 @@ export class SettingsPanel {
 
   private set<K extends keyof Settings>(key: K, value: Settings[K]): void {
     this.s[key] = value;
+    if (key === 'locale') this.s.localePicked = true;
     saveSettings(this.s);
     if (key === 'locale' && !this.opts.live) setLocale(value as Settings['locale']);
     this.opts.onChange?.(key);

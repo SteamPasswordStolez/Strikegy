@@ -21,7 +21,7 @@ const BED_TEXEL = 4;
 /** The ripple texture: noise cells across it, pixels across, and the gradient range it stores (±). */
 const RIPPLE = { cells: 16, size: 256, slope: 2 };
 /** Underwater: fog colour and density. */
-const UNDER = { color: new THREE.Color(0x0b3a46), density: 0.09 };
+const UNDER = { color: new THREE.Color(0x0b3a46), density: 0.03, reach: 250 };
 
 export class SeaView {
   readonly mesh: THREE.Mesh;
@@ -29,6 +29,11 @@ export class SeaView {
   private savedFog: { color: THREE.Color; density: number } | null = null;
   /** Ground wholly under the lowest trough (see hideBed). */
   private readonly bed: THREE.Object3D[] = [];
+  /**
+   * Under water, everything far off is water: the far levels of the ground have no sea bed
+   * (terrain.ts), and between them and the surface the sky showed as a bright band.
+   */
+  readonly veil = new THREE.Mesh(new THREE.SphereGeometry(UNDER.reach, 16, 12), new THREE.MeshBasicMaterial({ color: UNDER.color, side: THREE.BackSide, fog: false }));
   /** The eye is below the surface (last `update`). */
   under = false;
 
@@ -167,6 +172,9 @@ roughnessFactor = mix(roughnessFactor, 0.7, seaFoam);`,
     // the fleet, 2.95 -> 2.0 at the island; Iris Xe 1152x648, 2026-10-19).
     this.mesh.renderOrder = 0.95;
     this.mesh.matrixAutoUpdate = false;
+    this.veil.name = 'sea-veil';
+    this.veil.frustumCulled = false;
+    this.veil.visible = false;
   }
 
   /**
@@ -191,9 +199,11 @@ roughnessFactor = mix(roughnessFactor, 0.7, seaFoam);`,
     this.mesh.matrixWorld.copy(this.mesh.matrix);
     this.uniforms.seaTime!.value = time;
     const under = eye.y < this.sea.heightAt(eye.x, eye.z, time);
+    this.veil.position.copy(eye);
     if (under === this.under) return;
     this.under = under;
     for (const o of this.bed) o.visible = under;
+    this.veil.visible = under;
     const fog = scene.fog as THREE.FogExp2 | null;
     if (!fog) return;
     if (under) {
@@ -208,6 +218,8 @@ roughnessFactor = mix(roughnessFactor, 0.7, seaFoam);`,
 
   dispose(): void {
     this.mesh.geometry.dispose();
+    this.veil.geometry.dispose();
+    (this.veil.material as THREE.Material).dispose();
     (this.mesh.material as THREE.Material).dispose();
     (this.uniforms.seaBed!.value as THREE.Texture).dispose();
     (this.uniforms.seaRipple!.value as THREE.Texture).dispose();

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { createInputState } from '@/input/InputState';
+import { MATCH } from '@/modes/matchFlags';
 import { decodeSnapshot, encodeInputFrame, encodeInputs, encodeVehicles, packInput, snapshotFor, type NetVehicle } from '@/net/matchProtocol';
 import { HitboxRegistry } from '@/combat/Hitboxes';
 import { PhysicsWorld } from '@/physics/PhysicsWorld';
@@ -395,6 +396,40 @@ describe('warships on the wire', () => {
     expect(b!.seats[0]!.id).toBe(1000);
     expect(s!.ship).toMatchObject({ helm: 9, depth: 9.25, sinking: -1, oxygen: 87, overdrive: false });
   });
+
+  it('redeploying goes back to the deploy screen in a fleet battle, and nowhere else; falls hurt nobody there', async () => {
+    const conn = { text: () => {}, binary: () => {} };
+    const other = await MatchRoom.create({ room: 'n3', map: 'naval_test', mode: 'zone' });
+    other.join({ uid: 'ua', name: 'alpha' }, conn);
+    other.ready('ua');
+    other.tick();
+    other.deploy('ua', 'base', { cls: 'assault' });
+    other.tick();
+    const stays = other.sim.soldiers.get(1000)!;
+    other.redeploy('ua');
+    expect(stays.alive).toBe(true);
+    expect(MATCH.fall).toBe(true);
+    other.dispose();
+
+    const room = await MatchRoom.create({ room: 'f1', map: 'coral_reach', mode: 'fleet' });
+
+    room.join({ uid: 'ub', name: 'bravo' }, conn);
+    room.ready('ub');
+    room.tick();
+    expect(MATCH.fall).toBe(false);
+    const dd = room.sim.vehicles!.world.vehicles.find((v) => v.kind === 'dd' && v.home === 'blue')!;
+    room.deploy('ub', `ship:${dd.id}`, { cls: 'assault' });
+    room.tick();
+    const s = room.sim.soldiers.get(1000)!;
+    expect(s.alive).toBe(true);
+    room.redeploy('ub');
+    expect(s.alive).toBe(false);
+    expect(s.deployed).toBe(false);
+    expect(s.respawnTimer).toBeGreaterThan(0);
+    // Nobody got a kill for it.
+    expect(room.sim.scores.table(null).every((r) => r.kills === 0)).toBe(true);
+    room.dispose();
+  }, 120000);
 
   it('people first: E at a station a bot holds takes it over, the bot finds another', async () => {
     const room = await MatchRoom.create({ room: 'n2', map: 'naval_test', mode: 'zone', lineup: 'usersBots', size: 16, botShare: false });

@@ -376,6 +376,14 @@ export class MatchRoom {
     this.sendState(seat);
   }
 
+  /** Back to the deploy screen at one's own wish: only in the fleet battle, where nothing need ever kill you aboard. */
+  redeploy(uid: string): void {
+    const s = this.seats.get(uid)?.soldier;
+    if (!s || this.over || this.sim.zoneMode?.kind !== 'fleet') return;
+    if (s.ride) this.sim.vehicles?.leave(s, false);
+    s.redeploy();
+  }
+
   deploy(uid: string, key: string, rawKit: unknown): void {
     const seat = this.seats.get(uid);
     if (!seat || this.over) return;

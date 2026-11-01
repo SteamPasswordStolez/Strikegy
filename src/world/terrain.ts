@@ -367,6 +367,13 @@ const CHUNK_CELLS = 128;
 const LOD_DISTANCES = [0, 290, 460];
 /** Big maps (over 1 km) go on to 1/8 and 1/16 detail (16 / 32 m on a 2 m grid) for the ground across the map. */
 const FAR_LODS = [900, 1500];
+/**
+ * On big maps a chunk takes a coarser level only if it stays this close to the
+ * true ground for its distance (radians: about a pixel down a zoomed gun sight).
+ * Coarser grids cut hilltops off, and the trees stand on the true ground: on
+ * Coral Reach's islets, 64 m a cell at 1.5 km, they hung in the air.
+ */
+const MAX_LOD_ERROR = 0.001;
 /** Skirts hang this far below chunk edges to hide cracks between detail levels (m). */
 const SKIRT = 1.5;
 
@@ -376,7 +383,7 @@ const SKIRT = 1.5;
  * come from the full grid so the levels light the same; skirts cover the
  * cracks where a finer chunk meets a coarser one.
  */
-export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: readonly [number, number], material: THREE.Material, renderStep = 1): THREE.Group {
+export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: readonly [number, number], material: THREE.Material, renderStep = 1, hiddenBelow = -Infinity): THREE.Group {
   const { cols, rows, heights } = grid;
   const [sx, sz] = size;
   const at = (c: number, r: number): number => heights[r * (cols + 1) + c]!;
@@ -393,7 +400,8 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
     return n.set(-hx / wx, 1, -hz / wz).normalize();
   };
 
-  const chunk = (c0: number, c1: number, r0: number, r1: number, step: number): THREE.BufferGeometry => {
+  const chunk = (c0: number, c1: number, r0: number, r1: number, step: number, dropHidden = false): THREE.BufferGeometry => {
+    const hidden = (c: number, r: number): boolean => dropHidden && at(c, r) < hiddenBelow;
     const cs: number[] = [];
     for (let c = c0; c < c1; c += step) cs.push(c);
     cs.push(c1);
@@ -418,6 +426,8 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
     for (const r of rs) for (const c of cs) vert(c, r);
     for (let j = 0; j < rs.length - 1; j++) {
       for (let i = 0; i < w - 1; i++) {
+        // Sea bed under an opaque sea: nothing to draw, however far the grid goes.
+        if (hidden(cs[i]!, rs[j]!) && hidden(cs[i + 1]!, rs[j]!) && hidden(cs[i]!, rs[j + 1]!) && hidden(cs[i + 1]!, rs[j + 1]!)) continue;
         const a = j * w + i;
         const b = a + w;
         idx.push(a, b, a + 1, b, b + 1, a + 1);
@@ -428,6 +438,7 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
       for (let k = 0; k < list.length - 1; k++) {
         const [ca, ra] = list[k]!;
         const [cb, rb] = list[k + 1]!;
+        if (hidden(ca, ra) && hidden(cb, rb)) continue;
         const p0 = vert(ca, ra);
         const p1 = vert(cb, rb);
         const q0 = vert(ca, ra, SKIRT);
@@ -448,9 +459,37 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
     return geo;
   };
 
+  /** How far (m) a chunk's grid at `step` strays from the true ground, on the mesh's own triangles (ground under `hiddenBelow` doesn't count). */
+  const strays = (c0: number, c1: number, r0: number, r1: number, step: number): number => {
+    let worst = 0;
+    for (let rA = r0; rA < r1; rA += step) {
+      const rB = Math.min(r1, rA + step);
+      for (let cA = c0; cA < c1; cA += step) {
+        const cB = Math.min(c1, cA + step);
+        const h00 = at(cA, rA);
+        const h10 = at(cB, rA);
+        const h01 = at(cA, rB);
+        const h11 = at(cB, rB);
+        for (let r = rA; r <= rB; r++) {
+          const v = (r - rA) / (rB - rA);
+          for (let c = cA; c <= cB; c++) {
+            const u = (c - cA) / (cB - cA);
+            const coarse = u + v <= 1 ? h00 + u * (h10 - h00) + v * (h01 - h00) : h11 + (1 - u) * (h01 - h11) + (1 - v) * (h10 - h11);
+            const h = at(c, r);
+            if (h > hiddenBelow || coarse > hiddenBelow) worst = Math.max(worst, Math.abs(h - coarse));
+          }
+        }
+      }
+    }
+    return worst;
+  };
+
   const group = new THREE.Group();
   group.name = 'terrain';
   const base = Math.max(1, Math.floor(renderStep));
+  // Not on a lowered ground detail setting: there the coarse grid is what was asked for.
+  const bound = Math.max(sx, sz) > 1000 && base === 1;
+  const halfDiagonal = (Math.hypot(dx, dz) * CHUNK_CELLS) / 2;
   for (let r0 = 0; r0 < rows; r0 += CHUNK_CELLS) {
     for (let c0 = 0; c0 < cols; c0 += CHUNK_CELLS) {
       const c1 = Math.min(cols, c0 + CHUNK_CELLS);
@@ -458,9 +497,16 @@ export function buildTerrainMesh(grid: ReturnType<Terrain['sample']>, size: read
       const lod = new THREE.LOD();
       lod.position.set(px((c0 + c1) / 2), 0, pz((r0 + r1) / 2));
       lod.updateMatrix();
+      let lastStep = 0;
       (Math.max(sx, sz) > 1000 ? [...LOD_DISTANCES, ...FAR_LODS] : LOD_DISTANCES).forEach((d, level) => {
-        const step = Math.min(CHUNK_CELLS / 2, base << level);
-        const geo = chunk(c0, c1, r0, r1, step);
+        let step = Math.min(CHUNK_CELLS / 2, base << level);
+        // The coarsest grid close enough here. The level is measured to the chunk's centre: its near edge can be half a diagonal closer.
+        if (bound && level > 0) while (step > base && strays(c0, c1, r0, r1, step) > MAX_LOD_ERROR * Math.max(d / 2, d - halfDiagonal)) step >>= 1;
+        // Same grid as the level before: that one goes on (level 0 only hands over to drop its sea bed).
+        if (step === lastStep && level > 1) return;
+        lastStep = step;
+        // The nearest level keeps its bed: someone under water can see it (past that, the water's fog hides it).
+        const geo = chunk(c0, c1, r0, r1, step, level > 0);
         if (level === 0) {
           geo.computeBoundingBox();
           lod.userData.groundTop = geo.boundingBox!.max.y;
@@ -492,11 +538,13 @@ export function buildTerrain(
   physics: PhysicsWorld,
   /** Render mesh uses every `renderStep`-th grid line at full detail (the collider always uses all). */
   renderStep = 1,
+  /** Ground under this never shows (under a sea): its shape doesn't hold the render mesh's far levels back. */
+  hiddenBelow = -Infinity,
 ): { mesh: THREE.Group | null; collider: RAPIER.Collider; grid: ReturnType<Terrain['sample']> } {
   const grid = terrain.sample();
   const { cols, rows, heights } = grid;
   const [sx, sz] = terrain.size;
-  const mesh = material ? buildTerrainMesh(grid, terrain.size, material, renderStep) : null;
+  const mesh = material ? buildTerrainMesh(grid, terrain.size, material, renderStep, hiddenBelow) : null;
 
   // Rapier wants column-major (rows + 1) x (cols + 1) with rows along local z... its
   // "rows" index the x axis in the JS API, so transpose: index = c * (rows + 1) + r.

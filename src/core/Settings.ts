@@ -34,6 +34,8 @@ export interface Settings {
   /** Graphics items set apart from the preset (empty: all as the preset says). */
   gfx: Partial<GfxOptions>;
   locale: Locale;
+  /** The player chose the language (else it follows the region at every load). */
+  localePicked?: boolean;
   showFps: boolean;
   masterVolume: number;
   /** The battle briefing's voice (0..1, under the master volume). */
@@ -91,14 +93,32 @@ export const DEFAULT_SETTINGS: Settings = {
   inputMode: 'auto',
 };
 
-/** Korean for browsers set to Korean, English for everyone else (until the player picks one). */
-export function browserLocale(languages: readonly string[] = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language])): Locale {
+/** The device's time zone, '' when the browser won't say. */
+function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Korean in Korea, English everywhere else, until the player picks one (owner,
+ * 2026-11-01). The region is the device's time zone: no address is looked up.
+ * Without a time zone the browser's first language decides.
+ */
+export function regionLocale(timeZone = deviceTimeZone(), languages: readonly string[] = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language])): Locale {
+  if (timeZone) return timeZone === 'Asia/Seoul' || timeZone === 'ROK' ? 'ko' : 'en';
   const first = languages.find((l) => !!l);
   return !first || first.toLowerCase().startsWith('ko') ? 'ko' : 'en';
 }
 
 export function loadSettings(): Settings {
-  return { ...DEFAULT_SETTINGS, locale: browserLocale(), ...(loadJSON<Partial<Settings>>(KEY) ?? {}) };
+  const saved = loadJSON<Partial<Settings>>(KEY) ?? {};
+  const out = { ...DEFAULT_SETTINGS, ...saved };
+  // Saving any setting also saves the language then in use: only one the player picked counts.
+  if (!saved.localePicked) out.locale = regionLocale();
+  return out;
 }
 
 export function saveSettings(s: Settings): void {

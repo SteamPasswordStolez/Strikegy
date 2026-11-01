@@ -311,7 +311,8 @@ export function stationNear(spec: VehicleSpec, toLocal: (p: THREE.Vector3) => TH
 export function lookPoint(physics: PhysicsWorld, origin: THREE.Vector3, dir: THREE.Vector3, range: number, level: number, ignore?: RAPIER.RigidBody): THREE.Vector3 {
   const hit = physics.raycast(origin, dir, range, Layer.WORLD | Layer.HITBOX, undefined, ignore);
   let dist = hit ? hit.distance : range;
-  if (Number.isFinite(level) && dir.y < -1e-4) dist = Math.min(dist, (origin.y - level) / -dir.y);
+  // From under water (a submarine's camera) the surface stops nothing.
+  if (Number.isFinite(level) && dir.y < -1e-4 && origin.y > level) dist = Math.min(dist, (origin.y - level) / -dir.y);
   return origin.clone().addScaledVector(dir, Math.max(0, dist));
 }
 

@@ -218,7 +218,7 @@ export class Soldier {
     this.weapons.ignoreChar = this.boxes.slot;
     this.player.onLanded = (speed) => {
       const dmg = fallDamage(speed);
-      if (dmg > 0) this.damage(dmg, null, 'fall');
+      if (dmg > 0 && MATCH.fall) this.damage(dmg, null, 'fall');
     };
   }
 
@@ -378,6 +378,18 @@ export class Soldier {
     this.killedBy = null;
     this.weapons.redraw();
     this.hooks.revived?.(by);
+  }
+
+  /**
+   * Off the field at one's own wish, back to the deploy screen (the fleet battle: on one's own
+   * ship nothing need ever kill you, so you could never deploy elsewhere). A death with nobody's credit.
+   */
+  redeploy(): boolean {
+    const p = this.player;
+    if (!p.alive || this.downed) return false;
+    p.health.value = 0;
+    this.die('fall');
+    return true;
   }
 
   /** Dead for good (bled out or gave up): off the field until the next deploy. */

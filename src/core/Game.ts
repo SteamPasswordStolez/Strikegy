@@ -706,7 +706,7 @@ export class Game {
     if (water && terrain.rivers.length) r.scene.add(buildRivers(terrain, r.scene.environment));
     if (sea) {
       this.seaView = new SeaView(sea, terrain, r.camera.far, r.scene.environment, map.world.shore?.color ?? null);
-      r.scene.add(this.seaView.mesh);
+      r.scene.add(this.seaView.mesh, this.seaView.veil);
     }
     const winter = map.world.visualProfile === 'winter';
     const shore = map.world.shore ?? null;
@@ -1267,6 +1267,20 @@ export class Game {
     });
   }
 
+  /** Fleet battle: nothing need ever kill you aboard your own ship, so going back to the deploy screen is a choice. */
+  private canRedeploy(): boolean {
+    return this.zoneMode?.match instanceof FleetRules && this.deployed && this.player.alive && !this.playerDowned && !this.matchOver;
+  }
+
+  private redeploy(): void {
+    if (this.net) this.net.link.send({ t: 'redeploy' });
+    else {
+      if (this.ride) this.leaveVehicle();
+      if (this.me.redeploy()) this.deployAt = this.elapsed;
+    }
+    this.resume();
+  }
+
   /** The pause menu's entries: resume, the two views, the touch layout, the tutorial, quit. */
   private pauseEntries(view: 'controls' | 'settings'): OverlayAction[] {
     const touch = !!this.touch;
@@ -1274,6 +1288,7 @@ export class Game {
       { label: t('pause.resume'), onClick: () => this.resume() },
       { label: t('menu.controls'), selected: view === 'controls', onClick: () => this.pause('controls') },
       { label: t('pause.settings'), selected: view === 'settings', onClick: () => this.pause('settings') },
+      ...(this.canRedeploy() ? [{ label: t('pause.redeploy'), onClick: () => this.redeploy() }] : []),
       ...(touch
         ? [
             {
@@ -1471,7 +1486,7 @@ export class Game {
         if (this.orbiting()) {
           const o = (this.orbit ??= { yaw: p.yaw, pitch: THREE.MathUtils.clamp(p.pitch - 0.12, ORBIT.min, ORBIT.max) });
           o.yaw = (o.yaw + lookYaw) % (Math.PI * 2);
-          o.pitch = THREE.MathUtils.clamp(o.pitch + lookPitch, ORBIT.min, ORBIT.max);
+          o.pitch = THREE.MathUtils.clamp(o.pitch + lookPitch, ORBIT.min, this.ride?.v.spec.ship?.sub ? SUB_CAM.up : ORBIT.max);
           this.orbitAim(o);
         } else {
           this.orbit = null;
@@ -2809,7 +2824,7 @@ export class Game {
 
   /** What the third-person camera aboard looks at (world): over the hull's middle; over a warship, high enough to see the whole ship. */
   private rideCamTarget(v: Vehicle, alpha: number, out: THREE.Vector3): THREE.Vector3 {
-    const h = v.ship ? v.spec.half[1] + SHIP_CAM.height + SHIP_CAM.heightPerLength * v.spec.half[2] * 2 : v.spec.half[1] + (this.orbit ? ORBIT.height : 1.1);
+    const h = v.spec.ship?.sub ? v.spec.half[1] + SUB_CAM.height : v.ship ? v.spec.half[1] + SHIP_CAM.height + SHIP_CAM.heightPerLength * v.spec.half[2] * 2 : v.spec.half[1] + (this.orbit ? ORBIT.height : 1.1);
     return v.toWorld(out.set(0, h, 0), out, alpha);
   }
 
@@ -3889,7 +3904,9 @@ export class Game {
         this.gunView = { yaw: o.yaw, pitch: o.pitch };
       }
       const target = this.rideCamTarget(v, alpha, new THREE.Vector3());
-      const want = v.ship
+      const want = v.spec.ship?.sub
+        ? SUB_CAM.dist
+        : v.ship
         ? SHIP_CAM.dist + SHIP_CAM.distPerLength * v.spec.half[2] * 2
         : v.flight
           ? 20
@@ -3907,7 +3924,8 @@ export class Game {
       this.rideCamDist = dist < this.rideCamDist ? dist : this.rideCamDist + (dist - this.rideCamDist) * (1 - Math.exp(-3 * dt));
       cam.position.copy(target).addScaledVector(fwd, -this.rideCamDist);
       // Over a warship the camera stays above the waves.
-      const sea = v.ship ? this.gadgets.water?.(cam.position.x, cam.position.z) : undefined;
+      // (Not a submarine's: looking round one under water is the point.)
+      const sea = v.ship && !v.spec.ship?.sub ? this.gadgets.water?.(cam.position.x, cam.position.z) : undefined;
       if (sea !== undefined && Number.isFinite(sea)) cam.position.y = Math.max(cam.position.y, sea + SHIP_CAM.overSea);
     }
   }
@@ -6289,6 +6307,12 @@ const ORBIT = { min: -0.85, max: 0.45, height: 1.6 };
  * closer than `overSea` m over the waves.
  */
 const SHIP_CAM = { dist: 30, distPerLength: 0.55, height: 6, heightPerLength: 0.035, overSea: 2.5 };
+/**
+ * Third person in a submarine (owner, 2026-11-01): the camera may go under
+ * water, close enough to see the hull through the water's fog, and can swing
+ * further under it (`up`: look-up limit, rad; ORBIT's min still applies going over it).
+ */
+const SUB_CAM = { dist: 48, height: 1.5, up: 1.2 };
 
 /** The crosshair names who it is on within this distance (m). */
 const AIM_ID_RANGE = 150;

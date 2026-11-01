@@ -198,6 +198,7 @@ export class Lobby {
   /** Korean <-> English, at once (a button named in the other language, so either reader finds it). */
   private toggleLocale(): void {
     this.settings.locale = this.settings.locale === 'ko' ? 'en' : 'ko';
+    this.settings.localePicked = true;
     saveSettings(this.settings);
     setLocale(this.settings.locale);
     this.render();

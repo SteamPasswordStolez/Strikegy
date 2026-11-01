@@ -110,11 +110,12 @@ export class Matches implements MatchHost {
     }
   }
 
-  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' }>): void {
+  message(room: string, uid: string, msg: Extract<ClientMsg, { t: 'ready' | 'deploy' | 'callin' | 'redeploy' }>): void {
     const m = this.rooms.get(room);
     if (!m) return;
     if (msg.t === 'ready') m.ready(uid, msg.hostBots === true);
     else if (msg.t === 'deploy') m.deploy(uid, msg.key, msg.kit);
+    else if (msg.t === 'redeploy') m.redeploy(uid);
     else m.callIn(uid, msg.kind, msg.point);
   }
 

@@ -58,7 +58,7 @@ function modeFlags(kind: ModeKind): Partial<MatchFlags> {
   // One life a round: back only when the next round starts (Game / MatchSim respawn everyone then).
   if (kind === 'snd') return { revive: false, respawn: Infinity, vehicles: false, callIns: false };
   // At sea the call-ins (barrages, crates, the rocket truck) have nothing to land on: planes come from the carriers.
-  if (kind === 'fleet') return { callIns: false };
+  if (kind === 'fleet') return { callIns: false, fall: false };
   return {};
 }
 

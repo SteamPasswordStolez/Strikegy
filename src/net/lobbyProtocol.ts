@@ -401,6 +401,8 @@ export type ClientMsg =
   | { t: 'ready'; hostBots?: boolean }
   /** On the field at `key` ('base', 'zone:<id>', 'beacon:<id>', 'mate:<id>') with the kit picked on the deploy screen. */
   | { t: 'deploy'; key: string; kit: unknown }
+  /** Back to the deploy screen at one's own wish (fleet battle). */
+  | { t: 'redeploy' }
   /** A squad leader calls `kind` in onto `point` (the rocket tank: no point). */
   | { t: 'callin'; kind: string; point: [number, number, number] | null }
   /**
@@ -678,6 +680,7 @@ export function parseClientMsg(text: string): ClientMsg | null {
     case 'list':
     case 'start':
     case 'end':
+    case 'redeploy':
       return { t: raw.t };
     case 'deploy':
       return str(raw.key, 32) && isObj(raw.kit) ? { t: 'deploy', key: raw.key, kit: raw.kit } : null;

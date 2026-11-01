@@ -412,7 +412,16 @@ export function buildImpostors(
 
 function impostorMaterial(atlas: THREE.Texture): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial({ map: atlas, alphaTest: 0.5, side: THREE.DoubleSide });
+  const size = atlas.image as { width: number; height: number };
   mat.onBeforeCompile = (shader) => {
+    // Thin things average out in the smaller mips: at a fixed test a palm's trunk vanished far off and left its crown in the air.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <alphatest_fragment>',
+      `vec2 texelX = dFdx(vMapUv) * vec2(${size.width.toFixed(1)}, ${size.height.toFixed(1)});
+      vec2 texelY = dFdy(vMapUv) * vec2(${size.width.toFixed(1)}, ${size.height.toFixed(1)});
+      float impostorMip = 0.5 * log2(max(max(dot(texelX, texelX), dot(texelY, texelY)), 1.0));
+      if (diffuseColor.a < max(0.08, alphaTest - 0.14 * impostorMip)) discard;`,
+    );
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',

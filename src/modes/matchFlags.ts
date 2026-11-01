@@ -38,9 +38,11 @@ export interface MatchFlags {
   buildBoost: number;
   simple: boolean;
   melee: boolean;
+  /** Falling hurts (not in the fleet battle: ships have tall decks and superstructures to climb and jump off). */
+  fall: boolean;
 }
 
-const TEAM_PLAY: MatchFlags = { ffa: false, revive: true, respawn: null, squads: true, vehicles: true, callIns: true, truce: false, buildBoost: 1, simple: false, melee: true };
+const TEAM_PLAY: MatchFlags = { ffa: false, revive: true, respawn: null, squads: true, vehicles: true, callIns: true, truce: false, buildBoost: 1, simple: false, melee: true, fall: true };
 
 export const MATCH: MatchFlags = { ...TEAM_PLAY };
 
