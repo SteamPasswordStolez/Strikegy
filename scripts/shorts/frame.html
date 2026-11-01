@@ -1,0 +1,112 @@
+<!doctype html>
+<!-- The bands round the game picture in a Short, drawn over its blurred copy.
+     build.mjs takes a transparent 1080x1920 picture of this page. The game sits
+     at y 656-1264; nothing here reaches into it. Colours are the menus' BFV theme.
+     YouTube's own buttons cover about the top 130 px, the bottom 400 px and the
+     right 150 px of the lower half, so the text stays out of those. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Pretendard;
+        src: url('../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: Barlow;
+        src: url('../../public/assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+        font-weight: 700;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: transparent;
+      }
+      .band {
+        position: absolute;
+        left: 0;
+        width: 1080px;
+        height: 656px;
+        padding: 0 64px;
+        display: flex;
+        flex-direction: column;
+      }
+      .top {
+        top: 0;
+        justify-content: flex-end;
+        padding-bottom: 44px;
+        background: linear-gradient(rgb(12 12 11 / 0.45), rgb(12 12 11 / 0.82));
+        border-bottom: 6px solid #e9a03b;
+      }
+      .bottom {
+        top: 1264px;
+        padding-top: 40px;
+        background: linear-gradient(rgb(12 12 11 / 0.82), rgb(12 12 11 / 0.55));
+        border-top: 6px solid #e9a03b;
+      }
+      #sub {
+        margin-bottom: 14px;
+        font: 600 44px / 1.2 Pretendard, sans-serif;
+        color: #e9a03b;
+        word-break: keep-all;
+      }
+      #title {
+        font: 900 190px / 1.08 Pretendard, sans-serif;
+        letter-spacing: -0.02em;
+        color: #efebe2;
+        white-space: pre;
+        text-shadow: 0 6px 30px rgb(0 0 0 / 0.55);
+      }
+      .brand {
+        font: 700 92px / 1 Barlow, sans-serif;
+        letter-spacing: 0.06em;
+        color: #efebe2;
+      }
+      .site {
+        margin-top: 12px;
+        font: 700 52px / 1 Barlow, sans-serif;
+        letter-spacing: 0.04em;
+        color: #e9a03b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="band top">
+      <div id="sub"></div>
+      <div id="title"></div>
+    </div>
+    <div class="band bottom">
+      <div class="brand">STRIKEGY</div>
+      <div class="site">strikegy.xyz</div>
+    </div>
+    <script>
+      /** Fills in the texts; a long title shrinks until it fits between the margins. */
+      window.setup = async ({ title, sub }) => {
+        const titleEl = document.getElementById('title');
+        const subEl = document.getElementById('sub');
+        titleEl.textContent = title;
+        subEl.textContent = sub;
+        subEl.hidden = !sub;
+        await Promise.all([
+          document.fonts.load('900 190px Pretendard', title),
+          document.fonts.load('600 44px Pretendard', sub || '가'),
+          document.fonts.load('700 92px Barlow', 'STRIKEGY'),
+        ]);
+        let size = 190;
+        titleEl.style.display = 'inline-block';
+        while (size > 60 && titleEl.offsetWidth > 952) {
+          size -= 4;
+          titleEl.style.fontSize = `${size}px`;
+        }
+        titleEl.style.display = '';
+      };
+    </script>
+  </body>
+</html>
