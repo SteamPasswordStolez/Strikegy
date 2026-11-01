@@ -1,5 +1,6 @@
 import { t, type MessageKey } from '@/i18n';
 import { SUPPORT, SUPPORT_ORDER, type SupportId } from '@/data/support';
+import { helpTip } from './glossary';
 
 export interface SupportMenuState {
   /** The squad's RP. */
@@ -17,7 +18,7 @@ export interface SupportMenuState {
  */
 export class SupportMenu {
   private readonly root: HTMLDivElement;
-  private readonly head: HTMLDivElement;
+  private readonly head: HTMLSpanElement;
   private readonly rows = new Map<SupportId, { el: HTMLButtonElement; state: HTMLSpanElement }>();
   private last = '';
   open = false;
@@ -25,9 +26,11 @@ export class SupportMenu {
   constructor(parent: HTMLElement, onPick: (id: SupportId) => void) {
     this.root = document.createElement('div');
     this.root.className = 'support-menu';
-    this.head = document.createElement('div');
-    this.head.className = 'support-head';
-    this.root.appendChild(this.head);
+    const top = document.createElement('div');
+    top.className = 'support-head';
+    this.head = document.createElement('span');
+    top.append(this.head, helpTip('RP'));
+    this.root.appendChild(top);
     SUPPORT_ORDER.forEach((id, i) => {
       const el = document.createElement('button');
       el.className = 'support-row';

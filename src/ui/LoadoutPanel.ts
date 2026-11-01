@@ -23,6 +23,7 @@ import { weaponLevelOf, weaponUnlockLevel } from '@/progression/unlocks';
 import { rankName } from './rankInsignia';
 import { icon } from './icons';
 import { weaponPortrait, weaponPortraitNow } from './weaponPortraits';
+import { helpTip } from './glossary';
 
 /** Class marks, drawn like the icon set (24 px grid, one stroke, square ends). */
 const ICON: Record<ClassId, string> = {
@@ -193,6 +194,10 @@ export class LoadoutPanel {
     const l = this.current;
     const head = el('div', 'lp-head', p);
     const attGun = slot === 'att0' ? l.primary[0] : slot === 'att1' ? l.primary[1] : slot === 'att2' ? l.pistol : null;
+    if (attGun) {
+      // Attachments open with the weapon's own level: say what that is.
+      queueMicrotask(() => head.querySelector('.lp-title')?.after(helpTip('weaponLv')));
+    }
     el('span', 'lp-title', head).textContent = attGun
       ? `${WEAPONS[attGun].name} · ${t('loadout.attach')}`
       : slot === 'primary0'

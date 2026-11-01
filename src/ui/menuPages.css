@@ -68,3 +68,34 @@ a.lb-credit {
     display: none;
   }
 }
+
+/* Controls: the words a newcomer may not know, under the keys (glossary.ts). */
+.lb-gloss-head {
+  margin: var(--s6) 0 var(--s2);
+}
+.lb-gloss {
+  display: grid;
+  gap: var(--line-w);
+  width: min(calc(var(--u) * 64), 100%);
+}
+.lb-gloss-row {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--u) * 13), 0.35fr) 1fr;
+  gap: var(--s4);
+  padding: var(--s2) var(--s4);
+  background: var(--surface-1);
+}
+.lb-gloss-name {
+  font-weight: 700;
+}
+.lb-gloss-text {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+@media (max-width: 640px) {
+  .lb-gloss-row {
+    grid-template-columns: 1fr;
+    gap: var(--s1);
+  }
+}

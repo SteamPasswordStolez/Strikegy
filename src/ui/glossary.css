@@ -1,0 +1,69 @@
+/* The "?" beside a word a newcomer may not know, and its explanation (glossary.ts). Plain colours:
+   the tooltip lives on <body>, outside any themed root. */
+.gl-q {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.35em;
+  height: 1.35em;
+  margin-left: 0.4em;
+  padding: 0;
+  border: 1px solid rgb(239 235 226 / 0.45);
+  border-radius: 50%;
+  background: rgb(239 235 226 / 0.08);
+  color: rgb(239 235 226 / 0.85);
+  font: 700 0.78em / 1 inherit;
+  font-family: inherit;
+  vertical-align: 0.08em;
+  cursor: help;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+.gl-q:hover,
+.gl-q:focus-visible,
+.gl-q[aria-expanded='true'] {
+  border-color: #e8a33a;
+  background: #e8a33a;
+  color: #1a1611;
+  outline: none;
+}
+/* Touch: a bigger target round the same small mark. */
+@media (pointer: coarse) {
+  .gl-q {
+    position: relative;
+  }
+  .gl-q::after {
+    content: '';
+    position: absolute;
+    inset: -0.6em;
+  }
+}
+
+.gl-tip {
+  position: fixed;
+  z-index: 10000;
+  display: none;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 16px));
+  padding: 0.65rem 0.8rem 0.7rem;
+  border-left: 3px solid #e8a33a;
+  background: rgb(20 19 17 / 0.97);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.45);
+  color: #efebe2;
+  font-family: 'Pretendard', 'Pretendard Std', system-ui, sans-serif;
+  pointer-events: auto;
+}
+.gl-tip.on {
+  display: block;
+}
+.gl-name {
+  margin-bottom: 0.3rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.gl-text {
+  color: rgb(239 235 226 / 0.82);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  word-break: keep-all;
+}

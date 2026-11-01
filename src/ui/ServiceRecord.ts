@@ -25,6 +25,7 @@ import { accountConfig, cachedAccount, currentProfile, deleteAccount, linkProvid
 import { loginButtons } from './loginButtons';
 import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
 import './progress.css';
+import { addHelp } from './glossary';
 
 type Kind = 'all' | 'multi' | 'bots';
 let kind: Kind = 'all';
@@ -105,7 +106,7 @@ function head(parent: HTMLElement, p: Profile): void {
   bar.style.gridColumn = '2 / 4';
   el('i', '', bar).style.setProperty('--p', (at.into / at.need).toFixed(4));
   const next = el('div', 'sr-next', h);
-  el('span', '', next, t('rec.toNext').replace('{n}', n(at.need - at.into)));
+  addHelp(el('span', '', next, t('rec.toNext').replace('{n}', n(at.need - at.into))));
   const up = nextRank(at.level);
   if (!up) el('span', '', next, t('rec.topRank'));
   else {
@@ -131,7 +132,7 @@ function numbers(parent: HTMLElement, s: CareerStats): void {
     const tiles = el('div', 'sr-tiles', parent);
     for (const [k, v] of rows) {
       const tile = el('div', 'sr-tile', tiles);
-      el('div', 'ds-label', tile, t(k));
+      addHelp(el('div', 'ds-label', tile, t(k)));
       el('div', 'ds-num', tile, v);
     }
   };

@@ -5,6 +5,7 @@ import { setLocale, t, type MessageKey } from '@/i18n';
 import { PRESET_GFX, gfxFor, resolveQuality, saveSettings, type GfxOptions, type Settings, detectTouch } from '@/core/Settings';
 import { RESERVED, bind, bindings, commitBindings, conflicts, keyName, resetBindings, type Action } from '@/input/bindings';
 import { uiSound } from '@/audio/uiSounds';
+import { addHelp } from './glossary';
 import './settingsPanel.css';
 
 type Category = 'controls' | 'keys' | 'video' | 'graphics' | 'audio';
@@ -149,7 +150,9 @@ export class SettingsPanel {
   /** A row: the label, the control, and its description at the bottom while the pointer is on it. */
   private row(parent: HTMLElement, label: MessageKey, key: keyof Settings): HTMLDivElement {
     const r = el('div', 'sp-row', parent);
-    el('div', 'sp-label', r).textContent = t(label);
+    const name = el('div', 'sp-label', r);
+    name.textContent = t(label);
+    addHelp(name);
     const ctl = el('div', 'sp-ctl', r);
     const later = this.opts.live && (key === 'quality' || key === 'locale' || key === 'inputMode');
     const text = t(`setDesc.${key}` as MessageKey) + (later ? ` ${t('settings.nextMatch')}` : '');
@@ -237,7 +240,9 @@ export class SettingsPanel {
   private gfxItem<K extends keyof GfxOptions>(rows: HTMLElement, preset: GfxPresetKey, key: K, values: readonly GfxOptions[K][], name: (v: GfxOptions[K]) => string): void {
     const r = el('div', 'sp-row', rows);
     const label = t(`gfx.${key}` as MessageKey);
-    el('div', 'sp-label', r).textContent = label;
+    const labelEl = el('div', 'sp-label', r);
+    labelEl.textContent = label;
+    addHelp(labelEl);
     const ctl = el('div', 'sp-ctl', r);
     const text = t(`gfxDesc.${key}` as MessageKey) + (this.opts.live ? ` ${t('settings.nextMatch')}` : '');
     r.addEventListener('pointerenter', () => this.describe(label, text));

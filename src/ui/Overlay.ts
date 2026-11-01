@@ -18,6 +18,7 @@ import { nameOf } from './cosmetics';
 import { weaponLevelOf } from '@/progression/unlocks';
 import { WEAPONS, type WeaponId } from '@/weapons/weaponData';
 import { insigniaAt, rankLabel, rankName, rankTitle } from './rankInsignia';
+import { addHelp } from './glossary';
 
 /** What the loading screen says about the match (Game sets it once the map is in). */
 export interface LoadingInfo {
@@ -472,7 +473,7 @@ export class Overlay {
     };
     const row = (b: HTMLElement, a: string, v: string) => {
       const r = div('rs-wl-row', b);
-      div('', r, a);
+      addHelp(div('', r, a));
       div('ds-num', r, v);
     };
     // The match's own lines come from the summary, the rest (first match, missions, levels...) from the profile.

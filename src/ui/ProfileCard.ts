@@ -11,6 +11,7 @@ import './ds.css';
 import './dialogs.css';
 import './progress.css';
 import './badges.css';
+import { addHelp } from './glossary';
 
 /**
  * Someone's account card in multiplayer (owner, 2026-10-25): their card,
@@ -87,7 +88,7 @@ export function showProfileCard(card: PublicCard, report?: () => void): void {
     const stat = (k: MessageKey, v: string) => {
       const c = el('div', 'pc-stat', grid);
       el('div', 'pc-v', c, v);
-      el('div', 'pc-k', c, t(k));
+      addHelp(el('div', 'pc-k', c, t(k)));
     };
     stat('pc.matches', String(s.matches));
     stat('pc.winRate', s.matches ? `${Math.round((s.wins / s.matches) * 100)}%` : '-');

@@ -29,6 +29,7 @@ import { econOf } from '@/progression/economy';
 import { missionsCard, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
 import { renderServiceRecord } from './ServiceRecord';
+import { glossaryList } from './glossary';
 
 const PICK_KEY = 'strikegy.lobby.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
@@ -369,6 +370,14 @@ export class Lobby {
       body.classList.add('lb-controls');
       const keys = el('div', 'ds-keys lb-keys', body);
       renderHint(keys, t(this.touch ? 'start.hintTouch' : 'start.hint'));
+      // Words a newcomer may not know (glossary.ts), all in one place.
+      el('div', 'ds-label lb-gloss-head', body).textContent = t('menu.glossary');
+      const gl = el('div', 'lb-gloss', body);
+      for (const [name, text] of glossaryList()) {
+        const row = el('div', 'lb-gloss-row', gl);
+        el('div', 'lb-gloss-name', row).textContent = name;
+        el('div', 'lb-gloss-text', row).textContent = text;
+      }
     } else if (this.screen === 'record') {
       renderServiceRecord(body, { rename: () => this.editName(false), redraw: () => this.render(), root: this.root });
     } else if (this.screen === 'armory' || this.screen === 'ranks' || this.screen === 'shop') {
