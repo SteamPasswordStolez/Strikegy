@@ -50,7 +50,7 @@
   background: rgb(20 19 17 / 0.97);
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.45);
   color: #efebe2;
-  font-family: 'Pretendard', 'Pretendard Std', system-ui, sans-serif;
+  font-family: 'Pretendard Std Variable', 'Pretendard Std', 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif;
   pointer-events: auto;
 }
 .gl-tip.on {

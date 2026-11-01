@@ -8,6 +8,12 @@
  * its proportions from 720p to 4K; type sits on the game picture with a
  * soft dark shadow instead of panels.
  */
+/* Small labels never under 11 px (owner, 2026-11-01: small text hard to read): at 720p and on
+   phones the design system's smallest size is 9.75 px. Two classes, so it wins over `.ds-root`. */
+.hud.ds-root,
+.tut.ds-root {
+  --fs-xs: max(11px, calc(var(--u) * 0.75));
+}
 .hud {
   /* Side colours lifted for text over the world (the tokens are for fills). */
   --ally-text: color-mix(in srgb, var(--ally) 62%, #fff);
@@ -1289,6 +1295,42 @@
 }
 .tut.done .tut-fill {
   background: var(--squad);
+}
+/* The step count beside the chapter, why the step matters, and a mark a step (owner, 2026-11-01). */
+.tut-count {
+  margin-left: auto;
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.tut-skiphint {
+  margin-left: var(--s3);
+}
+.tut-why {
+  margin: calc(var(--s2) * -1) 0 var(--s3);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  word-break: keep-all;
+}
+.tut-why:empty {
+  display: none;
+}
+.tut-dots {
+  display: flex;
+  gap: 3px;
+  margin-bottom: var(--s2);
+}
+.tut-dots i {
+  flex: 1;
+  height: 3px;
+  background: rgb(239 235 226 / 0.16);
+}
+.tut-dots i.done {
+  background: var(--squad);
+}
+.tut-dots i.now {
+  background: var(--accent);
 }
 /* Touch: right under the gun's numbers, off the kill feed in the middle. */
 .is-touch .tut {

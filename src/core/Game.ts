@@ -413,7 +413,9 @@ export class Game {
   private tutorial: TutorialRun | null = null;
   private tutorialPanel: TutorialPanel | null = null;
   private tutorialEndLeft = 0;
-  private readonly tutLast = { x: 0, z: 0, ammo: -1, weapon: '', reloading: false, crouching: false };
+  private readonly tutLast = { x: 0, z: 0, ammo: -1, weapon: '', reloading: false, crouching: false, sliding: false, gadget: false };
+  /** The player's own rounds that hit something since the tutorial last looked. */
+  private tutHits = 0;
   private supportAim: SupportId | null = null;
   private supportPoint: THREE.Vector3 | null = null;
   private supportRing: THREE.Mesh | null = null;
@@ -1114,6 +1116,7 @@ export class Game {
       this.audio.impact(e.point, e.surface);
     });
     bus.on('combat:hit', (e) => {
+      if (e.byPlayer) this.tutHits++;
       // On the game server the hit marker waits for its word (`onNetEvents`).
       if (e.byPlayer && !this.net) {
         this.hud.showHit(e.part === 'head', e.killed, e.damage);
@@ -1309,12 +1312,15 @@ export class Game {
       fort: !!this.fort,
       support: !!this.playerSquad && MATCH.callIns,
       simple: MATCH.simple,
+      // The range has no class gadget; in a match the class picked on the deploy screen brings one.
+      gadget: !MATCH.simple && (this.deployFlow || !!this.gadget),
     });
     if (!steps.length) return;
     this.tutorial = new TutorialRun(steps);
-    this.tutorialPanel = new TutorialPanel(this.container, !!this.touch, () => this.endTutorial(true));
+    this.tutorialPanel = new TutorialPanel(this.container, !!this.touch, () => this.endTutorial(true), guided);
     const p = this.player.feet;
-    Object.assign(this.tutLast, { x: p.x, z: p.z, ammo: -1, weapon: '', reloading: false, crouching: this.player.crouching });
+    Object.assign(this.tutLast, { x: p.x, z: p.z, ammo: -1, weapon: '', reloading: false, crouching: this.player.crouching, sliding: false, gadget: false });
+    this.tutHits = 0;
   }
 
   /** Done or skipped: remembered so it doesn't come back (the menu's tutorial replays it). */
@@ -1377,11 +1383,19 @@ export class Game {
         building: this.buildMode,
         supportOpen: this.supportMenu.open,
         inZone: !!this.zoneMode?.zoneAt(p.feet),
+        slid: p.sliding && !last.sliding,
+        hits: onField ? this.tutHits : 0,
+        swapped: onField && last.weapon !== '' && w.def.id !== last.weapon,
+        melee: input.melee,
+        // A class without a gadget: nothing to take out, the step passes.
+        gadget: (this.gadgetOut && !last.gadget) || (onField && !this.gadget),
+        scoreboard: input.scoreboard,
       };
       run.update(probe);
       if (run.finished) this.endTutorial(false);
     }
-    Object.assign(last, { x: p.feet.x, z: p.feet.z, ammo: w.state.ammo, weapon: w.def.id, reloading: w.state.reloading, crouching: p.crouching });
+    Object.assign(last, { x: p.feet.x, z: p.feet.z, ammo: w.state.ammo, weapon: w.def.id, reloading: w.state.reloading, crouching: p.crouching, sliding: p.sliding, gadget: this.gadgetOut });
+    this.tutHits = 0;
     if (!this.tutorial && this.tutorialEndLeft > 0) this.tutorialEndLeft -= dt;
     const ended = !this.tutorial && this.tutorialEndLeft > 0;
     panel.update(this.tutorial, (onField || (deploying && this.tutorial?.current?.id === 'deploy')) && !this.matchOver, deploying, ended);

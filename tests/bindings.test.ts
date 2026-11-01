@@ -138,7 +138,7 @@ describe('key bindings', () => {
 });
 
 describe('tutorial', () => {
-  const ctx = { deployFlow: true, zones: true, fort: true, support: true };
+  const ctx = { deployFlow: true, zones: true, fort: true, support: true, gadget: true };
   const probe = (p: Partial<TutorialProbe>): TutorialProbe => ({
     dt: 0.1,
     onField: true,
@@ -165,9 +165,9 @@ describe('tutorial', () => {
     expect(all[0]).toBe('deploy');
     expect(all).toContain('capture');
     expect(all).toContain('move');
-    const range = stepsFor(false, {}, { deployFlow: false, zones: false, fort: false, support: false });
+    const range = stepsFor(false, {}, { deployFlow: false, zones: false, fort: false, support: false, gadget: true });
     expect(range).toEqual(STEPS.filter((s) => s.basic).map((s) => s.id));
-    expect(stepsFor(false, { basics: true }, ctx)).toEqual(['deploy', 'capture', 'interact', 'build', 'support']);
+    expect(stepsFor(false, { basics: true }, ctx)).toEqual(['deploy', 'capture', 'interact', 'build', 'support', 'scoreboard']);
     expect(stepsFor(false, { basics: true, match: true }, ctx)).toEqual([]);
     // The menu's tutorial always runs the basics.
     expect(stepsFor(true, { basics: true, match: true }, ctx)).toEqual(range);
