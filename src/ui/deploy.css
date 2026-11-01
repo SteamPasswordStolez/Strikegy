@@ -796,3 +796,11 @@
   color: var(--accent);
   font-size: var(--fs-xs);
 }
+/* A squad mate fanned out round another marker: no name on the map (it is in the squad list, and
+   on the pointer), a little smaller. */
+.dm.packed .dm-label {
+  display: none;
+}
+.dm.packed .dm-icon {
+  transform: scale(0.85);
+}

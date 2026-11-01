@@ -97,8 +97,9 @@
   .crit-layer {
     --u: 11px;
   }
+  /* Under the kill feed (two rows at the top middle on phones), over the notices. */
   .crit {
-    top: 22%;
+    top: 27%;
   }
   .crit-subs {
     bottom: 30%;

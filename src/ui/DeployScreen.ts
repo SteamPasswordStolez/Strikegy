@@ -287,6 +287,13 @@ export class DeployScreen {
     m.width = `${c.offsetWidth}px`;
     m.height = `${c.offsetHeight}px`;
     const seen = new Set<string>();
+    // Squad mates standing on another marker (all at the base after a deploy) fan out round it with
+    // their names off the map (owner, 2026-11-01: the names lay on top of each other; the squad list
+    // has them, the pointer shows them).
+    const W = Math.max(1, c.offsetWidth);
+    const H = Math.max(1, c.offsetHeight);
+    const placed: { x: number; y: number; n: number }[] = [];
+    const FAN = [-90, -38, -142, 14, -194, 66].map((d) => (d * Math.PI) / 180);
     for (const o of s.options) {
       // Vehicles from the base are in the list only.
       if (o.kind === 'vehicle') continue;
@@ -303,8 +310,6 @@ export class DeployScreen {
         b.addEventListener('click', () => this.pick(key));
         this.markEls.set(o.key, b);
       }
-      const cls = `dm k-${o.kind}${o.key === s.selected ? ' sel' : ''}${o.blocked ? ' blocked' : ''}${o.warn ? ' warn' : ''}`;
-      if (b.className !== cls) b.className = cls;
       b.disabled = !!o.blocked;
       badge(b.firstChild as HTMLSpanElement, o);
       const label = b.lastChild as HTMLSpanElement;
@@ -313,9 +318,21 @@ export class DeployScreen {
       if (label.textContent !== text) label.textContent = text;
       const [u, v] = this.map.project(o.x, o.z);
       // Off the picture (a mate in a plane over the hills): no marker, the list still has it.
-      const fu = u / c.width;
-      const fv = v / c.height;
+      let fu = u / c.width;
+      let fv = v / c.height;
       b.style.display = fu < 0 || fu > 1 || fv < 0 || fv > 1 ? 'none' : '';
+      const x = fu * W;
+      const y = fv * H;
+      const near = placed.find((p) => Math.hypot(p.x - x, p.y - y) < 26);
+      const packed = o.kind === 'mate' && !!near;
+      if (packed) {
+        const a = FAN[near!.n++ % FAN.length]!;
+        fu = (near!.x + Math.cos(a) * 30) / W;
+        fv = (near!.y + Math.sin(a) * 30) / H;
+      } else placed.push({ x, y, n: 0 });
+      const cls = `dm k-${o.kind}${o.key === s.selected ? ' sel' : ''}${o.blocked ? ' blocked' : ''}${o.warn ? ' warn' : ''}${packed ? ' packed' : ''}`;
+      if (b.className !== cls) b.className = cls;
+      b.title = packed ? o.label : '';
       b.style.left = `${(fu * 100).toFixed(2)}%`;
       b.style.top = `${(fv * 100).toFixed(2)}%`;
     }

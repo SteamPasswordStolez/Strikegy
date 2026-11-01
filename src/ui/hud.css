@@ -800,7 +800,10 @@
 }
 .hud-notice {
   position: relative;
-  padding-bottom: var(--s2);
+  /* A dark band like the critical strip's (owner, 2026-11-01: side-coloured text straight over a
+     bright sky was hard to read, and looked unlike the banner above it). */
+  padding: var(--s1) var(--s7) var(--s2);
+  background: linear-gradient(90deg, transparent, rgb(12 12 11 / 0.72) 22%, rgb(12 12 11 / 0.72) 78%, transparent);
   white-space: nowrap;
   font-size: var(--fs-xl);
   font-weight: 700;
@@ -1156,7 +1159,11 @@
   top: calc(var(--u) * 8.75);
 }
 .is-touch .hud-notices {
-  top: 39%;
+  top: 41%;
+}
+/* Touch: one points line at a time (two ran into the subtitle under them on phones). */
+.is-touch .xp-row:not(:last-child) {
+  display: none;
 }
 .is-touch .hud-notice {
   font-size: var(--fs-lg);
