@@ -41,7 +41,9 @@ const software = args.includes('--software');
 const [VW, VH] = opt('--size', '1920x1080').split('x').map(Number);
 /** FILM_DEBUG=1: say each step as it starts (to find where a run stops). */
 const debug = (...a) => process.env.FILM_DEBUG && console.log('[debug]', ...a);
-const positional = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--url' && args[i - 1] !== '--size');
+/** --frames N: every shot only N frames long (checking where the cameras stand). */
+const framesOverride = Number(opt('--frames', 0));
+const positional = args.filter((a, i) => !a.startsWith('--') && !['--url', '--size', '--frames'].includes(args[i - 1]));
 const [groupName, ...only] = positional;
 if (!groupName) {
   console.log('usage: node scripts/trailer/film.mjs <group> [shot ids...]');
@@ -52,6 +54,8 @@ const shotTimes = Object.fromEntries(
   JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/trailer/data/shots.json'), 'utf8')).map((s) => [s.id, s]),
 );
 const ids = Object.keys(group.shots).filter((id) => !only.length || only.includes(id));
+/** A group with `out` (a folder from the repo's root) films for something else: it stays out of the trailer's edit. */
+const outDir = group.out ? path.join(ROOT, group.out) : FOOTAGE;
 
 /** A function's source as an expression (method shorthand `setup(d) {}` becomes a function expression). */
 function src(fn) {
@@ -63,6 +67,7 @@ function src(fn) {
 
 /** Frames a shot needs: its length on the 30 fps grid plus padding. */
 function framesFor(id, spec) {
+  if (framesOverride) return framesOverride;
   if (spec.frames) return spec.frames;
   const s = shotTimes[id.split('_')[0]];
   if (!s) throw new Error(`${id}: not in shots.json and no frames given`);
@@ -280,7 +285,7 @@ try {
   for (const id of ids) {
     const spec = group.shots[id];
     const n = framesFor(id, spec);
-    const dir = path.join(FOOTAGE, id);
+    const dir = path.join(outDir, id);
     rmFlat(dir);
     fs.mkdirSync(dir, { recursive: true });
     const t0 = Date.now();
@@ -321,15 +326,15 @@ try {
       rmFlat(dir);
       continue;
     }
-    const file = path.join(FOOTAGE, `${id}.mp4`);
+    const file = path.join(outDir, `${id}.mp4`);
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-framerate', String(FPS), '-i', path.join(dir, '%05d.jpg'), '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-pix_fmt', 'yuv420p', file]);
     if (!keepFrames) rmFlat(dir);
     // A shot id like S20_slow fills S20; several footage ids may serve one shot (the edit picks one).
     const target = spec.for ?? id;
-    edit[target] = { ...(edit[target] ?? {}), file: `footage/${id}.mp4`, in: spec.in ?? 0, ...(spec.speed ? { speed: spec.speed } : {}) };
+    if (!group.out) edit[target] = { ...(edit[target] ?? {}), file: `footage/${id}.mp4`, in: spec.in ?? 0, ...(spec.speed ? { speed: spec.speed } : {}) };
     console.log(`${id}: ${n} frames in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   }
-  fs.writeFileSync(path.join(T, 'edit.json'), JSON.stringify(edit, null, 2) + '\n');
+  if (!group.out) fs.writeFileSync(path.join(T, 'edit.json'), JSON.stringify(edit, null, 2) + '\n');
   if (process.env.FILM_GLCHECK) console.log('GL errors by draw:', JSON.stringify(await page.evaluate(() => window.__glHits), null, 1));
   if (process.env.FILM_GLCHECK) console.log('GL errors at the WebGL level:', JSON.stringify(await page.evaluate(() => window.__glDrawHits), null, 1));
 } finally {

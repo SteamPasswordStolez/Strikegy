@@ -1,0 +1,768 @@
+<!doctype html>
+<!-- The winter-war Short's overlay: everything but the game's picture (the band in the split scenes): the map with its
+     fronts pushing and pulling on the song's hits, the portraits, the captions. Times and scenes are in scenes.js.
+     window.render(t) draws one frame; window.setData(countries, borders) hands it the map data. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Pretendard;
+        src: url('../../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: Barlow;
+        src: url('../../../public/assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+        font-weight: 700;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: transparent;
+        font-family: Pretendard, sans-serif;
+        color: #f3f4f1;
+        word-break: keep-all;
+      }
+      #map,
+      #flash,
+      #end {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1080px;
+        height: 1920px;
+      }
+      #flash {
+        background: #fff;
+        opacity: 0;
+      }
+      #day {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 134px;
+        text-align: center;
+        font-size: 50px;
+        font-weight: 800;
+        color: #ffd86b;
+        text-shadow: 0 4px 0 rgb(0 0 0 / 0.7);
+      }
+      #head {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 196px;
+        text-align: center;
+        font-size: 80px;
+        line-height: 1.08;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+        text-shadow: 0 6px 0 rgb(0 0 0 / 0.65);
+      }
+      #stat {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 1370px;
+        display: flex;
+        justify-content: center;
+        align-items: baseline;
+        gap: 24px;
+        white-space: nowrap;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        text-shadow: 0 6px 0 rgb(0 0 0 / 0.8), 0 0 26px rgb(0 0 0 / 0.8);
+      }
+      #stat .a {
+        font-size: 78px;
+        color: #fff;
+      }
+      #stat .vs {
+        font-size: 42px;
+        color: #cfd3d6;
+      }
+      #stat .b {
+        font-size: 96px;
+        color: #ff6a55;
+      }
+      #stat .l {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: -56px;
+        text-align: center;
+        font-size: 44px;
+        font-weight: 800;
+        color: #eef0f1;
+      }
+      #e1 {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 150px;
+        text-align: center;
+        font-size: 66px;
+        font-weight: 900;
+        line-height: 1.18;
+      }
+      #e2 {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 460px;
+        text-align: center;
+        font: 700 196px / 1 Barlow, sans-serif;
+        letter-spacing: 0.05em;
+      }
+      #e3 {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 670px;
+        text-align: center;
+        font: 700 108px / 1 Barlow, sans-serif;
+        letter-spacing: 0.03em;
+        color: #ffb04a;
+      }
+    </style>
+    <script src="scenes.js"></script>
+  </head>
+  <body>
+    <canvas id="map" width="1080" height="1920"></canvas>
+    <div id="day"></div>
+    <div id="head"></div>
+    <div id="stat"></div>
+    <div id="end"><div id="e1"></div><div id="e2"></div><div id="e3"></div></div>
+    <div id="flash"></div>
+    <script>
+      const { SCENES, BEAT, DAYS, FRONT, CAM, STRONG, SOFT } = window.WINTER;
+      const $ = (id) => document.getElementById(id);
+      const clamp01 = (x) => Math.min(1, Math.max(0, x));
+      const smooth = (x) => {
+        const k = clamp01(x);
+        return k * k * (3 - 2 * k);
+      };
+      const spring = (x) => (x <= 0 ? 0 : 1 - Math.exp(-9 * x) * Math.cos(18 * x));
+      /** How hard the hits are ringing at t: 1 on a hit, dying away. */
+      const ringOf = (list, t, k = 9) => {
+        let v = 0;
+        for (const h of list) if (t >= h && t < h + 0.6) v = Math.max(v, Math.exp(-k * (t - h)));
+        return v;
+      };
+      /** The band of the game's picture in the split scenes (build.mjs has the same numbers). */
+      const BAND = { y: 884, h: 608 };
+      const DARK = '#0b0d0e';
+
+      // ---- The map: an even projection round latitude 64.
+      const COS = Math.cos((64 * Math.PI) / 180);
+      const X = (lon) => (lon - 27) * COS;
+      const Y = (lat) => -(lat - 64);
+      let P = null;
+      const pathOf = (rings) => {
+        const p = new Path2D();
+        for (const r of rings) {
+          r.forEach(([lon, lat], i) => (i ? p.lineTo(X(lon), Y(lat)) : p.moveTo(X(lon), Y(lat))));
+          p.closePath();
+        }
+        return p;
+      };
+      // Lake Ladoga and Onega, drawn by hand: Natural Earth's countries run straight over them.
+      const LADOGA = [
+        [31.03, 59.95], [30.98, 60.03], [31.02, 60.1], [30.96, 60.24], [30.88, 60.33], [30.72, 60.42], [30.56, 60.5], [30.42, 60.6],
+        [30.32, 60.74], [30.2, 60.88], [30.12, 61.02], [29.98, 61.14], [29.92, 61.26], [30.02, 61.38], [30.2, 61.5], [30.34, 61.58],
+        [30.52, 61.66], [30.69, 61.71], [30.92, 61.66], [31.18, 61.65], [31.46, 61.55], [31.72, 61.44], [31.92, 61.33], [32.22, 61.24],
+        [32.44, 61.14], [32.6, 60.98], [32.72, 60.84], [32.82, 60.66], [32.92, 60.5], [32.78, 60.34], [32.56, 60.2], [32.3, 60.12],
+        [32.02, 60.04], [31.74, 59.96], [31.46, 59.92], [31.2, 59.9],
+      ];
+      const ONEGA = [
+        [35.5, 60.86], [35.1, 61.0], [34.72, 61.2], [34.54, 61.42], [34.4, 61.66], [34.38, 61.82], [34.62, 61.96], [34.86, 62.2],
+        [35.08, 62.44], [35.34, 62.72], [35.62, 62.74], [35.72, 62.5], [35.98, 62.3], [36.2, 62.02], [36.42, 61.7], [36.56, 61.36],
+        [36.42, 61.06], [36.08, 60.9], [35.76, 60.84],
+      ];
+      const LINE = [[28.62, 60.3], [28.98, 60.56], [29.34, 60.56], [29.74, 60.53], [30.1, 60.56], [30.56, 60.5]];
+      const ARROWS = [
+        [[30.32, 60.02], [29.84, 60.26], [29.1, 60.62]],
+        [[32.9, 61.4], [31.9, 61.72], [30.86, 61.98]],
+        [[32.9, 63.05], [31.9, 63.02], [30.7, 62.98]],
+        [[32.4, 65.05], [30.6, 65.02], [28.9, 64.9]],
+        [[31.9, 67.05], [30.2, 67.08], [27.6, 66.82]],
+        [[33.5, 69.1], [32.4, 69.28], [31.2, 69.54]],
+      ];
+      const PLACES = [
+        ['헬싱키', 24.94, 60.17, 'left', 0],
+        ['레닌그라드', 30.31, 59.94, 'right', 0],
+        ['비푸리', 28.75, 60.71, 'left', 0],
+        ['페차모', 31.17, 69.53, 'left', 0],
+        ['수오무살미', 28.91, 64.89, 'left', 1],
+        ['라도가호', 31.5, 60.82, 'center', 2],
+      ];
+      // The Soviet-held ground, sector by sector: stage lines of equal length (0: at the pre-war border, then
+      // how far it stood), closed behind by `back` in the USSR; only what falls inside Finland shows. Approximate,
+      // from the battles' places: the Mannerheim Line, Viipuri, Kitelä, Tolvajärvi, Kollaa, Kuhmo, Suomussalmi,
+      // Pelkosenniemi, Märkäjärvi, Nautsi.
+      const SECTORS = {
+        isthmus: {
+          back: [[31.2, 60.45], [31.2, 59.85], [28.2, 59.85]],
+          stages: [
+            [[29.4, 60.03], [29.7, 60.06], [30.0, 60.1], [30.3, 60.2], [30.7, 60.3], [31.05, 60.38]],
+            LINE,
+            [[28.4, 60.42], [28.85, 60.68], [29.3, 60.72], [29.74, 60.66], [30.15, 60.62], [30.6, 60.52]],
+            [[28.25, 60.5], [28.62, 60.78], [29.25, 60.92], [29.74, 60.78], [30.2, 60.68], [30.62, 60.54]],
+          ],
+        },
+        ladoga: {
+          back: [[34.2, 63.2], [34.2, 61.0]],
+          stages: [
+            [[32.0, 61.25], [32.7, 61.6], [33.0, 62.0], [33.0, 62.4], [32.9, 62.75]],
+            [[30.95, 61.62], [31.25, 61.9], [31.45, 62.25], [31.8, 62.6], [32.35, 62.95]],
+            [[31.3, 61.58], [31.75, 61.85], [32.0, 62.25], [32.25, 62.62], [32.7, 62.9]],
+          ],
+        },
+        kuhmo: {
+          back: [[32.6, 64.7], [32.6, 63.5]],
+          stages: [
+            [[31.2, 63.6], [30.9, 63.8], [30.7, 64.1], [30.6, 64.3], [30.6, 64.55]],
+            [[31.2, 63.6], [30.1, 63.85], [29.55, 64.12], [29.95, 64.3], [30.6, 64.55]],
+          ],
+        },
+        suomussalmi: {
+          back: [[32.5, 65.6], [32.5, 64.5]],
+          stages: [
+            [[30.7, 64.6], [30.4, 64.7], [30.2, 64.9], [30.1, 65.1], [29.9, 65.35]],
+            [[30.7, 64.6], [29.6, 64.68], [28.75, 64.88], [29.4, 65.1], [29.9, 65.35]],
+          ],
+        },
+        salla: {
+          back: [[32.0, 67.9], [32.0, 66.3]],
+          stages: [
+            [[30.2, 66.4], [30.25, 66.7], [30.05, 67.0], [29.95, 67.3], [29.9, 67.7]],
+            [[30.2, 66.4], [28.7, 66.72], [27.45, 67.1], [28.5, 67.38], [29.9, 67.7]],
+            [[30.2, 66.4], [29.35, 66.78], [28.9, 67.0], [29.25, 67.28], [29.9, 67.7]],
+          ],
+        },
+        petsamo: {
+          back: [[33.6, 70.4], [33.6, 68.5]],
+          stages: [
+            [[30.6, 68.75], [31.5, 69.0], [32.0, 69.4], [32.4, 69.8], [33.0, 70.1]],
+            [[28.3, 68.75], [28.7, 69.05], [29.1, 69.35], [30.0, 69.85], [31.0, 70.2]],
+          ],
+        },
+      };
+      /** A sector's stage at t: it springs to each key on its hit, and every hit shoves it a little, this way or that. */
+      function stageAt(name, t) {
+        const keys = FRONT[name];
+        let v = 0;
+        let last = 0;
+        for (const [h, to] of keys) {
+          if (t < h) break;
+          v = last + (to - last) * spring((t - h) * 1.6);
+          last = to;
+        }
+        if (t >= keys[0][0]) {
+          // Push on one hit, pull on the next.
+          const all = [...STRONG, ...SOFT].filter((h) => h <= t).sort((a, b) => b - a);
+          if (all.length) {
+            const dir = all.length % 2 ? 1 : -0.7;
+            const big = STRONG.includes(all[0]) ? 0.3 : 0.17;
+            v += dir * big * Math.exp(-6.5 * (t - all[0]));
+          }
+        }
+        const n = SECTORS[name].stages.length - 1;
+        return Math.min(n + 0.15, Math.max(0, v));
+      }
+      function frontLine(name, t) {
+        const { stages } = SECTORS[name];
+        const v = stageAt(name, t);
+        const i = Math.min(stages.length - 2, Math.floor(v));
+        const k = v - i;
+        return stages[i].map(([a, b], j) => [a + (stages[i + 1][j][0] - a) * k, b + (stages[i + 1][j][1] - b) * k]);
+      }
+      /** A smooth path through the points, in map units, starting with moveTo or going on from where it is. */
+      function curve(path, pts, start) {
+        const q = pts.map(([a, b]) => [X(a), Y(b)]);
+        if (start) path.moveTo(q[0][0], q[0][1]);
+        else path.lineTo(q[0][0], q[0][1]);
+        for (let i = 0; i < q.length - 1; i++) {
+          const m = i + 1 < q.length - 1 ? [(q[i + 1][0] + q[i + 2][0]) / 2, (q[i + 1][1] + q[i + 2][1]) / 2] : q[i + 1];
+          if (i + 1 < q.length - 1) path.quadraticCurveTo(q[i + 1][0], q[i + 1][1], m[0], m[1]);
+          else path.lineTo(m[0], m[1]);
+        }
+      }
+
+      window.setData = (countries, borders) => {
+        const neutral = ['Sweden', 'Norway', 'Estonia', 'Latvia', 'Lithuania', 'Belarus', 'Poland', 'Germany', 'Denmark', 'Ukraine'];
+        P = {
+          land: pathOf(Object.values(countries).flat()),
+          neutral: pathOf(neutral.flatMap((n) => countries[n] ?? [])),
+          neutralLines: neutral.map((n) => pathOf(countries[n] ?? [])),
+          soviet: pathOf(countries.Russia),
+          pre: pathOf(borders.pre),
+          post: pathOf(borders.post),
+          lakes: pathOf([LADOGA, ONEGA]),
+        };
+      };
+      const PHOTOS = {};
+      window.loadPhotos = async () => {
+        for (const n of ['stalin', 'mannerheim', 'hayha', 'siilasvuo', 'timoshenko']) {
+          const img = new Image();
+          img.src = `../../../assets-src/shorts/winter/photos/${n}.jpg`;
+          await img.decode();
+          PHOTOS[n] = img;
+        }
+      };
+
+      const ctx = $('map').getContext('2d');
+      // Film grain for the portraits: one tile of noise, moved every frame.
+      const grain = document.createElement('canvas');
+      grain.width = grain.height = 256;
+      {
+        const g = grain.getContext('2d');
+        const d = g.createImageData(256, 256);
+        for (let i = 0; i < d.data.length; i += 4) {
+          const v = Math.random() * 255;
+          d.data[i] = d.data[i + 1] = d.data[i + 2] = v;
+          d.data[i + 3] = 255;
+        }
+        g.putImageData(d, 0, 0);
+      }
+      function addGrain(t, x, y, w, h, alpha = 0.13) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'overlay';
+        ctx.globalAlpha = alpha;
+        const ox = Math.floor((t * 977) % 256);
+        const oy = Math.floor((t * 613) % 256);
+        for (let a = x - ox; a < x + w; a += 256) for (let b = y - oy; b < y + h; b += 256) ctx.drawImage(grain, a, b);
+        ctx.restore();
+      }
+
+      /** The camera at t: it snaps to each key on its hit, overshoots a little, then creeps inwards until the next. */
+      function camAt(t) {
+        let i = 0;
+        while (i + 1 < CAM.length && CAM[i + 1][0] <= t) i++;
+        const key = CAM[i];
+        const was = CAM[Math.max(0, i - 1)];
+        const dt = t - key[0];
+        const u = 1 - Math.exp(-17 * dt) * Math.cos(15 * dt);
+        return {
+          lon: was[1] + (key[1] - was[1]) * u,
+          lat: was[2] + (key[2] - was[2]) * u,
+          ppd: Math.exp(Math.log(was[3]) + (Math.log(key[3]) - Math.log(was[3])) * u) * (1 + 0.04 * dt),
+          tilt: ((was[4] + (key[4] - was[4]) * u) * Math.PI) / 180,
+        };
+      }
+      /** The map inside the box, its centre at height cy, `scale` times the camera's size. */
+      function drawMap(t, s, scale, cy, box) {
+        const cam = camAt(t);
+        const view = [cam.lon, cam.lat];
+        const ppd0 = cam.ppd * scale;
+        const ppd = ppd0 * (1 + 0.03 * ringOf(STRONG, t, 8));
+        // Every hit jolts it.
+        const hit = Math.max(ringOf(STRONG, t, 11), 0.45 * ringOf(SOFT, t, 13));
+        const shakeX = 15 * hit * Math.sin(t * 83);
+        const shakeY = 11 * hit * Math.sin(t * 71 + 1);
+        const roll = cam.tilt + 0.011 * hit * Math.sin(t * 59);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(box.x, box.y, box.w, box.h);
+        ctx.clip();
+        ctx.fillStyle = '#10222e';
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+        const cx = box.x + box.w / 2;
+        const M = new DOMMatrix()
+          .translate(cx + shakeX, cy + shakeY)
+          .rotate((roll * 180) / Math.PI)
+          .scale(ppd)
+          .translate(-X(view[0]), -Y(view[1]));
+        ctx.setTransform(M);
+        const on = (lon, lat) => {
+          const p = M.transformPoint(new DOMPoint(X(lon), Y(lat)));
+          return [p.x, p.y];
+        };
+        const small = s.kind === 'split';
+        const w = 1 / ppd;
+        ctx.fillStyle = '#39403f';
+        ctx.fill(P.neutral, 'evenodd');
+        ctx.strokeStyle = '#596160';
+        ctx.lineWidth = 1.5 * w;
+        for (const l of P.neutralLines) ctx.stroke(l);
+        ctx.fillStyle = '#8c2319';
+        ctx.fill(P.soviet, 'evenodd');
+        // Finland only where there is land: the historic outlines run out over the sea.
+        ctx.save();
+        ctx.clip(P.land, 'evenodd');
+        const ceded = s.ceded !== undefined && t >= s.ceded;
+        ctx.fillStyle = '#e9eef2';
+        ctx.fill(P.pre, 'evenodd');
+        if (ceded) {
+          const blink = ringOf([s.ceded, ...STRONG.filter((h) => h > s.ceded)], t, 5);
+          ctx.fillStyle = `rgb(${214 + 41 * blink} ${58 + 50 * blink} ${38 + 40 * blink})`;
+          ctx.fill(P.pre, 'evenodd');
+          ctx.fillStyle = '#e9eef2';
+          ctx.fill(P.post, 'evenodd');
+        }
+        // The fronts: red flowing into Finland, a bright edge where it stands.
+        ctx.save();
+        ctx.clip(P.pre, 'evenodd');
+        for (const name of Object.keys(SECTORS)) {
+          if (t < FRONT[name][0][0]) continue;
+          const line = frontLine(name, t);
+          const fill = new Path2D();
+          curve(fill, line, true);
+          for (const [a, b] of SECTORS[name].back) fill.lineTo(X(a), Y(b));
+          fill.closePath();
+          ctx.fillStyle = '#b02a1c';
+          ctx.fill(fill);
+          const edge = new Path2D();
+          curve(edge, line, true);
+          ctx.strokeStyle = '#ff5a3c';
+          ctx.lineWidth = (2.5 + 3 * ringOf([...STRONG, ...SOFT], t, 9)) * w * (small ? 1 : 1.5);
+          ctx.lineJoin = 'round';
+          ctx.stroke(edge);
+        }
+        ctx.restore();
+        ctx.restore();
+        // The pre-war border.
+        ctx.save();
+        ctx.clip(P.land, 'evenodd');
+        ctx.strokeStyle = '#11161a';
+        ctx.lineWidth = 2 * w;
+        ctx.stroke(P.pre);
+        ctx.restore();
+        ctx.fillStyle = '#10222e';
+        ctx.fill(P.lakes);
+        if (s.line) {
+          ctx.strokeStyle = '#2f86ff';
+          ctx.lineWidth = (small ? 4 : 8) * w;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          LINE.forEach(([a, b], i) => (i ? ctx.lineTo(X(a), Y(b)) : ctx.moveTo(X(a), Y(b))));
+          ctx.stroke();
+        }
+        for (const a of s.arrows ?? []) {
+          const u = clamp01((t - s.from - a.at) / a.dur);
+          if (u > 0) arrow(ARROWS[a.i], u, ppd);
+        }
+        if (s.pulse) {
+          const u = ((t - s.from) % (BEAT * 2)) / (BEAT * 2);
+          ctx.strokeStyle = `rgb(255 216 107 / ${1 - u})`;
+          ctx.lineWidth = 8 * w;
+          ctx.beginPath();
+          ctx.arc(X(s.pulse[0]), Y(s.pulse[1]), (18 + u * 90) * w, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = '#ffd86b';
+          ctx.beginPath();
+          ctx.arc(X(s.pulse[0]), Y(s.pulse[1]), 11 * w, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Names, the same size whatever the zoom.
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.textBaseline = 'middle';
+        for (const [name, a, b, align, kind] of PLACES) {
+          if (kind === 1 && !s.pulse) continue;
+          if (s.stat && name === '페차모') continue;
+          if (kind === 2 && ppd < 240) continue;
+          const [px, py] = on(a, b);
+          ctx.font = `800 ${small ? 28 : kind === 2 ? 34 : 40}px Pretendard`;
+          ctx.textAlign = align === 'left' ? 'right' : align === 'right' ? 'left' : 'center';
+          const gap = align === 'center' ? 0 : align === 'left' ? -16 : 16;
+          ctx.lineWidth = 8;
+          ctx.strokeStyle = 'rgb(8 12 14 / 0.9)';
+          ctx.strokeText(name, px + gap, py);
+          ctx.fillStyle = kind === 2 ? '#9dc1d6' : '#fff';
+          ctx.fillText(name, px + gap, py);
+          if (kind !== 2) {
+            ctx.beginPath();
+            ctx.arc(px, py, small ? 5 : 8, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        for (const l of s.labels ?? []) {
+          const u = spring(t - s.from - (l.at ?? 0));
+          if (u <= 0) continue;
+          ctx.font = `900 ${l.size ?? 72}px Pretendard`;
+          ctx.textAlign = 'center';
+          ctx.lineWidth = 12;
+          ctx.strokeStyle = 'rgb(8 12 14 / 0.92)';
+          const [px, py] = l.at2 ?? on(l.lon, l.lat);
+          ctx.globalAlpha = clamp01(u * 2);
+          ctx.strokeText(l.text, px, py);
+          ctx.fillStyle = l.color ?? '#fff';
+          ctx.fillText(l.text, px, py);
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+      }
+      function arrow(line, u, ppd) {
+        const pts = line.map(([a, b]) => [X(a), Y(b)]);
+        const len = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]);
+        const total = len(pts[0], pts[1]) + len(pts[1], pts[2]);
+        let left = total * u;
+        const path = [pts[0]];
+        let dir = [1, 0];
+        for (let i = 0; i < pts.length - 1 && left > 0; i++) {
+          const l = len(pts[i], pts[i + 1]);
+          const f = Math.min(1, left / l);
+          path.push([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f]);
+          dir = [(pts[i + 1][0] - pts[i][0]) / l, (pts[i + 1][1] - pts[i][1]) / l];
+          left -= l;
+        }
+        const w = 1 / ppd;
+        const tip = path[path.length - 1];
+        const head = 40 * w;
+        const back = [tip[0] - dir[0] * head, tip[1] - dir[1] * head];
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        path.slice(0, -1).forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+        ctx.lineTo(back[0], back[1]);
+        ctx.strokeStyle = '#1a0806';
+        ctx.lineWidth = 20 * w;
+        ctx.stroke();
+        ctx.strokeStyle = '#ff3b22';
+        ctx.lineWidth = 13 * w;
+        ctx.stroke();
+        const n = [-dir[1], dir[0]];
+        ctx.beginPath();
+        ctx.moveTo(tip[0], tip[1]);
+        ctx.lineTo(back[0] + n[0] * head * 0.72, back[1] + n[1] * head * 0.72);
+        ctx.lineTo(back[0] - n[0] * head * 0.72, back[1] - n[1] * head * 0.72);
+        ctx.closePath();
+        ctx.fillStyle = '#ff3b22';
+        ctx.fill();
+      }
+
+      /** A photo covering the box, the point `focus` at the box's middle, in black and white, with a film's small weave. */
+      function drawPhoto(t, name, focus, zoom, x, y, w, h, tint) {
+        const img = PHOTOS[name];
+        const s = Math.max(w / img.naturalWidth, h / img.naturalHeight) * zoom;
+        const dw = img.naturalWidth * s;
+        const dh = img.naturalHeight * s;
+        let dx = x + w / 2 - focus[0] * dw;
+        let dy = y + h / 2 - focus[1] * dh;
+        dx = Math.min(x, Math.max(x + w - dw, dx)) + Math.sin(t * 41) * 2.5;
+        dy = Math.min(y, Math.max(y + h - dh, dy)) + Math.sin(t * 57 + 1) * 2.5;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.clip();
+        ctx.fillStyle = '#16181a';
+        ctx.fillRect(x, y, w, h);
+        const flicker = 1 + 0.05 * Math.sin(t * 97) * Math.sin(t * 31);
+        ctx.filter = `grayscale(1) contrast(1.18) brightness(${flicker})`;
+        ctx.drawImage(img, dx, dy, dw, dh);
+        ctx.filter = 'none';
+        if (tint) {
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.fillStyle = tint;
+          ctx.fillRect(x, y, w, h);
+          ctx.globalCompositeOperation = 'source-over';
+        }
+        const v = ctx.createRadialGradient(x + w / 2, y + h / 2, Math.min(w, h) * 0.35, x + w / 2, y + h / 2, Math.max(w, h) * 0.72);
+        v.addColorStop(0, 'rgb(0 0 0 / 0)');
+        v.addColorStop(1, 'rgb(0 0 0 / 0.72)');
+        ctx.fillStyle = v;
+        ctx.fillRect(x, y, w, h);
+        ctx.restore();
+      }
+      /** A big name on a slanted bar that slams in on its time. */
+      function nameBar(t, at, text, sub, y, color, x = 540) {
+        const u = spring(t - at);
+        if (u <= 0) return;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-0.035);
+        ctx.scale(0.6 + 0.4 * u, 0.6 + 0.4 * u);
+        ctx.globalAlpha = clamp01((t - at) / 0.04);
+        ctx.font = '900 112px Pretendard';
+        const tw = ctx.measureText(text).width;
+        ctx.fillStyle = color;
+        ctx.fillRect(-tw / 2 - 40, -76, tw + 80, 150);
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 0, 2);
+        if (sub) {
+          ctx.font = '800 52px Pretendard';
+          ctx.lineWidth = 8;
+          ctx.strokeStyle = 'rgb(0 0 0 / 0.8)';
+          ctx.strokeText(sub, 0, 118);
+          ctx.fillStyle = '#ffd86b';
+          ctx.fillText(sub, 0, 118);
+        }
+        ctx.restore();
+      }
+      function drawVs(t) {
+        ctx.fillStyle = DARK;
+        ctx.fillRect(0, 0, 1080, 1920);
+        const pumpA = 1 + 0.03 * ringOf([0.048, 0.97, 1.895, 2.2], t, 7);
+        const inA = 1 - spring(t - 0.03);
+        const inB = 1 - spring(t - 0.49);
+        const push = 1.05 + t * 0.05;
+        // Stalin above, sliding from the left; Mannerheim below, from the right; slanted where they meet.
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(0, 300);
+        ctx.lineTo(1080, 300);
+        ctx.lineTo(1080, 850);
+        ctx.lineTo(0, 950);
+        ctx.closePath();
+        ctx.clip();
+        ctx.translate(-1080 * inA, 0);
+        drawPhoto(t, 'stalin', [0.44, 0.42], push * pumpA, 0, 300, 1080, 650, '#e0584a');
+        ctx.restore();
+        if (t >= 0.49) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(0, 950);
+          ctx.lineTo(1080, 850);
+          ctx.lineTo(1080, 1500);
+          ctx.lineTo(0, 1500);
+          ctx.closePath();
+          ctx.clip();
+          ctx.translate(1080 * inB, 0);
+          drawPhoto(t, 'mannerheim', [0.56, 0.2], push * pumpA * 1.1, 0, 850, 1080, 650, '#8fb8ff');
+          ctx.restore();
+        }
+        addGrain(t, 0, 300, 1080, 1200);
+        // The cut between them.
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(0, 950);
+        ctx.lineTo(1080, 850);
+        ctx.stroke();
+        nameBar(t, 0.048, '스탈린', '', 790, '#b02a1c', 270);
+        if (t >= 0.49) nameBar(t, 0.509, '만네르헤임', '', 1400, '#1f5fb8', 700);
+        const v = spring(t - 0.97);
+        if (v > 0) {
+          ctx.save();
+          ctx.translate(540, 900);
+          ctx.scale(v * pumpA, v * pumpA);
+          ctx.font = '700 170px Barlow';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 16;
+          ctx.strokeStyle = '#000';
+          ctx.strokeText('VS', 0, 0);
+          ctx.fillStyle = '#ffd86b';
+          ctx.fillText('VS', 0, 0);
+          ctx.restore();
+        }
+      }
+      function drawPhotoScene(t, s) {
+        const k = (t - s.from) / (s.to - s.from);
+        drawPhoto(t, s.photo, s.focus, s.zoom[0] + (s.zoom[1] - s.zoom[0]) * smooth(k), 0, 0, 1080, 1920);
+        addGrain(t, 0, 0, 1080, 1920, 0.16);
+        const top = ctx.createLinearGradient(0, 0, 0, 380);
+        top.addColorStop(0, 'rgb(11 13 14 / 0.96)');
+        top.addColorStop(0.75, 'rgb(11 13 14 / 0.8)');
+        top.addColorStop(1, 'rgb(11 13 14 / 0)');
+        ctx.fillStyle = top;
+        ctx.fillRect(0, 0, 1080, 380);
+        nameBar(t, s.from + 0.02, s.name, s.sub, 1270, '#1f5fb8');
+      }
+      function drawCard(t, s) {
+        const c = s.card;
+        const u = spring(t - s.from - 0.25);
+        if (u <= 0) return;
+        ctx.save();
+        ctx.translate(205, 1265);
+        ctx.rotate(-0.06);
+        ctx.scale(u, u);
+        ctx.fillStyle = '#f2efe6';
+        ctx.fillRect(-160, -200, 320, 450);
+        drawPhoto(t, c.photo, c.focus, 1.05, -146, -186, 292, 348);
+        ctx.fillStyle = '#16181a';
+        ctx.font = '900 38px Pretendard';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(c.name, 0, 206);
+        ctx.restore();
+      }
+
+      function dayAt(t) {
+        if (t < DAYS[0][0]) return null;
+        for (let i = 0; i < DAYS.length - 1; i++) {
+          const [t0, d0] = DAYS[i];
+          const [t1, d1] = DAYS[i + 1];
+          if (t < t1) return Math.round(d0 + (d1 - d0) * clamp01((t - t0) / (t1 - t0)));
+        }
+        return null;
+      }
+      let shown = null;
+      window.render = (t) => {
+        const s = SCENES.find((x) => t < x.to) ?? SCENES[SCENES.length - 1];
+        const dt = t - s.from;
+        if (s !== shown) {
+          shown = s;
+          $('head').innerHTML = s.head ?? '';
+          $('stat').innerHTML = s.stat ? `<div class="l">${s.stat.label}</div><span class="a">${s.stat.a}</span><span class="vs">vs</span><span class="b">${s.stat.b}</span>` : '';
+          $('stat').style.top = `${s.stat?.y ?? 1370}px`;
+          $('end').style.display = s.kind === 'end' ? '' : 'none';
+          $('head').style.display = s.kind === 'end' ? 'none' : '';
+          $('day').style.display = s.kind === 'end' ? 'none' : '';
+        }
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, 1080, 1920);
+        if (s.kind === 'vs') drawVs(t);
+        if (s.kind === 'photo') drawPhotoScene(t, s);
+        if (s.kind === 'black') {
+          ctx.fillStyle = DARK;
+          ctx.fillRect(0, 0, 1080, 1920);
+        }
+        if (s.kind === 'map') {
+          drawMap(t, s, 1, 945, { x: 0, y: 0, w: 1080, h: 1920 });
+          if (s.card) drawCard(t, s);
+          const shade = ctx.createLinearGradient(0, 0, 0, 340);
+          shade.addColorStop(0, 'rgb(11 13 14 / 1)');
+          shade.addColorStop(0.8, 'rgb(11 13 14 / 0.92)');
+          shade.addColorStop(1, 'rgb(11 13 14 / 0)');
+          ctx.fillStyle = shade;
+          ctx.fillRect(0, 0, 1080, 340);
+        }
+        if (s.kind === 'split' || s.kind === 'end') {
+          ctx.fillStyle = DARK;
+          ctx.fillRect(0, 0, 1080, 1920);
+          if (s.kind === 'split') drawMap(t, s, 0.55, 592, { x: 0, y: 300, w: 1080, h: BAND.y - 300 });
+          ctx.clearRect(0, BAND.y, 1080, BAND.h);
+        }
+        const ring = ringOf(STRONG, t, 8);
+        const headPump = 1 + 0.035 * ringOf([...STRONG, ...SOFT], t, 10);
+        $('head').style.transform = `scale(${(0.78 + 0.22 * spring(dt)) * headPump})`;
+        $('head').style.opacity = clamp01(dt / 0.04);
+        $('stat').style.transform = `scale(${(0.6 + 0.4 * spring(dt - 0.02)) * (1 + 0.05 * ring)})`;
+        $('stat').style.opacity = clamp01((dt - 0.02) / 0.04);
+        const day = dayAt(t);
+        $('day').textContent = s.date ?? (day ? `개전 ${day}일째` : '');
+        // A short white hit on the big bass hits.
+        let flash = 0;
+        for (const h of STRONG) if (t >= h && t < h + 0.12) flash = Math.max(flash, 0.3 * (1 - (t - h) / 0.12));
+        $('flash').style.opacity = flash;
+        if (s.kind === 'end') {
+          $('e1').innerHTML = '방금 본 전장은<br />설치 없는 브라우저 게임';
+          $('e1').style.opacity = clamp01(dt / 0.08);
+          $('e1').style.transform = `scale(${0.8 + 0.2 * spring(dt)})`;
+          const b2 = t - 31.198;
+          $('e2').textContent = 'STRIKEGY';
+          $('e2').style.opacity = clamp01(b2 / 0.05);
+          $('e2').style.transform = `scale(${0.7 + 0.3 * spring(b2)})`;
+          const b3 = t - 31.815;
+          $('e3').textContent = 'strikegy.xyz';
+          $('e3').style.opacity = clamp01(b3 / 0.05);
+          $('e3').style.transform = `translateY(${(1 - spring(b3)) * 50}px)`;
+        }
+      };
+    </script>
+  </body>
+</html>

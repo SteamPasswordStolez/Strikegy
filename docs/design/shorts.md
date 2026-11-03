@@ -62,6 +62,7 @@ node scripts/shorts/build.mjs <클립 경로> --title "제목" --from 2 --to 11 
 | 펜타킬 | 20.5초 | 빌바오 교전에서 RPK-74로 5킬 | `pentakill.mp4` |
 | M249 한 탄창으로 몇 명을 죽일 수 있을까 | 20.3초 | M249 100발 중 97발로 **6킬** (Raven 2, Scorpion, Hyena 2, Havoc, Adder 2, Talon). 빌바오, 킬 로그로 셈. 흰 카드 + 처치 카운터 + 끝 0.87초 `최종 6명`. 음악: Od Yishama (E's Jammy Jams, YouTube 오디오 보관함), 곡 7.86~28.11초 | `m249-music.mp4` |
 | 현실에서 이병이 원수 되려면 몇 년 걸릴까 (초안) | 37.8초 | 앞 22.6초 모션그래픽(복무 시계와 함께 계급을 오르는 흐름, 실제 계급장을 코드로 그림), 뒤 15.2초 게임 화면(Strikegy). Od Yishama를 0초부터, 첫 박자 0.255초 / 0.39982초 간격에 맞춤. 원수 직전 0.8초 음악 끊김. `scripts/shorts/rank/` | `rank/rank.mp4` |
+| 소련이 핀란드 하나에 105일 걸린 이유 | 34.05초 | 겨울전쟁. 위 지도와 아래 게임 화면, 타격에 맞춰 전선과 카메라가 움직임, 인물 사진 5장. 음악 FUNK CONTRA (Slowed). `scripts/shorts/winter/`, 만드는 법은 아래 후보 항목 | `winter/winter.mp4` |
 | 교통정리 | 13초 | 호송 모드에서 장갑차 주변을 쓸어 `장갑차 정지`가 뜨고, 곧 쓰러짐 | `traffic-control.mp4` |
 
 교환비 1:1, 죽을때까지 달리는 영상, 펜타킬, 교통정리는 성과가 저조해 2026-11-02에 채널에서 지웠다(주인). 지우기 전에 확인한 수치: `계속 시청함` 교환비 1:1 4.3 %, 죽을때까지 달리는 영상 20.5 %. M249는 만들었지만 아직 올리지 않았다.
@@ -76,5 +77,9 @@ node scripts/shorts/build.mjs <클립 경로> --title "제목" --from 2 --to 11 
 
 ## 다음 후보
 
+- **겨울전쟁 편집 영상 (제작 준비 중):** 음악에 맞춰 장면을 넘기고 지도에서 영토 변화를 보여 주며, 게임 화면을 처음부터 섞는다. 본편 후 약 3.7초가 게임 홍보다. 음악은 FUNK CONTRA (Slowed)(Dj Samir, Nulteex, Zericxxn, ℗ 2026 Lunar Media)다. 정식 발매곡이고 사용 허가는 없다. 2026-11-03 비공개 검사 결과: 소유권 주장 1건(FUNK CONTRA, overtonight, 저작권 오디오), 도달범위 영향 없음, 저작권 경고 아님. 이의 제기는 하지 않는다. 곡의 0.25초부터 쓰면 34.05초다. 98.09 BPM. 인트로의 타격은 박자 격자에서 반 박 어긋나므로, 컷은 격자가 아니라 측정한 타격 시각에 맞춘다(`scripts/shorts/winter/scenes.js`).
+  - **만들기:** `node scripts/trailer/film.mjs winter-war`(게임 장면, 개발 서버 필요), `node scripts/shorts/winter/shp.mjs`와 `borders.mjs`(지도), `node scripts/shorts/winter/build.mjs --song <곡> --fps 60`.
+  - **지도:** 구역 6곳의 전선이 타격마다 밀리고 당겨진다. 국경은 OpenHistoricalMap(CC0)과 Natural Earth(퍼블릭 도메인)에서 가져왔고, 전선과 라도가호, 오네가호는 전투 지명을 보고 손으로 그려 대략적이다.
+  - **설명란 크레딧:** `음악: FUNK CONTRA (Slowed) - Dj Samir, Nulteex, Zericxxn`, `사진: SA-kuva (핀란드 전쟁 사진 기록보관소), 러시아 국방부 mil.ru (CC BY 4.0, 흑백 처리)`, `지도: OpenHistoricalMap, Natural Earth`. 스탈린 사진은 Sovfoto, 위키미디어 공용 PD-Russia다.
 - **대공포:** 판처파우스트로 비행기 격추. 근접항공지원기를 정면에서 노리는 쪽이 그나마 쉽고, 실제 플레이로만 찍는다.
 - **교환비 0:1:** 거점으로 강하하다가 킬도 탈출도 못 하고 땅에 박힌다.
