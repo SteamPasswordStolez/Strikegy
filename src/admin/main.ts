@@ -59,11 +59,13 @@ const MAP: Record<string, string> = { iron_gate: '철문 주둔지', ardennes: '
 class AdminPage {
   private ws: WebSocket | null = null;
   private state: AdminState | null = null;
-  private tab: 'rooms' | 'people' | 'marks' | 'reports' | 'events' | 'accounts' | 'tools' = 'rooms';
+  private tab: 'rooms' | 'people' | 'marks' | 'reports' | 'events' | 'accounts' | 'guests' | 'tools' = 'rooms';
   /** The reports tab shows seen-to reports too. */
   private reportsAll = false;
   /** The accounts tab's search (game name or id). */
   private acctQuery = '';
+  /** The guests tab's search (name or tag). */
+  private guestQuery = '';
   private open = new Set<string>();
   private timer = 0;
   private status: HTMLElement | null = null;
@@ -217,6 +219,7 @@ class AdminPage {
       ['reports', `신고 ${(s.reports ?? []).filter((x) => !x.done).length}`],
       ['events', `이벤트${liveEvents(s.events, Date.now()).length ? ' ●' : ''}`],
       ...(s.accounts ? ([['accounts', `계정 ${s.accountCount ?? 0}`]] as const) : []),
+      ...(s.guests ? ([['guests', `게스트 ${s.guestCount ?? 0}`]] as const) : []),
       ['tools', '공지 · 금칙어'],
     ] as const) {
       const b = el('button', `ad-tab${this.tab === id ? ' sel' : ''}`, this.tabs, label);
@@ -236,6 +239,7 @@ class AdminPage {
     else if (this.tab === 'reports') this.reports(s);
     else if (this.tab === 'events') this.events(s);
     else if (this.tab === 'accounts') this.accounts(s);
+    else if (this.tab === 'guests') this.guests(s);
     if (keep) {
       this.body.appendChild(keep);
       (keep as HTMLElement).hidden = this.tab !== 'tools';
@@ -422,6 +426,51 @@ class AdminPage {
         a.staff ? `${a.name || a.id} 의 운영자 표시를 뗄까요?` : `${a.name || a.id} 를 운영자로 지정할까요? 이름 옆에 "운영" 배지가 붙고, 상점에서 자기 보급표를 마음대로 늘릴 수 있게 됩니다. (관리자 페이지는 여전히 키로만 들어옵니다.)`,
       );
     }
+  }
+
+  /**
+   * Guests (owner, 2026-11-03): browsers that never signed in, as the server
+   * saw them (the main menu reporting in, or a connection to the game server).
+   */
+  private guests(s: AdminState): void {
+    el('p', 'ad-desc', this.body, '로그인하지 않은 브라우저입니다. 메인 메뉴를 열 때(30분에 한 번까지)와 멀티 화면에 접속할 때 기록됩니다. 태그는 브라우저의 숨은 id로 만든 값이라 서버에도 id 자체는 없고, 레벨·경기 수는 그 브라우저가 알려 준 값입니다(검증 안 됨). 같은 사람이 브라우저를 바꾸거나 저장소를 지우면 새 게스트로 잡힙니다. 지금 접속 중인 게스트의 제재는 접속자 탭에서 합니다.');
+    const row = el('div', 'ad-row', this.body);
+    const q = el('input', 'ad-input', row);
+    q.maxLength = 40;
+    q.placeholder = '이름 일부 또는 태그 앞부분 (비우면 최근 순)';
+    q.value = this.guestQuery;
+    const go = (): void => {
+      this.guestQuery = q.value.trim();
+      this.op({ op: 'guests', q: this.guestQuery });
+    };
+    el('button', 'ad-btn', row, '찾기').addEventListener('click', go);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') go();
+    });
+    const list = s.guests ?? [];
+    if (!list.length) {
+      el('div', 'ad-empty', this.body, '찾은 게스트가 없습니다.');
+      return;
+    }
+    const table = el('table', 'ad-table', this.body);
+    const head = el('tr', '', el('thead', '', table));
+    for (const h of ['이름#태그', '레벨', '경기', '방문', '멀티 접속', '기기', '처음', '최근', '주소', '상태']) el('th', '', head, h);
+    const tbody = el('tbody', '', table);
+    for (const g of list) {
+      const tr = el('tr', '', tbody);
+      el('td', 'ad-who', tr, `${g.name}#${g.tag}`);
+      el('td', '', tr, g.level ? `Lv ${g.level}` : '-');
+      el('td', '', tr, String(g.matches));
+      el('td', '', tr, String(g.visits));
+      el('td', '', tr, String(g.connects));
+      el('td', '', tr, g.device === 'mobile' ? '모바일' : 'PC');
+      el('td', '', tr, time(g.first));
+      el('td', '', tr, time(g.last));
+      el('td', 'ad-mono', tr, g.addr);
+      const st = el('td', '', tr);
+      if (g.online) el('span', 'ad-badge playing', st, '접속 중');
+    }
+    if (list.length >= 100) el('div', 'ad-empty', this.body, '최근 100명까지만 보입니다. 이름이나 태그로 찾아 보세요.');
   }
 
   /** The double events (owner, 2026-10-25): XP, weapon XP, supply tickets; the lobby's banner shows them. */

@@ -13,7 +13,7 @@ import { loadJSON, saveJSON } from '@/core/storage';
 import { serverUrls } from './servers';
 import { applySummary, cleanProfile, loadProfile, newProfile, saveProfile, settleAbandoned, type MatchSummary, type Profile } from '@/progression/profile';
 import { runShopOp, settleCalendar, type MatchEcon, type ShopOp } from '@/progression/economy';
-import type { RankId } from '@/progression/levels';
+import { levelOf, type RankId } from '@/progression/levels';
 
 /** Session storage: open the sign-in dialog on reaching the main menu (a result screen's button). */
 export const LOGIN_ASK = 'strikegy.loginAsk';
@@ -48,6 +48,10 @@ const TOKEN_KEY = 'strikegy.auth.v1';
 const CACHE_KEY = 'strikegy.account.v1';
 /** A guest's local profile after it moved into an account (kept, not used). */
 const MOVED_KEY = 'strikegy.profile.moved.v1';
+/** When this browser last told the server it is here as a guest, and under which name. */
+const GUEST_KEY = 'strikegy.guestSeen.v1';
+/** A guest reports in at most this often (the same name), so the admin page sees visits, not page loads. */
+const GUEST_EVERY_MS = 30 * 60_000;
 /** Better Auth's popup message (`oauth-popup` plugin). */
 const POPUP_MESSAGE = 'better-auth:oauth-popup';
 
@@ -387,4 +391,27 @@ export async function shopAction(op: ShopOp): Promise<{ error?: string; result?:
   }
   if (!data || status === 0) return { error: 'offline', profile: acc?.profile ?? newProfile() };
   return { error: data.error, result: data.result, profile: profile ?? acc?.profile ?? newProfile() };
+}
+
+/**
+ * A guest's menu reports in (owner, 2026-11-03: the admin page lists guests):
+ * the browser's hidden id (the server keeps only a keyed hash of it), its name,
+ * the device kind and its own level / matches. Not when signed in, nameless,
+ * or reported under the same name within `GUEST_EVERY_MS`.
+ */
+export async function reportGuest(device: 'desktop' | 'mobile', now = Date.now()): Promise<void> {
+  if (signedIn()) return;
+  const id = loadIdentity();
+  if (!id.name) return;
+  const last = loadJSON<{ at?: unknown; name?: unknown }>(GUEST_KEY);
+  if (last && last.name === id.name && typeof last.at === 'number' && now - last.at < GUEST_EVERY_MS && now >= last.at) return;
+  const p = loadProfile();
+  const { status } = await call<{ ok?: boolean }>('/api/guest', {
+    uid: id.uid,
+    name: id.name,
+    device,
+    level: levelOf(p.xp).level,
+    matches: p.stats.bots.matches + p.stats.multi.matches,
+  });
+  if (status === 200) saveJSON(GUEST_KEY, { at: now, name: id.name });
 }

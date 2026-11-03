@@ -130,7 +130,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const log = opts.log ?? ((line: string) => console.log(`[server] ${line}`));
   let lobby: LobbyCore | null = null;
   const accounts = opts.accounts === undefined ? await accountsFromEnv(log) : opts.accounts;
-  const api = accounts ? accountApi(accounts, log, () => lobby?.events ?? {}) : null;
+  const api = accounts ? accountApi(accounts, log, () => lobby?.events ?? {}, (raw, addr) => lobby?.guestSeen(raw, addr) ?? false) : null;
   const hostOpts = {
     log,
     mapsDir: opts.mapsDir,

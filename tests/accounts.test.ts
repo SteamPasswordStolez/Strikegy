@@ -202,6 +202,47 @@ describe('the lobby with accounts', () => {
     expect(p.last('events')!.events.xp).toBeLessThanOrEqual(Date.now());
   });
 
+  it('guests the server saw are listed for the staff: by tag only, visits counted, the connected ones marked', async () => {
+    let now = Date.UTC(2026, 10, 3, 9);
+    const acc = await accounts(() => now);
+    const core = new LobbyCore({ tagSecret: 'k', accounts: acc, adminKey: 'the-admin-key-123', now: () => now });
+    const uid = 'a1b2c3d4e5f6a1b2c3d4e5f6';
+    // The menu reporting in: junk refused, a fine one kept by tag (never the id), a swear kept as '?'.
+    expect(core.guestSeen({ uid: 'not-hex', name: 'x', device: 'desktop' }, '1.2.3.4')).toBe(false);
+    expect(core.guestSeen({ uid, name: 'x', device: 'toaster' }, '1.2.3.4')).toBe(false);
+    expect(core.guestSeen({ uid, name: 'Rookie', device: 'mobile', level: 7, matches: 3 }, '1.2.3.4')).toBe(true);
+    now += 60_000;
+    core.guestSeen({ uid, name: 'Rookie2', device: 'mobile' }, '1.2.3.4');
+    now += 31 * 60_000;
+    core.guestSeen({ uid, name: 'Rookie2', device: 'mobile' }, '1.2.3.4');
+    core.guestSeen({ uid: 'f'.repeat(24), name: '씨발', device: 'desktop' }, '5.6.7.8');
+    const dump = JSON.stringify(acc.db.prepare('select * from guest').all());
+    expect(dump).not.toContain(uid);
+    expect(dump).not.toContain('1.2.3.4');
+    // A guest connecting (the tab's part after the id gives the same tag); a signed-in one is no guest.
+    now += 1000;
+    const g = fake();
+    const gid = core.open(g.conn);
+    await core.message(gid, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name: 'Rookie2', uid: `${uid}-1a2b3c4d`, device: 'mobile' }));
+    const { token } = await acc.devAccount();
+    const m = fake();
+    await core.message(core.open(m.conn), JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name: 'Member', uid: 'c'.repeat(24), device: 'desktop', token }));
+    expect(acc.guestCount).toBe(2);
+    // The admin page: newest first, the connected one marked, searchable by name or tag.
+    const admin = fake();
+    const aid = core.open(admin.conn);
+    await core.message(aid, JSON.stringify({ t: 'adminAuth', key: 'the-admin-key-123' }));
+    const list = admin.last('admState')!.state.guests!;
+    expect(admin.last('admState')!.state.guestCount).toBe(2);
+    expect(list.map((x) => x.name)).toEqual(['Rookie2', '?']);
+    expect(list[0]).toMatchObject({ tag: g.last('welcome')!.tag, level: 7, matches: 3, visits: 2, connects: 1, device: 'mobile', online: true });
+    expect(list[1]!.online).toBeUndefined();
+    await core.message(aid, JSON.stringify({ t: 'adm', op: { op: 'guests', q: 'rook' } }));
+    expect(admin.last('admState')!.state.guests!.map((x) => x.name)).toEqual(['Rookie2']);
+    await core.message(aid, JSON.stringify({ t: 'adm', op: { op: 'guests', q: list[1]!.tag.slice(0, 3).toLowerCase() } }));
+    expect(admin.last('admState')!.state.guests!.map((x) => x.tag)).toContain(list[1]!.tag);
+  });
+
   it('a double event doubles the match XP, weapon XP and tickets as lines of their own', () => {
     const plain = new ProgressTracker({ kind: 'multi', map: 'lyon', mode: 'zone', difficulty: null, startXp: 0 });
     const ev = new ProgressTracker({ kind: 'multi', map: 'lyon', mode: 'zone', difficulty: null, startXp: 0, event: { xp: 2, weapon: 2, tickets: 2 } });

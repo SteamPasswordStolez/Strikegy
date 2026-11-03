@@ -54,7 +54,7 @@ import {
   type ServerMsg,
   type Side,
 } from '../src/net/lobbyProtocol.ts';
-import { EVENT_MULT, liveEvents, type AdminAccount, type AdminReport, type Badge, type EventKind, type PublicCard, type ServerEvents } from '../src/net/lobbyProtocol.ts';
+import { EVENT_MULT, liveEvents, type AdminAccount, type AdminGuest, type AdminReport, type Badge, type EventKind, type PublicCard, type ServerEvents } from '../src/net/lobbyProtocol.ts';
 import type { Applied, MatchSummary, Profile } from '../src/progression/profile.ts';
 import { boostsLeft, econOf } from '../src/progression/economy.ts';
 import { wornOf, type Worn } from '../src/progression/worn.ts';
@@ -159,6 +159,10 @@ export interface AccountHost {
   reset(userId: string): void;
   revoke(userId: string): void;
   readonly count: number;
+  /** Guests seen (browsers that never signed in; see `LobbyCore.guestSeen`): stand-ins may leave these out. */
+  seenGuest?(g: { tag: string; name: string; device: Device; addr: string; connect?: boolean; level?: number; matches?: number }): void;
+  findGuests?(query: string): Omit<AdminGuest, 'online'>[];
+  readonly guestCount?: number;
   /** Signing in is possible (a provider is set up, or local test logins): rooms then need it. */
   readonly required: boolean;
 }
@@ -268,8 +272,9 @@ interface Client {
   admin: boolean;
   /** Signed in: the account's id (null: a guest). */
   account: string | null;
-  /** The admin page's account search. */
+  /** The admin page's account search, and its guest search. */
   adminQuery: string;
+  guestQuery?: string;
   /** Its badge as last read from the account, and when. */
   badge?: Badge;
   badgeAt?: number;
@@ -914,6 +919,7 @@ export class LobbyCore {
         if (stored && !profane(stored, this.staff.words)) c.name = stored;
         else this.accounts?.setName(account, name);
       }
+      if (!account) this.recordGuest({ tag: c.tag, name, device: c.device, addr: c.addr, connect: true });
       this.send(c, { t: 'welcome', id: c.id, name: c.name ?? name, tag: c.tag, account: !!account });
       this.send(c, { t: 'events', events: this.events });
       if (c.uid) this.rejoin(c);
@@ -1130,6 +1136,38 @@ export class LobbyCore {
   // The staff: bans, mutes, words, the admin page
 
   /** A live ban / mute matching this browser or address (expired ones are dropped). */
+  /**
+   * A guest's main menu reporting in (`/api/guest`; owner, 2026-11-03: the
+   * admin page lists guests). Only the tag made from the browser's hidden id
+   * is kept, never the id; a name that won't pass is kept as '?'. False when
+   * the report isn't one.
+   */
+  guestSeen(raw: unknown, addr: string): boolean {
+    if (!raw || typeof raw !== 'object') return false;
+    const o = raw as Record<string, unknown>;
+    if (typeof o.uid !== 'string' || !/^[0-9a-f]{24}$/.test(o.uid)) return false;
+    if (o.device !== 'desktop' && o.device !== 'mobile') return false;
+    const int = (v: unknown, max: number): number | undefined => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : undefined);
+    const name = typeof o.name === 'string' && o.name.length <= 64 ? cleanName(o.name) : null;
+    this.recordGuest({
+      tag: tagOf(this.tagSecret, o.uid),
+      name: name && !profane(name, this.staff.words) ? name : '?',
+      device: o.device,
+      addr,
+      level: int(o.level, 100_000),
+      matches: int(o.matches, 10_000_000),
+    });
+    return true;
+  }
+
+  private recordGuest(g: { tag: string; name: string; device: Device; addr: string; connect?: boolean; level?: number; matches?: number }): void {
+    try {
+      this.accounts?.seenGuest?.({ ...g, addr: this.addrHash(g.addr) });
+    } catch (err) {
+      this.log(`guests: could not record: ${String(err)}`);
+    }
+  }
+
   private marked(list: StaffMark[], who: { uid: string; addr: string; account?: string | null }): StaffMark | null {
     const now = this.now();
     const live = list.filter((m) => m.until === 0 || m.until > now);
@@ -1219,7 +1257,15 @@ export class LobbyCore {
       reports: this.staff.reports!.slice(0, 150),
       events: this.events,
       ...(this.accounts ? { accountCount: this.accounts.count, accounts: this.accounts.find(admin.adminQuery) } : {}),
+      ...(this.accounts?.findGuests ? { guestCount: this.accounts.guestCount ?? 0, guests: this.guestList(admin.guestQuery ?? '') } : {}),
     };
+  }
+
+  /** Guests found for the admin page, the ones connected now marked. */
+  private guestList(query: string): AdminGuest[] {
+    const on = new Set<string>();
+    for (const m of this.clients.values()) if (m.name && !m.account && !m.admin) on.add(m.tag);
+    return (this.accounts?.findGuests?.(query) ?? []).map((g) => (on.has(g.tag) ? { ...g, online: true } : g));
   }
 
   /** Every connection of a browser, an address or an account. */
@@ -1309,6 +1355,9 @@ export class LobbyCore {
       }
       case 'accounts':
         c.adminQuery = op.q;
+        break;
+      case 'guests':
+        c.guestQuery = op.q;
         break;
       case 'reportDone': {
         const rep = this.staff.reports!.find((x) => x.id === op.id);

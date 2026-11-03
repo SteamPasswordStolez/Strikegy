@@ -63,6 +63,7 @@
         <li><b>게임 진행</b>: 레벨과 경험치, 전적(처치·경기 수 등), 최근 20경기, 직접 정한 게임 이름.</li>
       </ul>
       <p><b>받지 않는 것</b>: 이메일, 실명, 프로필 사진, 비밀번호, 친구 목록. Google에는 <code>openid</code>만, Discord에는 <code>identify</code>만 요청합니다. 로그인 라이브러리가 이메일 칸을 요구해서, 그 칸에는 실제 주소가 아닌 <code>…@users.invalid</code> 형식의 대체값을 넣습니다. 로그인 제공자에게서 받은 접속 토큰도 저장하지 않습니다.</p>
+      <p><b>로그인하지 않은 경우(게스트)</b>: 메인 메뉴를 열 때와 멀티 화면에 접속할 때, 이 브라우저의 무작위 숨은 id를 게임 서버만 아는 키로 바꾼 값(태그), 게임 이름, 기기 종류(PC·모바일), 이 브라우저에 저장된 레벨과 경기 수, 접속 주소를 키로 바꾼 짧은 값(주소 자체는 저장하지 않음), 처음·마지막으로 본 시각과 방문 횟수를 저장합니다. 운영자가 이용 현황을 보고 남용을 막는 데만 쓰며, 180일 동안 보이지 않으면 지웁니다.</p>
 
       <h2>2. 접속하는 동안 쓰는 정보</h2>
       <ul>
@@ -101,6 +102,7 @@
         <li><b>Your game progress</b>: level and XP, your record (kills, matches...), your last 20 matches, the game name you chose.</li>
       </ul>
       <p><b>Not taken</b>: email, real name, picture, password, friends. Google is asked for <code>openid</code> only, Discord for <code>identify</code> only. The sign-in library needs an email field, so it holds a placeholder (<code>…@users.invalid</code>), not an address. The providers' access tokens are not stored.</p>
+      <p><b>Without signing in (guests)</b>: when the main menu opens and when you connect to the multiplayer pages, the server keeps a hash of this browser's random hidden id under a key only it has (your tag), your game name, the kind of device (PC or mobile), the level and match count stored in this browser, a short keyed hash of the address you came from (not the address), and when it first and last saw you and how often. The staff use it only to see how the game is used and to stop abuse; a guest not seen for 180 days is deleted.</p>
 
       <h2>2. While you are connected</h2>
       <ul>

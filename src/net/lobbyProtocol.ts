@@ -489,6 +489,8 @@ export type AdminOp =
   | { op: 'accounts'; q: string }
   | { op: 'acctReset'; id: string }
   | { op: 'acctRevoke'; id: string }
+  /** Guests (browsers that never signed in): find by name or tag. */
+  | { op: 'guests'; q: string }
   /** A report seen to (or opened again). */
   | { op: 'reportDone'; id: string; done: boolean }
   /** Supply tickets into an account (negative takes some away), the staff mark on an account, a double event (minutes 0: until turned off). */
@@ -544,6 +546,9 @@ export interface AdminState {
   /** Accounts on the server, and the last search's results. */
   accountCount?: number;
   accounts?: AdminAccount[];
+  /** Guests the server has seen (browsers without an account), and the last search's results. */
+  guestCount?: number;
+  guests?: AdminGuest[];
   /** The newest reports first. */
   reports?: AdminReport[];
   events?: ServerEvents;
@@ -560,6 +565,29 @@ export interface AdminAccount {
   providers: string[];
   tickets?: number;
   staff?: boolean;
+}
+
+/**
+ * A guest as the admin page sees it (owner, 2026-11-03): a browser that never
+ * signed in, known by its tag (a keyed hash of its hidden id, never the id),
+ * the name it last used, when it was first and last seen, how often it came
+ * back, and the level / matches its own browser reported (not checked).
+ */
+export interface AdminGuest {
+  tag: string;
+  name: string;
+  device: Device;
+  first: number;
+  last: number;
+  visits: number;
+  /** Times it connected to the game server (the multiplayer page). */
+  connects: number;
+  level: number;
+  matches: number;
+  /** A short keyed hash of the address it last came from (never the address). */
+  addr: string;
+  /** Connected right now. */
+  online?: boolean;
 }
 
 const okId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,40}$/.test(v);
@@ -589,6 +617,8 @@ export function parseAdminOp(raw: unknown): AdminOp | null {
       return str(raw.word, 32) && typeof raw.on === 'boolean' ? { op: 'word', word: raw.word, on: raw.on } : null;
     case 'accounts':
       return str(raw.q, 40) ? { op: 'accounts', q: raw.q } : null;
+    case 'guests':
+      return str(raw.q, 40) ? { op: 'guests', q: raw.q } : null;
     case 'acctReset':
     case 'acctRevoke':
       return okId(raw.id) ? { op: raw.op, id: raw.id } : null;

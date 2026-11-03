@@ -28,7 +28,13 @@ const RATE = { burst: 30, perSecond: 0.5 } as const;
 /** The same for sign-in routes on their own (each start of a sign-in writes a row to the database). */
 const AUTH_RATE = { burst: 40, perSecond: 0.5 } as const;
 
-export function accountApi(accounts: Accounts, log: (line: string) => void, events: () => ServerEvents = () => ({})): (req: IncomingMessage, res: ServerResponse, addr: string) => void {
+export function accountApi(
+  accounts: Accounts,
+  log: (line: string) => void,
+  events: () => ServerEvents = () => ({}),
+  /** A guest's main menu reporting in (`LobbyCore.guestSeen`): false when it isn't one. */
+  guest: (raw: unknown, addr: string) => boolean = () => false,
+): (req: IncomingMessage, res: ServerResponse, addr: string) => void {
   const limiter = (rate: { burst: number; perSecond: number }) => {
     const buckets = new Map<string, { tokens: number; at: number }>();
     return (addr: string): boolean => {
@@ -111,6 +117,11 @@ export function accountApi(accounts: Accounts, log: (line: string) => void, even
         if (!accounts.devLogin || !local) return json(res, 404, { error: 'none' });
         const made = await accounts.devAccount();
         return json(res, 200, { token: made.token });
+      }
+      // A guest's menu (no sign-in): only the tag made from its hidden id is kept (see LobbyCore.guestSeen).
+      if (path === '/api/guest' && req.method === 'POST') {
+        const body = await readBody(req);
+        return guest(body, addr) ? json(res, 200, { ok: true }) : json(res, 400, { error: 'bad' });
       }
       const userId = await accounts.fromRequest(req);
       if (!userId) return json(res, 401, { error: 'login' });

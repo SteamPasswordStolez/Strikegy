@@ -26,7 +26,7 @@ import { CREDITS } from '@/data/credits';
 import { SOLO_LOBBY_MODES, renderMatchSetup, simpleField, stepGroup, stepMode, type SetupField, type SetupMap } from './MatchSetup';
 import type { ServerLink } from '@/net/ServerLink';
 import { levelOf } from '@/progression/levels';
-import { accountConfig, onAccountChange, refreshAccount, setAccountName, settleLeft, settledProfile, signedIn } from '@/net/account';
+import { accountConfig, onAccountChange, refreshAccount, reportGuest, setAccountName, settleLeft, settledProfile, signedIn } from '@/net/account';
 import { econOf } from '@/progression/economy';
 import { missionsCard, openLogin, openMail, renderArmory, renderRanks, renderShop, stepTab } from './progressPages';
 import { insigniaAt, rankLabel } from './rankInsignia';
@@ -182,6 +182,8 @@ export class Lobby {
     onServerEvents(() => {
       if (this.screen === 'main') this.render();
     });
+    // A guest's visit, for the admin page's guest list (after the welcome when there is no name yet).
+    void reportGuest(this.touch ? 'mobile' : 'desktop');
     // First visit: what the game is and one button into a match.
     if (!this.playerName) this.welcome();
     // Back from a match (or reloaded in one): straight to the multiplayer pages.
@@ -200,6 +202,7 @@ export class Lobby {
       this.welcoming = false;
       this.frame.style.visibility = '';
       this.playerName = name;
+      void reportGuest(this.touch ? 'mobile' : 'desktop');
     };
     showWelcome(this.root, {
       start: (name) => {
@@ -223,6 +226,7 @@ export class Lobby {
       required,
       (name) => {
         if (name) this.playerName = name;
+        if (name) void reportGuest(this.touch ? 'mobile' : 'desktop');
         // Signed in: the name goes on the account (the same on every device).
         if (name && signedIn())
           void setAccountName(name).then((r) => {

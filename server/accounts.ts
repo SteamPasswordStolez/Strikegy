@@ -147,8 +147,41 @@ function makeAuth(db: Database.Database, o: AccountsOptions) {
 
 type Auth = ReturnType<typeof makeAuth>;
 
+/** A guest as reported (see `Accounts.seenGuest`). */
+export interface GuestSeen {
+  tag: string;
+  name: string;
+  device: 'desktop' | 'mobile';
+  /** A short keyed hash of the address. */
+  addr: string;
+  /** A connection to the game server (not only the menu's report). */
+  connect?: boolean;
+  level?: number;
+  matches?: number;
+}
+
+export interface GuestRow {
+  tag: string;
+  name: string;
+  device: 'desktop' | 'mobile';
+  first: number;
+  last: number;
+  visits: number;
+  connects: number;
+  level: number;
+  matches: number;
+  addr: string;
+}
+
+/** Guests kept (the ones seen longest ago go), and how far apart two visits must be to count twice. */
+const GUEST_KEEP = 50_000;
+/** A guest not seen for this long is forgotten (the privacy page says so). */
+const GUEST_DAYS = 180;
+const GUEST_VISIT_MS = 30 * 60_000;
+
 export class Accounts {
   private readonly now: () => number;
+  private guestAdds = 0;
   /** Better Auth's own routes (`/api/auth/*`). */
   readonly handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -173,6 +206,9 @@ export class Accounts {
     db.exec('create table if not exists profile (userId text primary key, data text not null, name text, updatedAt integer not null)');
     // The server's staff accounts (marked on the admin page; owner, 2026-10-25).
     db.exec('create table if not exists staff (userId text primary key, at integer not null)');
+    // Guests the server has seen: browsers that never signed in, by tag (owner, 2026-11-03: the admin page lists them).
+    db.exec('create table if not exists guest (tag text primary key, name text not null, device text not null, first integer not null, last integer not null, visits integer not null, connects integer not null, level integer not null, matches integer not null, addr text not null)');
+    db.exec('create index if not exists guest_last on guest (last)');
     return new Accounts(db, auth, o);
   }
 
@@ -468,6 +504,42 @@ export class Accounts {
 
   get count(): number {
     return (this.db.prepare('select count(*) as n from user').get() as { n: number }).n;
+  }
+
+  /**
+   * A guest seen (the main menu's report, or a connection to the game server):
+   * a visit counts once in `GUEST_VISIT_MS`; level / matches only when the
+   * report carries them. The oldest go past `GUEST_KEEP`.
+   */
+  seenGuest(g: GuestSeen): void {
+    const now = this.now();
+    const old = this.db.prepare('select last, level, matches from guest where tag = ?').get(g.tag) as { last: number; level: number; matches: number } | undefined;
+    if (!old) {
+      this.db
+        .prepare('insert into guest (tag, name, device, first, last, visits, connects, level, matches, addr) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(g.tag, g.name, g.device, now, now, 1, g.connect ? 1 : 0, g.level ?? 0, g.matches ?? 0, g.addr);
+      if (++this.guestAdds % 200 === 0) {
+        this.db.prepare('delete from guest where last < ?').run(now - GUEST_DAYS * 86_400_000);
+        this.db.prepare('delete from guest where tag not in (select tag from guest order by last desc limit ?)').run(GUEST_KEEP);
+      }
+      return;
+    }
+    const visit = now - old.last >= GUEST_VISIT_MS ? 1 : 0;
+    this.db
+      .prepare('update guest set name = ?, device = ?, last = ?, visits = visits + ?, connects = connects + ?, level = ?, matches = ?, addr = ? where tag = ?')
+      .run(g.name, g.device, now, visit, g.connect ? 1 : 0, g.level ?? old.level, g.matches ?? old.matches, g.addr, g.tag);
+  }
+
+  /** Guests for the admin page: by name (part of it) or tag prefix, last seen first. */
+  findGuests(query: string, limit = 100): GuestRow[] {
+    const q = query.trim().slice(0, 40);
+    return this.db
+      .prepare("select tag, name, device, first, last, visits, connects, level, matches, addr from guest where (? = '' or name like ? escape '\\' or tag like ?) order by last desc limit ?")
+      .all(q, `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`, `${q.toUpperCase()}%`, limit) as GuestRow[];
+  }
+
+  get guestCount(): number {
+    return (this.db.prepare('select count(*) as n from guest').get() as { n: number }).n;
   }
 
   /** Local testing only: a new account and its session token, no provider. */
