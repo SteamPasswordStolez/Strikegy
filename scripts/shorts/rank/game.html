@@ -1,0 +1,252 @@
+<!doctype html>
+<!-- The second part of the Short: a white card with a gap for the game, its caption
+     bouncing on the song's beat, then the reveal. Transparent where the game shows;
+     window.render(t) draws one frame, game.mjs takes each. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Pretendard;
+        src: url('../../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: Barlow;
+        src: url('../../../public/assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+        font-weight: 700;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: transparent;
+        font-family: Pretendard, sans-serif;
+        color: #f3efe6;
+      }
+      #above,
+      #below {
+        position: absolute;
+        left: 0;
+        right: 0;
+        background: #12150f;
+      }
+      #above {
+        top: 0;
+        height: 500px;
+      }
+      #below {
+        top: 1108px;
+        bottom: 0;
+      }
+      #ladder {
+        position: absolute;
+        left: 90px;
+        right: 90px;
+        top: 214px;
+      }
+      #names {
+        display: flex;
+        justify-content: space-between;
+        font-size: 44px;
+        font-weight: 900;
+        margin-bottom: 14px;
+      }
+      #track {
+        height: 30px;
+        border-radius: 15px;
+        background: rgb(255 255 255 / 0.14);
+        overflow: hidden;
+      }
+      #fill {
+        height: 100%;
+        border-radius: 15px;
+        background: #ffe07a;
+      }
+      #head {
+        position: absolute;
+        left: 40px;
+        right: 40px;
+        top: 340px;
+        text-align: center;
+        font-size: 80px;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+      }
+      #cap {
+        position: absolute;
+        left: 40px;
+        right: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 34px;
+        word-break: keep-all;
+      }
+      #text {
+        text-align: left;
+      }
+      #cap.alone #text {
+        text-align: center;
+      }
+      #line {
+        font-size: 66px;
+        font-weight: 800;
+        line-height: 1.2;
+      }
+      #big {
+        margin-top: 8px;
+        font-size: 150px;
+        font-weight: 900;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        color: #ffe07a;
+        white-space: nowrap;
+        text-shadow: 0 8px 0 rgb(0 0 0 / 0.45);
+      }
+      #note {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 36px;
+        font-weight: 700;
+        color: rgb(243 239 230 / 0.68);
+      }
+      #end {
+        position: absolute;
+        inset: 0;
+        background: #141413;
+        color: #efebe2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding-bottom: 200px;
+      }
+      #emblem svg {
+        width: 420px;
+        height: 420px;
+        display: block;
+      }
+      #name {
+        font: 700 170px / 1 Barlow, sans-serif;
+        letter-spacing: 0.05em;
+        margin-top: 10px;
+      }
+      #site {
+        margin-top: 16px;
+        font: 700 84px / 1 Barlow, sans-serif;
+        letter-spacing: 0.03em;
+        color: #e9a03b;
+      }
+      #free {
+        margin-top: 34px;
+        font-size: 50px;
+        font-weight: 800;
+      }
+    </style>
+    <script src="insignia.js"></script>
+  </head>
+  <body>
+    <div id="above">
+      <div id="ladder">
+        <div id="names"><span>이병</span><span>원수</span></div>
+        <div id="track"><div id="fill"></div></div>
+      </div>
+      <div id="head"></div>
+    </div>
+    <div id="below">
+      <div id="cap" style="top: 30px">
+        <div id="rank"></div>
+        <div id="text">
+          <div id="line"></div>
+          <div id="big"></div>
+        </div>
+      </div>
+      <div id="note" style="top: 350px"></div>
+    </div>
+    <div id="end">
+      <div id="emblem"></div>
+      <div id="name">STRIKEGY</div>
+      <div id="site">strikegy.xyz</div>
+      <div id="free">설치 없이 무료</div>
+    </div>
+    <script>
+      /** The song's measured beat (s); time 0 here is a beat too. */
+      const BEAT = 0.39982;
+      const CARDS = [
+        { beats: 6, head: '근데 여기선 됨', line: '현실이 아니니까', big: '', fill: 0.0 },
+        { beats: 3, head: '근데 여기선 됨', line: '병장까지', big: '3.8시간', rank: ['bar', 4], h: 180, fill: 0.06 },
+        { beats: 3, head: '근데 여기선 됨', line: '대위까지', big: '66시간', rank: ['diamond', 3], h: 300, fill: 0.2 },
+        { beats: 3, head: '근데 여기선 됨', line: '대령까지', big: '189시간', rank: ['blossom', 3], h: 300, fill: 0.42 },
+        { beats: 3, head: '근데 여기선 됨', line: '별 하나까지', big: '344시간', rank: ['star', 1], h: 300, fill: 0.62 },
+        { beats: 3, head: '근데 여기선 됨', line: '대장까지', big: '1,019시간', rank: ['star', 4], h: 300, fill: 0.85 },
+        { beats: 9, head: '근데 여기선 됨', line: '원수까지', big: '1,919시간', rank: ['marshal', 5], h: 300, note: '하루 8시간씩 240일 · 봇전 기준 예상', fill: 1 },
+        { beats: 8, end: true },
+      ];
+      let at = 0;
+      for (const c of CARDS) {
+        c.from = at * BEAT;
+        c.to = (at + c.beats) * BEAT;
+        at += c.beats;
+      }
+      window.LENGTH = at * BEAT;
+      window.CUTS = CARDS.map((c) => ({ from: c.from, to: c.to, end: !!c.end }));
+
+      const spring = (x) => (x <= 0 ? 0 : 1 - Math.exp(-8 * x) * Math.cos(16 * x));
+      const clamp01 = (x) => Math.min(1, Math.max(0, x));
+      const $ = (id) => document.getElementById(id);
+      const place = (el, y, s, o = 1) => {
+        el.style.transform = `translateY(${y}px) scale(${s})`;
+        el.style.opacity = o;
+      };
+      window.setEmblem = (svg) => {
+        $('emblem').innerHTML = svg;
+      };
+
+      let shown = -1;
+      window.render = (t) => {
+        let i = CARDS.findIndex((c) => t < c.to);
+        if (i < 0) i = CARDS.length - 1;
+        const c = CARDS[i];
+        const dt = t - c.from;
+        if (i !== shown) {
+          shown = i;
+          $('end').style.display = c.end ? '' : 'none';
+          $('above').style.display = $('below').style.display = c.end ? 'none' : '';
+          if (!c.end) {
+            $('head').textContent = c.head;
+            $('line').textContent = c.line;
+            $('big').textContent = c.big;
+            $('big').style.display = c.big ? '' : 'none';
+            $('note').textContent = c.big ? (c.note ?? '봇전 기준 예상') : '';
+            $('rank').innerHTML = c.rank ? window.rankSvg(c.rank[0], c.rank[1], c.h) : '';
+            $('rank').style.display = c.rank ? '' : 'none';
+            $('cap').classList.toggle('alone', !c.rank);
+          }
+        }
+        const beatPhase = ((t % BEAT) + BEAT) % BEAT;
+        const pump = 1 + 0.03 * Math.exp(-9 * beatPhase);
+        if (c.end) {
+          place($('emblem'), 0, spring(dt) * pump);
+          place($('name'), (1 - spring(dt - BEAT)) * 80, 1, clamp01((dt - BEAT) / 0.08));
+          place($('site'), (1 - spring(dt - BEAT * 2)) * 80, 1, clamp01((dt - BEAT * 2) / 0.08));
+          place($('free'), (1 - spring(dt - BEAT * 3)) * 60, 1, clamp01((dt - BEAT * 3) / 0.08));
+          return;
+        }
+        const before = i > 0 ? CARDS[i - 1].fill : 0;
+        $('fill').style.width = `${(before + (c.fill - before) * clamp01(spring(dt))) * 100}%`;
+        place($('head'), 0, i === 0 ? 0.3 + 0.7 * spring(dt) : pump, i === 0 ? clamp01(dt / 0.05) : 1);
+        place($('line'), (1 - spring(dt)) * 40, 1, clamp01(dt / 0.06));
+        place($('big'), 0, (0.25 + 0.75 * spring(dt - 0.08)) * pump, clamp01((dt - 0.08) / 0.05));
+        place($('rank'), 0, spring(dt - 0.04) * pump);
+      };
+    </script>
+  </body>
+</html>

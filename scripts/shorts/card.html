@@ -1,0 +1,169 @@
+<!doctype html>
+<!-- The bright card for a Short: channel, title, the game (drawn over by build.mjs)
+     and a running count under it. build.mjs takes the card as one picture and each
+     count as a picture of its own. YouTube's own buttons cover about the top 130 px,
+     the bottom 400 px and the right 150 px of the lower half, so the text stays out of those. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Pretendard;
+        src: url('../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: Barlow;
+        src: url('../../public/assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+        font-weight: 700;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: transparent;
+        font-family: Pretendard, sans-serif;
+        color: #141413;
+      }
+      #card {
+        position: absolute;
+        inset: 0;
+      }
+      .head {
+        position: absolute;
+        left: 64px;
+        top: 136px;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+      .icon {
+        width: 92px;
+        height: 92px;
+        border-radius: 50%;
+        background: #141413;
+        overflow: hidden;
+      }
+      .icon svg {
+        display: block;
+        width: 92px;
+        height: 92px;
+      }
+      .name {
+        font: 700 48px / 1 Barlow, sans-serif;
+        letter-spacing: 0.05em;
+      }
+      .site {
+        margin-top: 6px;
+        font: 700 32px / 1 Barlow, sans-serif;
+        letter-spacing: 0.03em;
+        color: #b3690f;
+      }
+      #title {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding-bottom: 28px;
+        text-align: center;
+        font-size: 104px;
+        font-weight: 900;
+        line-height: 1.14;
+        letter-spacing: -0.025em;
+        white-space: pre;
+      }
+      #titleBox {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 240px;
+      }
+      #count {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 22px;
+        visibility: hidden;
+      }
+      #label {
+        font-size: 64px;
+        font-weight: 800;
+      }
+      #number {
+        font-size: 190px;
+        line-height: 1;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+      }
+      #count.pop #number {
+        color: #d6341f;
+        transform: scale(1.18);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card">
+      <div class="head">
+        <div class="icon" id="icon"></div>
+        <div>
+          <div class="name">STRIKEGY</div>
+          <div class="site">strikegy.xyz</div>
+        </div>
+      </div>
+      <div id="titleBox"><div id="title"></div></div>
+    </div>
+    <div id="count"><span id="label"></span><span id="number"></span></div>
+    <script>
+      /** Fills in the card; a long title shrinks until its widest line fits. */
+      window.setup = async ({ title, label, emblem, gameY, gameH }) => {
+        document.getElementById('icon').innerHTML = emblem;
+        // White above and below; the game shows through the gap.
+        document.getElementById('card').style.background =
+          `linear-gradient(#fff 0 ${gameY}px, transparent ${gameY}px ${gameY + gameH}px, #fff ${gameY + gameH}px)`;
+        const titleEl = document.getElementById('title');
+        const box = document.getElementById('titleBox');
+        box.style.height = `${gameY - 240}px`;
+        titleEl.textContent = title;
+        document.getElementById('label').textContent = label;
+        const count = document.getElementById('count');
+        count.style.top = `${gameY + gameH + 36}px`;
+        await Promise.all([
+          document.fonts.load('900 104px Pretendard', title),
+          document.fonts.load('800 64px Pretendard', label || '가'),
+          document.fonts.load('900 190px Pretendard', '0123456789'),
+          document.fonts.load('700 48px Barlow', 'STRIKEGY'),
+        ]);
+        let size = 104;
+        titleEl.style.display = 'inline-block';
+        titleEl.style.position = 'static';
+        while (size > 56 && titleEl.offsetWidth > 960) {
+          size -= 2;
+          titleEl.style.fontSize = `${size}px`;
+        }
+        titleEl.style.display = '';
+        titleEl.style.position = '';
+      };
+      /** The card alone, or one count alone (over nothing). */
+      window.showCard = () => {
+        document.getElementById('card').style.visibility = 'visible';
+        document.getElementById('count').style.visibility = 'hidden';
+      };
+      window.showCount = (n, unit, pop, label) => {
+        document.getElementById('card').style.visibility = 'hidden';
+        if (label !== undefined) document.getElementById('label').textContent = label;
+        const count = document.getElementById('count');
+        count.style.visibility = 'visible';
+        count.classList.toggle('pop', pop);
+        document.getElementById('number').textContent = `${n}${unit}`;
+      };
+    </script>
+  </body>
+</html>

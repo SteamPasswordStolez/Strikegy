@@ -1,0 +1,397 @@
+<!doctype html>
+<!-- The first part of the Short "현실에서 이병이 원수 되려면": one climb up the ranks on the song's
+     beat, a service clock always running, fast runs broken by big stops. Drawn frame by frame by
+     window.render(t) (real.mjs takes each frame). Text stays clear of YouTube's buttons: the top
+     130 px, the bottom 400 px, the right of the lower half. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Pretendard;
+        src: url('../../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2');
+        font-weight: 100 900;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #12150f;
+        font-family: Pretendard, sans-serif;
+        color: #f3efe6;
+        --accent: #e9a03b;
+      }
+      #camo,
+      #shade,
+      #bits,
+      #event {
+        position: absolute;
+        inset: 0;
+      }
+      #camo svg {
+        display: block;
+      }
+      #shade {
+        background: radial-gradient(ellipse 760px 860px at 58% 52%, rgb(0 0 0 / 0) 40%, rgb(0 0 0 / 0.78) 100%);
+      }
+      #rays {
+        position: absolute;
+        left: 640px;
+        top: 860px;
+        width: 2600px;
+        height: 2600px;
+        margin: -1300px 0 0 -1300px;
+        border-radius: 50%;
+        background: repeating-conic-gradient(var(--accent) 0 7deg, transparent 7deg 22deg);
+        -webkit-mask-image: radial-gradient(circle, rgb(0 0 0 / 0.32) 0, rgb(0 0 0 / 0.08) 30%, transparent 62%);
+        mask-image: radial-gradient(circle, rgb(0 0 0 / 0.32) 0, rgb(0 0 0 / 0.08) 30%, transparent 62%);
+      }
+      .bit {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 22px;
+        height: 22px;
+        background: var(--accent);
+        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+      }
+      /* The service clock, always on. */
+      #clock {
+        position: absolute;
+        left: 60px;
+        right: 60px;
+        top: 170px;
+        text-align: center;
+      }
+      #clockLabel {
+        font-size: 50px;
+        font-weight: 800;
+        color: rgb(243 239 230 / 0.82);
+      }
+      #clockValue {
+        font-size: 190px;
+        line-height: 1.02;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+        font-variant-numeric: tabular-nums;
+        color: var(--accent);
+        text-shadow: 0 8px 0 rgb(0 0 0 / 0.45);
+      }
+      /* The ranks going by, down the left. */
+      #railBox {
+        position: absolute;
+        left: 0;
+        top: 470px;
+        width: 290px;
+        height: 960px;
+        overflow: hidden;
+        -webkit-mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
+        mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
+      }
+      #rail {
+        position: absolute;
+        left: 54px;
+        top: 0;
+      }
+      #rail div {
+        height: 96px;
+        line-height: 96px;
+        font-size: 58px;
+        font-weight: 800;
+        color: rgb(243 239 230 / 0.35);
+        transform-origin: left center;
+        white-space: nowrap;
+      }
+      #rail div.now {
+        color: var(--accent);
+      }
+      /* The rank just reached. */
+      #hero {
+        position: absolute;
+        left: 290px;
+        right: 40px;
+        top: 500px;
+        height: 900px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        word-break: keep-all;
+      }
+      #name {
+        margin-top: 14px;
+        font-size: 150px;
+        font-weight: 900;
+        line-height: 1.05;
+        text-shadow: 0 6px 0 rgb(0 0 0 / 0.45);
+      }
+      #note {
+        margin-top: 14px;
+        font-size: 50px;
+        font-weight: 800;
+        line-height: 1.25;
+      }
+      /* A big stop takes the whole screen. */
+      #event {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 200px 50px 420px;
+        text-align: center;
+        word-break: keep-all;
+      }
+      #evTop {
+        font-size: 72px;
+        font-weight: 800;
+        line-height: 1.2;
+        margin-bottom: 20px;
+      }
+      #evMark {
+        margin-bottom: 20px;
+      }
+      #evBig {
+        font-weight: 900;
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+        font-variant-numeric: tabular-nums;
+      }
+      #evSub {
+        margin-top: 26px;
+        font-size: 58px;
+        font-weight: 800;
+      }
+      .stamp {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        padding: 4px 60px 18px;
+        border: 20px solid #ff4a3d;
+        border-radius: 28px;
+        color: #ff4a3d;
+        background: rgb(18 21 15 / 0.82);
+        font-size: 210px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+    </style>
+    <script src="insignia.js"></script>
+  </head>
+  <body>
+    <div id="camo"></div>
+    <div id="rays"></div>
+    <div id="shade"></div>
+    <div id="bits"></div>
+    <div id="clock">
+      <div id="clockLabel"></div>
+      <div id="clockValue"></div>
+    </div>
+    <div id="railBox"><div id="rail"></div></div>
+    <div id="hero">
+      <div id="mark"></div>
+      <div id="name"></div>
+      <div id="note"></div>
+    </div>
+    <div id="event">
+      <div id="evTop"></div>
+      <div id="evMark"></div>
+      <div id="evBig"></div>
+      <div id="evSub"></div>
+    </div>
+    <script>
+      /** The song's measured beat (s) and where its first beat falls; the song starts at time 0 here. */
+      const BEAT = 0.39982;
+      const FIRST = 0.255;
+      const A = { enl: '#e9a03b', nco: '#f4c84b', off: '#6fd6bf', fld: '#8fc7ff', gen: '#ffe07a', end: '#ff5a4a' };
+      const NAMES = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '소위', '중위', '대위', '소령', '중령', '대령', '준장', '소장', '중장', '대장', '원수'];
+      const ARMY = '입대 후';
+      const NCO = '하사 임관 후';
+      const OFF = '소위 임관 후';
+      /** The climb: rank steps (r: index in NAMES) and stops (ev) that take the screen, in beats. */
+      const STEPS = [
+        { b: 5, r: 0, a: A.enl, rank: ['bar', 1], h: 150, label: ARMY, v: 0, unit: '개월', note: '여기서 원수까지 몇 년?' },
+        { b: 1, r: 1, a: A.enl, rank: ['bar', 2], h: 170, label: ARMY, v: 2, unit: '개월' },
+        { b: 1, r: 2, a: A.enl, rank: ['bar', 3], h: 190, label: ARMY, v: 8, unit: '개월' },
+        { b: 2, r: 3, a: A.enl, rank: ['bar', 4], h: 210, label: ARMY, v: 14, unit: '개월', pre: '약' },
+        { b: 4, ev: 'stamp', a: A.end, r: 3, label: ARMY, v: 18, unit: '개월', top: '근데 육군은 18개월이면', stamp: '전역' },
+        { b: 2, ev: 'text', a: A.nco, r: 3, big: '말뚝 박으면?', size: 170, solid: true },
+        { b: 1, r: 4, a: A.nco, rank: ['chevron', 1], h: 400, label: NCO, v: 0, unit: '년' },
+        { b: 2, r: 5, a: A.nco, rank: ['chevron', 2], h: 400, label: NCO, v: 2, unit: '년', pre: '최소' },
+        { b: 2, r: 6, a: A.nco, rank: ['chevron', 3], h: 400, label: NCO, v: 7, unit: '년', pre: '최소' },
+        { b: 3, r: 7, a: A.nco, rank: ['chevronStar', 3], h: 440, label: NCO, v: 14, unit: '년', pre: '최소', big: true },
+        { b: 2, ev: 'text', a: A.nco, r: 7, top: '부사관 계급은 여기까지', big: '막힘', size: 300, shake: true },
+        { b: 2, ev: 'text', a: A.off, r: 7, big: '그럼 장교로?', size: 170, solid: true },
+        { b: 1, r: 8, a: A.off, rank: ['diamond', 1], h: 400, label: OFF, v: 0, unit: '년' },
+        { b: 1, r: 9, a: A.off, rank: ['diamond', 2], h: 400, label: OFF, v: 1, unit: '년', pre: '최소' },
+        { b: 1, r: 10, a: A.off, rank: ['diamond', 3], h: 400, label: OFF, v: 3, unit: '년', pre: '최소' },
+        { b: 2, r: 11, a: A.fld, rank: ['blossom', 1], h: 400, label: OFF, v: 11, unit: '년', pre: '최소' },
+        { b: 1, r: 12, a: A.fld, rank: ['blossom', 2], h: 400, label: OFF, v: 17, unit: '년', pre: '최소' },
+        { b: 1, r: 13, a: A.fld, rank: ['blossom', 3], h: 400, label: OFF, v: 22, unit: '년', pre: '최소' },
+        { b: 4, ev: 'star', a: A.gen, r: 14, top: '드디어 별 하나, 준장', rank: ['star', 1], h: 520, big: '최소 26년', size: 170, sub: '23살에 임관했다면 49살' },
+        { b: 2, r: 15, a: A.gen, rank: ['star', 2], h: 440, label: OFF, v: 28, unit: '년', pre: '최소', note: '장군은 전군에 약 370명' },
+        { b: 1, r: 16, a: A.gen, rank: ['star', 3], h: 400, label: OFF, v: 28, unit: '년', pre: '최소' },
+        { b: 3, r: 17, a: A.gen, rank: ['star', 4], h: 440, label: OFF, v: 28, unit: '년', pre: '최소', note: '대장 자리는 7~8개뿐' },
+        { b: 2, ev: 'hush', a: A.end, r: 17, big: '그럼 원수는?', size: 150 },
+        { b: 10, ev: 'zero', a: A.end, r: 18, rank: ['marshal', 5], h: 480, tick: 370, big: '0명', size: 300, sub: '임명된 사람을 못 찾음', shake: true },
+      ];
+      let at = 0;
+      for (const s of STEPS) {
+        s.from = at === 0 ? 0 : FIRST + at * BEAT;
+        s.to = FIRST + (at + s.b) * BEAT;
+        at += s.b;
+      }
+      window.LENGTH = FIRST + at * BEAT;
+      /** For the sound: a pop on each step, and where the song goes quiet. */
+      window.POPS = STEPS.slice(1).filter((s) => s.ev !== 'hush').map((s) => s.from);
+      const hushStep = STEPS.find((s) => s.ev === 'hush');
+      window.HUSH = [hushStep.from, hushStep.to];
+
+      const spring = (x) => (x <= 0 ? 0 : 1 - Math.exp(-8 * x) * Math.cos(16 * x));
+      const clamp01 = (x) => Math.min(1, Math.max(0, x));
+      const easeOut = (x) => 1 - (1 - clamp01(x)) ** 3;
+      const $ = (id) => document.getElementById(id);
+      const place = (el, x, y, s = 1, r = 0, o = 1) => {
+        el.style.transform = `translate(${x}px, ${y}px) scale(${s}) rotate(${r}deg)`;
+        el.style.opacity = o;
+      };
+      const rnd = (i) => {
+        const v = Math.sin(i * 12.9898) * 43758.5453;
+        return v - Math.floor(v);
+      };
+
+      // A digital camouflage cloth behind everything, faint.
+      {
+        const tones = ['#1a1f15', '#20261a', '#161a12', '#262c1d'];
+        let cells = '';
+        for (let y = 0; y < 48; y++) {
+          for (let x = 0; x < 27; x++) {
+            const tone = tones[Math.floor(rnd(x * 31 + y * 57 + 3) * tones.length)];
+            const w = 1 + Math.floor(rnd(x + y * 11) * 2);
+            cells += `<rect x="${x * 40}" y="${y * 40}" width="${w * 40}" height="40" fill="${tone}"/>`;
+          }
+        }
+        $('camo').innerHTML = `<svg width="1080" height="1920">${cells}</svg>`;
+      }
+      $('rail').innerHTML = NAMES.map((n) => `<div>${n}</div>`).join('');
+      const railEls = [...$('rail').children];
+      const RAIL_ROW = 96;
+      const RAIL_MID = 480 - RAIL_ROW / 2;
+
+      // Sparks thrown out from the rank when it lands.
+      const bits = [];
+      for (let i = 0; i < 16; i++) {
+        const el = document.createElement('div');
+        el.className = 'bit';
+        $('bits').append(el);
+        const f = rnd(i + 40);
+        bits.push({ el, a: (i / 16) * Math.PI * 2 + f, v: 800 + f * 1000, spin: (f - 0.5) * 900, s: 0.6 + rnd(i + 80) });
+      }
+
+      const clockText = (s, v) => `${s.pre ? `${s.pre} ` : ''}${Math.round(v)}${s.unit}`;
+      let shown = -1;
+      let clockFrom = 0;
+      window.render = (t) => {
+        let i = STEPS.findIndex((s) => t < s.to);
+        if (i < 0) i = STEPS.length - 1;
+        const s = STEPS[i];
+        const dt = t - s.from;
+        const prev = STEPS[i - 1];
+        if (i !== shown) {
+          shown = i;
+          document.body.style.setProperty('--accent', s.a);
+          const isEvent = !!s.ev;
+          $('event').style.display = isEvent ? '' : 'none';
+          $('event').style.background = s.solid ? s.a : s.ev === 'hush' ? '#000' : s.ev ? 'rgb(14 16 11 / 0.92)' : '';
+          $('event').style.color = s.solid ? '#12150f' : '#f3efe6';
+          $('hero').style.display = isEvent ? 'none' : '';
+          const clockOn = !isEvent || s.ev === 'stamp';
+          $('clock').style.display = clockOn ? '' : 'none';
+          // The stamp's stop keeps the clock in sight, over the dimmed screen.
+          $('clock').style.zIndex = s.ev === 'stamp' ? 5 : '';
+          // Its line sits above the stamp, under the clock.
+          $('event').style.justifyContent = s.ev === 'stamp' ? 'flex-start' : '';
+          $('event').style.paddingTop = s.ev === 'stamp' ? '510px' : '';
+          $('railBox').style.display = isEvent ? 'none' : '';
+          if (!isEvent) {
+            $('mark').innerHTML = window.rankSvg(s.rank[0], s.rank[1], s.h);
+            $('name').textContent = NAMES[s.r];
+            $('name').style.color = s.a;
+            $('note').textContent = s.note ?? '';
+          } else {
+            $('evTop').textContent = s.top ?? '';
+            $('evTop').style.display = s.top ? '' : 'none';
+            $('evMark').innerHTML = s.rank ? window.rankSvg(s.rank[0], s.rank[1], s.h) : '';
+            $('evMark').style.display = s.rank ? '' : 'none';
+            $('evBig').style.fontSize = `${s.size}px`;
+            $('evBig').style.color = s.solid ? '#12150f' : s.ev === 'hush' ? '#f3efe6' : s.a;
+            $('evBig').textContent = s.big ?? '';
+            $('evSub').textContent = s.sub ?? '';
+            $('evSub').style.display = s.sub ? '' : 'none';
+            const old = $('event').querySelector('.stamp');
+            if (old) old.remove();
+            if (s.stamp) {
+              const el = document.createElement('div');
+              el.className = 'stamp';
+              el.textContent = s.stamp;
+              $('event').append(el);
+            }
+          }
+          clockFrom = prev && prev.unit === s.unit && prev.label === s.label ? prev.v : 0;
+          if (s.label) $('clockLabel').textContent = s.label;
+          railEls.forEach((el, k) => el.classList.toggle('now', k === s.r));
+        }
+        const beat = (t - FIRST) / BEAT;
+        const phase = ((beat % 1) + 1) % 1;
+        const pump = 1 + 0.03 * Math.exp(-3.6 * phase);
+        place($('rays'), 0, 0, 1, t * 16);
+        // The clock runs to this step's time in the first half beat or two.
+        if (s.label) {
+          const v = clockFrom + (s.v - clockFrom) * easeOut(dt / (Math.min(s.b, 2) * BEAT * 0.9));
+          $('clockValue').textContent = clockText(s, v);
+          place($('clockValue'), 0, 0, 1 + 0.12 * Math.exp(-14 * dt), 0);
+        }
+        // The rail rolls up to the rank reached.
+        const before = prev ? prev.r : s.r;
+        const pos = before + (s.r - before) * clamp01(spring(dt * 1.4));
+        $('rail').style.transform = `translateY(${RAIL_MID - pos * RAIL_ROW}px)`;
+        railEls.forEach((el, k) => {
+          el.style.transform = `scale(${1 + 0.55 * clamp01(1 - Math.abs(k - pos))})`;
+        });
+        if (!s.ev) {
+          // Rises in from below, as if the whole thing is going up.
+          place($('mark'), 0, (1 - spring(dt)) * 320, (0.6 + 0.4 * spring(dt)) * pump, (1 - spring(dt)) * -10);
+          place($('name'), 0, (1 - spring(dt - 0.03)) * 240, 1, 0, clamp01(dt / 0.05));
+          place($('note'), 0, (1 - spring(dt - BEAT)) * 40, 1, 0, clamp01((dt - BEAT) / 0.1));
+        } else {
+          const hit = s.shake ? Math.exp(-5 * dt) * 28 * Math.sin(dt * 70) : 0;
+          place($('evTop'), 0, (1 - spring(dt)) * -60, 1, 0, clamp01(dt / 0.06));
+          place($('evMark'), hit, 0, spring(dt - 0.02) * pump);
+          // A hush lands slowly; everything else slams.
+          const bigIn = s.ev === 'hush' ? easeOut(dt / (BEAT * 1.4)) : 0.25 + 0.75 * spring(dt - 0.04);
+          place($('evBig'), hit, 0, s.ev === 'hush' ? 0.9 + 0.1 * bigIn : bigIn * pump, 0, s.ev === 'hush' ? bigIn : clamp01((dt - 0.04) / 0.04));
+          place($('evSub'), 0, (1 - spring(dt - BEAT * 3)) * 50, 1, 0, clamp01((dt - BEAT * 3) / 0.1));
+          if (s.tick !== undefined) {
+            const n = Math.round(s.tick * (1 - easeOut(dt / (BEAT * 3))));
+            $('evBig').textContent = `${n}명`;
+          }
+          const stamp = $('event').querySelector('.stamp');
+          if (stamp) {
+            const x = dt - BEAT * 1.2;
+            stamp.style.transform = `translate(-50%, -50%) rotate(-12deg) scale(${x <= 0 ? 0 : 2.8 - 1.8 * spring(x)})`;
+          }
+        }
+        for (const b of bits) {
+          const x = dt * 0.8;
+          const o = i === 0 || s.ev === 'hush' || s.solid ? 0 : clamp01(1 - dt / 0.6);
+          place(b.el, 640 - 11 + Math.cos(b.a) * b.v * x, 860 + Math.sin(b.a) * b.v * x + 700 * x * x, b.s, b.spin * x, o);
+        }
+      };
+    </script>
+  </body>
+</html>
