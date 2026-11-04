@@ -1,0 +1,677 @@
+<!doctype html>
+<!-- The Korean-military Short's overlay: a dark satellite map filling the frame, each side's ground painted with its
+     flag, the front between them moving on the song's hits, dates changing with the march; see-through where the
+     game shows. Times are in scenes.js. window.render(t) draws one frame. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: Pretendard;
+        src: url('../../../public/assets/fonts/PretendardStdVariable.woff2') format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: Barlow;
+        src: url('../../../public/assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+        font-weight: 700;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: transparent;
+        font-family: Pretendard, sans-serif;
+        color: #fff;
+      }
+      canvas {
+        position: absolute;
+        inset: 0;
+      }
+    </style>
+    <script src="scenes.js"></script>
+  </head>
+  <body>
+    <canvas id="c" width="1080" height="1920"></canvas>
+    <script>
+      const { SCENES, FRONT, CAM, STRONG, BEATS, END } = window.ROK;
+      const ctx = document.getElementById('c').getContext('2d');
+      const LAT0 = 37.5;
+      const COS = Math.cos((LAT0 * Math.PI) / 180);
+      const X = (lon) => (lon - 127.5) * COS;
+      const Y = (lat) => -(lat - LAT0);
+      const clamp01 = (x) => Math.min(1, Math.max(0, x));
+      const spring = (x) => (x <= 0 ? 0 : 1 - Math.exp(-11 * x) * Math.cos(16 * x));
+      const ringOf = (list, t, k) => {
+        let v = 0;
+        for (const h of list) if (t >= h && t < h + 0.7) v = Math.max(v, Math.exp(-k * (t - h)));
+        return v;
+      };
+      /** The map's picture area, and the see-through band of the game's clips (build.mjs has the same numbers). */
+      const BAND = { y: 120, h: 1380 };
+      const CENTRE_Y = 810;
+
+      let P = null;
+      const IMG = {};
+      const PHOTO = {};
+      const pathOf = (rings) => {
+        const p = new Path2D();
+        for (const r of rings) {
+          r.forEach(([a, b], i) => (i ? p.lineTo(X(a), Y(b)) : p.moveTo(X(a), Y(b))));
+          p.closePath();
+        }
+        return p;
+      };
+      /** The picture dimmed once, so the filter isn't run every frame; `fade` hides its outer edges. */
+      function dimmed(img, fade) {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const g = c.getContext('2d');
+        g.filter = 'brightness(0.62) contrast(1.15) saturate(0.9)';
+        g.drawImage(img, 0, 0);
+        g.filter = 'none';
+        if (fade) {
+          g.globalCompositeOperation = 'destination-in';
+          for (const [x1, y1, size] of [[c.width, 0, c.width], [0, c.height, c.height]]) {
+            const s = g.createLinearGradient(0, 0, x1, y1);
+            s.addColorStop(0, 'rgb(0 0 0 / 0)');
+            s.addColorStop(fade / size, 'rgb(0 0 0 / 1)');
+            s.addColorStop(1 - fade / size, 'rgb(0 0 0 / 1)');
+            s.addColorStop(1, 'rgb(0 0 0 / 0)');
+            g.fillStyle = s;
+            g.fillRect(0, 0, c.width, c.height);
+          }
+        }
+        return c;
+      }
+      window.setData = async (countries) => {
+        const vn = countries.Vietnam ?? [];
+        P = {
+          north: pathOf(countries['North Korea']),
+          south: pathOf(countries['South Korea']),
+          korea: pathOf([...countries['North Korea'], ...countries['South Korea']]),
+          vietnam: pathOf(vn),
+        };
+        for (const n of ['rhee', 'macarthur']) {
+          const img = new Image();
+          img.src = `../../../assets-src/shorts/rok/photos/${n}.jpg`;
+          await img.decode();
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth;
+          c.height = img.naturalHeight;
+          const g = c.getContext('2d');
+          g.filter = 'grayscale(1) contrast(1.15)';
+          g.drawImage(img, 0, 0);
+          PHOTO[n] = c;
+        }
+        for (const [n, fade] of [['asia', 0], ['korea', 220]]) {
+          const img = new Image();
+          img.src = `../../../assets-src/shorts/rok/${n}.jpg`;
+          await img.decode();
+          IMG[n] = dimmed(img, fade);
+        }
+      };
+
+      // ---- Flags, each drawn into a canvas once.
+      function taegukgi() {
+        const c = document.createElement('canvas');
+        c.width = 1500;
+        c.height = 1000;
+        const g = c.getContext('2d');
+        g.fillStyle = '#f7f7f3';
+        g.fillRect(0, 0, 1500, 1000);
+        g.translate(750, 500);
+        const a = Math.atan2(2, 3);
+        const R = 250;
+        g.save();
+        g.rotate(a);
+        g.fillStyle = '#cd2e3a';
+        g.beginPath();
+        g.arc(0, 0, R, Math.PI, 0);
+        g.fill();
+        g.fillStyle = '#0047a0';
+        g.beginPath();
+        g.arc(0, 0, R, 0, Math.PI);
+        g.fill();
+        g.fillStyle = '#cd2e3a';
+        g.beginPath();
+        g.arc(-R / 2, 0, R / 2, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#0047a0';
+        g.beginPath();
+        g.arc(R / 2, 0, R / 2, 0, Math.PI * 2);
+        g.fill();
+        g.restore();
+        const tri = (angle, broken) => {
+          g.save();
+          g.rotate(angle);
+          g.translate(R + 250, 0);
+          g.fillStyle = '#111';
+          const w = R / 3;
+          const len = R;
+          for (let i = 0; i < 3; i++) {
+            const x = -w * 1.75 + i * (w * 1.25);
+            if (broken[i]) {
+              g.fillRect(x, -len, w, len - w / 6);
+              g.fillRect(x, w / 6, w, len - w / 6);
+            } else g.fillRect(x, -len, w, len * 2);
+          }
+          g.restore();
+        };
+        tri(Math.PI + a, [0, 0, 0]);
+        tri(-a, [1, 0, 1]);
+        tri(a, [1, 1, 1]);
+        tri(Math.PI - a, [0, 1, 0]);
+        return c;
+      }
+      function dprk() {
+        const c = document.createElement('canvas');
+        c.width = 2000;
+        c.height = 1000;
+        const g = c.getContext('2d');
+        g.fillStyle = '#024fa2';
+        g.fillRect(0, 0, 2000, 1000);
+        g.fillStyle = '#fff';
+        g.fillRect(0, 167, 2000, 666);
+        g.fillStyle = '#ed1c27';
+        g.fillRect(0, 200, 2000, 600);
+        g.fillStyle = '#fff';
+        g.beginPath();
+        g.arc(1000, 500, 240, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#ed1c27';
+        g.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const r = i % 2 ? 90 : 235;
+          const an = -Math.PI / 2 + (i * Math.PI) / 5;
+          g[i ? 'lineTo' : 'moveTo'](1000 + Math.cos(an) * r, 500 + Math.sin(an) * r);
+        }
+        g.closePath();
+        g.fill();
+        return c;
+      }
+      const FLAG = { rok: taegukgi(), dprk: dprk() };
+
+      // ---- The front, west to east, each with the same number of points. North of it is the north's ground.
+      const LINES = {
+        parallel: [[124, 38], [125, 38], [126, 38], [126.8, 38], [127.5, 38], [128.2, 38], [128.7, 38], [129.5, 38]],
+        seoulNear: [[124, 37.85], [125.5, 37.85], [126.6, 37.75], [127.2, 37.75], [127.8, 37.85], [128.3, 37.9], [128.8, 37.9], [129.5, 37.9]],
+        seoulFalls: [[124, 37.6], [125.5, 37.6], [126.6, 37.35], [127.2, 37.45], [127.8, 37.6], [128.3, 37.7], [128.8, 37.7], [129.5, 37.7]],
+        daejeon: [[125, 35.4], [126.5, 35.7], [127, 36.2], [127.5, 36.3], [128, 36.6], [128.6, 36.9], [129, 37], [129.6, 37]],
+        perimeter: [[128, 34.6], [128.35, 35.2], [128.4, 35.6], [128.4, 36], [128.8, 36.25], [129.1, 36.25], [129.4, 36.1], [129.9, 36]],
+        seoulBack: [[124, 37.75], [125.5, 37.8], [126.6, 37.85], [127.2, 37.8], [127.8, 37.7], [128.3, 37.7], [128.8, 37.75], [129.5, 37.75]],
+        over38: [[124, 38.2], [125.5, 38.2], [126.4, 38.2], [127.2, 38.25], [127.8, 38.4], [128.4, 38.75], [128.9, 39], [129.6, 39]],
+        pyongyang: [[124, 39.3], [125.3, 39.35], [126, 39.4], [126.8, 39.4], [127.5, 39.6], [128, 39.9], [128.8, 40.1], [129.6, 40.2]],
+        yalu: [[123.5, 40], [125, 40.6], [126, 41], [127, 41.2], [128, 41.4], [129, 41.6], [130, 41.9], [131, 42.4]],
+        january: [[124, 37], [125.5, 36.9], [126.9, 37], [127.4, 37.1], [128, 37.2], [128.6, 37.3], [129, 37.3], [129.5, 37.3]],
+        armistice: [[124, 37.7], [125, 37.7], [126.1, 37.75], [126.7, 37.95], [127.2, 38.3], [127.9, 38.3], [128.3, 38.6], [128.6, 38.75]],
+      };
+      /** The front at t: it springs to each line on its hit, and every beat shoves it a little, south then north. */
+      function frontAt(t) {
+        if (t < FRONT[0][0]) return null;
+        let was = LINES[FRONT[0][1]];
+        let now = was;
+        let since = 99;
+        for (const [h, name] of FRONT) {
+          if (t < h) break;
+          was = now;
+          now = LINES[name];
+          since = t - h;
+        }
+        const k = spring(since * 1.5);
+        const war = t >= BEATS[0] && t < BEATS[BEATS.length - 1];
+        let shove = 0;
+        if (war) {
+          const passed = BEATS.filter((b) => b <= t);
+          const last = passed[passed.length - 1];
+          shove = (passed.length % 2 ? -1 : 1) * 0.1 * Math.exp(-7 * (t - last));
+        }
+        return now.map(([a, b], i) => [was[i][0] + (a - was[i][0]) * k, was[i][1] + (b - was[i][1]) * k + shove]);
+      }
+      function frontPath(pts) {
+        const p = new Path2D();
+        p.moveTo(X(121), Y(33.7));
+        pts.forEach(([a, b]) => p.lineTo(X(a), Y(b)));
+        p.lineTo(X(133), Y(pts[pts.length - 1][1]));
+        p.lineTo(X(133), Y(44.5));
+        p.lineTo(X(121), Y(44.5));
+        p.closePath();
+        return p;
+      }
+      /** The camera at t: it snaps to each key on its hit, overshoots a little, then creeps inwards. */
+      function camAt(t) {
+        let i = 0;
+        while (i + 1 < CAM.length && CAM[i + 1][0] <= t) i++;
+        const key = CAM[i];
+        const was = CAM[Math.max(0, i - 1)];
+        const dt = t - key[0];
+        const u = 1 - Math.exp(-15 * dt) * Math.cos(14 * dt);
+        return {
+          lon: was[1] + (key[1] - was[1]) * u,
+          lat: was[2] + (key[2] - was[2]) * u,
+          ppd: Math.exp(Math.log(was[3]) + (Math.log(key[3]) - Math.log(was[3])) * u) * (1 + 0.035 * dt),
+          tilt: was[4] + (key[4] - was[4]) * u,
+        };
+      }
+
+      function drawMap(t, s) {
+        const cam = camAt(t);
+        const ppd = cam.ppd * (1 + 0.03 * ringOf(STRONG, t, 8));
+        const hit = Math.max(ringOf(STRONG, t, 11), 0.4 * ringOf(BEATS, t, 14));
+        const M = new DOMMatrix()
+          .translate(540 + 14 * hit * Math.sin(t * 83), CENTRE_Y + 10 * hit * Math.sin(t * 71 + 1))
+          .rotate(cam.tilt + 0.6 * hit * Math.sin(t * 59))
+          .scale(ppd)
+          .translate(-X(cam.lon), -Y(cam.lat));
+        const on = (lon, lat) => {
+          const p = M.transformPoint(new DOMPoint(X(lon), Y(lat)));
+          return [p.x, p.y];
+        };
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#05080b';
+        ctx.fillRect(0, 0, 1080, 1920);
+        ctx.setTransform(M);
+        const w = 1 / ppd;
+        const put = (img, wl, el, sl, nl) => ctx.drawImage(img, X(wl), Y(nl), X(el) - X(wl), Y(sl) - Y(nl));
+        put(IMG.asia, 95, 150, 5, 55);
+        put(IMG.korea, 122, 134, 32.5, 44);
+        // The coast, under the flags: only its outer half shows and no modern border crosses the land.
+        ctx.strokeStyle = 'rgb(0 0 0 / 0.85)';
+        ctx.lineWidth = 6 * w;
+        ctx.stroke(P.north);
+        ctx.stroke(P.south);
+        const paint = (colour, flag, aspect, cx, south, north, min) => {
+          ctx.fillStyle = colour;
+          ctx.fillRect(X(118), Y(46), X(136) - X(118), Y(30) - Y(46));
+          if (!flag) return;
+          const h = Math.max(min, north - south);
+          const fw = h * aspect;
+          ctx.drawImage(flag, X(cx) - fw / 2, Y((north + south) / 2) - h / 2, fw, h);
+        };
+        const front = frontAt(t);
+        ctx.save();
+        ctx.clip(P.korea, 'evenodd');
+        if (!front) {
+          paint('#f7f7f3', FLAG.rok, 1.5, 127.6, 33.2, 43, 8);
+        } else {
+          const fp = frontPath(front);
+          const mid = front.slice(2, 6).reduce((n, q) => n + q[1], 0) / 4;
+          const below = new Path2D();
+          below.addPath(fp);
+          below.rect(X(118), Y(46), X(136) - X(118), Y(30) - Y(46));
+          ctx.save();
+          ctx.clip(below, 'evenodd');
+          if (t < 9) paint('#3b5c8c', null);
+          else paint('#f7f7f3', FLAG.rok, 1.5, 127.7, 33.6, mid, 2.6);
+          ctx.restore();
+          ctx.save();
+          ctx.clip(fp);
+          if (t < 10.94) paint('#7d2a22', null);
+          else paint('#ed1c27', FLAG.dprk, 2, 127.3, mid, 42.9, 1.7);
+          ctx.restore();
+          // From the armistice on the true border holds, not the drawn line: Baengnyeong and Yeonpyeong are the South's.
+          if (t >= 34) {
+            ctx.save();
+            ctx.clip(P.south, 'evenodd');
+            paint('#f7f7f3', FLAG.rok, 1.5, 127.7, 33.6, mid, 2.6);
+            ctx.restore();
+          } else {
+            ctx.strokeStyle = '#ffd24a';
+            ctx.lineWidth = (6 + 5 * hit) * w;
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            front.forEach(([a, b], i) => (i ? ctx.lineTo(X(a), Y(b)) : ctx.moveTo(X(a), Y(b))));
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+        // South Vietnam under its flag's colours while the Korean troops are there.
+        if (t >= 35.33 && t < 39.23) {
+          ctx.save();
+          ctx.clip(P.vietnam, 'evenodd');
+          ctx.fillStyle = '#c8232c';
+          ctx.fillRect(X(100), Y(24), X(112) - X(100), Y(17) - Y(24));
+          ctx.fillStyle = '#f5cf2e';
+          ctx.fillRect(X(100), Y(17), X(112) - X(100), Y(7) - Y(17));
+          ctx.fillStyle = '#d0282e';
+          for (const lat of [13.6, 12.8, 12]) ctx.fillRect(X(100), Y(lat), X(112) - X(100), 0.36);
+          ctx.restore();
+        }
+        for (const a of s.arrows ?? []) {
+          const u = clamp01((t - s.from - a.at) / a.dur);
+          if (u > 0) arrow(a, u, ppd);
+        }
+        for (const [lon, lat] of s.burn ?? []) burn(lon, lat, t - s.from, w);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.textBaseline = 'middle';
+        // City names, the same size whatever the zoom.
+        for (const [name, lon, lat, minPpd] of [
+          ['서울', 126.98, 37.56, 200],
+          ['평양', 125.75, 39.02, 200],
+          ['부산', 129.07, 35.18, 200],
+          ['대전', 127.38, 36.35, 260],
+          ['인천', 126.62, 37.47, 390],
+        ]) {
+          if (ppd < minPpd) continue;
+          const [px, py] = on(lon, lat);
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = 'rgb(0 0 0 / 0.9)';
+          ctx.lineWidth = 7;
+          ctx.font = '800 36px Pretendard';
+          ctx.textAlign = 'left';
+          ctx.strokeText(name, px + 15, py);
+          ctx.fillText(name, px + 15, py);
+          ctx.beginPath();
+          ctx.arc(px, py, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fill();
+        }
+        for (const [lon, lat, name] of s.marks ?? []) {
+          const [px, py] = on(lon, lat);
+          ctx.font = '800 44px Pretendard';
+          ctx.textAlign = 'left';
+          ctx.lineWidth = 8;
+          ctx.strokeStyle = '#000';
+          ctx.fillStyle = '#ffd24a';
+          ctx.strokeText(name, px + 18, py);
+          ctx.fillText(name, px + 18, py);
+          ctx.beginPath();
+          ctx.arc(px, py, 10, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (s.aside) {
+          const u = spring(t - s.from - 0.2);
+          ctx.globalAlpha = clamp01(u);
+          ctx.font = '900 64px Pretendard';
+          ctx.textAlign = 'left';
+          ctx.lineWidth = 10;
+          ctx.strokeStyle = '#000';
+          ctx.fillStyle = '#7fb8ff';
+          const [ax, ay] = s.asideAt ?? [60, 1000];
+          ctx.strokeText(s.aside, ax, ay);
+          ctx.fillText(s.aside, ax, ay);
+          ctx.globalAlpha = 1;
+        }
+        const v = ctx.createRadialGradient(540, 810, 440, 540, 810, 1000);
+        v.addColorStop(0, 'rgb(0 0 0 / 0)');
+        v.addColorStop(1, 'rgb(0 0 0 / 0.72)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, 1080, 1920);
+      }
+      function arrow(a, u, ppd) {
+        const p0 = [X(a.from[0]), Y(a.from[1])];
+        const p1 = [X(a.to[0]), Y(a.to[1])];
+        const q = [p0[0] + (p1[0] - p0[0]) * u, p0[1] + (p1[1] - p0[1]) * u];
+        const len = Math.hypot(q[0] - p0[0], q[1] - p0[1]);
+        if (len < 1e-3) return;
+        const dir = [(q[0] - p0[0]) / len, (q[1] - p0[1]) / len];
+        const w = 1 / ppd;
+        const size = (a.wide ? 34 : 26) * w;
+        const head = size * 2.2;
+        const back = [q[0] - dir[0] * head, q[1] - dir[1] * head];
+        const colour = a.color === 'blue' ? '#2f8bff' : '#ff2f1f';
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#100504';
+        ctx.lineWidth = size * 1.25;
+        ctx.beginPath();
+        ctx.moveTo(p0[0], p0[1]);
+        ctx.lineTo(back[0], back[1]);
+        ctx.stroke();
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = size * 0.85;
+        ctx.stroke();
+        const n = [-dir[1], dir[0]];
+        ctx.beginPath();
+        ctx.moveTo(q[0], q[1]);
+        ctx.lineTo(back[0] + n[0] * head * 0.62, back[1] + n[1] * head * 0.62);
+        ctx.lineTo(back[0] - n[0] * head * 0.62, back[1] - n[1] * head * 0.62);
+        ctx.closePath();
+        ctx.fillStyle = colour;
+        ctx.fill();
+        ctx.strokeStyle = '#100504';
+        ctx.lineWidth = 3 * w;
+        ctx.stroke();
+      }
+      /** A burning mark on a town: an orange star that bursts and flickers. */
+      function burn(lon, lat, dt, w) {
+        const r = (46 + 26 * Math.sin(dt * 31)) * w * spring(dt);
+        const x = X(lon);
+        const y = Y(lat);
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r * 1.7);
+        g.addColorStop(0, 'rgb(255 240 190 / 1)');
+        g.addColorStop(0.35, 'rgb(255 150 40 / 0.95)');
+        g.addColorStop(1, 'rgb(255 60 10 / 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        for (let i = 0; i < 16; i++) {
+          const rr = (i % 2 ? 0.75 : 1.7) * r * (1 + 0.15 * Math.sin(dt * 40 + i));
+          const an = (i * Math.PI) / 8 + dt;
+          ctx[i ? 'lineTo' : 'moveTo'](x + Math.cos(an) * rr, y + Math.sin(an) * rr);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      /** A photo on a white card that slams in on its scene's first hit and is slowly pushed into. */
+      function photoCard(t, s) {
+        const c = s.card;
+        const dt = t - s.from;
+        const u = spring(dt - 0.03);
+        if (u <= 0) return;
+        const k = clamp01(dt / (s.to - s.from));
+        const img = PHOTO[c.photo];
+        const zoom = c.zoom[0] + (c.zoom[1] - c.zoom[0]) * k;
+        const scale = Math.max(c.w / img.width, c.h / img.height) * zoom;
+        const dw = img.width * scale;
+        const dh = img.height * scale;
+        const dx = Math.min(-c.w / 2, Math.max(c.w / 2 - dw, -c.focus[0] * dw));
+        const dy = Math.min(-c.h / 2, Math.max(c.h / 2 - dh, -c.focus[1] * dh));
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.save();
+        ctx.translate(c.x + (1 - u) * 300, c.y);
+        ctx.rotate(c.rot + (1 - u) * 0.25);
+        const s0 = (0.8 + 0.2 * u) * (1 + 0.025 * ringOf(STRONG, t, 9));
+        ctx.scale(s0, s0);
+        ctx.shadowColor = 'rgb(0 0 0 / 0.75)';
+        ctx.shadowBlur = 28;
+        ctx.fillStyle = '#f2efe6';
+        ctx.fillRect(-c.w / 2 - 12, -c.h / 2 - 12, c.w + 24, c.h + 84);
+        ctx.shadowBlur = 0;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(-c.w / 2, -c.h / 2, c.w, c.h);
+        ctx.clip();
+        ctx.drawImage(img, dx + Math.sin(t * 41) * 2, dy + Math.sin(t * 57) * 2, dw, dh);
+        ctx.restore();
+        ctx.fillStyle = '#16181a';
+        ctx.font = '900 38px Pretendard';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(c.name, 0, c.h / 2 + 36);
+        ctx.restore();
+      }
+
+      function caption(t, s) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 1080, BAND.y);
+        ctx.fillRect(0, BAND.y + BAND.h, 1080, 1920 - BAND.y - BAND.h);
+        const g = ctx.createLinearGradient(0, BAND.y, 0, 400);
+        g.addColorStop(0, 'rgb(0 0 0 / 0.9)');
+        g.addColorStop(0.7, 'rgb(0 0 0 / 0.7)');
+        g.addColorStop(1, 'rgb(0 0 0 / 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, BAND.y, 1080, 280);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#fff';
+        ctx.font = '800 44px Pretendard';
+        ctx.fillText('멸공의 횃불', 540, 76);
+        ctx.font = '700 40px Barlow';
+        ctx.fillStyle = '#c9ccce';
+        ctx.fillText('STRIKEGY', 540, 1540);
+        const dt = t - s.from;
+        const pop = 0.8 + 0.2 * spring(dt);
+        ctx.save();
+        ctx.translate(540, 190);
+        ctx.scale(pop, pop);
+        ctx.font = '700 104px Barlow';
+        ctx.lineWidth = 9;
+        ctx.strokeStyle = '#000';
+        ctx.strokeText(s.date, 0, 0);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(s.date, 0, 0);
+        ctx.restore();
+        ctx.save();
+        ctx.translate(540, 290);
+        const lp = (0.7 + 0.3 * spring(dt - 0.02)) * (1 + 0.03 * ringOf(STRONG, t, 10));
+        ctx.scale(lp, lp);
+        ctx.globalAlpha = clamp01(dt / 0.04);
+        ctx.font = '900 66px Pretendard';
+        ctx.lineWidth = 10;
+        ctx.strokeText(s.line, 0, 0);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillText(s.line, 0, 0);
+        ctx.restore();
+      }
+      function stat(t, s) {
+        const st = s.stat;
+        const dt = t - s.from;
+        const u = 0.65 + 0.35 * spring(dt - 0.02);
+        ctx.save();
+        ctx.translate(540, 1330);
+        ctx.scale(u, u);
+        ctx.globalAlpha = clamp01(dt / 0.04);
+        const strong = (text, x, size, colour) => {
+          ctx.font = `900 ${size}px Pretendard`;
+          ctx.lineWidth = 12;
+          ctx.strokeStyle = '#000';
+          ctx.strokeText(text, x, 0);
+          ctx.fillStyle = colour;
+          ctx.fillText(text, x, 0);
+        };
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.font = '800 44px Pretendard';
+        ctx.lineWidth = 8;
+        ctx.strokeStyle = '#000';
+        const ly = st.a ? -76 : -100;
+        ctx.strokeText(st.label, 0, ly);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(st.label, 0, ly);
+        if (st.a) {
+          // Side by side, measured: the two numbers differ in length.
+          ctx.font = '900 72px Pretendard';
+          const wa = ctx.measureText(st.a).width;
+          const wb = ctx.measureText(st.b).width;
+          const gap = 96;
+          const left = -(wa + gap + wb) / 2;
+          strong(st.a, left + wa / 2, 72, '#fff');
+          ctx.font = '700 40px Pretendard';
+          ctx.lineWidth = 8;
+          ctx.strokeText('vs', left + wa + gap / 2, 4);
+          ctx.fillStyle = '#d7dadc';
+          ctx.fillText('vs', left + wa + gap / 2, 4);
+          strong(st.b, left + wa + gap + wb / 2, 72, '#ff6a55');
+        } else strong(st.b, 0, 116, '#ffd24a');
+        ctx.restore();
+      }
+      function title(t) {
+        drawMap(t, { from: 0 });
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        const u = spring(t - 0.26);
+        if (u > 0) {
+          ctx.fillStyle = `rgb(0 0 0 / ${0.3 * clamp01(u)})`;
+          ctx.fillRect(0, 0, 1080, 1920);
+          ctx.save();
+          ctx.translate(540, 860);
+          const s = (0.5 + 0.5 * u) * (1 + 0.04 * ringOf(STRONG, t, 8));
+          ctx.scale(s, s);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.font = '900 140px Pretendard';
+          ctx.lineWidth = 18;
+          ctx.strokeStyle = '#000';
+          ctx.strokeText('멸공의', 0, -90);
+          ctx.fillStyle = '#fff';
+          ctx.fillText('멸공의', 0, -90);
+          ctx.font = '900 190px Pretendard';
+          ctx.strokeText('횃불', 0, 80);
+          ctx.fillStyle = '#ffd24a';
+          ctx.fillText('횃불', 0, 80);
+          ctx.restore();
+        }
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 1080, BAND.y);
+        ctx.fillRect(0, BAND.y + BAND.h, 1080, 1920 - BAND.y - BAND.h);
+      }
+      function endCard(t, s) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 1080, BAND.y);
+        ctx.fillRect(0, BAND.y + BAND.h, 1080, 1920 - BAND.y - BAND.h);
+        const dt = t - s.from;
+        const g = ctx.createLinearGradient(0, BAND.y, 0, 560);
+        g.addColorStop(0, 'rgb(0 0 0 / 0.92)');
+        g.addColorStop(0.75, 'rgb(0 0 0 / 0.75)');
+        g.addColorStop(1, 'rgb(0 0 0 / 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, BAND.y, 1080, 440);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const line = (text, y, font, colour, at) => {
+          const u = spring(t - at);
+          if (u <= 0) return;
+          ctx.save();
+          ctx.translate(540, y);
+          ctx.scale(0.75 + 0.25 * u, 0.75 + 0.25 * u);
+          ctx.globalAlpha = clamp01((t - at) / 0.05);
+          ctx.font = font;
+          ctx.lineWidth = 10;
+          ctx.strokeStyle = '#000';
+          ctx.strokeText(text, 0, 0);
+          ctx.fillStyle = colour;
+          ctx.fillText(text, 0, 0);
+          ctx.restore();
+        };
+        line('방금 본 전장은', 210, '900 64px Pretendard', '#fff', s.from);
+        line('설치 없는 브라우저 게임', 295, '900 64px Pretendard', '#fff', s.from + 0.98);
+        line('STRIKEGY', 1160, '700 190px Barlow', '#fff', 61.31);
+        line('strikegy.xyz', 1310, '700 104px Barlow', '#ffb04a', 61.81);
+        ctx.globalAlpha = 1;
+        void dt;
+      }
+
+      window.render = (t) => {
+        const s = SCENES.find((x) => t < x.to) ?? SCENES[SCENES.length - 1];
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, 1080, 1920);
+        if (s.kind === 'title') title(t);
+        if (s.kind === 'map') {
+          drawMap(t, s);
+          if (s.card) photoCard(t, s);
+          caption(t, s);
+        }
+        if (s.kind === 'clip') caption(t, s);
+        if (s.kind === 'end') endCard(t, s);
+        if (s.stat) stat(t, s);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        let flash = 0;
+        for (const h of STRONG) if (t >= h && t < h + 0.1) flash = Math.max(flash, 0.28 * (1 - (t - h) / 0.1));
+        if (flash) {
+          ctx.fillStyle = `rgb(255 255 255 / ${flash})`;
+          ctx.fillRect(0, BAND.y, 1080, BAND.h);
+        }
+        void END;
+      };
+    </script>
+  </body>
+</html>

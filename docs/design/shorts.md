@@ -63,6 +63,7 @@ node scripts/shorts/build.mjs <클립 경로> --title "제목" --from 2 --to 11 
 | M249 한 탄창으로 몇 명을 죽일 수 있을까 | 20.3초 | M249 100발 중 97발로 **6킬** (Raven 2, Scorpion, Hyena 2, Havoc, Adder 2, Talon). 빌바오, 킬 로그로 셈. 흰 카드 + 처치 카운터 + 끝 0.87초 `최종 6명`. 음악: Od Yishama (E's Jammy Jams, YouTube 오디오 보관함), 곡 7.86~28.11초 | `m249-music.mp4` |
 | 현실에서 이병이 원수 되려면 몇 년 걸릴까 (초안) | 37.8초 | 앞 22.6초 모션그래픽(복무 시계와 함께 계급을 오르는 흐름, 실제 계급장을 코드로 그림), 뒤 15.2초 게임 화면(Strikegy). Od Yishama를 0초부터, 첫 박자 0.255초 / 0.39982초 간격에 맞춤. 원수 직전 0.8초 음악 끊김. `scripts/shorts/rank/` | `rank/rank.mp4` |
 | 소련이 핀란드 하나에 105일 걸린 이유 | 34.05초 | 겨울전쟁. 위 지도와 아래 게임 화면, 타격에 맞춰 전선과 카메라가 움직임, 인물 사진 5장. 음악 FUNK CONTRA (Slowed). `scripts/shorts/winter/`, 만드는 법은 아래 후보 항목 | `winter/winter.mp4` |
+| 멸공의 횃불, 지도로 보는 국군의 싸움 | 62.8초 | 위성 지도와 국기로 칠한 영토, 타격에 맞춘 전선과 카메라. 분단, 6.25, 이후 북한의 도발. 이승만과 맥아더 사진. `scripts/shorts/rok/`, 만드는 법은 아래 후보 항목 | `rok/rok.mp4` |
 | 교통정리 | 13초 | 호송 모드에서 장갑차 주변을 쓸어 `장갑차 정지`가 뜨고, 곧 쓰러짐 | `traffic-control.mp4` |
 
 교환비 1:1, 죽을때까지 달리는 영상, 펜타킬, 교통정리는 성과가 저조해 2026-11-02에 채널에서 지웠다(주인). 지우기 전에 확인한 수치: `계속 시청함` 교환비 1:1 4.3 %, 죽을때까지 달리는 영상 20.5 %. M249는 만들었지만 아직 올리지 않았다.
@@ -78,6 +79,8 @@ node scripts/shorts/build.mjs <클립 경로> --title "제목" --from 2 --to 11 
 
 ## 다음 후보
 
+- **멸공의 횃불 (완성, 저작권 검사 후 공개):** 곡 제목에 맞춰 6.25와 그 이후 북한의 도발과 대응을 다룬다(주인). 파워맵 쇼츠의 구성을 참고한다(어두운 위성 지도, 국기로 칠한 영토, 날짜와 사건 한 줄). 음악은 국방일보 영상의 멸공의 횃불 처음부터 1절 끝까지(62.81초, 약 122 BPM)이고 사용 허가는 확인하지 못했다. 정전 이후 영토는 그린 선이 아니라 실제 경계 데이터로 칠한다. `scripts/shorts/rok/`: `data.mjs`(지도), `build.mjs --song <곡> --fps 60`. 게임 장면은 겨울전쟁 촬영본을 쓴다.
+  - **설명란 크레딧:** `음악: 멸공의 횃불 - 국방일보`, `지도: Natural Earth, NASA Earth Observatory (Blue Marble)`, `사진: 미 육군/NARA, 대한민국 정부`.
 - **겨울전쟁 편집 영상 (제작 준비 중):** 음악에 맞춰 장면을 넘기고 지도에서 영토 변화를 보여 주며, 게임 화면을 처음부터 섞는다. 본편 후 약 3.7초가 게임 홍보다. 음악은 FUNK CONTRA (Slowed)(Dj Samir, Nulteex, Zericxxn, ℗ 2026 Lunar Media)다. 정식 발매곡이고 사용 허가는 없다. 2026-11-03 비공개 검사 결과: 소유권 주장 1건(FUNK CONTRA, overtonight, 저작권 오디오), 도달범위 영향 없음, 저작권 경고 아님. 이의 제기는 하지 않는다. 곡의 0.25초부터 쓰면 34.05초다. 98.09 BPM. 인트로의 타격은 박자 격자에서 반 박 어긋나므로, 컷은 격자가 아니라 측정한 타격 시각에 맞춘다(`scripts/shorts/winter/scenes.js`).
   - **만들기:** `node scripts/trailer/film.mjs winter-war`(게임 장면, 개발 서버 필요), `node scripts/shorts/winter/shp.mjs`와 `borders.mjs`(지도), `node scripts/shorts/winter/build.mjs --song <곡> --fps 60`.
   - **지도:** 구역 6곳의 전선이 타격마다 밀리고 당겨진다. 국경은 OpenHistoricalMap(CC0)과 Natural Earth(퍼블릭 도메인)에서 가져왔고, 전선과 라도가호, 오네가호는 전투 지명을 보고 손으로 그려 대략적이다.
