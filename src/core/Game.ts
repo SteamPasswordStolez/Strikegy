@@ -89,6 +89,8 @@ import { GrenadeInventory, Throwables } from '@/weapons/Throwables';
 import { AudioSystem } from '@/audio/AudioSystem';
 import { ambienceFor } from '@/audio/ambienceDirector';
 import { CameraMotion } from '@/player/cameraMotion';
+import { KillCard, type KillInfo } from '@/ui/KillCard';
+import { LAYER_FX } from '@/render/layers';
 import { HUD, statusLine, type HudFrame, type ModeStatus, type Side, type SquadHud, type ZoneHud } from '@/ui/HUD';
 import { ChatPanel } from '@/ui/ChatPanel';
 import { chatOf } from '@/net/chat';
@@ -134,6 +136,9 @@ import { Minimap, type MinimapFrame } from '@/ui/Minimap';
 import { ASSIST_CONE_DEG, applyAimAssist, type AssistTarget } from '@/input/aimAssist';
 import { ShowcaseCamera } from '@/render/showcaseCamera';
 import { wrapAngle, yawPitchOf } from '@/ai/aim';
+
+/** The shortest turn from `a` to `b`. */
+const angleDiff = (a: number, b: number): number => wrapAngle(b - a);
 import { Squad, WIPE_PENALTY, formSquads, mateSpawnBlock, squadName, type SquadMember } from '@/modes/squads';
 import type { Bot } from '@/ai/Bot';
 import { ScoreTracker } from '@/modes/scoreTracker';
@@ -171,6 +176,13 @@ const SIM_HZ = 60;
 const ASSET_BASE = `${import.meta.env.BASE_URL}assets/`;
 /** Seconds of death cam before the deploy screen opens. */
 const DEATH_CAM_SEC = 1.6;
+/**
+ * Battlefield-style death camera (players asked what had killed them, 2026-11; owner: 2-3 s on the killer,
+ * with a person's details): from where the player fell the view turns to the killer (`turn` after `wait`),
+ * zooms so they fill about `span` m of the view, holds until `length`, and gives the view back over `back`
+ * when the player is only down. A red mark over the killer shows through walls.
+ */
+const KILL_CAM = { range: 600, wait: 0.35, turn: 0.8, length: 2.6, back: 0.4, span: 16, minFov: 32, mark: 0.035 };
 /** Maps up to this size (m) get one shadow map fitted over the whole area, rendered once. */
 const STATIC_SHADOW_MAX = 420;
 /** Weapon is unusable this long after starting a throw. */
@@ -373,6 +385,12 @@ export class Game {
   /** The head moving with the body on foot: steps, landings, slides (cameraMotion.ts). */
   private readonly camMotion = new CameraMotion();
   private deathBlend = 0;
+  /** The death camera on the killer (see KILL_CAM), or null. */
+  private killCam: { start: number; killerId: number; look: boolean; down: boolean } | null = null;
+  private killCard: KillCard | null = null;
+  private killMark: THREE.Sprite | null = null;
+  private readonly killAt = new THREE.Vector3();
+  private readonly endKillCam = () => this.stopKillCam();
   /** Class loadouts picked on the deploy screen (kept per class across matches). */
   private readonly loadouts = new LoadoutStore();
   private loadoutPanel: LoadoutPanel | null = null;
@@ -1134,7 +1152,10 @@ export class Game {
       }
     });
     // Free-for-all: everyone else is an enemy in the feed.
-    bus.on('combat:kill', (e) => this.hud.addKill(MATCH.ffa ? { ...e, attackerTeam: 'red', victimTeam: 'red' } : e));
+    bus.on('combat:kill', (e) => {
+      this.hud.addKill(MATCH.ffa ? { ...e, attackerTeam: 'red', victimTeam: 'red' } : e);
+      if (!this.net && e.victimId === this.myId && e.attackerId !== undefined) this.startKillCam(e.attackerId, e.attacker, e.weapon, e.headshot);
+    });
     bus.on('grenade:thrown', () => {
       this.audio.pinAndThrow();
       this.viewModel.onThrow();
@@ -1288,6 +1309,18 @@ export class Game {
     const touch = !!this.touch;
     return [
       { label: t('pause.resume'), onClick: () => this.resume() },
+      // Right under resume while the tutorial runs: its card sends people here with Esc (players looked for it, 2026-11).
+      ...(this.tutorial
+        ? [
+            {
+              label: t('tut.skip'),
+              onClick: () => {
+                this.endTutorial(true);
+                this.resume();
+              },
+            },
+          ]
+        : []),
       { label: t('menu.controls'), selected: view === 'controls', onClick: () => this.pause('controls') },
       { label: t('pause.settings'), selected: view === 'settings', onClick: () => this.pause('settings') },
       ...(this.canRedeploy() ? [{ label: t('pause.redeploy'), onClick: () => this.redeploy() }] : []),
@@ -1298,17 +1331,6 @@ export class Game {
               onClick: () => {
                 this.overlay.hide();
                 this.touch?.editLayout(() => this.pause());
-              },
-            },
-          ]
-        : []),
-      ...(this.tutorial
-        ? [
-            {
-              label: t('tut.skip'),
-              onClick: () => {
-                this.endTutorial(true);
-                this.pause(view);
               },
             },
           ]
@@ -1644,7 +1666,7 @@ export class Game {
         this.audio.revived();
       },
       died: () => {
-        if (this.deployFlow) this.deployAt = this.elapsed + DEATH_CAM_SEC * 0.5;
+        if (this.deployFlow) this.deployAt = Math.max(this.elapsed + DEATH_CAM_SEC * 0.5, this.killCam ? this.killCam.start + KILL_CAM.length : 0);
       },
       medkit: () => this.audio.medkit(),
     };
@@ -3708,6 +3730,13 @@ export class Game {
     );
     let fov = this.settings.fov + (adsFov - this.settings.fov) * w.adsBlend + cm.fov;
     if (this.ride && p.alive && !this.rideThird) fov = this.rideFov(this.ride.v, dt);
+    const kc = this.killCamView(cam.position);
+    if (kc) {
+      cam.rotation.x += (kc.pitch - cam.rotation.x) * kc.k;
+      cam.rotation.y += angleDiff(cam.rotation.y, kc.yaw) * kc.k;
+      cam.rotation.z *= 1 - kc.k;
+      fov += (kc.fov - fov) * kc.k;
+    }
     if (Math.abs(cam.fov - fov) > 0.01) {
       cam.fov = fov;
       cam.updateProjectionMatrix();
@@ -3719,6 +3748,132 @@ export class Game {
     this.audio.setListener(cam.position, this.tmpFwd, this.tmpUp);
     this.probeSpace(cam.position, dt);
     this.updateEngines(cam.position);
+  }
+
+  /**
+   * The death camera (KILL_CAM): on being downed or killed by someone else, the view turns from where
+   * the player fell to the killer and the card says who, with what, how far and what they have left.
+   * Off in the settings, against oneself, and when nobody can be found (far off, gone): then only the card.
+   */
+  private startKillCam(killerId: number, name: string, weapon: string, headshot: boolean): void {
+    if (killerId === this.myId || this.matchOver) return;
+    this.stopKillCam();
+    const spot = this.killerSpot(killerId, this.killAt);
+    const from = this.player.feet;
+    const person = this.net?.roster.get(killerId);
+    const info: KillInfo = {
+      name: person?.name ?? name,
+      weapon,
+      headshot,
+      distance: spot ? Math.hypot(spot.pos.x - from.x, spot.pos.y - from.y, spot.pos.z - from.z) : null,
+      health: spot ? spot.health : null,
+    };
+    if (person && !person.bot) {
+      info.tag = person.tag;
+      info.badge = person.badge;
+    }
+    const gun = (Object.keys(WEAPONS) as WeaponId[]).find((id) => WEAPONS[id].name === weapon);
+    if (gun) info.weaponId = gun;
+    if (spot?.vehicle) {
+      const key = `vehicle.${spot.vehicle.kind}` as MessageKey;
+      const vname = t(key);
+      if (vname !== key) info.vehicle = vname;
+    }
+    this.killCard ??= new KillCard(this.hud.root);
+    this.killCard.show(info);
+    const near = (info.distance ?? Infinity) < KILL_CAM.range;
+    this.killCam = { start: this.elapsed, killerId, look: this.settings.killCam && !!spot && near, down: this.playerDowned };
+    if (!this.killCam.look) return;
+    this.hud.root.classList.add('kc-look');
+    if (this.deployFlow && !this.playerDowned) this.deployAt = Math.max(this.deployAt, this.elapsed + KILL_CAM.length);
+    window.addEventListener('mousedown', this.endKillCam, true);
+    window.addEventListener('touchstart', this.endKillCam, { capture: true, passive: true });
+  }
+
+  private stopKillCam(): void {
+    window.removeEventListener('mousedown', this.endKillCam, true);
+    window.removeEventListener('touchstart', this.endKillCam, true);
+    // Skipped while dead: straight on to the deploy screen.
+    if (this.killCam?.look && this.deployFlow && !this.player.alive && !this.playerDowned) this.deployAt = Math.min(this.deployAt, this.elapsed + 0.1);
+    this.killCam = null;
+    this.killCard?.hide();
+    this.hud.root.classList.remove('kc-look');
+    if (this.killMark) this.killMark.visible = false;
+  }
+
+  /** Where the killer is now (their eye, or their vehicle's middle) and what they have left; null when not to be found. */
+  private killerSpot(id: number, out: THREE.Vector3): { pos: THREE.Vector3; health: number; vehicle: Vehicle | null } | null {
+    const inVehicle = this.vehicles?.vehicles.find((v) => !v.wrecked && v.seats.some((o) => o?.id === id)) ?? null;
+    if (inVehicle) return { pos: out.copy(inVehicle.pos).setY(inVehicle.pos.y + 1.2), health: inVehicle.health / inVehicle.spec.health, vehicle: inVehicle };
+    if (this.net) {
+      const r = this.net.remote(id);
+      if (!r || !r.visible) return null;
+      return { pos: out.copy(r.feet).setY(r.feet.y + 1.4), health: r.health / 100, vehicle: null };
+    }
+    const b = this.bots?.bots.find((x) => x.id === id);
+    if (!b) return null;
+    return { pos: out.copy(b.feet).setY(b.feet.y + 1.4), health: b.health.value / 100, vehicle: null };
+  }
+
+  /** This frame's death camera: where to look, the zoom, and how much of it (0..1); null when off. */
+  private killCamView(eye: THREE.Vector3): { yaw: number; pitch: number; fov: number; k: number } | null {
+    const kc = this.killCam;
+    if (!kc) return null;
+    const time = this.elapsed - kc.start;
+    // Up again (revived, redeployed), the match over or its time up: the view is the player's again.
+    if ((this.player.alive && !this.playerDowned) || this.matchOver || time > KILL_CAM.length + (kc.down ? KILL_CAM.back : 0)) {
+      this.stopKillCam();
+      return null;
+    }
+    if (!kc.look) return null;
+    const spot = this.killerSpot(kc.killerId, this.killAt);
+    const at = this.killAt;
+    const [yaw, pitch] = yawPitchOf(at.x - eye.x, at.y - eye.y, at.z - eye.z);
+    const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+    let k = ease((time - KILL_CAM.wait) / KILL_CAM.turn);
+    if (kc.down && time > KILL_CAM.length) k *= 1 - ease((time - KILL_CAM.length) / KILL_CAM.back);
+    const dist = Math.max(1, eye.distanceTo(at));
+    const fov = Math.min(this.settings.fov, Math.max(KILL_CAM.minFov, (2 * Math.atan(KILL_CAM.span / 2 / dist) * 180) / Math.PI));
+    this.placeKillMark(spot ? at : null, k);
+    return { yaw, pitch, fov, k };
+  }
+
+  /** The red mark over the killer (drawn over everything, a fixed size on screen). */
+  private placeKillMark(at: THREE.Vector3 | null, k: number): void {
+    if (!at) {
+      if (this.killMark) this.killMark.visible = false;
+      return;
+    }
+    if (!this.killMark) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#ff3b30';
+      g.strokeStyle = 'rgba(0,0,0,0.75)';
+      g.lineWidth = 5;
+      g.beginPath();
+      g.moveTo(32, 58);
+      g.lineTo(8, 14);
+      g.lineTo(56, 14);
+      g.closePath();
+      g.stroke();
+      g.fill();
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false, transparent: true, toneMapped: false });
+      this.killMark = new THREE.Sprite(mat);
+      // The effects' layer, like the ally chevrons (the world pass skips sprites on the default one).
+      this.killMark.layers.set(LAYER_FX);
+      this.killMark.renderOrder = 1000;
+      this.killMark.center.set(0.5, 0);
+      this.killMark.frustumCulled = false;
+      this.renderer.scene.add(this.killMark);
+    }
+    const m = this.killMark;
+    m.visible = k > 0.05;
+    m.position.copy(at).setY(at.y + 0.9);
+    m.scale.setScalar(KILL_CAM.mark);
+    (m.material as THREE.SpriteMaterial).opacity = Math.min(1, k * 1.5);
   }
 
   private spaceIn = 0;
@@ -4882,13 +5037,13 @@ export class Game {
       if (b) {
         this.gadgets.useBeacon(b);
         const pos = this.nav?.randomAround(b.pos, 1.5) ?? b.pos.clone();
-        return { pos, yaw: b.mesh.rotation.y };
+        return { pos: this.zoneMode?.clearOfPeople(pos, this.nav, selfId) ?? pos, yaw: b.mesh.rotation.y };
       }
     }
     if (kind === 'mate') {
       const sq = this.squads.find((s) => s.team === team && s.has(selfId));
       const mate = sq?.members.find((m) => String(m.id) === id);
-      if (mate && !mateSpawnBlock(mate, this.bots!.time, this.riding(mate.id))) return this.besideMate(mate);
+      if (mate && !mateSpawnBlock(mate, this.bots!.time, this.riding(mate.id))) return this.besideMate(mate, selfId);
     }
     const zm = this.zoneMode;
     if (zm) return zm.spawnPoint(team, kind === 'zone' ? id! : 'base', this.nav, Math.random, selfId);
@@ -4905,14 +5060,15 @@ export class Game {
   }
 
   /** A step behind a squadmate, facing where they face. */
-  private besideMate(m: SquadMember): { pos: THREE.Vector3; yaw: number } {
+  private besideMate(m: SquadMember, selfId: number): { pos: THREE.Vector3; yaw: number } {
     const side = Math.random() < 0.5 ? -1 : 1;
     const back = new THREE.Vector3(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(2.2);
     const lateral = new THREE.Vector3(Math.cos(m.yaw), 0, -Math.sin(m.yaw)).multiplyScalar(side * 1.2);
     const want = m.feet.clone().add(back).add(lateral);
-    // Behind them may be a wall: then right where they stand.
+    // Behind them may be a wall (inside buildings, often): then near them, never inside them (2026-11: the
+    // player was shoved aside by mates appearing on their spot).
     const pos = (this.nav && (this.nav.randomAround(want, 1.2) ?? this.nav.closest(want) ?? this.nav.closest(m.feet))) || m.feet.clone();
-    return { pos, yaw: m.yaw };
+    return { pos: this.zoneMode?.clearOfPeople(pos, this.nav, selfId) ?? pos, yaw: m.yaw };
   }
 
   /**
@@ -6067,6 +6223,7 @@ export class Game {
       switch (e.k) {
         case 'kill':
           if (e.fx && e.victimId !== undefined) this.playKillFx(e.fx, e.attackerId ?? -1, e.victimId);
+          if (e.victimId === this.myId && e.attackerId !== undefined) this.startKillCam(e.attackerId, e.attacker, e.weapon, e.headshot);
           this.hud.addKill({
             attacker: you(e.attackerId, e.attacker),
             victim: you(e.victimId, e.victim),

@@ -1,0 +1,112 @@
+/* The death camera's card (KillCard.ts): inside the HUD (`.hud`, its ds tokens), under the middle. */
+.kc {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translate(-50%, calc(var(--u) * 0.8));
+  min-width: calc(var(--u) * 20);
+  max-width: min(92vw, calc(var(--u) * 30));
+  padding: var(--s3) var(--s4) var(--s4);
+  background: linear-gradient(180deg, rgb(10 10 9 / 0.82), rgb(10 10 9 / 0.66));
+  border-top: 3px solid var(--enemy-text);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.25s ease;
+  text-shadow: none;
+}
+.kc.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.kc-head {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  color: var(--enemy-text);
+  font-weight: 700;
+}
+.kc-who {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s1);
+}
+.kc-name {
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  color: #fff;
+  border-bottom: 2px solid var(--plate, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-tag {
+  font-size: var(--fs-sm);
+  color: rgb(239 235 226 / 0.6);
+}
+.kc-gun {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s2);
+  min-height: calc(var(--u) * 2.4);
+}
+.kc-pic {
+  height: calc(var(--u) * 2.4);
+  width: auto;
+  display: none;
+}
+.kc-pic.on {
+  display: block;
+}
+.kc-wname {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: rgb(239 235 226 / 0.92);
+}
+.kc-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s2) var(--s5);
+  margin-top: var(--s2);
+}
+.kc-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kc-flabel {
+  font-size: var(--fs-xs);
+  color: rgb(239 235 226 / 0.6);
+}
+.kc-fvalue {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+}
+.kc-hp {
+  width: calc(var(--u) * 6);
+  height: 4px;
+  background: var(--track);
+}
+.kc-hp-fill {
+  height: 100%;
+  background: var(--enemy-text);
+}
+.kc-head-shot {
+  align-self: center;
+  padding: 2px var(--s2);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  color: #111;
+  background: #f0c34a;
+}
+/* While the death camera looks at the killer, the down / dead text in the middle steps aside (it covered them). */
+.hud.kc-look .hud-down-text,
+.hud.kc-look .hud-death-text {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}

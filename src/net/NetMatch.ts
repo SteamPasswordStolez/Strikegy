@@ -200,6 +200,8 @@ class Remote {
   alive = false;
   /** In a vehicle in the moment drawn (not drawn: the vehicle is). */
   riding = false;
+  /** Health as the latest snapshot had it (0..100; the death camera's card). */
+  health = 100;
   /** A bot this browser runs itself (drawn and hit there): this copy only keeps its place for the map. */
   hidden = false;
   /** When it last fired (s, performance clock), and how it moves in the moment drawn (m/s). */
@@ -624,7 +626,7 @@ export class NetMatch {
 
   /** Everyone else this browser draws (minimap, deploy screen). */
   /** Someone else as this browser draws them, if snapshots have brought them. */
-  remote(id: number): { readonly alive: boolean; readonly downed: boolean; readonly feet: THREE.Vector3; readonly yaw: number } | undefined {
+  remote(id: number): { readonly alive: boolean; readonly downed: boolean; readonly feet: THREE.Vector3; readonly yaw: number; readonly visible: boolean; readonly riding: boolean; readonly health: number } | undefined {
     return this.remotes.get(id);
   }
 
@@ -776,6 +778,7 @@ export class NetMatch {
         this.remotes.set(s.id, r);
       }
       r.add({ tick: snap.tick, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, flags: s.flags, weapon: s.weapon, shots: s.shots, deck: s.flags & SF.riding ? undefined : this.deckAt(snap.tick, s.x, s.y, s.z, s.yaw) });
+      r.health = s.health;
       r.hidden = this.owned.has(s.id);
       if (r.hidden) this.onOwned(s.id, s.flags, s.health);
     }

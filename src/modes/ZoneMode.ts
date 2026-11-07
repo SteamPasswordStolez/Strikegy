@@ -562,6 +562,43 @@ export class ZoneMode {
    * base if the zone is no longer owned. Faces the nearest zone not yet owned.
    */
   spawnPoint(team: Team, choice: string, nav: NavWorld | null, rand = Math.random, selfId = -1): { pos: THREE.Vector3; yaw: number } {
+    const at = this.pickSpawn(team, choice, nav, rand, selfId);
+    at.pos = this.clearOfPeople(at.pos, nav, selfId, rand);
+    return at;
+  }
+
+  /**
+   * A spawn spot nobody stands on: a soldier put inside someone's capsule shoves them aside (players saw
+   * themselves pushed when a mate appeared next to them in a building, 2026-11). Tries spots round it;
+   * the least crowded one when every try is taken.
+   */
+  clearOfPeople(pos: THREE.Vector3, nav: NavWorld | null, selfId: number, rand: () => number = Math.random): THREE.Vector3 {
+    const others = this.alive.filter((p) => p.id !== selfId);
+    const gap = (q: THREE.Vector3) => {
+      let near = Infinity;
+      for (const o of others) {
+        if (Math.abs(o.feet.y - q.y) > SPAWN_CLEAR.height) continue;
+        near = Math.min(near, Math.hypot(o.feet.x - q.x, o.feet.z - q.z));
+      }
+      return near;
+    };
+    let best = pos;
+    let bestGap = gap(pos);
+    if (bestGap >= SPAWN_CLEAR.radius || !nav) return pos;
+    for (let i = 0; i < SPAWN_CLEAR.tries; i++) {
+      const q = nav.randomAround(pos, SPAWN_CLEAR.search * (0.5 + rand()));
+      if (!q || Math.abs(q.y - pos.y) > SPAWN_CLEAR.height) continue;
+      const g = gap(q);
+      if (g >= SPAWN_CLEAR.radius) return q;
+      if (g > bestGap) {
+        best = q;
+        bestGap = g;
+      }
+    }
+    return best;
+  }
+
+  private pickSpawn(team: Team, choice: string, nav: NavWorld | null, rand: () => number, selfId: number): { pos: THREE.Vector3; yaw: number } {
     if (this.solo) return this.soloSpawn(nav, selfId, rand);
     // S&D: each side starts a round at its spot of the half (attackers off the sites, defenders between them).
     if (this.match instanceof SearchDestroyRules) {
@@ -717,6 +754,9 @@ export class ZoneMode {
  * reaches the upper floors of buildings in a zone, and nobody should spawn on
  * the fourth floor of the hospital. Falls back to any point if none is low.
  */
+/** Spawning clear of people: no one within `radius` m (two capsules' width and some) at about the same height. */
+const SPAWN_CLEAR = { radius: 1.2, height: 1.8, search: 3, tries: 10 };
+
 function groundAround(nav: NavWorld, at: THREE.Vector3, r: number): THREE.Vector3 | null {
   let any: THREE.Vector3 | null = null;
   for (let i = 0; i < 6; i++) {

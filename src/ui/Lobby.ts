@@ -34,6 +34,8 @@ import { renderServiceRecord } from './ServiceRecord';
 import { glossaryList } from './glossary';
 
 const PICK_KEY = 'strikegy.lobby.v1';
+/** Set once the quick start's leftover easy pick has been put back to normal (see the constructor). */
+const EASY_FIX_KEY = 'strikegy.easyfix.v1';
 const DIFFICULTIES: readonly Difficulty[] = ['easy', 'normal', 'hard'];
 
 /**
@@ -158,6 +160,13 @@ export class Lobby {
       side: SIDES.find((s) => s === saved.side) ?? 'random',
       simple: saved.simple === true,
     };
+    // Picks the first-visit quick start left on easy (before 2026-11, it was saved as the pick) go back to
+    // normal once: the quick start's exact setup on easy is that, not a choice.
+    if (this.pick.difficulty === 'easy' && saved.map === MAPS[0]!.id && saved.mode === 'zone' && saved.team === FIRST_MATCH_TEAM && !loadJSON<boolean>(EASY_FIX_KEY)) {
+      this.pick.difficulty = 'normal';
+      saveJSON(PICK_KEY, this.pick);
+    }
+    saveJSON(EASY_FIX_KEY, true);
     this.root = el('div', 'lobby', container);
     this.bg = el('div', 'lb-bg', this.root);
     el('div', 'lb-shade', this.root);
@@ -207,9 +216,12 @@ export class Lobby {
     showWelcome(this.root, {
       start: (name) => {
         done(name);
-        // Easy bots and fewer of them, on the map every tutorial line was written for.
-        this.pick = { ...this.pick, map: MAPS[0]!.id, mode: 'zone', team: FIRST_MATCH_TEAM, difficulty: 'easy', side: 'random', simple: false };
-        this.finish(this.pick);
+        // Easy bots and fewer of them, on the map every tutorial line was written for. Easy is for this
+        // match only: kept as the pick, every later match (the continue card, the setup page) stayed easy
+        // and players called the game far too easy (2026-11).
+        const first: LobbyPick = { ...this.pick, map: MAPS[0]!.id, mode: 'zone', team: FIRST_MATCH_TEAM, difficulty: 'easy', side: 'random', simple: false };
+        this.pick = { ...first, difficulty: 'normal' };
+        this.finish(first);
       },
       browse: (name) => {
         done(name);

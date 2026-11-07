@@ -65,6 +65,8 @@ export interface Settings {
   soldierSex: 'm' | 'f';
   /** The view moving with steps, landings and slides (cameraMotion.ts): normal, low or off (motion sickness). */
   cameraBob: 'full' | 'low' | 'off';
+  /** On going down or dying: the view turns to whoever did it for a moment (Battlefield-style, 2026-11). */
+  killCam: boolean;
 }
 
 const KEY = 'strikegy.settings.v1';
@@ -88,6 +90,7 @@ export const DEFAULT_SETTINGS: Settings = {
   killFx: 'all',
   soldierSex: 'm',
   cameraBob: 'full',
+  killCam: true,
   musicVolume: 0.5,
   marshalMusic: true,
   inputMode: 'auto',

@@ -722,7 +722,8 @@ export class MatchSim {
       const back = new THREE.Vector3(Math.sin(mate.yaw), 0, Math.cos(mate.yaw)).multiplyScalar(2.2);
       const lateral = new THREE.Vector3(Math.cos(mate.yaw), 0, -Math.sin(mate.yaw)).multiplyScalar(side * 1.2);
       const want = mate.feet.clone().add(back).add(lateral);
-      at = { pos: (nav && (nav.randomAround(want, 1.2) ?? nav.closest(want))) || want, yaw: mate.yaw };
+      const pos = (nav && (nav.randomAround(want, 1.2) ?? nav.closest(want))) || want;
+      at = { pos: this.zoneMode?.clearOfPeople(pos, nav, selfId) ?? pos, yaw: mate.yaw };
     }
     return at;
   }

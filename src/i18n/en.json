@@ -903,7 +903,7 @@
   "menu.tutorialDesc": "Learn the basic controls step by step on the firing range. Your next match shows the deploy, zone and call-in tips again.",
   "tut.title": "Tutorial",
   "tut.skip": "Skip tutorial",
-  "tut.skipHint": "Esc → skip",
+  "tut.skipHint": "Esc → skip in the menu",
   "tut.done": "Tutorial done! Replay it any time from 'Tutorial' in the menu.",
   "tut.deploy": "You can just press Deploy. Where you come in, your class and your weapons are picked here.",
   "tut.move": "Walk a few steps.",
@@ -1650,5 +1650,12 @@
   "tk.event": "Double event",
   "pp.staffTickets": "+ Tickets (staff)",
   "pp.staffAsk": "Supply tickets to add (negative to take away)",
-  "pc.staff": "Staff"
+  "pc.staff": "Staff",
+  "kc.killedBy": "Killed by",
+  "kc.headshot": "Headshot",
+  "kc.distance": "Distance",
+  "kc.health": "Health left",
+  "kc.vehicleHealth": "Vehicle health",
+  "lobby.killCam": "Death camera",
+  "setDesc.killCam": "When you go down or die, the view turns to whoever did it for 2-3 seconds (click to skip). Off, a card still says who and with what."
 }

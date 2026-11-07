@@ -97,6 +97,7 @@ export class SettingsPanel {
       this.choice(rows, 'lobby.cameraBob', 'cameraBob', ['full', 'low', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.cb.${v}` as MessageKey)));
       this.toggle(rows, 'lobby.showFps', 'showFps');
       this.choice(rows, 'lobby.progressNotices', 'progressNotices', ['all', 'levels', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.pn.${v}` as MessageKey)));
+      this.toggle(rows, 'lobby.killCam', 'killCam');
       this.choice(rows, 'lobby.killFx', 'killFx', ['all', 'mine', 'off'] as const, (v) => t(v === 'off' ? 'lobby.off' : (`lobby.kfx.${v}` as MessageKey)));
       this.choice(rows, 'lobby.soldierSex', 'soldierSex', ['m', 'f'] as const, (v) => t(`lobby.sex.${v}` as MessageKey));
       if (!this.opts.live) this.toggle(rows, 'lobby.menuScene', 'menuScene');
@@ -267,7 +268,7 @@ export class SettingsPanel {
   }
 
   /** Two choices, off / on (or named by `names`). */
-  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene' | 'subtitles' | 'marshalMusic', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
+  private toggle(parent: HTMLElement, label: MessageKey, key: 'invertY' | 'showFps' | 'crouchHold' | 'menuScene' | 'subtitles' | 'marshalMusic' | 'killCam', names: [MessageKey, MessageKey] = ['lobby.off', 'lobby.on']): void {
     const seg = el('div', 'ds-seg sp-seg', this.row(parent, label, key));
     for (const on of [false, true]) {
       const b = el('button', on === this.s[key] ? 'sel' : '', seg);
